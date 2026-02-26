@@ -184,3 +184,13 @@ class AdminAuditLogRead(BaseModel):
     status: str
     detail: dict[str, Any]
     created_at: datetime
+
+
+class JobRunRead(BaseModel):
+    id: int
+    job_name: str
+    trigger: str
+    status: str
+    started_at: datetime
+    finished_at: datetime
+    detail: dict[str, Any]

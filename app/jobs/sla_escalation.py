@@ -16,7 +16,12 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     ensure_database()
-    result = run_sla_escalation_job(site=args.site, dry_run=args.dry_run, limit=args.limit)
+    result = run_sla_escalation_job(
+        site=args.site,
+        dry_run=args.dry_run,
+        limit=args.limit,
+        trigger="cron",
+    )
     print(json.dumps(result.model_dump(), ensure_ascii=False, default=str))
 
 

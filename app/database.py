@@ -3,6 +3,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text, create_engine
 from sqlalchemy.engine import Connection, make_url
 
@@ -116,6 +118,18 @@ admin_audit_logs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+job_runs = Table(
+    "job_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("job_name", String(80), nullable=False),
+    Column("trigger", String(40), nullable=False, default="manual"),
+    Column("status", String(20), nullable=False, default="success"),
+    Column("started_at", DateTime(timezone=True), nullable=False),
+    Column("finished_at", DateTime(timezone=True), nullable=False),
+    Column("detail_json", Text, nullable=False, default="{}"),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:
@@ -129,7 +143,14 @@ def _ensure_sqlite_parent_dir() -> None:
 
 def ensure_database() -> None:
     _ensure_sqlite_parent_dir()
-    metadata.create_all(engine)
+    project_root = Path(__file__).resolve().parent.parent
+    alembic_ini = project_root / "alembic.ini"
+    alembic_dir = project_root / "migrations"
+
+    cfg = Config(str(alembic_ini))
+    cfg.set_main_option("script_location", str(alembic_dir))
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+    command.upgrade(cfg, "head")
 
 
 @contextmanager

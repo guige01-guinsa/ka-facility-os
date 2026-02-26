@@ -24,6 +24,7 @@ from app.database import (
     ensure_database,
     get_conn,
     inspections,
+    job_runs,
     work_orders,
 )
 from app.schemas import (
@@ -37,6 +38,7 @@ from app.schemas import (
     AuthMeRead,
     InspectionCreate,
     InspectionRead,
+    JobRunRead,
     MonthlyReportRead,
     SlaEscalationRunRequest,
     SlaEscalationRunResponse,
@@ -463,6 +465,51 @@ def _row_to_admin_audit_log_model(row: dict[str, Any]) -> AdminAuditLogRead:
     )
 
 
+def _write_job_run(
+    *,
+    job_name: str,
+    trigger: str,
+    status: str,
+    started_at: datetime,
+    finished_at: datetime,
+    detail: dict[str, Any] | None = None,
+) -> None:
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                insert(job_runs).values(
+                    job_name=job_name,
+                    trigger=trigger,
+                    status=status,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    detail_json=_to_json_text(detail),
+                )
+            )
+    except SQLAlchemyError:
+        return
+
+
+def _row_to_job_run_model(row: dict[str, Any]) -> JobRunRead:
+    raw = str(row["detail_json"] or "{}")
+    try:
+        detail = json.loads(raw)
+    except json.JSONDecodeError:
+        detail = {"raw": raw}
+    if not isinstance(detail, dict):
+        detail = {"value": detail}
+
+    return JobRunRead(
+        id=int(row["id"]),
+        job_name=str(row["job_name"]),
+        trigger=str(row["trigger"]),
+        status=str(row["status"]),
+        started_at=_as_datetime(row["started_at"]),
+        finished_at=_as_datetime(row["finished_at"]),
+        detail=detail,
+    )
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -582,8 +629,10 @@ def run_sla_escalation_job(
     site: str | None = None,
     dry_run: bool = False,
     limit: int = 200,
+    trigger: str = "manual",
 ) -> SlaEscalationRunResponse:
-    now = datetime.now(timezone.utc)
+    started_at = datetime.now(timezone.utc)
+    now = started_at
     stmt = (
         select(work_orders)
         .where(work_orders.c.due_at.is_not(None))
@@ -634,8 +683,26 @@ def run_sla_escalation_job(
             },
         )
 
+    finished_at = datetime.now(timezone.utc)
+    _write_job_run(
+        job_name="sla_escalation",
+        trigger=trigger,
+        status="success" if alert_error is None else "warning",
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "site": site,
+            "dry_run": dry_run,
+            "limit": limit,
+            "candidate_count": len(ids),
+            "escalated_count": escalated_count,
+            "alert_dispatched": alert_dispatched,
+            "alert_error": alert_error,
+        },
+    )
+
     return SlaEscalationRunResponse(
-        checked_at=now,
+        checked_at=finished_at,
         dry_run=dry_run,
         site=site,
         candidate_count=len(ids),
@@ -821,6 +888,7 @@ def root() -> dict[str, str]:
         "auth_me_api": "/api/auth/me",
         "admin_tokens_api": "/api/admin/tokens",
         "admin_audit_api": "/api/admin/audit-logs",
+        "job_runs_api": "/api/ops/job-runs",
     }
 
 
@@ -1046,6 +1114,23 @@ def list_admin_audit_logs(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_admin_audit_log_model(row) for row in rows]
+
+
+@app.get("/api/ops/job-runs", response_model=list[JobRunRead])
+def list_job_runs(
+    job_name: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[JobRunRead]:
+    stmt = select(job_runs).order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+    if job_name is not None:
+        stmt = stmt.where(job_runs.c.job_name == job_name)
+    stmt = stmt.limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_job_run_model(row) for row in rows]
 
 
 @app.post("/api/admin/tokens/{token_id}/revoke", response_model=AdminTokenRead)
@@ -1425,6 +1510,7 @@ def run_sla_escalation(
         site=payload.site,
         dry_run=payload.dry_run,
         limit=payload.limit,
+        trigger="api",
     )
     _write_audit_log(
         principal=principal,

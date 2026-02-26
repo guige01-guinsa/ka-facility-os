@@ -28,6 +28,7 @@ Open:
   - `GET /api/admin/tokens` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
+  - `GET /api/ops/job-runs` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -101,6 +102,9 @@ Optional alert webhook env:
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
 
+Job monitoring:
+- `GET /api/ops/job-runs?job_name=sla_escalation`
+
 ## Audit logs
 
 Sensitive actions are stored in `admin_audit_logs`:
@@ -137,6 +141,19 @@ This app uses:
 
 After deploy, verify:
 - `GET /meta` -> `"db": "postgresql"`
+
+## Database migrations (Alembic)
+
+This project uses Alembic for schema migrations.
+
+Run manually:
+
+```powershell
+alembic upgrade head
+```
+
+Startup behavior:
+- app startup runs `alembic upgrade head` automatically via `ensure_database()`
 
 ## Render deploy
 
