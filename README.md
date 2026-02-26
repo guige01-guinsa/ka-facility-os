@@ -23,7 +23,10 @@ Open:
   - `GET /api/auth/me`
   - `GET /api/admin/users` (permission: `admins:manage`)
   - `POST /api/admin/users` (permission: `admins:manage`)
+  - `PATCH /api/admin/users/{user_id}/active` (permission: `admins:manage`)
   - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)
+  - `GET /api/admin/tokens` (permission: `admins:manage`)
+  - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)

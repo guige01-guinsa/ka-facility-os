@@ -143,6 +143,10 @@ class AdminUserRead(BaseModel):
     updated_at: datetime
 
 
+class AdminUserActiveUpdate(BaseModel):
+    is_active: bool
+
+
 class AdminTokenIssueRequest(BaseModel):
     label: str = Field(default="default", min_length=1, max_length=120)
     expires_at: Optional[datetime] = None
@@ -154,4 +158,15 @@ class AdminTokenIssueResponse(BaseModel):
     label: str
     token: str
     expires_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class AdminTokenRead(BaseModel):
+    token_id: int
+    user_id: int
+    username: str
+    label: str
+    is_active: bool
+    expires_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
     created_at: datetime

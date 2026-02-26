@@ -25,6 +25,8 @@ from app.database import (
 from app.schemas import (
     AdminTokenIssueRequest,
     AdminTokenIssueResponse,
+    AdminTokenRead,
+    AdminUserActiveUpdate,
     AdminUserCreate,
     AdminUserRead,
     AuthMeRead,
@@ -408,6 +410,19 @@ def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
     )
 
 
+def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
+    return AdminTokenRead(
+        token_id=int(row["token_id"]),
+        user_id=int(row["user_id"]),
+        username=str(row["username"]),
+        label=str(row["label"] or ""),
+        is_active=bool(row["is_active"]),
+        expires_at=_as_optional_datetime(row["expires_at"]),
+        last_used_at=_as_optional_datetime(row["last_used_at"]),
+        created_at=_as_datetime(row["created_at"]),
+    )
+
+
 def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
     due_at = _as_optional_datetime(row["due_at"])
     status = row["status"]
@@ -647,6 +662,7 @@ def root() -> dict[str, str]:
         "monthly_report_csv_api": "/api/reports/monthly/csv",
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
         "auth_me_api": "/api/auth/me",
+        "admin_tokens_api": "/api/admin/tokens",
     }
 
 
@@ -721,6 +737,42 @@ def create_admin_user(
     return _row_to_admin_user_model(row)
 
 
+@app.patch("/api/admin/users/{user_id}/active", response_model=AdminUserRead)
+def set_admin_user_active(
+    user_id: int,
+    payload: AdminUserActiveUpdate,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminUserRead:
+    now = datetime.now(timezone.utc)
+    actor_user_id = principal.get("user_id")
+    if actor_user_id is not None and int(actor_user_id) == user_id and payload.is_active is False:
+        raise HTTPException(status_code=409, detail="Cannot deactivate current admin user")
+
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(is_active=payload.is_active, updated_at=now)
+        )
+
+        if payload.is_active is False:
+            conn.execute(
+                update(admin_tokens)
+                .where(admin_tokens.c.user_id == user_id)
+                .values(is_active=False)
+            )
+
+        updated = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update admin user")
+    return _row_to_admin_user_model(updated)
+
+
 @app.post("/api/admin/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
 def issue_admin_token(
     user_id: int,
@@ -760,6 +812,90 @@ def issue_admin_token(
         expires_at=expires_at,
         created_at=now,
     )
+
+
+@app.get("/api/admin/tokens", response_model=list[AdminTokenRead])
+def list_admin_tokens(
+    user_id: Annotated[int | None, Query()] = None,
+    active_only: Annotated[bool, Query()] = False,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[AdminTokenRead]:
+    stmt = (
+        select(
+            admin_tokens.c.id.label("token_id"),
+            admin_tokens.c.user_id.label("user_id"),
+            admin_users.c.username.label("username"),
+            admin_tokens.c.label.label("label"),
+            admin_tokens.c.is_active.label("is_active"),
+            admin_tokens.c.expires_at.label("expires_at"),
+            admin_tokens.c.last_used_at.label("last_used_at"),
+            admin_tokens.c.created_at.label("created_at"),
+        )
+        .where(admin_users.c.id == admin_tokens.c.user_id)
+        .order_by(admin_tokens.c.created_at.desc(), admin_tokens.c.id.desc())
+    )
+    if user_id is not None:
+        stmt = stmt.where(admin_tokens.c.user_id == user_id)
+    if active_only:
+        stmt = stmt.where(admin_tokens.c.is_active.is_(True))
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_admin_token_model(row) for row in rows]
+
+
+@app.post("/api/admin/tokens/{token_id}/revoke", response_model=AdminTokenRead)
+def revoke_admin_token(
+    token_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminTokenRead:
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(
+                admin_tokens.c.id.label("token_id"),
+                admin_tokens.c.user_id.label("user_id"),
+                admin_users.c.username.label("username"),
+                admin_tokens.c.label.label("label"),
+                admin_tokens.c.is_active.label("is_active"),
+                admin_tokens.c.expires_at.label("expires_at"),
+                admin_tokens.c.last_used_at.label("last_used_at"),
+                admin_tokens.c.created_at.label("created_at"),
+            )
+            .where(admin_tokens.c.id == token_id)
+            .where(admin_users.c.id == admin_tokens.c.user_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin token not found")
+
+        actor_user_id = principal.get("user_id")
+        if actor_user_id is not None and int(actor_user_id) == int(row["user_id"]):
+            raise HTTPException(status_code=409, detail="Cannot revoke token of current admin user")
+
+        conn.execute(
+            update(admin_tokens)
+            .where(admin_tokens.c.id == token_id)
+            .values(is_active=False, last_used_at=now)
+        )
+        updated = conn.execute(
+            select(
+                admin_tokens.c.id.label("token_id"),
+                admin_tokens.c.user_id.label("user_id"),
+                admin_users.c.username.label("username"),
+                admin_tokens.c.label.label("label"),
+                admin_tokens.c.is_active.label("is_active"),
+                admin_tokens.c.expires_at.label("expires_at"),
+                admin_tokens.c.last_used_at.label("last_used_at"),
+                admin_tokens.c.created_at.label("created_at"),
+            )
+            .where(admin_tokens.c.id == token_id)
+            .where(admin_users.c.id == admin_tokens.c.user_id)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to revoke admin token")
+    return _row_to_admin_token_model(updated)
 
 
 @app.post("/api/inspections", response_model=InspectionRead, status_code=201)
