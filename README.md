@@ -24,12 +24,28 @@ Open:
 - `GET /api/inspections/{id}` get one inspection
 - `GET /inspections/{id}/print` printable A4 HTML report
 
+## Work Order endpoints
+
+- `POST /api/work-orders` create work order
+- `GET /api/work-orders` list work orders
+- `GET /api/work-orders/{id}` get work order
+- `PATCH /api/work-orders/{id}/ack` acknowledge work order
+- `PATCH /api/work-orders/{id}/complete` complete work order
+
 Example create:
 
 ```powershell
 curl -X POST "http://127.0.0.1:8001/api/inspections" `
   -H "Content-Type: application/json" `
   -d "{\"site\":\"OO Apartment\",\"location\":\"Substation\",\"cycle\":\"monthly\",\"inspector\":\"Hong\",\"inspected_at\":\"2026-02-26T09:30:00\",\"voltage_r\":220,\"voltage_s\":221,\"voltage_t\":219,\"insulation_mohm\":5.2,\"notes\":\"ok\"}"
+```
+
+Example work order create:
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/work-orders" `
+  -H "Content-Type: application/json" `
+  -d "{\"title\":\"Pump alarm\",\"description\":\"B2 pump vibration\",\"site\":\"OO Apartment\",\"location\":\"B1 mechanical room\",\"priority\":\"high\",\"assignee\":\"Kim\",\"reporter\":\"Guard\",\"due_at\":\"2026-02-27T09:00:00+00:00\"}"
 ```
 
 ## PostgreSQL mode

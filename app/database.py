@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import Column, DateTime, Float, Integer, MetaData, String, Table, Text, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text, create_engine
 from sqlalchemy.engine import Connection, make_url
 
 DEFAULT_SQLITE_URL = "sqlite:///data/facility.db"
@@ -52,6 +52,28 @@ inspections = Table(
     Column("risk_level", String(20), nullable=False),
     Column("risk_flags", Text, nullable=False, default=""),
     Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+work_orders = Table(
+    "work_orders",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("title", String(200), nullable=False),
+    Column("description", Text, nullable=False, default=""),
+    Column("site", String(120), nullable=False),
+    Column("location", String(120), nullable=False),
+    Column("priority", String(20), nullable=False, default="medium"),
+    Column("status", String(20), nullable=False, default="open"),
+    Column("assignee", String(80), nullable=True),
+    Column("reporter", String(80), nullable=True),
+    Column("inspection_id", Integer, nullable=True),
+    Column("due_at", DateTime(timezone=True), nullable=True),
+    Column("acknowledged_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("resolution_notes", Text, nullable=False, default=""),
+    Column("is_escalated", Boolean, nullable=False, default=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
 

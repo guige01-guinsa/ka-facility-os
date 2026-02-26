@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -44,3 +44,47 @@ class InspectionRead(BaseModel):
     risk_level: str
     risk_flags: list[str]
     created_at: datetime
+
+
+WorkOrderPriority = Literal["low", "medium", "high", "critical"]
+WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
+
+
+class WorkOrderCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = ""
+    site: str = Field(min_length=1, max_length=120)
+    location: str = Field(min_length=1, max_length=120)
+    priority: WorkOrderPriority = "medium"
+    assignee: Optional[str] = Field(default=None, max_length=80)
+    reporter: Optional[str] = Field(default=None, max_length=80)
+    inspection_id: Optional[int] = None
+    due_at: Optional[datetime] = None
+
+
+class WorkOrderAck(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=80)
+
+
+class WorkOrderComplete(BaseModel):
+    resolution_notes: str = ""
+
+
+class WorkOrderRead(BaseModel):
+    id: int
+    title: str
+    description: str
+    site: str
+    location: str
+    priority: WorkOrderPriority
+    status: WorkOrderStatus
+    assignee: Optional[str] = None
+    reporter: Optional[str] = None
+    inspection_id: Optional[int] = None
+    due_at: Optional[datetime] = None
+    acknowledged_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    resolution_notes: str
+    is_overdue: bool
+    created_at: datetime
+    updated_at: datetime

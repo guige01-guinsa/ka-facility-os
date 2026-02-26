@@ -4,15 +4,22 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, update
 
-from app.database import DATABASE_URL, ensure_database, get_conn, inspections
-from app.schemas import InspectionCreate, InspectionRead
+from app.database import DATABASE_URL, ensure_database, get_conn, inspections, work_orders
+from app.schemas import (
+    InspectionCreate,
+    InspectionRead,
+    WorkOrderAck,
+    WorkOrderComplete,
+    WorkOrderCreate,
+    WorkOrderRead,
+)
 
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 
@@ -53,10 +60,21 @@ def _to_utc(dt: datetime) -> datetime:
 
 def _as_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
         return value
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
     raise ValueError("Unsupported datetime value")
+
+
+def _as_optional_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    return _as_datetime(value)
 
 
 def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
@@ -87,6 +105,38 @@ def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
     )
 
 
+def _is_overdue(status: str, due_at: datetime | None) -> bool:
+    if due_at is None:
+        return False
+    if status in {"completed", "canceled"}:
+        return False
+    return due_at < datetime.now(timezone.utc)
+
+
+def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
+    due_at = _as_optional_datetime(row["due_at"])
+    status = row["status"]
+    return WorkOrderRead(
+        id=row["id"],
+        title=row["title"],
+        description=row["description"] or "",
+        site=row["site"],
+        location=row["location"],
+        priority=row["priority"],
+        status=status,
+        assignee=row["assignee"],
+        reporter=row["reporter"],
+        inspection_id=row["inspection_id"],
+        due_at=due_at,
+        acknowledged_at=_as_optional_datetime(row["acknowledged_at"]),
+        completed_at=_as_optional_datetime(row["completed_at"]),
+        resolution_notes=row["resolution_notes"] or "",
+        is_overdue=_is_overdue(status, due_at),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {
@@ -94,6 +144,7 @@ def root() -> dict[str, str]:
         "status": "running",
         "docs": "/docs",
         "inspection_api": "/api/inspections",
+        "work_order_api": "/api/work-orders",
     }
 
 
@@ -225,3 +276,133 @@ def print_inspection(inspection_id: int) -> str:
 </body>
 </html>
 """
+
+
+@app.post("/api/work-orders", response_model=WorkOrderRead, status_code=201)
+def create_work_order(payload: WorkOrderCreate) -> WorkOrderRead:
+    now = datetime.now(timezone.utc)
+    due_at = _as_optional_datetime(payload.due_at)
+
+    with get_conn() as conn:
+        result = conn.execute(
+            insert(work_orders).values(
+                title=payload.title,
+                description=payload.description,
+                site=payload.site,
+                location=payload.location,
+                priority=payload.priority,
+                status="open",
+                assignee=payload.assignee,
+                reporter=payload.reporter,
+                inspection_id=payload.inspection_id,
+                due_at=due_at,
+                acknowledged_at=None,
+                completed_at=None,
+                resolution_notes="",
+                is_escalated=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        work_order_id = result.inserted_primary_key[0]
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to create work order")
+    return _row_to_work_order_model(row)
+
+
+@app.get("/api/work-orders", response_model=list[WorkOrderRead])
+def list_work_orders(
+    status: str | None = Query(default=None),
+    site: str | None = Query(default=None),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> list[WorkOrderRead]:
+    stmt = select(work_orders)
+    if status is not None:
+        stmt = stmt.where(work_orders.c.status == status)
+    if site is not None:
+        stmt = stmt.where(work_orders.c.site == site)
+
+    stmt = stmt.order_by(work_orders.c.created_at.desc(), work_orders.c.id.desc()).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_work_order_model(r) for r in rows]
+
+
+@app.get("/api/work-orders/{work_order_id}", response_model=WorkOrderRead)
+def get_work_order(work_order_id: int) -> WorkOrderRead:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Work order not found")
+    return _row_to_work_order_model(row)
+
+
+@app.patch("/api/work-orders/{work_order_id}/ack", response_model=WorkOrderRead)
+def ack_work_order(work_order_id: int, payload: WorkOrderAck) -> WorkOrderRead:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        if row["status"] == "completed":
+            raise HTTPException(status_code=409, detail="Completed work order cannot be acked")
+
+        assignee = payload.assignee if payload.assignee is not None else row["assignee"]
+        conn.execute(
+            update(work_orders)
+            .where(work_orders.c.id == work_order_id)
+            .values(
+                status="acked",
+                assignee=assignee,
+                acknowledged_at=now,
+                updated_at=now,
+            )
+        )
+        updated_row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to update work order")
+    return _row_to_work_order_model(updated_row)
+
+
+@app.patch("/api/work-orders/{work_order_id}/complete", response_model=WorkOrderRead)
+def complete_work_order(work_order_id: int, payload: WorkOrderComplete) -> WorkOrderRead:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        if row["status"] == "completed":
+            return _row_to_work_order_model(row)
+
+        conn.execute(
+            update(work_orders)
+            .where(work_orders.c.id == work_order_id)
+            .values(
+                status="completed",
+                completed_at=now,
+                resolution_notes=payload.resolution_notes,
+                updated_at=now,
+            )
+        )
+        updated_row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to complete work order")
+    return _row_to_work_order_model(updated_row)
