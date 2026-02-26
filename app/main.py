@@ -5,6 +5,8 @@ import io
 import json
 import secrets
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from datetime import timedelta
 from os import getenv
@@ -52,12 +54,6 @@ from app.schemas import (
     WorkOrderComplete,
     WorkOrderCreate,
     WorkOrderRead,
-)
-
-app = FastAPI(
-    title="KA Facility OS",
-    description="Inspection MVP for apartment facility operations",
-    version="0.8.0",
 )
 
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
@@ -108,10 +104,19 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
 }
 
 
-@app.on_event("startup")
-def on_startup() -> None:
+@asynccontextmanager
+async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_database()
     ensure_legacy_admin_token_seed()
+    yield
+
+
+app = FastAPI(
+    title="KA Facility OS",
+    description="Inspection MVP for apartment facility operations",
+    version="0.8.1",
+    lifespan=app_lifespan,
+)
 
 
 def _permission_text_to_list(value: Any) -> list[str]:
