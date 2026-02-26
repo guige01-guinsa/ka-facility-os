@@ -17,6 +17,7 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
     monkeypatch.setenv("ADMIN_TOKEN", "test-owner-token")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
 
     import app.database as database_module
     import app.main as main_module
@@ -108,6 +109,7 @@ def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
     assert run.status_code == 200
     assert run.json()["escalated_count"] >= 1
     assert "alert_dispatched" in run.json()
+    assert "alert_channels" in run.json()
 
     logs = app_client.get(
         "/api/admin/audit-logs?action=work_order_sla_escalation_run",
@@ -209,3 +211,55 @@ def test_monthly_report_exports(app_client: TestClient) -> None:
     )
     assert pdf_resp.status_code == 200
     assert pdf_resp.headers["content-type"].startswith("application/pdf")
+
+
+def test_ops_dashboard_summary(app_client: TestClient) -> None:
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=_owner_headers(),
+        json={
+            "site": "Ops Site",
+            "location": "B3",
+            "cycle": "monthly",
+            "inspector": "CI Bot",
+            "inspected_at": inspected_at,
+        },
+    )
+    assert inspection.status_code == 201
+
+    due_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Dashboard work order",
+            "description": "for summary",
+            "site": "Ops Site",
+            "location": "B3",
+            "priority": "high",
+            "due_at": due_at,
+        },
+    )
+    assert work_order.status_code == 201
+
+    run = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=_owner_headers(),
+        json={"dry_run": False, "site": "Ops Site", "limit": 50},
+    )
+    assert run.status_code == 200
+
+    summary = app_client.get(
+        "/api/ops/dashboard/summary?site=Ops+Site&days=30&job_limit=10",
+        headers=_owner_headers(),
+    )
+    assert summary.status_code == 200
+    body = summary.json()
+    assert body["site"] == "Ops Site"
+    assert body["inspections_total"] >= 1
+    assert body["work_orders_total"] >= 1
+    assert "inspection_risk_counts" in body
+    assert "work_order_status_counts" in body
+    assert "recent_job_runs" in body
+    assert body["sla_recent_runs"] >= 1

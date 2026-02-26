@@ -38,10 +38,12 @@ from app.schemas import (
     AdminUserCreate,
     AdminUserRead,
     AuthMeRead,
+    DashboardSummaryRead,
     InspectionCreate,
     InspectionRead,
     JobRunRead,
     MonthlyReportRead,
+    SlaAlertChannelResult,
     SlaEscalationRunRequest,
     SlaEscalationRunResponse,
     SlaPolicyRead,
@@ -55,7 +57,7 @@ from app.schemas import (
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.6.0",
+    version="0.7.0",
 )
 
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
@@ -67,6 +69,7 @@ ALLOW_INSECURE_LOCAL_AUTH = getenv("ALLOW_INSECURE_LOCAL_AUTH", "1").lower() in 
     "on",
 }
 ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
+ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
 
@@ -622,6 +625,26 @@ def _upsert_sla_policy(payload: SlaPolicyUpdate) -> SlaPolicyRead:
     return _sla_policy_to_model(updated_at=now, policy=policy)
 
 
+def _configured_alert_targets() -> list[str]:
+    targets: list[str] = []
+    merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
+    for part in merged_raw.split(","):
+        value = part.strip()
+        if value:
+            targets.append(value)
+    if ALERT_WEBHOOK_URL:
+        targets.append(ALERT_WEBHOOK_URL)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        if target in seen:
+            continue
+        seen.add(target)
+        deduped.append(target)
+    return deduped
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -662,11 +685,13 @@ def _dispatch_sla_alert(
     checked_at: datetime,
     escalated_count: int,
     work_order_ids: list[int],
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
     if escalated_count <= 0:
-        return False, None
-    if not ALERT_WEBHOOK_URL:
-        return False, None
+        return False, None, []
+
+    targets = _configured_alert_targets()
+    if not targets:
+        return False, None, []
 
     payload = {
         "event": "sla_escalation",
@@ -675,12 +700,28 @@ def _dispatch_sla_alert(
         "escalated_count": escalated_count,
         "work_order_ids": work_order_ids,
     }
-    return _post_json_with_retries(
-        url=ALERT_WEBHOOK_URL,
-        payload=payload,
-        retries=ALERT_WEBHOOK_RETRIES,
-        timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
-    )
+    results: list[SlaAlertChannelResult] = []
+    success_count = 0
+    failed_count = 0
+
+    for target in targets:
+        ok, err = _post_json_with_retries(
+            url=target,
+            payload=payload,
+            retries=ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        if ok:
+            success_count += 1
+        else:
+            failed_count += 1
+        results.append(SlaAlertChannelResult(target=target, success=ok, error=err))
+
+    if failed_count == 0:
+        return True, None, results
+    if success_count > 0:
+        return True, f"{failed_count}/{len(results)} alert channels failed", results
+    return False, "all alert channels failed", results
 
 
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
@@ -774,8 +815,9 @@ def run_sla_escalation_job(
 
     alert_dispatched = False
     alert_error: str | None = None
+    alert_channels: list[SlaAlertChannelResult] = []
     if not dry_run and escalated_count > 0:
-        alert_dispatched, alert_error = _dispatch_sla_alert(
+        alert_dispatched, alert_error, alert_channels = _dispatch_sla_alert(
             site=site,
             checked_at=now,
             escalated_count=escalated_count,
@@ -795,6 +837,7 @@ def run_sla_escalation_job(
                 "grace_minutes": grace_minutes,
                 "alert_dispatched": alert_dispatched,
                 "alert_error": alert_error,
+                "alert_channels": [channel.model_dump() for channel in alert_channels],
                 "work_order_ids": ids,
             },
         )
@@ -815,6 +858,7 @@ def run_sla_escalation_job(
             "grace_minutes": grace_minutes,
             "alert_dispatched": alert_dispatched,
             "alert_error": alert_error,
+            "alert_channels": [channel.model_dump() for channel in alert_channels],
         },
     )
 
@@ -827,6 +871,7 @@ def run_sla_escalation_job(
         work_order_ids=ids,
         alert_dispatched=alert_dispatched,
         alert_error=alert_error,
+        alert_channels=alert_channels,
     )
 
 
@@ -906,6 +951,84 @@ def build_monthly_report(month: str | None, site: str | None) -> MonthlyReportRe
             "completion_rate_percent": completion_rate,
             "avg_resolution_hours": avg_resolution_hours,
         },
+    )
+
+
+def build_dashboard_summary(
+    *,
+    site: str | None,
+    days: int,
+    recent_job_limit: int,
+) -> DashboardSummaryRead:
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+
+    inspections_stmt = select(inspections).where(inspections.c.inspected_at >= start)
+    work_orders_window_stmt = select(work_orders).where(work_orders.c.created_at >= start)
+    work_orders_open_stmt = select(work_orders).where(work_orders.c.status.in_(["open", "acked"]))
+    job_runs_stmt = (
+        select(job_runs)
+        .where(job_runs.c.finished_at >= start)
+        .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+        .limit(recent_job_limit)
+    )
+    report_exports_stmt = (
+        select(admin_audit_logs.c.action)
+        .where(admin_audit_logs.c.created_at >= start)
+        .where(admin_audit_logs.c.action.in_(["report_monthly_export_csv", "report_monthly_export_pdf"]))
+    )
+
+    if site is not None:
+        inspections_stmt = inspections_stmt.where(inspections.c.site == site)
+        work_orders_window_stmt = work_orders_window_stmt.where(work_orders.c.site == site)
+        work_orders_open_stmt = work_orders_open_stmt.where(work_orders.c.site == site)
+
+    with get_conn() as conn:
+        inspection_rows = conn.execute(inspections_stmt).mappings().all()
+        work_order_window_rows = conn.execute(work_orders_window_stmt).mappings().all()
+        work_order_open_rows = conn.execute(work_orders_open_stmt).mappings().all()
+        job_rows = conn.execute(job_runs_stmt).mappings().all()
+        export_rows = conn.execute(report_exports_stmt).all()
+
+    inspection_risk_counts = {"normal": 0, "warning": 0, "danger": 0}
+    for row in inspection_rows:
+        risk_level = str(row["risk_level"] or "normal")
+        inspection_risk_counts[risk_level] = inspection_risk_counts.get(risk_level, 0) + 1
+
+    work_order_status_counts = {"open": 0, "acked": 0, "completed": 0, "canceled": 0}
+    for row in work_order_window_rows:
+        status = str(row["status"] or "open")
+        work_order_status_counts[status] = work_order_status_counts.get(status, 0) + 1
+
+    overdue_open_count = 0
+    escalated_open_count = 0
+    for row in work_order_open_rows:
+        if row["is_escalated"]:
+            escalated_open_count += 1
+        due_at = _as_optional_datetime(row["due_at"])
+        if due_at is not None and due_at < now:
+            overdue_open_count += 1
+
+    recent_jobs = [_row_to_job_run_model(row) for row in job_rows]
+    sla_recent_runs = [job for job in recent_jobs if job.job_name == "sla_escalation"]
+    sla_last_run_at = sla_recent_runs[0].finished_at if sla_recent_runs else None
+    sla_warning_runs = sum(1 for job in sla_recent_runs if job.status != "success")
+
+    return DashboardSummaryRead(
+        generated_at=now,
+        site=site,
+        window_days=days,
+        inspections_total=len(inspection_rows),
+        inspection_risk_counts=inspection_risk_counts,
+        work_orders_total=len(work_order_window_rows),
+        work_order_status_counts=work_order_status_counts,
+        overdue_open_count=overdue_open_count,
+        escalated_open_count=escalated_open_count,
+        report_export_count=len(export_rows),
+        sla_recent_runs=len(sla_recent_runs),
+        sla_warning_runs=sla_warning_runs,
+        sla_last_run_at=sla_last_run_at,
+        recent_job_runs=recent_jobs,
     )
 
 
@@ -1006,6 +1129,7 @@ def root() -> dict[str, str]:
         "admin_tokens_api": "/api/admin/tokens",
         "admin_audit_api": "/api/admin/audit-logs",
         "job_runs_api": "/api/ops/job-runs",
+        "dashboard_summary_api": "/api/ops/dashboard/summary",
         "sla_policy_api": "/api/admin/policies/sla",
     }
 
@@ -1249,6 +1373,16 @@ def list_job_runs(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_job_run_model(row) for row in rows]
+
+
+@app.get("/api/ops/dashboard/summary", response_model=DashboardSummaryRead)
+def get_dashboard_summary(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    recent_job_limit: Annotated[int, Query(alias="job_limit", ge=1, le=50)] = 10,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> DashboardSummaryRead:
+    return build_dashboard_summary(site=site, days=days, recent_job_limit=recent_job_limit)
 
 
 @app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)

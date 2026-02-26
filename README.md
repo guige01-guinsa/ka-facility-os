@@ -31,6 +31,7 @@ Open:
   - `GET /api/admin/policies/sla` (permission: `admins:manage`)
   - `PUT /api/admin/policies/sla` (permission: `admins:manage`)
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
+  - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -101,11 +102,13 @@ Render cron target command:
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
+- `ALERT_WEBHOOK_URLS` (comma-separated, multi-channel broadcast)
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
 
 Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
+- `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 
 SLA policy (rule engine):
 - `GET /api/admin/policies/sla`

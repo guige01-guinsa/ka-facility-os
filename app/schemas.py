@@ -98,6 +98,12 @@ class SlaEscalationRunRequest(BaseModel):
     limit: int = Field(default=200, ge=1, le=2000)
 
 
+class SlaAlertChannelResult(BaseModel):
+    target: str
+    success: bool
+    error: Optional[str] = None
+
+
 class SlaEscalationRunResponse(BaseModel):
     checked_at: datetime
     dry_run: bool
@@ -107,6 +113,7 @@ class SlaEscalationRunResponse(BaseModel):
     work_order_ids: list[int]
     alert_dispatched: bool = False
     alert_error: Optional[str] = None
+    alert_channels: list[SlaAlertChannelResult] = Field(default_factory=list)
 
 
 class SlaPolicyUpdate(BaseModel):
@@ -208,3 +215,20 @@ class JobRunRead(BaseModel):
     started_at: datetime
     finished_at: datetime
     detail: dict[str, Any]
+
+
+class DashboardSummaryRead(BaseModel):
+    generated_at: datetime
+    site: Optional[str] = None
+    window_days: int
+    inspections_total: int
+    inspection_risk_counts: dict[str, int]
+    work_orders_total: int
+    work_order_status_counts: dict[str, int]
+    overdue_open_count: int
+    escalated_open_count: int
+    report_export_count: int
+    sla_recent_runs: int
+    sla_warning_runs: int
+    sla_last_run_at: Optional[datetime] = None
+    recent_job_runs: list[JobRunRead]
