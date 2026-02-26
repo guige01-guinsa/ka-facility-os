@@ -19,23 +19,36 @@ Open:
 
 ## Inspection MVP endpoints
 
-- `POST /api/inspections` create one inspection
+- `POST /api/inspections` create one inspection (admin token)
 - `GET /api/inspections` list inspections
 - `GET /api/inspections/{id}` get one inspection
 - `GET /inspections/{id}/print` printable A4 HTML report
 
 ## Work Order endpoints
 
-- `POST /api/work-orders` create work order
+- `POST /api/work-orders` create work order (admin token)
 - `GET /api/work-orders` list work orders
 - `GET /api/work-orders/{id}` get work order
-- `PATCH /api/work-orders/{id}/ack` acknowledge work order
-- `PATCH /api/work-orders/{id}/complete` complete work order
+- `PATCH /api/work-orders/{id}/ack` acknowledge work order (admin token)
+- `PATCH /api/work-orders/{id}/complete` complete work order (admin token)
+- `POST /api/work-orders/escalations/run` run overdue SLA escalation (admin token)
+
+## Audit Report endpoints
+
+- `GET /api/reports/monthly?month=YYYY-MM&site=...` monthly audit summary (admin token)
+- `GET /reports/monthly/print?month=YYYY-MM&site=...` printable monthly report (admin token)
+
+## Admin token
+
+- Header key: `X-Admin-Token`
+- If `ADMIN_TOKEN` env var is set, protected endpoints require this header.
+- If `ADMIN_TOKEN` is empty, auth is bypassed (local convenience mode).
 
 Example create:
 
 ```powershell
 curl -X POST "http://127.0.0.1:8001/api/inspections" `
+  -H "X-Admin-Token: <your-admin-token>" `
   -H "Content-Type: application/json" `
   -d "{\"site\":\"OO Apartment\",\"location\":\"Substation\",\"cycle\":\"monthly\",\"inspector\":\"Hong\",\"inspected_at\":\"2026-02-26T09:30:00\",\"voltage_r\":220,\"voltage_s\":221,\"voltage_t\":219,\"insulation_mohm\":5.2,\"notes\":\"ok\"}"
 ```
@@ -44,8 +57,25 @@ Example work order create:
 
 ```powershell
 curl -X POST "http://127.0.0.1:8001/api/work-orders" `
+  -H "X-Admin-Token: <your-admin-token>" `
   -H "Content-Type: application/json" `
   -d "{\"title\":\"Pump alarm\",\"description\":\"B2 pump vibration\",\"site\":\"OO Apartment\",\"location\":\"B1 mechanical room\",\"priority\":\"high\",\"assignee\":\"Kim\",\"reporter\":\"Guard\",\"due_at\":\"2026-02-27T09:00:00+00:00\"}"
+```
+
+Example escalation run:
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/work-orders/escalations/run" `
+  -H "X-Admin-Token: <your-admin-token>" `
+  -H "Content-Type: application/json" `
+  -d "{\"dry_run\":false,\"limit\":500}"
+```
+
+Batch command (scheduler/cron):
+
+```powershell
+python -m app.jobs.sla_escalation --limit 500
+python -m app.jobs.sla_escalation --dry-run
 ```
 
 ## PostgreSQL mode

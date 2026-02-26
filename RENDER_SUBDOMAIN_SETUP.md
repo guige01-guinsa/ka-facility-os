@@ -7,8 +7,8 @@ Current service:
 - Default URL: `https://ka-facility-os.onrender.com`
 - Health URL: `https://ka-facility-os.onrender.com/health`
 
-Custom domain already added in Render:
-- `ops.ka-part.com` (verification pending)
+Custom domain:
+- `ops.ka-part.com`
 
 ## DNS record to add
 
@@ -31,6 +31,17 @@ For production persistence, set service env var:
 After setting, redeploy and verify:
 
 - `https://ops.ka-part.com/meta` should show `"db": "postgresql"`
+
+## Admin token setting
+
+Set protected API token:
+
+- Key: `ADMIN_TOKEN`
+- Value: your secret random string
+
+Protected endpoints require:
+
+- Header `X-Admin-Token: <ADMIN_TOKEN>`
 
 ## Quick verification
 

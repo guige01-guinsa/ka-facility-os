@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -85,6 +85,30 @@ class WorkOrderRead(BaseModel):
     acknowledged_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     resolution_notes: str
+    is_escalated: bool
     is_overdue: bool
     created_at: datetime
     updated_at: datetime
+
+
+class SlaEscalationRunRequest(BaseModel):
+    site: Optional[str] = Field(default=None, max_length=120)
+    dry_run: bool = False
+    limit: int = Field(default=200, ge=1, le=2000)
+
+
+class SlaEscalationRunResponse(BaseModel):
+    checked_at: datetime
+    dry_run: bool
+    site: Optional[str] = None
+    candidate_count: int
+    escalated_count: int
+    work_order_ids: list[int]
+
+
+class MonthlyReportRead(BaseModel):
+    month: str
+    site: Optional[str] = None
+    generated_at: datetime
+    inspections: dict[str, Any]
+    work_orders: dict[str, Any]
