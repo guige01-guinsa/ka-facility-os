@@ -109,6 +109,20 @@ class SlaEscalationRunResponse(BaseModel):
     alert_error: Optional[str] = None
 
 
+class SlaPolicyUpdate(BaseModel):
+    default_due_hours: dict[WorkOrderPriority, int] = Field(
+        default_factory=lambda: {"low": 72, "medium": 24, "high": 8, "critical": 2}
+    )
+    escalation_grace_minutes: int = Field(default=0, ge=0, le=1440)
+
+
+class SlaPolicyRead(BaseModel):
+    policy_key: str
+    default_due_hours: dict[WorkOrderPriority, int]
+    escalation_grace_minutes: int
+    updated_at: datetime
+
+
 class MonthlyReportRead(BaseModel):
     month: str
     site: Optional[str] = None

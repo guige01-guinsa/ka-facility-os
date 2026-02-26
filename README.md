@@ -28,6 +28,8 @@ Open:
   - `GET /api/admin/tokens` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
+  - `GET /api/admin/policies/sla` (permission: `admins:manage`)
+  - `PUT /api/admin/policies/sla` (permission: `admins:manage`)
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
@@ -104,6 +106,13 @@ Optional alert webhook env:
 
 Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
+
+SLA policy (rule engine):
+- `GET /api/admin/policies/sla`
+- `PUT /api/admin/policies/sla`
+- policy fields:
+  - `default_due_hours`: per-priority default due time (applied when `due_at` is omitted on work-order create)
+  - `escalation_grace_minutes`: additional grace before escalation batch marks overdue work orders as escalated
 
 ## Audit logs
 

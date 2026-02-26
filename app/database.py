@@ -118,6 +118,15 @@ admin_audit_logs = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+sla_policies = Table(
+    "sla_policies",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("policy_key", String(80), nullable=False, unique=True),
+    Column("policy_json", Text, nullable=False, default="{}"),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 job_runs = Table(
     "job_runs",
     metadata,

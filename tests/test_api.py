@@ -117,6 +117,82 @@ def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
     assert len(logs.json()) >= 1
 
 
+def test_sla_policy_auto_due_and_grace(app_client: TestClient) -> None:
+    updated = app_client.put(
+        "/api/admin/policies/sla",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 96, "medium": 1, "high": 4, "critical": 2},
+            "escalation_grace_minutes": 30,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["default_due_hours"]["medium"] == 1
+    assert updated.json()["escalation_grace_minutes"] == 30
+
+    wo_auto_due = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Auto due by policy",
+            "description": "No due_at provided",
+            "site": "Policy Site",
+            "location": "B2",
+            "priority": "medium",
+        },
+    )
+    assert wo_auto_due.status_code == 201
+    due_at = datetime.fromisoformat(wo_auto_due.json()["due_at"])
+    now = datetime.now(timezone.utc)
+    assert now + timedelta(minutes=50) <= due_at <= now + timedelta(minutes=70)
+
+    due_not_ready = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    created_not_ready = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Within grace",
+            "description": "Should not escalate yet",
+            "site": "Policy Site",
+            "location": "B2",
+            "priority": "high",
+            "due_at": due_not_ready,
+        },
+    )
+    assert created_not_ready.status_code == 201
+
+    run1 = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=_owner_headers(),
+        json={"dry_run": False, "site": "Policy Site", "limit": 100},
+    )
+    assert run1.status_code == 200
+    assert run1.json()["escalated_count"] == 0
+
+    due_over_grace = (datetime.now(timezone.utc) - timedelta(minutes=40)).isoformat()
+    created_over_grace = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Over grace",
+            "description": "Should escalate",
+            "site": "Policy Site",
+            "location": "B2",
+            "priority": "high",
+            "due_at": due_over_grace,
+        },
+    )
+    assert created_over_grace.status_code == 201
+
+    run2 = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=_owner_headers(),
+        json={"dry_run": False, "site": "Policy Site", "limit": 100},
+    )
+    assert run2.status_code == 200
+    assert run2.json()["escalated_count"] >= 1
+
+
 def test_monthly_report_exports(app_client: TestClient) -> None:
     month = datetime.now(timezone.utc).strftime("%Y-%m")
 

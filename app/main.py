@@ -6,6 +6,7 @@ import json
 import secrets
 import time
 from datetime import datetime, timezone
+from datetime import timedelta
 from os import getenv
 from typing import Annotated, Any, Callable
 from urllib import error as url_error
@@ -25,6 +26,7 @@ from app.database import (
     get_conn,
     inspections,
     job_runs,
+    sla_policies,
     work_orders,
 )
 from app.schemas import (
@@ -42,6 +44,8 @@ from app.schemas import (
     MonthlyReportRead,
     SlaEscalationRunRequest,
     SlaEscalationRunResponse,
+    SlaPolicyRead,
+    SlaPolicyUpdate,
     WorkOrderAck,
     WorkOrderComplete,
     WorkOrderCreate,
@@ -51,7 +55,7 @@ from app.schemas import (
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.5.0",
+    version="0.6.0",
 )
 
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
@@ -89,6 +93,14 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "reports:read",
         "reports:export",
     },
+}
+
+SLA_DEFAULT_POLICY_KEY = "default"
+SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
+    "low": 72,
+    "medium": 24,
+    "high": 8,
+    "critical": 2,
 }
 
 
@@ -510,6 +522,106 @@ def _row_to_job_run_model(row: dict[str, Any]) -> JobRunRead:
     )
 
 
+def _normalize_sla_due_hours(value: Any) -> dict[str, int]:
+    source = value if isinstance(value, dict) else {}
+    normalized: dict[str, int] = {}
+    for priority, default_hours in SLA_DEFAULT_DUE_HOURS.items():
+        raw_hours = source.get(priority, default_hours)
+        try:
+            hours = int(raw_hours)
+        except (TypeError, ValueError):
+            hours = default_hours
+        if hours < 1 or hours > 24 * 30:
+            hours = default_hours
+        normalized[priority] = hours
+    return normalized
+
+
+def _normalize_sla_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    due_hours = _normalize_sla_due_hours(source.get("default_due_hours"))
+
+    raw_grace = source.get("escalation_grace_minutes", 0)
+    try:
+        grace_minutes = int(raw_grace)
+    except (TypeError, ValueError):
+        grace_minutes = 0
+    grace_minutes = max(0, min(1440, grace_minutes))
+
+    return {
+        "default_due_hours": due_hours,
+        "escalation_grace_minutes": grace_minutes,
+    }
+
+
+def _parse_sla_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_sla_policy(loaded)
+
+
+def _sla_policy_to_model(*, updated_at: datetime, policy: dict[str, Any]) -> SlaPolicyRead:
+    return SlaPolicyRead(
+        policy_key=SLA_DEFAULT_POLICY_KEY,
+        default_due_hours=policy["default_due_hours"],
+        escalation_grace_minutes=policy["escalation_grace_minutes"],
+        updated_at=updated_at,
+    )
+
+
+def _load_sla_policy() -> tuple[dict[str, Any], datetime]:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies)
+            .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
+            .limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _normalize_sla_policy({})
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=SLA_DEFAULT_POLICY_KEY,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now
+
+    policy = _parse_sla_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at
+
+
+def _upsert_sla_policy(payload: SlaPolicyUpdate) -> SlaPolicyRead:
+    now = datetime.now(timezone.utc)
+    policy = _normalize_sla_policy(payload.model_dump())
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies.c.id)
+            .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
+            .limit(1)
+        ).first()
+        if row is None:
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=SLA_DEFAULT_POLICY_KEY,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(sla_policies)
+                .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
+                .values(policy_json=_to_json_text(policy), updated_at=now)
+            )
+
+    return _sla_policy_to_model(updated_at=now, policy=policy)
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -633,10 +745,13 @@ def run_sla_escalation_job(
 ) -> SlaEscalationRunResponse:
     started_at = datetime.now(timezone.utc)
     now = started_at
+    policy, _ = _load_sla_policy()
+    grace_minutes = int(policy["escalation_grace_minutes"])
+    due_cutoff = now - timedelta(minutes=grace_minutes)
     stmt = (
         select(work_orders)
         .where(work_orders.c.due_at.is_not(None))
-        .where(work_orders.c.due_at < now)
+        .where(work_orders.c.due_at < due_cutoff)
         .where(work_orders.c.status.in_(["open", "acked"]))
         .where(work_orders.c.is_escalated.is_(False))
         .order_by(work_orders.c.due_at.asc())
@@ -677,6 +792,7 @@ def run_sla_escalation_job(
                 "dry_run": dry_run,
                 "candidate_count": len(ids),
                 "escalated_count": escalated_count,
+                "grace_minutes": grace_minutes,
                 "alert_dispatched": alert_dispatched,
                 "alert_error": alert_error,
                 "work_order_ids": ids,
@@ -696,6 +812,7 @@ def run_sla_escalation_job(
             "limit": limit,
             "candidate_count": len(ids),
             "escalated_count": escalated_count,
+            "grace_minutes": grace_minutes,
             "alert_dispatched": alert_dispatched,
             "alert_error": alert_error,
         },
@@ -889,6 +1006,7 @@ def root() -> dict[str, str]:
         "admin_tokens_api": "/api/admin/tokens",
         "admin_audit_api": "/api/admin/audit-logs",
         "job_runs_api": "/api/ops/job-runs",
+        "sla_policy_api": "/api/admin/policies/sla",
     }
 
 
@@ -1133,6 +1251,33 @@ def list_job_runs(
     return [_row_to_job_run_model(row) for row in rows]
 
 
+@app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)
+def get_sla_policy(
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyRead:
+    policy, updated_at = _load_sla_policy()
+    return _sla_policy_to_model(updated_at=updated_at, policy=policy)
+
+
+@app.put("/api/admin/policies/sla", response_model=SlaPolicyRead)
+def set_sla_policy(
+    payload: SlaPolicyUpdate,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyRead:
+    model = _upsert_sla_policy(payload)
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_update",
+        resource_type="sla_policy",
+        resource_id=model.policy_key,
+        detail={
+            "default_due_hours": model.default_due_hours,
+            "escalation_grace_minutes": model.escalation_grace_minutes,
+        },
+    )
+    return model
+
+
 @app.post("/api/admin/tokens/{token_id}/revoke", response_model=AdminTokenRead)
 def revoke_admin_token(
     token_id: int,
@@ -1339,6 +1484,12 @@ def create_work_order(
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     due_at = _as_optional_datetime(payload.due_at)
+    auto_due_applied = False
+    if due_at is None:
+        policy, _ = _load_sla_policy()
+        due_hours = int(policy["default_due_hours"].get(payload.priority, SLA_DEFAULT_DUE_HOURS["medium"]))
+        due_at = now + timedelta(hours=due_hours)
+        auto_due_applied = True
 
     with get_conn() as conn:
         result = conn.execute(
@@ -1374,7 +1525,12 @@ def create_work_order(
         action="work_order_create",
         resource_type="work_order",
         resource_id=str(model.id),
-        detail={"site": model.site, "priority": model.priority, "due_at": model.due_at},
+        detail={
+            "site": model.site,
+            "priority": model.priority,
+            "due_at": model.due_at,
+            "auto_due_applied": auto_due_applied,
+        },
     )
     return model
 
