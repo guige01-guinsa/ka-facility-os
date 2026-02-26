@@ -195,6 +195,142 @@ def test_sla_policy_auto_due_and_grace(app_client: TestClient) -> None:
     assert run2.json()["escalated_count"] >= 1
 
 
+def test_sla_policy_site_override_and_fallback(app_client: TestClient) -> None:
+    default_updated = app_client.put(
+        "/api/admin/policies/sla",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 0,
+        },
+    )
+    assert default_updated.status_code == 200
+
+    site_updated = app_client.put(
+        "/api/admin/policies/sla?site=Site%20A",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 2, "high": 6, "critical": 1},
+            "escalation_grace_minutes": 45,
+        },
+    )
+    assert site_updated.status_code == 200
+    assert site_updated.json()["source"] == "site"
+    assert site_updated.json()["site"] == "Site A"
+    assert site_updated.json()["default_due_hours"]["medium"] == 2
+
+    get_site_a = app_client.get(
+        "/api/admin/policies/sla?site=Site%20A",
+        headers=_owner_headers(),
+    )
+    assert get_site_a.status_code == 200
+    assert get_site_a.json()["source"] == "site"
+    assert get_site_a.json()["policy_key"].startswith("site:")
+
+    get_site_b = app_client.get(
+        "/api/admin/policies/sla?site=Site%20B",
+        headers=_owner_headers(),
+    )
+    assert get_site_b.status_code == 200
+    assert get_site_b.json()["source"] == "default"
+    assert get_site_b.json()["policy_key"] == "default"
+    assert get_site_b.json()["default_due_hours"]["medium"] == 24
+
+    now = datetime.now(timezone.utc)
+    wo_a = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Site A auto due",
+            "description": "site override",
+            "site": "Site A",
+            "location": "B4",
+            "priority": "medium",
+        },
+    )
+    assert wo_a.status_code == 201
+    due_a = datetime.fromisoformat(wo_a.json()["due_at"])
+    assert now + timedelta(minutes=100) <= due_a <= now + timedelta(minutes=140)
+
+    wo_b = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Site B auto due",
+            "description": "default fallback",
+            "site": "Site B",
+            "location": "B4",
+            "priority": "medium",
+        },
+    )
+    assert wo_b.status_code == 201
+    due_b = datetime.fromisoformat(wo_b.json()["due_at"])
+    assert now + timedelta(hours=23) <= due_b <= now + timedelta(hours=25)
+
+
+def test_sla_escalation_uses_site_grace_on_global_run(app_client: TestClient) -> None:
+    set_default = app_client.put(
+        "/api/admin/policies/sla",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 0,
+        },
+    )
+    assert set_default.status_code == 200
+
+    set_site = app_client.put(
+        "/api/admin/policies/sla?site=Grace%20Site",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 60,
+        },
+    )
+    assert set_site.status_code == 200
+
+    due_30m = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    wo_grace = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Grace protected",
+            "description": "should not escalate",
+            "site": "Grace Site",
+            "location": "B5",
+            "priority": "high",
+            "due_at": due_30m,
+        },
+    )
+    assert wo_grace.status_code == 201
+    grace_id = wo_grace.json()["id"]
+
+    wo_default = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Default escalated",
+            "description": "should escalate",
+            "site": "No Grace Site",
+            "location": "B5",
+            "priority": "high",
+            "due_at": due_30m,
+        },
+    )
+    assert wo_default.status_code == 201
+    default_id = wo_default.json()["id"]
+
+    run = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=_owner_headers(),
+        json={"dry_run": False, "limit": 100},
+    )
+    assert run.status_code == 200
+    escalated_ids = set(run.json()["work_order_ids"])
+    assert default_id in escalated_ids
+    assert grace_id not in escalated_ids
+
+
 def test_monthly_report_exports(app_client: TestClient) -> None:
     month = datetime.now(timezone.utc).strftime("%Y-%m")
 

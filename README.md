@@ -28,8 +28,8 @@ Open:
   - `GET /api/admin/tokens` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
-  - `GET /api/admin/policies/sla` (permission: `admins:manage`)
-  - `PUT /api/admin/policies/sla` (permission: `admins:manage`)
+  - `GET /api/admin/policies/sla?site=...` (permission: `admins:manage`)
+  - `PUT /api/admin/policies/sla?site=...` (permission: `admins:manage`)
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
 - Inspections
@@ -111,11 +111,14 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 
 SLA policy (rule engine):
-- `GET /api/admin/policies/sla`
-- `PUT /api/admin/policies/sla`
+- `GET /api/admin/policies/sla` (default policy)
+- `GET /api/admin/policies/sla?site=SiteA` (site override; falls back to default if override is missing)
+- `PUT /api/admin/policies/sla` (update default policy)
+- `PUT /api/admin/policies/sla?site=SiteA` (upsert site override)
 - policy fields:
   - `default_due_hours`: per-priority default due time (applied when `due_at` is omitted on work-order create)
   - `escalation_grace_minutes`: additional grace before escalation batch marks overdue work orders as escalated
+- global escalation run (`site` omitted) resolves grace per work-order site
 
 ## Audit logs
 

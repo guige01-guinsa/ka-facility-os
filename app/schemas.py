@@ -125,6 +125,8 @@ class SlaPolicyUpdate(BaseModel):
 
 class SlaPolicyRead(BaseModel):
     policy_key: str
+    site: Optional[str] = None
+    source: str = "default"
     default_due_hours: dict[WorkOrderPriority, int]
     escalation_grace_minutes: int
     updated_at: datetime

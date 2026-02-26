@@ -57,7 +57,7 @@ from app.schemas import (
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.7.0",
+    version="0.8.0",
 )
 
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
@@ -99,6 +99,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
 }
 
 SLA_DEFAULT_POLICY_KEY = "default"
+SLA_SITE_POLICY_PREFIX = "site:"
 SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "low": 72,
     "medium": 24,
@@ -565,25 +566,33 @@ def _parse_sla_policy_json(raw: Any) -> dict[str, Any]:
     return _normalize_sla_policy(loaded)
 
 
-def _sla_policy_to_model(*, updated_at: datetime, policy: dict[str, Any]) -> SlaPolicyRead:
-    return SlaPolicyRead(
-        policy_key=SLA_DEFAULT_POLICY_KEY,
-        default_due_hours=policy["default_due_hours"],
-        escalation_grace_minutes=policy["escalation_grace_minutes"],
-        updated_at=updated_at,
-    )
+def _normalize_site_name(site: str | None) -> str | None:
+    if site is None:
+        return None
+    value = site.strip()
+    return value or None
 
 
-def _load_sla_policy() -> tuple[dict[str, Any], datetime]:
-    now = datetime.now(timezone.utc)
+def _policy_key_for_site(site: str | None) -> str | None:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return None
+    return f"{SLA_SITE_POLICY_PREFIX}{normalized_site}"
+
+
+def _get_sla_policy_row(policy_key: str) -> dict[str, Any] | None:
     with get_conn() as conn:
-        row = conn.execute(
-            select(sla_policies)
-            .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
-            .limit(1)
+        return conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
         ).mappings().first()
-        if row is None:
-            policy = _normalize_sla_policy({})
+
+
+def _ensure_default_sla_policy() -> tuple[dict[str, Any], datetime]:
+    now = datetime.now(timezone.utc)
+    row = _get_sla_policy_row(SLA_DEFAULT_POLICY_KEY)
+    if row is None:
+        policy = _normalize_sla_policy({})
+        with get_conn() as conn:
             conn.execute(
                 insert(sla_policies).values(
                     policy_key=SLA_DEFAULT_POLICY_KEY,
@@ -591,26 +600,68 @@ def _load_sla_policy() -> tuple[dict[str, Any], datetime]:
                     updated_at=now,
                 )
             )
-            return policy, now
+        return policy, now
 
     policy = _parse_sla_policy_json(row["policy_json"])
     updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
     return policy, updated_at
 
 
-def _upsert_sla_policy(payload: SlaPolicyUpdate) -> SlaPolicyRead:
+def _sla_policy_to_model(
+    *,
+    policy_key: str,
+    site: str | None,
+    source: str,
+    updated_at: datetime,
+    policy: dict[str, Any],
+) -> SlaPolicyRead:
+    return SlaPolicyRead(
+        policy_key=policy_key,
+        site=site,
+        source=source,
+        default_due_hours=policy["default_due_hours"],
+        escalation_grace_minutes=policy["escalation_grace_minutes"],
+        updated_at=updated_at,
+    )
+
+
+def _load_sla_policy(
+    site: str | None = None,
+) -> tuple[dict[str, Any], datetime, str, str | None, str]:
+    normalized_site = _normalize_site_name(site)
+    default_policy, default_updated_at = _ensure_default_sla_policy()
+    site_policy_key = _policy_key_for_site(normalized_site)
+    if site_policy_key is None:
+        return default_policy, default_updated_at, "default", None, SLA_DEFAULT_POLICY_KEY
+
+    row = _get_sla_policy_row(site_policy_key)
+    if row is None:
+        # Site requested but override does not exist: use default policy.
+        return default_policy, default_updated_at, "default", normalized_site, SLA_DEFAULT_POLICY_KEY
+
+    now = datetime.now(timezone.utc)
+    policy = _parse_sla_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, "site", normalized_site, site_policy_key
+
+
+def _upsert_sla_policy(payload: SlaPolicyUpdate, site: str | None = None) -> SlaPolicyRead:
     now = datetime.now(timezone.utc)
     policy = _normalize_sla_policy(payload.model_dump())
+    normalized_site = _normalize_site_name(site)
+    policy_key = _policy_key_for_site(normalized_site) or SLA_DEFAULT_POLICY_KEY
+    source = "site" if normalized_site is not None else "default"
+
     with get_conn() as conn:
         row = conn.execute(
             select(sla_policies.c.id)
-            .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
+            .where(sla_policies.c.policy_key == policy_key)
             .limit(1)
         ).first()
         if row is None:
             conn.execute(
                 insert(sla_policies).values(
-                    policy_key=SLA_DEFAULT_POLICY_KEY,
+                    policy_key=policy_key,
                     policy_json=_to_json_text(policy),
                     updated_at=now,
                 )
@@ -618,11 +669,17 @@ def _upsert_sla_policy(payload: SlaPolicyUpdate) -> SlaPolicyRead:
         else:
             conn.execute(
                 update(sla_policies)
-                .where(sla_policies.c.policy_key == SLA_DEFAULT_POLICY_KEY)
+                .where(sla_policies.c.policy_key == policy_key)
                 .values(policy_json=_to_json_text(policy), updated_at=now)
             )
 
-    return _sla_policy_to_model(updated_at=now, policy=policy)
+    return _sla_policy_to_model(
+        policy_key=policy_key,
+        site=normalized_site,
+        source=source,
+        updated_at=now,
+        policy=policy,
+    )
 
 
 def _configured_alert_targets() -> list[str]:
@@ -786,24 +843,44 @@ def run_sla_escalation_job(
 ) -> SlaEscalationRunResponse:
     started_at = datetime.now(timezone.utc)
     now = started_at
-    policy, _ = _load_sla_policy()
-    grace_minutes = int(policy["escalation_grace_minutes"])
-    due_cutoff = now - timedelta(minutes=grace_minutes)
     stmt = (
         select(work_orders)
         .where(work_orders.c.due_at.is_not(None))
-        .where(work_orders.c.due_at < due_cutoff)
+        .where(work_orders.c.due_at < now)
         .where(work_orders.c.status.in_(["open", "acked"]))
         .where(work_orders.c.is_escalated.is_(False))
         .order_by(work_orders.c.due_at.asc())
-        .limit(limit)
+        .limit(limit * 5)
     )
     if site is not None:
         stmt = stmt.where(work_orders.c.site == site)
 
+    grace_minutes_by_site: dict[str, int] = {}
+
+    def _resolve_grace(site_name: str) -> int:
+        key = site_name.strip()
+        if key in grace_minutes_by_site:
+            return grace_minutes_by_site[key]
+        policy, _, _, _, _ = _load_sla_policy(site=key if key else None)
+        grace_value = int(policy["escalation_grace_minutes"])
+        grace_minutes_by_site[key] = grace_value
+        return grace_value
+
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
-        ids = [int(r["id"]) for r in rows]
+        ids: list[int] = []
+        for row in rows:
+            due_at = _as_optional_datetime(row["due_at"])
+            if due_at is None:
+                continue
+            row_site = str(row["site"] or "")
+            row_grace = _resolve_grace(row_site)
+            due_cutoff = now - timedelta(minutes=row_grace)
+            if due_at < due_cutoff:
+                ids.append(int(row["id"]))
+            if len(ids) >= limit:
+                break
+
         escalated_count = 0
         if ids and not dry_run:
             conn.execute(
@@ -834,7 +911,7 @@ def run_sla_escalation_job(
                 "dry_run": dry_run,
                 "candidate_count": len(ids),
                 "escalated_count": escalated_count,
-                "grace_minutes": grace_minutes,
+                "grace_minutes_by_site": grace_minutes_by_site,
                 "alert_dispatched": alert_dispatched,
                 "alert_error": alert_error,
                 "alert_channels": [channel.model_dump() for channel in alert_channels],
@@ -855,7 +932,7 @@ def run_sla_escalation_job(
             "limit": limit,
             "candidate_count": len(ids),
             "escalated_count": escalated_count,
-            "grace_minutes": grace_minutes,
+            "grace_minutes_by_site": grace_minutes_by_site,
             "alert_dispatched": alert_dispatched,
             "alert_error": alert_error,
             "alert_channels": [channel.model_dump() for channel in alert_channels],
@@ -1387,24 +1464,34 @@ def get_dashboard_summary(
 
 @app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)
 def get_sla_policy(
+    site: Annotated[str | None, Query()] = None,
     _: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> SlaPolicyRead:
-    policy, updated_at = _load_sla_policy()
-    return _sla_policy_to_model(updated_at=updated_at, policy=policy)
+    policy, updated_at, source, resolved_site, policy_key = _load_sla_policy(site=site)
+    return _sla_policy_to_model(
+        policy_key=policy_key,
+        site=resolved_site,
+        source=source,
+        updated_at=updated_at,
+        policy=policy,
+    )
 
 
 @app.put("/api/admin/policies/sla", response_model=SlaPolicyRead)
 def set_sla_policy(
     payload: SlaPolicyUpdate,
+    site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> SlaPolicyRead:
-    model = _upsert_sla_policy(payload)
+    model = _upsert_sla_policy(payload, site=site)
     _write_audit_log(
         principal=principal,
         action="sla_policy_update",
         resource_type="sla_policy",
         resource_id=model.policy_key,
         detail={
+            "site": model.site,
+            "source": model.source,
             "default_due_hours": model.default_due_hours,
             "escalation_grace_minutes": model.escalation_grace_minutes,
         },
@@ -1619,11 +1706,13 @@ def create_work_order(
     now = datetime.now(timezone.utc)
     due_at = _as_optional_datetime(payload.due_at)
     auto_due_applied = False
+    policy_source = "manual"
     if due_at is None:
-        policy, _ = _load_sla_policy()
+        policy, _, source, _, _ = _load_sla_policy(site=payload.site)
         due_hours = int(policy["default_due_hours"].get(payload.priority, SLA_DEFAULT_DUE_HOURS["medium"]))
         due_at = now + timedelta(hours=due_hours)
         auto_due_applied = True
+        policy_source = source
 
     with get_conn() as conn:
         result = conn.execute(
@@ -1664,6 +1753,7 @@ def create_work_order(
             "priority": model.priority,
             "due_at": model.due_at,
             "auto_due_applied": auto_due_applied,
+            "policy_source": policy_source,
         },
     )
     return model
