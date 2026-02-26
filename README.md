@@ -41,3 +41,6 @@ Use this repo in Render as a Web Service.
 - Health check path: `/health`
 
 `render.yaml` is already included for infrastructure-as-code style deployment.
+
+For safe subdomain split setup (`ops.ka-part.com`), see:
+- `RENDER_SUBDOMAIN_SETUP.md`
