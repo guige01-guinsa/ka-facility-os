@@ -9,3 +9,4 @@ __pycache__/
 Thumbs.db
 .vscode/
 _share.html
+_render_public_api.json
