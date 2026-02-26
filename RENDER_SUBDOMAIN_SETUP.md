@@ -32,16 +32,37 @@ After setting, redeploy and verify:
 
 - `https://ops.ka-part.com/meta` should show `"db": "postgresql"`
 
-## Admin token setting
+## Admin / RBAC setting
 
-Set protected API token:
+Bootstrap token (legacy-compatible):
 
 - Key: `ADMIN_TOKEN`
 - Value: your secret random string
 
-Protected endpoints require:
+Startup seeds `legacy-admin` owner token into RBAC tables.
 
-- Header `X-Admin-Token: <ADMIN_TOKEN>`
+Protected endpoints require:
+- Header `X-Admin-Token: <token>`
+
+Create additional RBAC users/tokens via API:
+- `POST /api/admin/users`
+- `POST /api/admin/users/{user_id}/tokens`
+
+## SLA cron service
+
+Create a Render Cron Job with:
+
+- Name: `ka-facility-os-sla-escalation`
+- Command: `python -m app.jobs.sla_escalation --limit 500`
+- Schedule: `*/15 * * * *`
+- Env var: same `DATABASE_URL` as web service
+
+`render.yaml` already includes this cron definition.
+
+## Monthly report export
+
+- CSV download: `https://ops.ka-part.com/api/reports/monthly/csv?month=YYYY-MM`
+- PDF download: `https://ops.ka-part.com/api/reports/monthly/pdf?month=YYYY-MM`
 
 ## Quick verification
 

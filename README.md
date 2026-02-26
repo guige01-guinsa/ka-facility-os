@@ -1,6 +1,6 @@
 # ka-facility-os
 
-`ka-facility-os` is an isolated FastAPI starter project for your apartment facility operations service.
+`ka-facility-os` is a FastAPI service for facility inspection/work-order operations.
 
 ## 1) Local run (Windows / PowerShell)
 
@@ -17,73 +17,80 @@ Open:
 - Health: `http://127.0.0.1:8001/health`
 - Meta: `http://127.0.0.1:8001/meta`
 
-## Inspection MVP endpoints
+## API summary
 
-- `POST /api/inspections` create one inspection (admin token)
-- `GET /api/inspections` list inspections
-- `GET /api/inspections/{id}` get one inspection
-- `GET /inspections/{id}/print` printable A4 HTML report
+- Auth/RBAC
+  - `GET /api/auth/me`
+  - `GET /api/admin/users` (permission: `admins:manage`)
+  - `POST /api/admin/users` (permission: `admins:manage`)
+  - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)
+- Inspections
+  - `POST /api/inspections` (`inspections:write`)
+  - `GET /api/inspections` (`inspections:read`)
+  - `GET /api/inspections/{id}` (`inspections:read`)
+  - `GET /inspections/{id}/print` (`inspections:read`)
+- Work orders
+  - `POST /api/work-orders` (`work_orders:write`)
+  - `GET /api/work-orders` (`work_orders:read`)
+  - `GET /api/work-orders/{id}` (`work_orders:read`)
+  - `PATCH /api/work-orders/{id}/ack` (`work_orders:write`)
+  - `PATCH /api/work-orders/{id}/complete` (`work_orders:write`)
+  - `POST /api/work-orders/escalations/run` (`work_orders:escalate`)
+- Monthly audit reports
+  - `GET /api/reports/monthly?month=YYYY-MM&site=...` (`reports:read`)
+  - `GET /reports/monthly/print?month=YYYY-MM&site=...` (`reports:read`)
+  - `GET /api/reports/monthly/csv?month=YYYY-MM&site=...` (`reports:export`)
+  - `GET /api/reports/monthly/pdf?month=YYYY-MM&site=...` (`reports:export`)
 
-## Work Order endpoints
-
-- `POST /api/work-orders` create work order (admin token)
-- `GET /api/work-orders` list work orders
-- `GET /api/work-orders/{id}` get work order
-- `PATCH /api/work-orders/{id}/ack` acknowledge work order (admin token)
-- `PATCH /api/work-orders/{id}/complete` complete work order (admin token)
-- `POST /api/work-orders/escalations/run` run overdue SLA escalation (admin token)
-
-## Audit Report endpoints
-
-- `GET /api/reports/monthly?month=YYYY-MM&site=...` monthly audit summary (admin token)
-- `GET /reports/monthly/print?month=YYYY-MM&site=...` printable monthly report (admin token)
-
-## Admin token
+## RBAC and token auth
 
 - Header key: `X-Admin-Token`
-- If `ADMIN_TOKEN` env var is set, protected endpoints require this header.
-- If `ADMIN_TOKEN` is empty, auth is bypassed (local convenience mode).
+- Tokens are stored as hash in DB (`admin_tokens`), linked to users (`admin_users`).
+- Role defaults:
+  - `owner`: `*`
+  - `manager`: inspections/work-orders/reports
+  - `operator`: inspections/work-orders
+  - `auditor`: read + report export
+- Legacy bootstrap:
+  - If `ADMIN_TOKEN` env exists, startup seeds `legacy-admin` owner token.
+  - Existing `ADMIN_TOKEN` remains backward-compatible.
 
-Example create:
-
-```powershell
-curl -X POST "http://127.0.0.1:8001/api/inspections" `
-  -H "X-Admin-Token: <your-admin-token>" `
-  -H "Content-Type: application/json" `
-  -d "{\"site\":\"OO Apartment\",\"location\":\"Substation\",\"cycle\":\"monthly\",\"inspector\":\"Hong\",\"inspected_at\":\"2026-02-26T09:30:00\",\"voltage_r\":220,\"voltage_s\":221,\"voltage_t\":219,\"insulation_mohm\":5.2,\"notes\":\"ok\"}"
-```
-
-Example work order create:
+Quick check:
 
 ```powershell
-curl -X POST "http://127.0.0.1:8001/api/work-orders" `
-  -H "X-Admin-Token: <your-admin-token>" `
-  -H "Content-Type: application/json" `
-  -d "{\"title\":\"Pump alarm\",\"description\":\"B2 pump vibration\",\"site\":\"OO Apartment\",\"location\":\"B1 mechanical room\",\"priority\":\"high\",\"assignee\":\"Kim\",\"reporter\":\"Guard\",\"due_at\":\"2026-02-27T09:00:00+00:00\"}"
+curl -H "X-Admin-Token: <token>" "http://127.0.0.1:8001/api/auth/me"
 ```
 
-Example escalation run:
+Create admin user:
 
 ```powershell
-curl -X POST "http://127.0.0.1:8001/api/work-orders/escalations/run" `
-  -H "X-Admin-Token: <your-admin-token>" `
+curl -X POST "http://127.0.0.1:8001/api/admin/users" `
+  -H "X-Admin-Token: <owner-token>" `
   -H "Content-Type: application/json" `
-  -d "{\"dry_run\":false,\"limit\":500}"
+  -d "{\"username\":\"ops_manager\",\"display_name\":\"Ops Manager\",\"role\":\"manager\",\"permissions\":[]}"
 ```
 
-Batch command (scheduler/cron):
+Issue token for user:
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/admin/users/2/tokens" `
+  -H "X-Admin-Token: <owner-token>" `
+  -H "Content-Type: application/json" `
+  -d "{\"label\":\"ops-manager-main\"}"
+```
+
+## SLA escalation automation
+
+Manual batch:
 
 ```powershell
 python -m app.jobs.sla_escalation --limit 500
 python -m app.jobs.sla_escalation --dry-run
 ```
 
-Render cron recommendation:
-
-- Service type: `Cron Job`
-- Command: `python -m app.jobs.sla_escalation --limit 500`
-- Schedule example: `*/15 * * * *` (every 15 minutes)
-- Use same `DATABASE_URL` env var as the web service.
+Render cron target command:
+- `python -m app.jobs.sla_escalation --limit 500`
+- schedule: `*/15 * * * *`
 
 ## PostgreSQL mode
 
@@ -91,39 +98,14 @@ This app uses:
 - `DATABASE_URL` set -> PostgreSQL
 - `DATABASE_URL` unset -> local SQLite fallback (`data/facility.db`)
 
-Render production recommendation:
-- Create a PostgreSQL instance in Render.
-- Set service env var `DATABASE_URL` to the Render Postgres internal connection string.
-- Redeploy service.
-
-After deploy, check:
+After deploy, verify:
 - `GET /meta` -> `"db": "postgresql"`
 
-## 2) Git init and first commit
+## Render deploy
 
-```powershell
-git init
-git branch -M main
-git add .
-git commit -m "chore: bootstrap ka-facility-os"
-```
-
-## 3) GitHub push
-
-```powershell
-git remote add origin https://github.com/<your-id>/<your-repo>.git
-git push -u origin main
-```
-
-## 4) Render deploy
-
-Use this repo in Render as a Web Service.
-
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-- Health check path: `/health`
-
-`render.yaml` is already included for infrastructure-as-code style deployment.
+`render.yaml` includes:
+- Web service `ka-facility-os`
+- Cron service `ka-facility-os-sla-escalation`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`

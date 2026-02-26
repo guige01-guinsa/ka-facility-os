@@ -48,6 +48,7 @@ class InspectionRead(BaseModel):
 
 WorkOrderPriority = Literal["low", "medium", "high", "critical"]
 WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
+AdminRole = Literal["owner", "manager", "operator", "auditor"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -112,3 +113,45 @@ class MonthlyReportRead(BaseModel):
     generated_at: datetime
     inspections: dict[str, Any]
     work_orders: dict[str, Any]
+
+
+class AuthMeRead(BaseModel):
+    user_id: Optional[int] = None
+    username: str
+    display_name: str
+    role: str
+    permissions: list[str]
+    is_legacy: bool = False
+
+
+class AdminUserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    display_name: str = Field(default="", max_length=120)
+    role: AdminRole = "operator"
+    permissions: list[str] = Field(default_factory=list)
+    is_active: bool = True
+
+
+class AdminUserRead(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    role: AdminRole
+    permissions: list[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminTokenIssueRequest(BaseModel):
+    label: str = Field(default="default", min_length=1, max_length=120)
+    expires_at: Optional[datetime] = None
+
+
+class AdminTokenIssueResponse(BaseModel):
+    token_id: int
+    user_id: int
+    label: str
+    token: str
+    expires_at: Optional[datetime] = None
+    created_at: datetime

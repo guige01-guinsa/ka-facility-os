@@ -1,13 +1,33 @@
+import csv
+import hashlib
+import hmac
+import io
+import json
+import secrets
 from datetime import datetime, timezone
 from os import getenv
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import insert, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
-from app.database import DATABASE_URL, ensure_database, get_conn, inspections, work_orders
+from app.database import (
+    DATABASE_URL,
+    admin_tokens,
+    admin_users,
+    ensure_database,
+    get_conn,
+    inspections,
+    work_orders,
+)
 from app.schemas import (
+    AdminTokenIssueRequest,
+    AdminTokenIssueResponse,
+    AdminUserCreate,
+    AdminUserRead,
+    AuthMeRead,
     InspectionCreate,
     InspectionRead,
     MonthlyReportRead,
@@ -22,15 +42,141 @@ from app.schemas import (
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.4.0",
+    version="0.5.0",
 )
 
-ADMIN_TOKEN = getenv("ADMIN_TOKEN", "")
+ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
+ENV_NAME = getenv("ENV", "local").lower()
+ALLOW_INSECURE_LOCAL_AUTH = getenv("ALLOW_INSECURE_LOCAL_AUTH", "1").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+ROLE_PERMISSION_MAP: dict[str, set[str]] = {
+    "owner": {"*"},
+    "manager": {
+        "inspections:read",
+        "inspections:write",
+        "work_orders:read",
+        "work_orders:write",
+        "work_orders:escalate",
+        "reports:read",
+        "reports:export",
+    },
+    "operator": {
+        "inspections:read",
+        "inspections:write",
+        "work_orders:read",
+        "work_orders:write",
+    },
+    "auditor": {
+        "inspections:read",
+        "work_orders:read",
+        "reports:read",
+        "reports:export",
+    },
+}
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_database()
+    ensure_legacy_admin_token_seed()
+
+
+def _permission_text_to_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [x.strip() for x in value.split(",") if x.strip()]
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    return []
+
+
+def _permission_list_to_text(values: list[str]) -> str:
+    normalized = sorted({v.strip() for v in values if v.strip()})
+    return ",".join(normalized)
+
+
+def _effective_permissions(role: str, custom: list[str]) -> list[str]:
+    perms = set(ROLE_PERMISSION_MAP.get(role, set()))
+    perms.update(custom)
+    if role == "owner":
+        perms.add("*")
+    return sorted(perms)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _has_active_admin_tokens() -> bool:
+    try:
+        with get_conn() as conn:
+            row = conn.execute(
+                select(admin_tokens.c.id).where(admin_tokens.c.is_active.is_(True)).limit(1)
+            ).first()
+        return row is not None
+    except SQLAlchemyError:
+        return False
+
+
+def ensure_legacy_admin_token_seed() -> None:
+    if not ADMIN_TOKEN:
+        return
+
+    now = datetime.now(timezone.utc)
+    token_hash = _hash_token(ADMIN_TOKEN)
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(admin_tokens.c.id).where(admin_tokens.c.token_hash == token_hash)
+        ).first()
+        if existing is not None:
+            return
+
+        user_row = conn.execute(
+            select(admin_users).where(admin_users.c.username == "legacy-admin")
+        ).mappings().first()
+        if user_row is None:
+            result = conn.execute(
+                insert(admin_users).values(
+                    username="legacy-admin",
+                    display_name="Legacy Bootstrap Admin",
+                    role="owner",
+                    permissions="*",
+                    is_active=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            user_id = int(result.inserted_primary_key[0])
+        else:
+            user_id = int(user_row["id"])
+            conn.execute(
+                update(admin_users)
+                .where(admin_users.c.id == user_id)
+                .values(
+                    role="owner",
+                    permissions="*",
+                    is_active=True,
+                    updated_at=now,
+                )
+            )
+
+        conn.execute(
+            insert(admin_tokens).values(
+                user_id=user_id,
+                label="legacy-env-admin-token",
+                token_hash=token_hash,
+                is_active=True,
+                expires_at=None,
+                last_used_at=None,
+                created_at=now,
+            )
+        )
 
 
 def _calculate_risk(payload: InspectionCreate) -> tuple[str, list[str]]:
@@ -138,14 +284,128 @@ def _month_window(month: str | None) -> tuple[datetime, datetime, str]:
     return start, end, normalized
 
 
-def require_admin_token(
+def _load_principal_by_token(token: str) -> dict[str, Any] | None:
+    now = datetime.now(timezone.utc)
+    token_hash = _hash_token(token)
+
+    stmt = (
+        select(
+            admin_tokens.c.id.label("token_id"),
+            admin_tokens.c.user_id.label("user_id"),
+            admin_tokens.c.expires_at.label("expires_at"),
+            admin_users.c.username.label("username"),
+            admin_users.c.display_name.label("display_name"),
+            admin_users.c.role.label("role"),
+            admin_users.c.permissions.label("permissions"),
+        )
+        .where(admin_tokens.c.token_hash == token_hash)
+        .where(admin_tokens.c.is_active.is_(True))
+        .where(admin_users.c.id == admin_tokens.c.user_id)
+        .where(admin_users.c.is_active.is_(True))
+        .limit(1)
+    )
+
+    try:
+        with get_conn() as conn:
+            row = conn.execute(stmt).mappings().first()
+            if row is None:
+                return None
+
+            expires_at = _as_optional_datetime(row["expires_at"])
+            if expires_at is not None and expires_at <= now:
+                return None
+
+            conn.execute(
+                update(admin_tokens)
+                .where(admin_tokens.c.id == row["token_id"])
+                .values(last_used_at=now)
+            )
+    except SQLAlchemyError:
+        return None
+
+    custom_permissions = _permission_text_to_list(row["permissions"])
+    permissions = _effective_permissions(str(row["role"]), custom_permissions)
+    return {
+        "user_id": int(row["user_id"]),
+        "username": str(row["username"]),
+        "display_name": str(row["display_name"] or row["username"]),
+        "role": str(row["role"]),
+        "permissions": permissions,
+        "is_legacy": str(row["username"]) == "legacy-admin",
+    }
+
+
+def _build_local_dev_principal() -> dict[str, Any]:
+    return {
+        "user_id": None,
+        "username": "local-dev",
+        "display_name": "Local Dev Bypass",
+        "role": "owner",
+        "permissions": ["*"],
+        "is_legacy": True,
+    }
+
+
+def get_current_admin(
     x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
-) -> None:
-    # Token is enforced only when ADMIN_TOKEN is configured.
-    if not ADMIN_TOKEN:
-        return
-    if x_admin_token != ADMIN_TOKEN:
+) -> dict[str, Any]:
+    if x_admin_token:
+        principal = _load_principal_by_token(x_admin_token)
+        if principal is not None:
+            return principal
+
+        if ADMIN_TOKEN and hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
+            return {
+                "user_id": None,
+                "username": "legacy-env-token",
+                "display_name": "Legacy Env Token",
+                "role": "owner",
+                "permissions": ["*"],
+                "is_legacy": True,
+            }
         raise HTTPException(status_code=401, detail="Invalid admin token")
+
+    if (
+        ENV_NAME != "production"
+        and ALLOW_INSECURE_LOCAL_AUTH
+        and not ADMIN_TOKEN
+        and not _has_active_admin_tokens()
+    ):
+        return _build_local_dev_principal()
+
+    raise HTTPException(status_code=401, detail="Missing admin token")
+
+
+def _has_permission(principal: dict[str, Any], permission: str) -> bool:
+    permissions = set(principal.get("permissions", []))
+    if "*" in permissions or permission in permissions:
+        return True
+    namespace = f"{permission.split(':', 1)[0]}:*"
+    return namespace in permissions
+
+
+def require_permission(permission: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    def dependency(principal: dict[str, Any] = Depends(get_current_admin)) -> dict[str, Any]:
+        if not _has_permission(principal, permission):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
+        return principal
+
+    return dependency
+
+
+def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
+    role = str(row["role"])
+    custom_permissions = _permission_text_to_list(row["permissions"])
+    return AdminUserRead(
+        id=int(row["id"]),
+        username=str(row["username"]),
+        display_name=str(row["display_name"] or row["username"]),
+        role=role,
+        permissions=_effective_permissions(role, custom_permissions),
+        is_active=bool(row["is_active"]),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
 
 
 def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
@@ -293,6 +553,87 @@ def build_monthly_report(month: str | None, site: str | None) -> MonthlyReportRe
     )
 
 
+def _json_or_scalar(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _build_monthly_report_csv(report: MonthlyReportRead) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["section", "key", "value"])
+    writer.writerow(["meta", "month", report.month])
+    writer.writerow(["meta", "site", report.site or "ALL"])
+    writer.writerow(["meta", "generated_at", report.generated_at.isoformat()])
+    writer.writerow(["inspections", "total", report.inspections.get("total", 0)])
+
+    risk_counts = report.inspections.get("risk_counts", {})
+    for key, value in risk_counts.items():
+        writer.writerow(["inspections.risk_counts", key, value])
+
+    top_flags = report.inspections.get("top_risk_flags", {})
+    for key, value in top_flags.items():
+        writer.writerow(["inspections.top_risk_flags", key, value])
+
+    writer.writerow(["work_orders", "total", report.work_orders.get("total", 0)])
+    for key, value in report.work_orders.items():
+        if key == "status_counts":
+            continue
+        writer.writerow(["work_orders", key, _json_or_scalar(value)])
+
+    status_counts = report.work_orders.get("status_counts", {})
+    for key, value in status_counts.items():
+        writer.writerow(["work_orders.status_counts", key, value])
+    return out.getvalue()
+
+
+def _build_monthly_report_pdf(report: MonthlyReportRead) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF generator dependency not installed") from exc
+
+    lines = [
+        f"Monthly Audit Report ({report.month})",
+        "",
+        f"Site: {report.site or 'ALL'}",
+        f"Generated At: {report.generated_at.isoformat()}",
+        "",
+        "[Inspection Summary]",
+        f"Total: {report.inspections.get('total', 0)}",
+        f"Risk Counts: {_json_or_scalar(report.inspections.get('risk_counts', {}))}",
+        f"Top Risk Flags: {_json_or_scalar(report.inspections.get('top_risk_flags', {}))}",
+        "",
+        "[Work Order Summary]",
+        f"Total: {report.work_orders.get('total', 0)}",
+        f"Status Counts: {_json_or_scalar(report.work_orders.get('status_counts', {}))}",
+        f"Escalated Count: {report.work_orders.get('escalated_count', 0)}",
+        f"Overdue Open Count: {report.work_orders.get('overdue_open_count', 0)}",
+        f"Completion Rate (%): {report.work_orders.get('completion_rate_percent', 0)}",
+        f"Avg Resolution Hours: {report.work_orders.get('avg_resolution_hours') or '-'}",
+    ]
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    _, height = A4
+    margin_left = 36
+    y = height - 40
+    pdf.setFont("Helvetica", 10)
+    for line in lines:
+        if y < 40:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 10)
+            y = height - 40
+        pdf.drawString(margin_left, y, line[:180])
+        y -= 14
+    pdf.save()
+    return buf.getvalue()
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {
@@ -303,6 +644,9 @@ def root() -> dict[str, str]:
         "work_order_api": "/api/work-orders",
         "escalation_api": "/api/work-orders/escalations/run",
         "monthly_report_api": "/api/reports/monthly",
+        "monthly_report_csv_api": "/api/reports/monthly/csv",
+        "monthly_report_pdf_api": "/api/reports/monthly/pdf",
+        "auth_me_api": "/api/auth/me",
     }
 
 
@@ -317,10 +661,111 @@ def meta() -> dict[str, str]:
     return {"env": getenv("ENV", "local"), "db": db_backend}
 
 
+@app.get("/api/auth/me", response_model=AuthMeRead)
+def auth_me(
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AuthMeRead:
+    return AuthMeRead(
+        user_id=principal.get("user_id"),
+        username=principal["username"],
+        display_name=principal["display_name"],
+        role=principal["role"],
+        permissions=list(principal.get("permissions", [])),
+        is_legacy=bool(principal.get("is_legacy", False)),
+    )
+
+
+@app.get("/api/admin/users", response_model=list[AdminUserRead])
+def list_admin_users(
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[AdminUserRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(admin_users).order_by(admin_users.c.created_at.desc(), admin_users.c.id.desc())
+        ).mappings().all()
+    return [_row_to_admin_user_model(row) for row in rows]
+
+
+@app.post("/api/admin/users", response_model=AdminUserRead, status_code=201)
+def create_admin_user(
+    payload: AdminUserCreate,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminUserRead:
+    now = datetime.now(timezone.utc)
+    permissions_text = _permission_list_to_text(payload.permissions)
+    display_name = payload.display_name.strip() or payload.username
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(admin_users.c.id).where(admin_users.c.username == payload.username)
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="username already exists")
+
+        result = conn.execute(
+            insert(admin_users).values(
+                username=payload.username,
+                display_name=display_name,
+                role=payload.role,
+                permissions=permissions_text,
+                is_active=payload.is_active,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        user_id = result.inserted_primary_key[0]
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to load created admin user")
+    return _row_to_admin_user_model(row)
+
+
+@app.post("/api/admin/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
+def issue_admin_token(
+    user_id: int,
+    payload: AdminTokenIssueRequest,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminTokenIssueResponse:
+    now = datetime.now(timezone.utc)
+    token_plain = f"kaos_{secrets.token_urlsafe(24)}"
+    token_hash = _hash_token(token_plain)
+    expires_at = _as_optional_datetime(payload.expires_at)
+
+    with get_conn() as conn:
+        user_row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+        if user_row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+        if not user_row["is_active"]:
+            raise HTTPException(status_code=409, detail="Inactive user cannot receive token")
+
+        result = conn.execute(
+            insert(admin_tokens).values(
+                user_id=user_id,
+                label=payload.label,
+                token_hash=token_hash,
+                is_active=True,
+                expires_at=expires_at,
+                last_used_at=None,
+                created_at=now,
+            )
+        )
+        token_id = int(result.inserted_primary_key[0])
+
+    return AdminTokenIssueResponse(
+        token_id=token_id,
+        user_id=user_id,
+        label=payload.label,
+        token=token_plain,
+        expires_at=expires_at,
+        created_at=now,
+    )
+
+
 @app.post("/api/inspections", response_model=InspectionRead, status_code=201)
 def create_inspection(
     payload: InspectionCreate,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("inspections:write")),
 ) -> InspectionRead:
     risk_level, flags = _calculate_risk(payload)
     now = datetime.now(timezone.utc)
@@ -367,6 +812,7 @@ def create_inspection(
 def list_inspections(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    _: dict[str, Any] = Depends(require_permission("inspections:read")),
 ) -> list[InspectionRead]:
     with get_conn() as conn:
         rows = conn.execute(
@@ -379,7 +825,10 @@ def list_inspections(
 
 
 @app.get("/api/inspections/{inspection_id}", response_model=InspectionRead)
-def get_inspection(inspection_id: int) -> InspectionRead:
+def get_inspection(
+    inspection_id: int,
+    _: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> InspectionRead:
     with get_conn() as conn:
         row = conn.execute(
             select(inspections).where(inspections.c.id == inspection_id)
@@ -390,7 +839,10 @@ def get_inspection(inspection_id: int) -> InspectionRead:
 
 
 @app.get("/inspections/{inspection_id}/print", response_class=HTMLResponse)
-def print_inspection(inspection_id: int) -> str:
+def print_inspection(
+    inspection_id: int,
+    _: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> str:
     with get_conn() as conn:
         row = conn.execute(
             select(inspections).where(inspections.c.id == inspection_id)
@@ -442,7 +894,7 @@ def print_inspection(inspection_id: int) -> str:
 @app.post("/api/work-orders", response_model=WorkOrderRead, status_code=201)
 def create_work_order(
     payload: WorkOrderCreate,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     due_at = _as_optional_datetime(payload.due_at)
@@ -484,6 +936,7 @@ def list_work_orders(
     site: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
+    _: dict[str, Any] = Depends(require_permission("work_orders:read")),
 ) -> list[WorkOrderRead]:
     stmt = select(work_orders)
     if status is not None:
@@ -499,7 +952,10 @@ def list_work_orders(
 
 
 @app.get("/api/work-orders/{work_order_id}", response_model=WorkOrderRead)
-def get_work_order(work_order_id: int) -> WorkOrderRead:
+def get_work_order(
+    work_order_id: int,
+    _: dict[str, Any] = Depends(require_permission("work_orders:read")),
+) -> WorkOrderRead:
     with get_conn() as conn:
         row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -513,7 +969,7 @@ def get_work_order(work_order_id: int) -> WorkOrderRead:
 def ack_work_order(
     work_order_id: int,
     payload: WorkOrderAck,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -549,7 +1005,7 @@ def ack_work_order(
 def complete_work_order(
     work_order_id: int,
     payload: WorkOrderComplete,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -583,7 +1039,7 @@ def complete_work_order(
 @app.post("/api/work-orders/escalations/run", response_model=SlaEscalationRunResponse)
 def run_sla_escalation(
     payload: SlaEscalationRunRequest,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("work_orders:escalate")),
 ) -> SlaEscalationRunResponse:
     return run_sla_escalation_job(
         site=payload.site,
@@ -596,16 +1052,50 @@ def run_sla_escalation(
 def get_monthly_report(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> MonthlyReportRead:
     return build_monthly_report(month=month, site=site)
+
+
+@app.get("/api/reports/monthly/csv")
+def get_monthly_report_csv(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    site: Annotated[str | None, Query()] = None,
+    _: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    report = build_monthly_report(month=month, site=site)
+    csv_text = _build_monthly_report_csv(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"monthly-report-{report.month}-{site_label}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/reports/monthly/pdf")
+def get_monthly_report_pdf(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    site: Annotated[str | None, Query()] = None,
+    _: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    report = build_monthly_report(month=month, site=site)
+    pdf_bytes = _build_monthly_report_pdf(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"monthly-report-{report.month}-{site_label}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/reports/monthly/print", response_class=HTMLResponse)
 def print_monthly_report(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: None = Depends(require_admin_token),
+    _: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> str:
     report = build_monthly_report(month=month, site=site)
     return f"""

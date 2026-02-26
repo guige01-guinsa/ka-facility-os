@@ -76,6 +76,32 @@ work_orders = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+admin_users = Table(
+    "admin_users",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("username", String(80), nullable=False, unique=True),
+    Column("display_name", String(120), nullable=False, default=""),
+    Column("role", String(20), nullable=False, default="operator"),
+    Column("permissions", Text, nullable=False, default=""),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+admin_tokens = Table(
+    "admin_tokens",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("user_id", Integer, nullable=False),
+    Column("label", String(120), nullable=False, default=""),
+    Column("token_hash", String(128), nullable=False, unique=True),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("last_used_at", DateTime(timezone=True), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

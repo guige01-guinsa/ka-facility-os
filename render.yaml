@@ -17,3 +17,19 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         sync: false
+  - type: cron
+    name: ka-facility-os-sla-escalation
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "*/15 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.sla_escalation --limit 500
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
