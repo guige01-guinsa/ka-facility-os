@@ -78,6 +78,13 @@ python -m app.jobs.sla_escalation --limit 500
 python -m app.jobs.sla_escalation --dry-run
 ```
 
+Render cron recommendation:
+
+- Service type: `Cron Job`
+- Command: `python -m app.jobs.sla_escalation --limit 500`
+- Schedule example: `*/15 * * * *` (every 15 minutes)
+- Use same `DATABASE_URL` env var as the web service.
+
 ## PostgreSQL mode
 
 This app uses:
