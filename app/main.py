@@ -4,9 +4,12 @@ import hmac
 import io
 import json
 import secrets
+import time
 from datetime import datetime, timezone
 from os import getenv
 from typing import Annotated, Any, Callable
+from urllib import error as url_error
+from urllib import request as url_request
 
 from fastapi import Depends, FastAPI, HTTPException, Header, Query
 from fastapi.responses import HTMLResponse, Response
@@ -15,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import (
     DATABASE_URL,
+    admin_audit_logs,
     admin_tokens,
     admin_users,
     ensure_database,
@@ -23,6 +27,7 @@ from app.database import (
     work_orders,
 )
 from app.schemas import (
+    AdminAuditLogRead,
     AdminTokenIssueRequest,
     AdminTokenIssueResponse,
     AdminTokenRead,
@@ -55,6 +60,9 @@ ALLOW_INSECURE_LOCAL_AUTH = getenv("ALLOW_INSECURE_LOCAL_AUTH", "1").lower() in 
     "yes",
     "on",
 }
+ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
+ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
+ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
 
 ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "owner": {"*"},
@@ -395,6 +403,127 @@ def require_permission(permission: str) -> Callable[[dict[str, Any]], dict[str, 
     return dependency
 
 
+def _to_json_text(value: dict[str, Any] | None) -> str:
+    data = value or {}
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def _write_audit_log(
+    *,
+    principal: dict[str, Any] | None,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    status: str = "success",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    now = datetime.now(timezone.utc)
+    actor_user_id = None
+    actor_username = "system"
+    if principal is not None:
+        actor_user_id = principal.get("user_id")
+        actor_username = str(principal.get("username") or "unknown")
+
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                insert(admin_audit_logs).values(
+                    actor_user_id=actor_user_id,
+                    actor_username=actor_username,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    status=status,
+                    detail_json=_to_json_text(detail),
+                    created_at=now,
+                )
+            )
+    except SQLAlchemyError:
+        # Audit log failures must not block business requests.
+        return
+
+
+def _row_to_admin_audit_log_model(row: dict[str, Any]) -> AdminAuditLogRead:
+    raw = str(row["detail_json"] or "{}")
+    try:
+        detail = json.loads(raw)
+    except json.JSONDecodeError:
+        detail = {"raw": raw}
+
+    return AdminAuditLogRead(
+        id=int(row["id"]),
+        actor_user_id=row["actor_user_id"],
+        actor_username=str(row["actor_username"]),
+        action=str(row["action"]),
+        resource_type=str(row["resource_type"]),
+        resource_id=str(row["resource_id"]),
+        status=str(row["status"]),
+        detail=detail if isinstance(detail, dict) else {"value": detail},
+        created_at=_as_datetime(row["created_at"]),
+    )
+
+
+def _post_json_with_retries(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    retries: int,
+    timeout_sec: float,
+) -> tuple[bool, str | None]:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        req = url_request.Request(
+            url=url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with url_request.urlopen(req, timeout=timeout_sec) as resp:
+                status_code = int(getattr(resp, "status", 0))
+                if 200 <= status_code < 300:
+                    return True, None
+                err = f"webhook returned status {status_code}"
+        except url_error.HTTPError as exc:
+            err = f"webhook http error {exc.code}"
+        except url_error.URLError as exc:
+            err = f"webhook url error: {exc.reason}"
+        except Exception as exc:  # pragma: no cover - defensive path
+            err = f"webhook unexpected error: {exc}"
+
+        if attempt < attempts:
+            time.sleep(0.5 * (2 ** (attempt - 1)))
+    return False, err
+
+
+def _dispatch_sla_alert(
+    *,
+    site: str | None,
+    checked_at: datetime,
+    escalated_count: int,
+    work_order_ids: list[int],
+) -> tuple[bool, str | None]:
+    if escalated_count <= 0:
+        return False, None
+    if not ALERT_WEBHOOK_URL:
+        return False, None
+
+    payload = {
+        "event": "sla_escalation",
+        "site": site or "ALL",
+        "checked_at": checked_at.isoformat(),
+        "escalated_count": escalated_count,
+        "work_order_ids": work_order_ids,
+    }
+    return _post_json_with_retries(
+        url=ALERT_WEBHOOK_URL,
+        payload=payload,
+        retries=ALERT_WEBHOOK_RETRIES,
+        timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+    )
+
+
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
     role = str(row["role"])
     custom_permissions = _permission_text_to_list(row["permissions"])
@@ -479,6 +608,32 @@ def run_sla_escalation_job(
             )
             escalated_count = len(ids)
 
+    alert_dispatched = False
+    alert_error: str | None = None
+    if not dry_run and escalated_count > 0:
+        alert_dispatched, alert_error = _dispatch_sla_alert(
+            site=site,
+            checked_at=now,
+            escalated_count=escalated_count,
+            work_order_ids=ids,
+        )
+        _write_audit_log(
+            principal=None,
+            action="sla_escalation_batch",
+            resource_type="work_order",
+            resource_id="batch",
+            status="success" if alert_error is None else "warning",
+            detail={
+                "site": site,
+                "dry_run": dry_run,
+                "candidate_count": len(ids),
+                "escalated_count": escalated_count,
+                "alert_dispatched": alert_dispatched,
+                "alert_error": alert_error,
+                "work_order_ids": ids,
+            },
+        )
+
     return SlaEscalationRunResponse(
         checked_at=now,
         dry_run=dry_run,
@@ -486,6 +641,8 @@ def run_sla_escalation_job(
         candidate_count=len(ids),
         escalated_count=escalated_count,
         work_order_ids=ids,
+        alert_dispatched=alert_dispatched,
+        alert_error=alert_error,
     )
 
 
@@ -663,6 +820,7 @@ def root() -> dict[str, str]:
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
         "auth_me_api": "/api/auth/me",
         "admin_tokens_api": "/api/admin/tokens",
+        "admin_audit_api": "/api/admin/audit-logs",
     }
 
 
@@ -705,7 +863,7 @@ def list_admin_users(
 @app.post("/api/admin/users", response_model=AdminUserRead, status_code=201)
 def create_admin_user(
     payload: AdminUserCreate,
-    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> AdminUserRead:
     now = datetime.now(timezone.utc)
     permissions_text = _permission_list_to_text(payload.permissions)
@@ -734,7 +892,15 @@ def create_admin_user(
 
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to load created admin user")
-    return _row_to_admin_user_model(row)
+    model = _row_to_admin_user_model(row)
+    _write_audit_log(
+        principal=principal,
+        action="admin_user_create",
+        resource_type="admin_user",
+        resource_id=str(model.id),
+        detail={"username": model.username, "role": model.role, "is_active": model.is_active},
+    )
+    return model
 
 
 @app.patch("/api/admin/users/{user_id}/active", response_model=AdminUserRead)
@@ -770,14 +936,22 @@ def set_admin_user_active(
 
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to update admin user")
-    return _row_to_admin_user_model(updated)
+    model = _row_to_admin_user_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="admin_user_set_active",
+        resource_type="admin_user",
+        resource_id=str(model.id),
+        detail={"username": model.username, "is_active": model.is_active},
+    )
+    return model
 
 
 @app.post("/api/admin/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
 def issue_admin_token(
     user_id: int,
     payload: AdminTokenIssueRequest,
-    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> AdminTokenIssueResponse:
     now = datetime.now(timezone.utc)
     token_plain = f"kaos_{secrets.token_urlsafe(24)}"
@@ -804,7 +978,7 @@ def issue_admin_token(
         )
         token_id = int(result.inserted_primary_key[0])
 
-    return AdminTokenIssueResponse(
+    response = AdminTokenIssueResponse(
         token_id=token_id,
         user_id=user_id,
         label=payload.label,
@@ -812,6 +986,14 @@ def issue_admin_token(
         expires_at=expires_at,
         created_at=now,
     )
+    _write_audit_log(
+        principal=principal,
+        action="admin_token_issue",
+        resource_type="admin_token",
+        resource_id=str(token_id),
+        detail={"user_id": user_id, "label": payload.label, "expires_at": expires_at},
+    )
+    return response
 
 
 @app.get("/api/admin/tokens", response_model=list[AdminTokenRead])
@@ -842,6 +1024,28 @@ def list_admin_tokens(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_admin_token_model(row) for row in rows]
+
+
+@app.get("/api/admin/audit-logs", response_model=list[AdminAuditLogRead])
+def list_admin_audit_logs(
+    action: Annotated[str | None, Query()] = None,
+    actor_username: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[AdminAuditLogRead]:
+    stmt = select(admin_audit_logs).order_by(
+        admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc()
+    )
+    if action is not None:
+        stmt = stmt.where(admin_audit_logs.c.action == action)
+    if actor_username is not None:
+        stmt = stmt.where(admin_audit_logs.c.actor_username == actor_username)
+    stmt = stmt.limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_admin_audit_log_model(row) for row in rows]
 
 
 @app.post("/api/admin/tokens/{token_id}/revoke", response_model=AdminTokenRead)
@@ -895,13 +1099,21 @@ def revoke_admin_token(
 
     if updated is None:
         raise HTTPException(status_code=500, detail="Failed to revoke admin token")
-    return _row_to_admin_token_model(updated)
+    model = _row_to_admin_token_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="admin_token_revoke",
+        resource_type="admin_token",
+        resource_id=str(model.token_id),
+        detail={"user_id": model.user_id, "label": model.label},
+    )
+    return model
 
 
 @app.post("/api/inspections", response_model=InspectionRead, status_code=201)
 def create_inspection(
     payload: InspectionCreate,
-    _: dict[str, Any] = Depends(require_permission("inspections:write")),
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
 ) -> InspectionRead:
     risk_level, flags = _calculate_risk(payload)
     now = datetime.now(timezone.utc)
@@ -941,7 +1153,15 @@ def create_inspection(
         if row is None:
             raise HTTPException(status_code=500, detail="Failed to load created inspection")
 
-    return _row_to_read_model(row)
+    model = _row_to_read_model(row)
+    _write_audit_log(
+        principal=principal,
+        action="inspection_create",
+        resource_type="inspection",
+        resource_id=str(model.id),
+        detail={"site": model.site, "location": model.location, "risk_level": model.risk_level},
+    )
+    return model
 
 
 @app.get("/api/inspections", response_model=list[InspectionRead])
@@ -1030,7 +1250,7 @@ def print_inspection(
 @app.post("/api/work-orders", response_model=WorkOrderRead, status_code=201)
 def create_work_order(
     payload: WorkOrderCreate,
-    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     due_at = _as_optional_datetime(payload.due_at)
@@ -1063,7 +1283,15 @@ def create_work_order(
 
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to create work order")
-    return _row_to_work_order_model(row)
+    model = _row_to_work_order_model(row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_create",
+        resource_type="work_order",
+        resource_id=str(model.id),
+        detail={"site": model.site, "priority": model.priority, "due_at": model.due_at},
+    )
+    return model
 
 
 @app.get("/api/work-orders", response_model=list[WorkOrderRead])
@@ -1105,7 +1333,7 @@ def get_work_order(
 def ack_work_order(
     work_order_id: int,
     payload: WorkOrderAck,
-    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -1134,14 +1362,22 @@ def ack_work_order(
 
     if updated_row is None:
         raise HTTPException(status_code=500, detail="Failed to update work order")
-    return _row_to_work_order_model(updated_row)
+    model = _row_to_work_order_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_ack",
+        resource_type="work_order",
+        resource_id=str(model.id),
+        detail={"status": model.status, "assignee": model.assignee},
+    )
+    return model
 
 
 @app.patch("/api/work-orders/{work_order_id}/complete", response_model=WorkOrderRead)
 def complete_work_order(
     work_order_id: int,
     payload: WorkOrderComplete,
-    _: dict[str, Any] = Depends(require_permission("work_orders:write")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
@@ -1169,19 +1405,43 @@ def complete_work_order(
 
     if updated_row is None:
         raise HTTPException(status_code=500, detail="Failed to complete work order")
-    return _row_to_work_order_model(updated_row)
+    model = _row_to_work_order_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_complete",
+        resource_type="work_order",
+        resource_id=str(model.id),
+        detail={"status": model.status},
+    )
+    return model
 
 
 @app.post("/api/work-orders/escalations/run", response_model=SlaEscalationRunResponse)
 def run_sla_escalation(
     payload: SlaEscalationRunRequest,
-    _: dict[str, Any] = Depends(require_permission("work_orders:escalate")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:escalate")),
 ) -> SlaEscalationRunResponse:
-    return run_sla_escalation_job(
+    result = run_sla_escalation_job(
         site=payload.site,
         dry_run=payload.dry_run,
         limit=payload.limit,
     )
+    _write_audit_log(
+        principal=principal,
+        action="work_order_sla_escalation_run",
+        resource_type="work_order",
+        resource_id="batch",
+        detail={
+            "site": payload.site,
+            "dry_run": payload.dry_run,
+            "limit": payload.limit,
+            "candidate_count": result.candidate_count,
+            "escalated_count": result.escalated_count,
+            "alert_dispatched": result.alert_dispatched,
+            "alert_error": result.alert_error,
+        },
+    )
+    return result
 
 
 @app.get("/api/reports/monthly", response_model=MonthlyReportRead)
@@ -1197,34 +1457,50 @@ def get_monthly_report(
 def get_monthly_report_csv(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: dict[str, Any] = Depends(require_permission("reports:export")),
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     report = build_monthly_report(month=month, site=site)
     csv_text = _build_monthly_report_csv(report)
     site_label = (report.site or "all").replace(" ", "_")
     file_name = f"monthly-report-{report.month}-{site_label}.csv"
-    return Response(
+    response = Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+    _write_audit_log(
+        principal=principal,
+        action="report_monthly_export_csv",
+        resource_type="report",
+        resource_id=f"{report.month}:{report.site or 'ALL'}",
+        detail={"month": report.month, "site": report.site},
+    )
+    return response
 
 
 @app.get("/api/reports/monthly/pdf")
 def get_monthly_report_pdf(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: dict[str, Any] = Depends(require_permission("reports:export")),
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     report = build_monthly_report(month=month, site=site)
     pdf_bytes = _build_monthly_report_pdf(report)
     site_label = (report.site or "all").replace(" ", "_")
     file_name = f"monthly-report-{report.month}-{site_label}.pdf"
-    return Response(
+    response = Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+    _write_audit_log(
+        principal=principal,
+        action="report_monthly_export_pdf",
+        resource_type="report",
+        resource_id=f"{report.month}:{report.site or 'ALL'}",
+        detail={"month": report.month, "site": report.site},
+    )
+    return response
 
 
 @app.get("/reports/monthly/print", response_class=HTMLResponse)

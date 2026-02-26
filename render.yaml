@@ -17,6 +17,12 @@ services:
         sync: false
       - key: ADMIN_TOKEN
         sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
   - type: cron
     name: ka-facility-os-sla-escalation
     runtime: python
@@ -33,3 +39,9 @@ services:
         value: 3.12.8
       - key: DATABASE_URL
         sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"

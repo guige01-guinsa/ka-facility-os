@@ -105,6 +105,8 @@ class SlaEscalationRunResponse(BaseModel):
     candidate_count: int
     escalated_count: int
     work_order_ids: list[int]
+    alert_dispatched: bool = False
+    alert_error: Optional[str] = None
 
 
 class MonthlyReportRead(BaseModel):
@@ -169,4 +171,16 @@ class AdminTokenRead(BaseModel):
     is_active: bool
     expires_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
+    created_at: datetime
+
+
+class AdminAuditLogRead(BaseModel):
+    id: int
+    actor_user_id: Optional[int] = None
+    actor_username: str
+    action: str
+    resource_type: str
+    resource_id: str
+    status: str
+    detail: dict[str, Any]
     created_at: datetime

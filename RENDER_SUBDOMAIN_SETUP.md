@@ -59,10 +59,20 @@ Create a Render Cron Job with:
 
 `render.yaml` already includes this cron definition.
 
+Optional escalation alert webhook env:
+
+- `ALERT_WEBHOOK_URL` (secret URL)
+- `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
+- `ALERT_WEBHOOK_RETRIES` (default `3`)
+
 ## Monthly report export
 
 - CSV download: `https://ops.ka-part.com/api/reports/monthly/csv?month=YYYY-MM`
 - PDF download: `https://ops.ka-part.com/api/reports/monthly/pdf?month=YYYY-MM`
+
+## Audit trail
+
+- Audit API: `https://ops.ka-part.com/api/admin/audit-logs`
 
 ## Quick verification
 

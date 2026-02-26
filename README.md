@@ -27,6 +27,7 @@ Open:
   - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)
   - `GET /api/admin/tokens` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
+  - `GET /api/admin/audit-logs` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -94,6 +95,39 @@ python -m app.jobs.sla_escalation --dry-run
 Render cron target command:
 - `python -m app.jobs.sla_escalation --limit 500`
 - schedule: `*/15 * * * *`
+
+Optional alert webhook env:
+- `ALERT_WEBHOOK_URL` (sync false secret env)
+- `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
+- `ALERT_WEBHOOK_RETRIES` (default `3`)
+
+## Audit logs
+
+Sensitive actions are stored in `admin_audit_logs`:
+- admin user/token lifecycle
+- inspection/work-order writes
+- SLA escalation run
+- monthly report CSV/PDF exports
+
+Example:
+
+```powershell
+curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-logs?limit=50"
+```
+
+## CI and ops scripts
+
+- CI workflow: `.github/workflows/ci.yml` (`pytest -q`)
+- Deploy + smoke script:
+
+```powershell
+.\scripts\deploy_and_verify.ps1 `
+  -DeployHookUrl "https://api.render.com/deploy/<serviceId>?key=<hookKey>" `
+  -ServiceId "<render-service-id>" `
+  -BaseUrl "https://ops.ka-part.com" `
+  -AdminToken "<owner-token>" `
+  -RollbackOnFailure
+```
 
 ## PostgreSQL mode
 

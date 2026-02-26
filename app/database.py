@@ -102,6 +102,20 @@ admin_tokens = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+admin_audit_logs = Table(
+    "admin_audit_logs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("actor_user_id", Integer, nullable=True),
+    Column("actor_username", String(80), nullable=False),
+    Column("action", String(80), nullable=False),
+    Column("resource_type", String(80), nullable=False),
+    Column("resource_id", String(120), nullable=False),
+    Column("status", String(20), nullable=False, default="success"),
+    Column("detail_json", Text, nullable=False, default="{}"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:
