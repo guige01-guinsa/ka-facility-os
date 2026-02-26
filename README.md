@@ -16,6 +16,21 @@ Open:
 - Docs: `http://127.0.0.1:8001/docs`
 - Health: `http://127.0.0.1:8001/health`
 
+## Inspection MVP endpoints
+
+- `POST /api/inspections` create one inspection
+- `GET /api/inspections` list inspections
+- `GET /api/inspections/{id}` get one inspection
+- `GET /inspections/{id}/print` printable A4 HTML report
+
+Example create:
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/inspections" `
+  -H "Content-Type: application/json" `
+  -d "{\"site\":\"OO Apartment\",\"location\":\"Substation\",\"cycle\":\"monthly\",\"inspector\":\"Hong\",\"inspected_at\":\"2026-02-26T09:30:00\",\"voltage_r\":220,\"voltage_s\":221,\"voltage_t\":219,\"insulation_mohm\":5.2,\"notes\":\"ok\"}"
+```
+
 ## 2) Git init and first commit
 
 ```powershell
