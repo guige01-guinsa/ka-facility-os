@@ -1,10 +1,12 @@
 from datetime import datetime, timezone
 from os import getenv
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
+from sqlalchemy import insert, select
 
-from app.database import ensure_database, get_conn
+from app.database import DATABASE_URL, ensure_database, get_conn, inspections
 from app.schemas import InspectionCreate, InspectionRead
 
 app = FastAPI(
@@ -43,7 +45,21 @@ def _calculate_risk(payload: InspectionCreate) -> tuple[str, list[str]]:
     return "normal", flags
 
 
-def _row_to_read_model(row: object) -> InspectionRead:
+def _to_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _as_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    raise ValueError("Unsupported datetime value")
+
+
+def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
     risk_flags_raw = row["risk_flags"] or ""
     risk_flags = [x for x in risk_flags_raw.split(",") if x]
 
@@ -53,7 +69,7 @@ def _row_to_read_model(row: object) -> InspectionRead:
         location=row["location"],
         cycle=row["cycle"],
         inspector=row["inspector"],
-        inspected_at=datetime.fromisoformat(row["inspected_at"]),
+        inspected_at=_as_datetime(row["inspected_at"]),
         transformer_kva=row["transformer_kva"],
         voltage_r=row["voltage_r"],
         voltage_s=row["voltage_s"],
@@ -67,7 +83,7 @@ def _row_to_read_model(row: object) -> InspectionRead:
         notes=row["notes"],
         risk_level=row["risk_level"],
         risk_flags=risk_flags,
-        created_at=datetime.fromisoformat(row["created_at"]),
+        created_at=_as_datetime(row["created_at"]),
     )
 
 
@@ -88,54 +104,49 @@ def health() -> dict[str, str]:
 
 @app.get("/meta")
 def meta() -> dict[str, str]:
-    return {"env": getenv("ENV", "local")}
+    db_backend = "postgresql" if DATABASE_URL.startswith("postgresql+") else "sqlite"
+    return {"env": getenv("ENV", "local"), "db": db_backend}
 
 
 @app.post("/api/inspections", response_model=InspectionRead, status_code=201)
 def create_inspection(payload: InspectionCreate) -> InspectionRead:
     risk_level, flags = _calculate_risk(payload)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    inspected_at = _to_utc(payload.inspected_at)
 
     with get_conn() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO inspections (
-                site, location, cycle, inspector, inspected_at,
-                transformer_kva, voltage_r, voltage_s, voltage_t,
-                current_r, current_s, current_t,
-                winding_temp_c, grounding_ohm, insulation_mohm,
-                notes, risk_level, risk_flags, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                payload.site,
-                payload.location,
-                payload.cycle,
-                payload.inspector,
-                payload.inspected_at.isoformat(),
-                payload.transformer_kva,
-                payload.voltage_r,
-                payload.voltage_s,
-                payload.voltage_t,
-                payload.current_r,
-                payload.current_s,
-                payload.current_t,
-                payload.winding_temp_c,
-                payload.grounding_ohm,
-                payload.insulation_mohm,
-                payload.notes,
-                risk_level,
-                ",".join(flags),
-                now,
-            ),
+        result = conn.execute(
+            insert(inspections).values(
+                site=payload.site,
+                location=payload.location,
+                cycle=payload.cycle,
+                inspector=payload.inspector,
+                inspected_at=inspected_at,
+                transformer_kva=payload.transformer_kva,
+                voltage_r=payload.voltage_r,
+                voltage_s=payload.voltage_s,
+                voltage_t=payload.voltage_t,
+                current_r=payload.current_r,
+                current_s=payload.current_s,
+                current_t=payload.current_t,
+                winding_temp_c=payload.winding_temp_c,
+                grounding_ohm=payload.grounding_ohm,
+                insulation_mohm=payload.insulation_mohm,
+                notes=payload.notes,
+                risk_level=risk_level,
+                risk_flags=",".join(flags),
+                created_at=now,
+            )
         )
-        inspection_id = cursor.lastrowid
-        conn.commit()
+        inspection_id = result.inserted_primary_key[0]
+        if inspection_id is None:
+            raise HTTPException(status_code=500, detail="Failed to create inspection")
 
         row = conn.execute(
-            "SELECT * FROM inspections WHERE id = ?",
-            (inspection_id,),
-        ).fetchone()
+            select(inspections).where(inspections.c.id == inspection_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=500, detail="Failed to load created inspection")
 
     return _row_to_read_model(row)
 
@@ -147,13 +158,11 @@ def list_inspections(
 ) -> list[InspectionRead]:
     with get_conn() as conn:
         rows = conn.execute(
-            """
-            SELECT * FROM inspections
-            ORDER BY inspected_at DESC, id DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        ).fetchall()
+            select(inspections)
+            .order_by(inspections.c.inspected_at.desc(), inspections.c.id.desc())
+            .limit(limit)
+            .offset(offset)
+        ).mappings().all()
     return [_row_to_read_model(r) for r in rows]
 
 
@@ -161,9 +170,8 @@ def list_inspections(
 def get_inspection(inspection_id: int) -> InspectionRead:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM inspections WHERE id = ?",
-            (inspection_id,),
-        ).fetchone()
+            select(inspections).where(inspections.c.id == inspection_id)
+        ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Inspection not found")
     return _row_to_read_model(row)
@@ -173,9 +181,8 @@ def get_inspection(inspection_id: int) -> InspectionRead:
 def print_inspection(inspection_id: int) -> str:
     with get_conn() as conn:
         row = conn.execute(
-            "SELECT * FROM inspections WHERE id = ?",
-            (inspection_id,),
-        ).fetchone()
+            select(inspections).where(inspections.c.id == inspection_id)
+        ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Inspection not found")
 

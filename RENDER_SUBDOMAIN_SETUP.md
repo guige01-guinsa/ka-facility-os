@@ -21,6 +21,17 @@ Add this CNAME at your DNS provider:
 
 After DNS propagation, Render will issue TLS automatically and `ops.ka-part.com` will become active.
 
+## PostgreSQL setting
+
+For production persistence, set service env var:
+
+- Key: `DATABASE_URL`
+- Value: Render PostgreSQL internal connection string
+
+After setting, redeploy and verify:
+
+- `https://ops.ka-part.com/meta` should show `"db": "postgresql"`
+
 ## Quick verification
 
 1. Open Render dashboard for the service and check Custom Domains status.

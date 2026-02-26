@@ -15,6 +15,7 @@ Open:
 - API: `http://127.0.0.1:8001`
 - Docs: `http://127.0.0.1:8001/docs`
 - Health: `http://127.0.0.1:8001/health`
+- Meta: `http://127.0.0.1:8001/meta`
 
 ## Inspection MVP endpoints
 
@@ -30,6 +31,20 @@ curl -X POST "http://127.0.0.1:8001/api/inspections" `
   -H "Content-Type: application/json" `
   -d "{\"site\":\"OO Apartment\",\"location\":\"Substation\",\"cycle\":\"monthly\",\"inspector\":\"Hong\",\"inspected_at\":\"2026-02-26T09:30:00\",\"voltage_r\":220,\"voltage_s\":221,\"voltage_t\":219,\"insulation_mohm\":5.2,\"notes\":\"ok\"}"
 ```
+
+## PostgreSQL mode
+
+This app uses:
+- `DATABASE_URL` set -> PostgreSQL
+- `DATABASE_URL` unset -> local SQLite fallback (`data/facility.db`)
+
+Render production recommendation:
+- Create a PostgreSQL instance in Render.
+- Set service env var `DATABASE_URL` to the Render Postgres internal connection string.
+- Redeploy service.
+
+After deploy, check:
+- `GET /meta` -> `"db": "postgresql"`
 
 ## 2) Git init and first commit
 
