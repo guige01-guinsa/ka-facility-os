@@ -1048,9 +1048,148 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.23.0",
+    version="0.25.0",
     lifespan=app_lifespan,
 )
+
+
+def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: int, payload: Any) -> str:
+    payload_text = json.dumps(payload, ensure_ascii=False, indent=2) if payload is not None else "null"
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KA Facility OS - API Browser View</title>
+  <style>
+    :root {{
+      --ink: #0f2139;
+      --muted: #4b6282;
+      --line: #d5e0ee;
+      --bg: #f3f8ff;
+      --card: #fff;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      font-family: "SUIT", "Pretendard", "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+      background:
+        radial-gradient(780px 300px at 8% -20%, #e1f6ff 0%, transparent 58%),
+        radial-gradient(700px 300px at 95% -20%, #ffedd8 0%, transparent 58%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 980px; margin: 0 auto; padding: 18px 14px 42px; }}
+    .hero {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, #fff 0%, #eef7f5 52%, #fff4e8 100%);
+      padding: 14px;
+      box-shadow: 0 10px 22px rgba(15, 34, 60, 0.08);
+    }}
+    .hero h1 {{ margin: 0; font-size: 22px; }}
+    .hero p {{ margin: 8px 0 0; color: var(--muted); font-size: 13px; }}
+    .meta {{
+      margin-top: 10px;
+      border: 1px solid #c9d9ec;
+      background: #f2f8ff;
+      border-radius: 10px;
+      padding: 9px;
+      font-size: 12px;
+      color: #24496f;
+    }}
+    .links {{
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }}
+    .links a {{
+      text-decoration: none;
+      border: 1px solid #b8cee8;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #22507f;
+      background: #f3f8ff;
+    }}
+    pre {{
+      margin: 12px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 12px;
+      max-height: 68vh;
+      overflow: auto;
+      font-family: "Consolas", "D2Coding", "IBM Plex Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>API Browser View</h1>
+      <p>브라우저 접속 시 JSON 원문 대신 사람이 읽기 쉬운 HTML 보기입니다.</p>
+      <div class="meta">
+        Path: {html.escape(path_label)} | HTTP: {status_code}
+      </div>
+      <div class="links">
+        <a href="/">Public Main</a>
+        <a href="/web/console">Operations Console</a>
+        <a href="{html.escape(raw_href)}">Raw JSON</a>
+      </div>
+      <pre>{html.escape(payload_text)}</pre>
+    </section>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.middleware("http")
+async def browser_json_to_html_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
+    response = await call_next(request)
+    if request.method != "GET":
+        return response
+    if request.query_params.get("raw") == "1":
+        return response
+    if not request.url.path.startswith("/api/"):
+        return response
+
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" not in accept:
+        return response
+
+    content_type = response.headers.get("content-type", "").lower()
+    if not content_type.startswith("application/json"):
+        return response
+
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+
+    payload: Any
+    if body:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except json.JSONDecodeError:
+            payload = body.decode("utf-8", errors="replace")
+    else:
+        payload = None
+
+    path_label = request.url.path
+    raw_href = f"{request.url.path}?raw=1"
+    if request.url.query:
+        path_label = f"{request.url.path}?{request.url.query}"
+        raw_href = f"{request.url.path}?{request.url.query}&raw=1"
+
+    return HTMLResponse(_build_browser_json_view_html(path_label, raw_href, response.status_code, payload), status_code=response.status_code)
 
 
 def _permission_text_to_list(value: Any) -> list[str]:
@@ -5232,6 +5371,132 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
     return rendered
 
 
+def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
+    modules = modules_payload.get("modules", [])
+    cards: list[str] = []
+    for item in modules:
+        links_html = "".join(
+            f'<a href="{html.escape(str(link.get("href", "#")))}">{html.escape(str(link.get("label", "Open")))}'
+            "</a>"
+            for link in item.get("links", [])
+        )
+        cards.append(
+            f"""
+            <article class="module-card">
+              <h3>{html.escape(str(item.get("name_ko", "")))}</h3>
+              <p class="en">{html.escape(str(item.get("name", "")))}</p>
+              <p class="desc">{html.escape(str(item.get("description", "")))}</p>
+              <p class="hint"><strong>KPI Hint:</strong> {html.escape(str(item.get("kpi_hint", "")))}</p>
+              <div class="links">{links_html}</div>
+            </article>
+            """
+        )
+
+    cards_html = "".join(cards) or "<p>등록된 모듈이 없습니다.</p>"
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KA Facility OS - Public Modules</title>
+  <style>
+    :root {{
+      --ink: #0f1f37;
+      --muted: #49617f;
+      --line: #d5e0ef;
+      --bg: #f4f8ff;
+      --card: #fff;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      font-family: "SUIT", "Pretendard", "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+      background:
+        radial-gradient(820px 320px at 10% -20%, #dff6ff 0%, transparent 58%),
+        radial-gradient(740px 320px at 95% -20%, #ffecd8 0%, transparent 58%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 1200px; margin: 0 auto; padding: 18px 14px 48px; }}
+    .hero {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(145deg, #fff 0%, #eef8f5 52%, #fff4e8 100%);
+      padding: 14px;
+      box-shadow: 0 10px 24px rgba(15, 35, 63, 0.08);
+    }}
+    .hero h1 {{ margin: 0; font-size: 24px; }}
+    .hero p {{ margin: 7px 0 0; color: var(--muted); font-size: 14px; }}
+    .hero-links {{ margin-top: 10px; display: flex; flex-wrap: wrap; gap: 7px; }}
+    .hero-links a {{
+      text-decoration: none;
+      font-size: 12px;
+      border: 1px solid #b7cde7;
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: #1f4d7c;
+      background: #f3f8ff;
+      font-weight: 700;
+    }}
+    .grid {{
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .module-card {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 12px;
+    }}
+    .module-card h3 {{ margin: 0; font-size: 15px; color: #0c654f; }}
+    .module-card .en {{ margin: 4px 0 8px; font-size: 12px; color: #3e5f84; font-weight: 700; }}
+    .module-card .desc {{ margin: 0; color: var(--muted); font-size: 12px; }}
+    .module-card .hint {{ margin: 8px 0 0; color: #264d77; font-size: 12px; }}
+    .module-card .links {{
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .module-card .links a {{
+      text-decoration: none;
+      border: 1px solid #bdd2eb;
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #245281;
+      background: #f3f8ff;
+    }}
+    @media (max-width: 900px) {{
+      .grid {{ grid-template-columns: 1fr; }}
+      .hero h1 {{ font-size: 20px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>Facility Web Modules</h1>
+      <p>브라우저에서 API JSON 대신 사람이 읽기 쉬운 모듈 카드 화면입니다.</p>
+      <div class="hero-links">
+        <a href="/">Public Main</a>
+        <a href="/web/console">Operations Console</a>
+        <a href="/api/public/modules">Same URL (JSON/HTML)</a>
+      </div>
+    </header>
+    <section class="grid">
+      {cards_html}
+    </section>
+  </div>
+</body>
+</html>
+"""
+
+
 @app.get("/api/service-info")
 def service_info() -> dict[str, str]:
     return _service_info_payload()
@@ -5265,9 +5530,13 @@ def get_public_adoption_campaign() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/modules")
-def get_public_modules() -> dict[str, Any]:
-    return _facility_modules_payload()
+@app.get("/api/public/modules", response_model=None)
+def get_public_modules(request: Request) -> Any:
+    payload = _facility_modules_payload()
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" in accept:
+        return HTMLResponse(_build_public_modules_html(payload))
+    return payload
 
 
 @app.get("/api/public/adoption-plan/schedule.csv")

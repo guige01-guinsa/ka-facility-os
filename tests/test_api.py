@@ -88,6 +88,12 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert modules_body["console_html"] == "/web/console"
     assert len(modules_body["modules"]) >= 7
 
+    modules_html = app_client.get("/api/public/modules", headers={"Accept": "text/html"})
+    assert modules_html.status_code == 200
+    assert modules_html.headers["content-type"].startswith("text/html")
+    assert "Facility Web Modules" in modules_html.text
+    assert "Operations Console" in modules_html.text
+
     public_plan = app_client.get("/api/public/adoption-plan")
     assert public_plan.status_code == 200
     body = public_plan.json()
@@ -147,6 +153,17 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     post_risks = app_client.get("/api/public/post-mvp/risks")
     assert post_risks.status_code == 200
     assert len(post_risks.json()["risk_register"]) >= 8
+
+    post_mvp_html = app_client.get("/api/public/post-mvp", headers={"Accept": "text/html"})
+    assert post_mvp_html.status_code == 200
+    assert post_mvp_html.headers["content-type"].startswith("text/html")
+    assert "API Browser View" in post_mvp_html.text
+    assert "Raw JSON" in post_mvp_html.text
+
+    post_mvp_raw = app_client.get("/api/public/post-mvp?raw=1", headers={"Accept": "text/html"})
+    assert post_mvp_raw.status_code == 200
+    assert post_mvp_raw.headers["content-type"].startswith("application/json")
+    assert post_mvp_raw.json()["public"] is True
 
 
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:

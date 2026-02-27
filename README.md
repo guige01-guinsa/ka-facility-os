@@ -23,7 +23,7 @@ Open:
   - `GET /` (browser main page: facility web hub + adoption/post-MVP sections)
   - `GET /web/console` (browser HTML operations console for human-readable module views)
   - `GET /api/service-info` (machine-readable service endpoint map)
-  - `GET /api/public/modules` (public module registry for main hub navigation)
+  - `GET /api/public/modules` (public module registry; browser `Accept: text/html` renders card view)
   - `GET /api/public/adoption-plan` (public JSON plan)
   - `GET /api/public/adoption-plan/campaign` (public promotion/education/fun kit)
   - `GET /api/public/adoption-plan/schedule.csv` (weekly execution schedule export)
@@ -165,6 +165,10 @@ Job monitoring:
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)
+
+Browser rendering note:
+- For `GET /api/*`, browser requests with `Accept: text/html` are automatically shown as HTML viewer pages.
+- To force raw JSON in browser, append `?raw=1` (example: `/api/public/post-mvp?raw=1`).
 
 SLA approval flow:
 - `POST /api/ops/sla/simulate` to preview impact
