@@ -531,6 +531,425 @@ ADOPTION_FUN_PACK: list[dict[str, Any]] = [
     },
 ]
 
+POST_MVP_PLAN_START = date(2026, 5, 25)
+POST_MVP_PLAN_END = date(2026, 11, 27)
+
+POST_MVP_ROADMAP_PHASES: list[dict[str, Any]] = [
+    {
+        "phase": "Phase 1 - Stabilize",
+        "start_date": "2026-05-25",
+        "end_date": "2026-06-19",
+        "duration_weeks": 4,
+        "objective": "Production hardening and operational baseline.",
+        "outcomes": [
+            "P95 API latency baseline and alert thresholds configured.",
+            "Failure drill playbook validated with on-call rotation.",
+            "Top 20 operational support issues converted to runbooks.",
+        ],
+        "release_gate": "R1 Operations Stability",
+    },
+    {
+        "phase": "Phase 2 - Automate",
+        "start_date": "2026-06-22",
+        "end_date": "2026-08-07",
+        "duration_weeks": 7,
+        "objective": "Automation depth for SLA, reporting, and alert handling.",
+        "outcomes": [
+            "SLA assistant suggestions shipped for priority and due time.",
+            "Monthly report automation with approval checklist in one flow.",
+            "Retry and escalation jobs running with incident-safe guardrails.",
+        ],
+        "release_gate": "R2 Automation Pack",
+    },
+    {
+        "phase": "Phase 3 - Scale",
+        "start_date": "2026-08-10",
+        "end_date": "2026-10-02",
+        "duration_weeks": 8,
+        "objective": "Multi-site scale, integrations, and governance.",
+        "outcomes": [
+            "Site template onboarding flow reduced to under 30 minutes.",
+            "External integrations for ERP/BI delivered with audit trail.",
+            "RBAC policy governance dashboard adopted by site owners.",
+        ],
+        "release_gate": "R3 Scale and Integration",
+    },
+    {
+        "phase": "Phase 4 - Optimize",
+        "start_date": "2026-10-05",
+        "end_date": "2026-11-27",
+        "duration_weeks": 8,
+        "objective": "Business optimization and expansion readiness.",
+        "outcomes": [
+            "Cross-site benchmarking with KPI league table.",
+            "Operational cost-to-close metric tracked and improved.",
+            "Next-year expansion plan and staffing model finalized.",
+        ],
+        "release_gate": "R4 Optimization and FY Plan",
+    },
+]
+
+POST_MVP_EXECUTION_BACKLOG: list[dict[str, Any]] = [
+    {
+        "id": "PMVP-01",
+        "epic": "Reliability",
+        "item": "Implement API latency/error budget dashboard",
+        "priority": "P0",
+        "owner": "Backend Lead",
+        "estimate_points": 8,
+        "target_release": "R1",
+        "status": "ready",
+        "success_kpi": "P95 API latency <= 450ms",
+    },
+    {
+        "id": "PMVP-02",
+        "epic": "Reliability",
+        "item": "Add incident drill scenario runner and scorecard",
+        "priority": "P0",
+        "owner": "SRE",
+        "estimate_points": 5,
+        "target_release": "R1",
+        "status": "ready",
+        "success_kpi": "Monthly drill pass rate >= 90%",
+    },
+    {
+        "id": "PMVP-03",
+        "epic": "Automation",
+        "item": "SLA due-time recommendation API and explainability log",
+        "priority": "P1",
+        "owner": "Backend Lead",
+        "estimate_points": 8,
+        "target_release": "R2",
+        "status": "planned",
+        "success_kpi": "Manual due-time overrides down >= 25%",
+    },
+    {
+        "id": "PMVP-04",
+        "epic": "Automation",
+        "item": "One-click monthly package (JSON+CSV+PDF+approval note)",
+        "priority": "P1",
+        "owner": "Ops PM",
+        "estimate_points": 5,
+        "target_release": "R2",
+        "status": "planned",
+        "success_kpi": "Report preparation time down >= 40%",
+    },
+    {
+        "id": "PMVP-05",
+        "epic": "Automation",
+        "item": "Escalation job anomaly detector with safe-stop switch",
+        "priority": "P1",
+        "owner": "SRE",
+        "estimate_points": 5,
+        "target_release": "R2",
+        "status": "planned",
+        "success_kpi": "False escalation rate <= 1%",
+    },
+    {
+        "id": "PMVP-06",
+        "epic": "Scale",
+        "item": "Site onboarding template wizard",
+        "priority": "P1",
+        "owner": "Product",
+        "estimate_points": 8,
+        "target_release": "R3",
+        "status": "planned",
+        "success_kpi": "New site setup <= 30 minutes",
+    },
+    {
+        "id": "PMVP-07",
+        "epic": "Scale",
+        "item": "ERP/BI outbound webhook connector",
+        "priority": "P2",
+        "owner": "Integrations",
+        "estimate_points": 8,
+        "target_release": "R3",
+        "status": "planned",
+        "success_kpi": "Data sync success rate >= 99%",
+    },
+    {
+        "id": "PMVP-08",
+        "epic": "Scale",
+        "item": "Policy governance board (site-by-site RBAC drift)",
+        "priority": "P1",
+        "owner": "Security",
+        "estimate_points": 5,
+        "target_release": "R3",
+        "status": "planned",
+        "success_kpi": "Policy drift unresolved >7d count = 0",
+    },
+    {
+        "id": "PMVP-09",
+        "epic": "Optimization",
+        "item": "Cross-site benchmark dashboard",
+        "priority": "P2",
+        "owner": "Data Analyst",
+        "estimate_points": 5,
+        "target_release": "R4",
+        "status": "planned",
+        "success_kpi": "Monthly benchmark review held 100%",
+    },
+    {
+        "id": "PMVP-10",
+        "epic": "Optimization",
+        "item": "Cost-to-close per work-order analytics",
+        "priority": "P2",
+        "owner": "Finance Ops",
+        "estimate_points": 5,
+        "target_release": "R4",
+        "status": "planned",
+        "success_kpi": "Cost-to-close reduced >= 10%",
+    },
+    {
+        "id": "PMVP-11",
+        "epic": "Optimization",
+        "item": "Executive expansion readiness pack automation",
+        "priority": "P2",
+        "owner": "Program Manager",
+        "estimate_points": 3,
+        "target_release": "R4",
+        "status": "planned",
+        "success_kpi": "Quarter planning prep time <= 2 days",
+    },
+    {
+        "id": "PMVP-12",
+        "epic": "Platform",
+        "item": "Public changelog and release-note API",
+        "priority": "P3",
+        "owner": "Developer Experience",
+        "estimate_points": 3,
+        "target_release": "R4",
+        "status": "backlog",
+        "success_kpi": "Release notes published within 24h",
+    },
+]
+
+POST_MVP_RELEASE_MILESTONES: list[dict[str, str]] = [
+    {
+        "release": "R1",
+        "name": "Operations Stability",
+        "date": "2026-06-19",
+        "owner": "Backend Lead + SRE",
+        "goal": "Reliability baseline and incident drill readiness",
+    },
+    {
+        "release": "R1.5",
+        "name": "Stability Retrospective",
+        "date": "2026-07-03",
+        "owner": "Ops PM",
+        "goal": "Assess error budget and support load delta",
+    },
+    {
+        "release": "R2",
+        "name": "Automation Pack",
+        "date": "2026-08-07",
+        "owner": "Ops PM + Backend Lead",
+        "goal": "Automated reporting and escalation quality controls",
+    },
+    {
+        "release": "R2.5",
+        "name": "Automation Adoption Check",
+        "date": "2026-08-28",
+        "owner": "Training Lead",
+        "goal": "Verify workflow adoption and issue burn-down",
+    },
+    {
+        "release": "R3",
+        "name": "Scale and Integration",
+        "date": "2026-10-02",
+        "owner": "Product + Integrations",
+        "goal": "Multi-site onboarding and integration reliability",
+    },
+    {
+        "release": "R3.5",
+        "name": "Scale Risk Review",
+        "date": "2026-10-23",
+        "owner": "Program Manager",
+        "goal": "Close top scaling risks before optimization phase",
+    },
+    {
+        "release": "R4",
+        "name": "Optimization and FY Plan",
+        "date": "2026-11-27",
+        "owner": "Executive Sponsor",
+        "goal": "KPI optimization and next-year expansion readiness",
+    },
+]
+
+POST_MVP_KPI_DASHBOARD_SPEC: list[dict[str, str]] = [
+    {
+        "id": "OPS-01",
+        "name": "SLA On-Time Completion",
+        "formula": "completed_within_due / total_completed",
+        "target": ">= 95%",
+        "data_source": "work_orders",
+        "cadence": "weekly",
+        "owner": "Ops Lead",
+        "alert_rule": "< 92% for 2 consecutive weeks",
+    },
+    {
+        "id": "OPS-02",
+        "name": "Median Time-To-First-Action",
+        "formula": "median(first_ack_at - created_at)",
+        "target": "<= 20 min",
+        "data_source": "work_orders + work_order_events",
+        "cadence": "weekly",
+        "owner": "Site Managers",
+        "alert_rule": "> 30 min in any week",
+    },
+    {
+        "id": "OPS-03",
+        "name": "Escalation Accuracy",
+        "formula": "valid_escalations / total_escalations",
+        "target": ">= 99%",
+        "data_source": "job_runs + work_order_events",
+        "cadence": "weekly",
+        "owner": "SRE",
+        "alert_rule": "< 98% in a week",
+    },
+    {
+        "id": "OPS-04",
+        "name": "Alert Delivery Success",
+        "formula": "delivered / attempted",
+        "target": ">= 99.5%",
+        "data_source": "alert_deliveries",
+        "cadence": "daily",
+        "owner": "SRE",
+        "alert_rule": "< 99.0% in 24h",
+    },
+    {
+        "id": "OPS-05",
+        "name": "Report On-Time Rate",
+        "formula": "reports_submitted_on_time / reports_expected",
+        "target": ">= 98%",
+        "data_source": "monthly_reports",
+        "cadence": "monthly",
+        "owner": "Auditor",
+        "alert_rule": "< 95% in month close",
+    },
+    {
+        "id": "OPS-06",
+        "name": "New Site Setup Time",
+        "formula": "median(site_ready_at - site_request_at)",
+        "target": "<= 30 min",
+        "data_source": "admin_audit_logs",
+        "cadence": "monthly",
+        "owner": "Product Ops",
+        "alert_rule": "> 45 min median",
+    },
+    {
+        "id": "OPS-07",
+        "name": "Policy Drift Aging",
+        "formula": "count(drift_items_age_days > 7)",
+        "target": "= 0",
+        "data_source": "sla_policies + admin_audit_logs",
+        "cadence": "weekly",
+        "owner": "Security",
+        "alert_rule": "> 0 for 2 weeks",
+    },
+    {
+        "id": "OPS-08",
+        "name": "Cost-To-Close",
+        "formula": "sum(work_order_cost) / closed_work_orders",
+        "target": "-10% QoQ",
+        "data_source": "work_orders + finance export",
+        "cadence": "monthly",
+        "owner": "Finance Ops",
+        "alert_rule": "No improvement for 2 months",
+    },
+]
+
+POST_MVP_RISK_REGISTER: list[dict[str, str]] = [
+    {
+        "id": "RISK-01",
+        "title": "Escalation noise from incorrect due-time policies",
+        "probability": "medium",
+        "impact": "high",
+        "signal": "Escalation volume spikes > 2x baseline",
+        "mitigation": "Approve policy changes only via proposal flow + simulation",
+        "owner": "Ops Lead",
+        "status": "open",
+        "review_cycle": "weekly",
+    },
+    {
+        "id": "RISK-02",
+        "title": "Webhook reliability degradation",
+        "probability": "medium",
+        "impact": "high",
+        "signal": "Alert delivery success < 99%",
+        "mitigation": "Multi-endpoint fallback + retry batch + timeout tuning",
+        "owner": "SRE",
+        "status": "open",
+        "review_cycle": "weekly",
+    },
+    {
+        "id": "RISK-03",
+        "title": "RBAC scope misconfiguration during scale-out",
+        "probability": "medium",
+        "impact": "high",
+        "signal": "Unauthorized attempts increase on new sites",
+        "mitigation": "Template-based site scope + monthly RBAC audit",
+        "owner": "Security",
+        "status": "open",
+        "review_cycle": "bi-weekly",
+    },
+    {
+        "id": "RISK-04",
+        "title": "Slow report close due to manual handoffs",
+        "probability": "medium",
+        "impact": "medium",
+        "signal": "Monthly report on-time rate < 95%",
+        "mitigation": "One-click package and checklist automation",
+        "owner": "Auditor",
+        "status": "open",
+        "review_cycle": "monthly",
+    },
+    {
+        "id": "RISK-05",
+        "title": "Data schema drift across integrations",
+        "probability": "low",
+        "impact": "high",
+        "signal": "Integration sync errors above threshold",
+        "mitigation": "Contract versioning + replay queue for failed payloads",
+        "owner": "Integrations",
+        "status": "monitoring",
+        "review_cycle": "weekly",
+    },
+    {
+        "id": "RISK-06",
+        "title": "Adoption regression after initial launch wave",
+        "probability": "medium",
+        "impact": "medium",
+        "signal": "Weekly active users drop > 15%",
+        "mitigation": "Champion clinics + targeted mission campaigns",
+        "owner": "Training Lead",
+        "status": "open",
+        "review_cycle": "weekly",
+    },
+    {
+        "id": "RISK-07",
+        "title": "Single-owner bottleneck for policy approvals",
+        "probability": "low",
+        "impact": "medium",
+        "signal": "Proposal pending age > 3 business days",
+        "mitigation": "Define backup approver rotation",
+        "owner": "Program Manager",
+        "status": "open",
+        "review_cycle": "bi-weekly",
+    },
+    {
+        "id": "RISK-08",
+        "title": "Cost metrics unavailable from source systems",
+        "probability": "medium",
+        "impact": "medium",
+        "signal": "Cost-to-close KPI missing for month close",
+        "mitigation": "Interim manual import and source contract enforcement",
+        "owner": "Finance Ops",
+        "status": "open",
+        "review_cycle": "monthly",
+    },
+]
+
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -542,7 +961,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.20.0",
+    version="0.21.0",
     lifespan=app_lifespan,
 )
 
@@ -2802,6 +3221,11 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_schedule_csv_api": "/api/public/adoption-plan/schedule.csv",
         "public_adoption_schedule_ics_api": "/api/public/adoption-plan/schedule.ics",
         "public_adoption_campaign_api": "/api/public/adoption-plan/campaign",
+        "public_post_mvp_plan_api": "/api/public/post-mvp",
+        "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
+        "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
+        "public_post_mvp_kpi_api": "/api/public/post-mvp/kpi-dashboard",
+        "public_post_mvp_risks_api": "/api/public/post-mvp/risks",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
@@ -2947,9 +3371,122 @@ def _build_adoption_plan_schedule_ics(plan: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _post_mvp_payload() -> dict[str, Any]:
+    duration_weeks = sum(int(item.get("duration_weeks", 0)) for item in POST_MVP_ROADMAP_PHASES)
+    return {
+        "title": "KA Facility OS Post-MVP Execution Plan",
+        "published_on": "2026-02-27",
+        "public": True,
+        "timeline": {
+            "start_date": POST_MVP_PLAN_START.isoformat(),
+            "end_date": POST_MVP_PLAN_END.isoformat(),
+            "duration_weeks": duration_weeks,
+        },
+        "roadmap": POST_MVP_ROADMAP_PHASES,
+        "execution_backlog": POST_MVP_EXECUTION_BACKLOG,
+        "release_calendar": {
+            "milestones": POST_MVP_RELEASE_MILESTONES,
+            "downloads": {
+                "backlog_csv": "/api/public/post-mvp/backlog.csv",
+                "release_ics": "/api/public/post-mvp/releases.ics",
+            },
+        },
+        "kpi_dashboard_spec": POST_MVP_KPI_DASHBOARD_SPEC,
+        "risk_register": POST_MVP_RISK_REGISTER,
+        "governance": {
+            "weekly": "Monday execution sync + Friday KPI review",
+            "bi_weekly": "Risk and dependency review board",
+            "monthly": "Release readiness and budget steering committee",
+            "quarterly": "Executive roadmap reprioritization",
+        },
+    }
+
+
+def _build_post_mvp_backlog_csv(plan: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "id",
+            "epic",
+            "item",
+            "priority",
+            "owner",
+            "estimate_points",
+            "target_release",
+            "status",
+            "success_kpi",
+        ]
+    )
+    for item in plan.get("execution_backlog", []):
+        writer.writerow(
+            [
+                item.get("id", ""),
+                item.get("epic", ""),
+                item.get("item", ""),
+                item.get("priority", ""),
+                item.get("owner", ""),
+                item.get("estimate_points", ""),
+                item.get("target_release", ""),
+                item.get("status", ""),
+                item.get("success_kpi", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_post_mvp_release_ics(plan: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    milestones = plan.get("release_calendar", {}).get("milestones", [])
+
+    for milestone in milestones:
+        release = str(milestone.get("release", ""))
+        name = str(milestone.get("name", ""))
+        date_raw = str(milestone.get("date", ""))
+        try:
+            release_date = date.fromisoformat(date_raw)
+        except ValueError:
+            continue
+
+        release_end = release_date + timedelta(days=1)
+        summary = f"[Post-MVP] {release} - {name}"
+        description = "\n".join(
+            [
+                f"Owner: {milestone.get('owner', '')}",
+                f"Goal: {milestone.get('goal', '')}",
+            ]
+        )
+        uid = f"ka-facility-os-post-mvp-{release.lower().replace('.', '-')}-release@public"
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART;VALUE=DATE:{release_date.strftime('%Y%m%d')}",
+                f"DTEND;VALUE=DATE:{release_end.strftime('%Y%m%d')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//Post-MVP Releases//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, Any]) -> str:
     training = plan.get("training_outline", [])
     kpis = plan.get("kpi_dashboard_items", [])
+    post_mvp = _post_mvp_payload()
 
     weekly_rows: list[str] = []
     for item in plan.get("weekly_execution", []):
@@ -2999,6 +3536,95 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
             </tr>
             """
         )
+
+    post_timeline = post_mvp.get("timeline", {})
+    post_roadmap_rows: list[str] = []
+    for item in post_mvp.get("roadmap", []):
+        outcomes_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("outcomes", []))
+        post_roadmap_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("phase", "")))}</td>
+              <td>{html.escape(str(item.get("start_date", "")))} ~ {html.escape(str(item.get("end_date", "")))}</td>
+              <td>{html.escape(str(item.get("duration_weeks", "")))} weeks</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{outcomes_html}</td>
+              <td>{html.escape(str(item.get("release_gate", "")))}</td>
+            </tr>
+            """
+        )
+
+    post_backlog_rows: list[str] = []
+    for item in post_mvp.get("execution_backlog", []):
+        post_backlog_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("epic", "")))}</td>
+              <td>{html.escape(str(item.get("item", "")))}</td>
+              <td>{html.escape(str(item.get("priority", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("estimate_points", "")))}</td>
+              <td>{html.escape(str(item.get("target_release", "")))}</td>
+              <td>{html.escape(str(item.get("status", "")))}</td>
+              <td>{html.escape(str(item.get("success_kpi", "")))}</td>
+            </tr>
+            """
+        )
+
+    post_release_rows: list[str] = []
+    for item in post_mvp.get("release_calendar", {}).get("milestones", []):
+        post_release_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("release", "")))}</td>
+              <td>{html.escape(str(item.get("name", "")))}</td>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("goal", "")))}</td>
+            </tr>
+            """
+        )
+
+    post_kpi_rows: list[str] = []
+    for item in post_mvp.get("kpi_dashboard_spec", []):
+        post_kpi_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("name", "")))}</td>
+              <td>{html.escape(str(item.get("formula", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("cadence", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("alert_rule", "")))}</td>
+            </tr>
+            """
+        )
+
+    post_risk_rows: list[str] = []
+    for item in post_mvp.get("risk_register", []):
+        post_risk_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("probability", "")))}</td>
+              <td>{html.escape(str(item.get("impact", "")))}</td>
+              <td>{html.escape(str(item.get("signal", "")))}</td>
+              <td>{html.escape(str(item.get("mitigation", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("status", "")))}</td>
+              <td>{html.escape(str(item.get("review_cycle", "")))}</td>
+            </tr>
+            """
+        )
+
+    post_governance = post_mvp.get("governance", {})
+    post_governance_items_html = "".join(
+        f"<li><strong>{html.escape(str(key).replace('_', ' ').title())}:</strong> {html.escape(str(value))}</li>"
+        for key, value in post_governance.items()
+    )
 
     campaign_kit = plan.get("campaign_kit", {})
     promotion_cards: list[str] = []
@@ -3616,6 +4242,122 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <ul>{cadence_list}</ul>
       </div>
     </section>
+
+    <section class="section">
+      <h2>Post-MVP Execution Pack</h2>
+      <p class="sub">
+        Timeline: {html.escape(str(post_timeline.get("start_date", "")))} ~
+        {html.escape(str(post_timeline.get("end_date", "")))} |
+        Duration: {html.escape(str(post_timeline.get("duration_weeks", "")))} weeks
+      </p>
+      <div class="links">
+        <a href="/api/public/post-mvp">Post-MVP JSON API</a>
+        <a href="/api/public/post-mvp/backlog.csv">Backlog CSV</a>
+        <a href="/api/public/post-mvp/releases.ics">Release ICS</a>
+        <a href="/api/public/post-mvp/kpi-dashboard">KPI Spec API</a>
+        <a href="/api/public/post-mvp/risks">Risk Register API</a>
+      </div>
+      <div class="card">
+        <h3>Governance Cadence</h3>
+        <ul>{post_governance_items_html}</ul>
+      </div>
+      <h3>Roadmap Phases</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Period</th>
+              <th>Duration</th>
+              <th>Objective</th>
+              <th>Outcomes</th>
+              <th>Release Gate</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(post_roadmap_rows)}
+          </tbody>
+        </table>
+      </div>
+      <h3>Execution Backlog</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Epic</th>
+              <th>Item</th>
+              <th>Priority</th>
+              <th>Owner</th>
+              <th>Points</th>
+              <th>Target Release</th>
+              <th>Status</th>
+              <th>Success KPI</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(post_backlog_rows)}
+          </tbody>
+        </table>
+      </div>
+      <h3>Release Calendar</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Release</th>
+              <th>Name</th>
+              <th>Date</th>
+              <th>Owner</th>
+              <th>Goal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(post_release_rows)}
+          </tbody>
+        </table>
+      </div>
+      <h3>Post-MVP KPI Dashboard Spec</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Formula</th>
+              <th>Target</th>
+              <th>Cadence</th>
+              <th>Owner</th>
+              <th>Alert Rule</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(post_kpi_rows)}
+          </tbody>
+        </table>
+      </div>
+      <h3>Risk Register</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Risk</th>
+              <th>Probability</th>
+              <th>Impact</th>
+              <th>Signal</th>
+              <th>Mitigation</th>
+              <th>Owner</th>
+              <th>Status</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(post_risk_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
   <script>
     (function() {{
@@ -3719,6 +4461,57 @@ def get_public_adoption_plan_schedule_ics() -> Response:
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@app.get("/api/public/post-mvp")
+def get_public_post_mvp_plan() -> dict[str, Any]:
+    return _post_mvp_payload()
+
+
+@app.get("/api/public/post-mvp/backlog.csv")
+def get_public_post_mvp_backlog_csv() -> Response:
+    plan = _post_mvp_payload()
+    csv_text = _build_post_mvp_backlog_csv(plan)
+    file_name = f"ka-facility-os-post-mvp-backlog-{POST_MVP_PLAN_START.isoformat()}-{POST_MVP_PLAN_END.isoformat()}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/post-mvp/releases.ics")
+def get_public_post_mvp_releases_ics() -> Response:
+    plan = _post_mvp_payload()
+    ics_text = _build_post_mvp_release_ics(plan)
+    file_name = f"ka-facility-os-post-mvp-releases-{POST_MVP_PLAN_START.isoformat()}-{POST_MVP_PLAN_END.isoformat()}.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/post-mvp/kpi-dashboard")
+def get_public_post_mvp_kpi_dashboard() -> dict[str, Any]:
+    plan = _post_mvp_payload()
+    return {
+        "title": plan.get("title"),
+        "public": plan.get("public", True),
+        "timeline": plan.get("timeline", {}),
+        "kpi_dashboard_spec": plan.get("kpi_dashboard_spec", []),
+    }
+
+
+@app.get("/api/public/post-mvp/risks")
+def get_public_post_mvp_risks() -> dict[str, Any]:
+    plan = _post_mvp_payload()
+    return {
+        "title": plan.get("title"),
+        "public": plan.get("public", True),
+        "timeline": plan.get("timeline", {}),
+        "risk_register": plan.get("risk_register", []),
+    }
 
 
 @app.get("/health")

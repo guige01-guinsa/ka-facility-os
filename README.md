@@ -26,6 +26,11 @@ Open:
   - `GET /api/public/adoption-plan/campaign` (public promotion/education/fun kit)
   - `GET /api/public/adoption-plan/schedule.csv` (weekly execution schedule export)
   - `GET /api/public/adoption-plan/schedule.ics` (calendar import for schedule management)
+  - `GET /api/public/post-mvp` (post-MVP roadmap/backlog/release/KPI/risk plan)
+  - `GET /api/public/post-mvp/backlog.csv` (execution backlog export)
+  - `GET /api/public/post-mvp/releases.ics` (release calendar import)
+  - `GET /api/public/post-mvp/kpi-dashboard` (post-MVP KPI dashboard specification)
+  - `GET /api/public/post-mvp/risks` (post-MVP risk register)
 - Auth/RBAC
   - `GET /api/auth/me`
   - `GET /api/admin/users` (permission: `admins:manage`)
@@ -148,6 +153,11 @@ Job monitoring:
 - `GET /api/public/adoption-plan/campaign`
 - `GET /api/public/adoption-plan/schedule.csv`
 - `GET /api/public/adoption-plan/schedule.ics`
+- `GET /api/public/post-mvp`
+- `GET /api/public/post-mvp/backlog.csv`
+- `GET /api/public/post-mvp/releases.ics`
+- `GET /api/public/post-mvp/kpi-dashboard`
+- `GET /api/public/post-mvp/risks`
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)

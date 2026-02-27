@@ -49,6 +49,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert root_json.json()["service"] == "ka-facility-os"
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
+    assert "public_post_mvp_plan_api" in root_json.json()
+    assert "public_post_mvp_backlog_csv_api" in root_json.json()
 
     root_html = app_client.get("/", headers={"Accept": "text/html"})
     assert root_html.status_code == 200
@@ -58,10 +60,12 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "Promotion + Education + Fun Kit" in root_html.text
     assert "요약 모드 (핵심 5줄): OFF" in root_html.text
     assert "핵심 5줄 요약" in root_html.text
+    assert "Post-MVP Execution Pack" in root_html.text
 
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     assert service_info.json()["service"] == "ka-facility-os"
+    assert "public_post_mvp_release_ics_api" in service_info.json()
 
     public_plan = app_client.get("/api/public/adoption-plan")
     assert public_plan.status_code == 200
@@ -93,6 +97,35 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert schedule_ics.headers["content-type"].startswith("text/calendar")
     assert "BEGIN:VCALENDAR" in schedule_ics.text
     assert "SUMMARY:[W01] Kickoff - Role workflow lock" in schedule_ics.text
+
+    post_mvp = app_client.get("/api/public/post-mvp")
+    assert post_mvp.status_code == 200
+    post_body = post_mvp.json()
+    assert post_body["public"] is True
+    assert post_body["timeline"]["start_date"] == "2026-05-25"
+    assert post_body["timeline"]["end_date"] == "2026-11-27"
+    assert len(post_body["roadmap"]) >= 4
+    assert len(post_body["execution_backlog"]) >= 10
+
+    post_backlog_csv = app_client.get("/api/public/post-mvp/backlog.csv")
+    assert post_backlog_csv.status_code == 200
+    assert post_backlog_csv.headers["content-type"].startswith("text/csv")
+    assert "id,epic,item,priority,owner,estimate_points,target_release,status,success_kpi" in post_backlog_csv.text
+    assert "PMVP-01" in post_backlog_csv.text
+
+    post_release_ics = app_client.get("/api/public/post-mvp/releases.ics")
+    assert post_release_ics.status_code == 200
+    assert post_release_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in post_release_ics.text
+    assert "SUMMARY:[Post-MVP] R1 - Operations Stability" in post_release_ics.text
+
+    post_kpis = app_client.get("/api/public/post-mvp/kpi-dashboard")
+    assert post_kpis.status_code == 200
+    assert len(post_kpis.json()["kpi_dashboard_spec"]) >= 8
+
+    post_risks = app_client.get("/api/public/post-mvp/risks")
+    assert post_risks.status_code == 200
+    assert len(post_risks.json()["risk_register"]) >= 8
 
 
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
