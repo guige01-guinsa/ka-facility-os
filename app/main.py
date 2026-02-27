@@ -102,6 +102,7 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "high": 8,
     "critical": 2,
 }
+SITE_SCOPE_ALL = "*"
 
 
 @asynccontextmanager
@@ -114,7 +115,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.8.1",
+    version="0.9.0",
     lifespan=app_lifespan,
 )
 
@@ -132,6 +133,78 @@ def _permission_text_to_list(value: Any) -> list[str]:
 def _permission_list_to_text(values: list[str]) -> str:
     normalized = sorted({v.strip() for v in values if v.strip()})
     return ",".join(normalized)
+
+
+def _site_scope_text_to_list(value: Any, *, default_all: bool = True) -> list[str]:
+    if value is None:
+        return [SITE_SCOPE_ALL] if default_all else []
+    if isinstance(value, str):
+        raw_values = [x.strip() for x in value.split(",") if x.strip()]
+    elif isinstance(value, list):
+        raw_values = [str(x).strip() for x in value if str(x).strip()]
+    else:
+        raw_values = []
+
+    if not raw_values:
+        return [SITE_SCOPE_ALL] if default_all else []
+    if SITE_SCOPE_ALL in raw_values:
+        return [SITE_SCOPE_ALL]
+    return sorted(set(raw_values))
+
+
+def _site_scope_list_to_text(values: list[str]) -> str:
+    normalized = _site_scope_text_to_list(values, default_all=True)
+    return ",".join(normalized)
+
+
+def _resolve_effective_site_scope(
+    *,
+    user_scope: list[str],
+    token_scope: list[str] | None,
+) -> list[str]:
+    normalized_user_scope = _site_scope_text_to_list(user_scope, default_all=True)
+    if token_scope is None:
+        return normalized_user_scope
+
+    normalized_token_scope = _site_scope_text_to_list(token_scope, default_all=True)
+    if SITE_SCOPE_ALL in normalized_user_scope:
+        return normalized_token_scope
+    if SITE_SCOPE_ALL in normalized_token_scope:
+        return normalized_user_scope
+
+    intersection = sorted(set(normalized_user_scope).intersection(normalized_token_scope))
+    return intersection
+
+
+def _principal_site_scope(principal: dict[str, Any]) -> list[str]:
+    raw_scope = principal.get("site_scope", [SITE_SCOPE_ALL])
+    return _site_scope_text_to_list(raw_scope, default_all=True)
+
+
+def _allowed_sites_for_principal(principal: dict[str, Any]) -> list[str] | None:
+    scope = _principal_site_scope(principal)
+    if SITE_SCOPE_ALL in scope:
+        return None
+    return scope
+
+
+def _has_site_access(principal: dict[str, Any], site: str | None) -> bool:
+    if site is None:
+        return True
+    scope = _principal_site_scope(principal)
+    if SITE_SCOPE_ALL in scope:
+        return True
+    return site in scope
+
+
+def _require_site_access(principal: dict[str, Any], site: str | None) -> None:
+    if not _has_site_access(principal, site):
+        raise HTTPException(status_code=403, detail="Site access denied")
+
+
+def _require_global_site_scope(principal: dict[str, Any]) -> None:
+    if SITE_SCOPE_ALL not in _principal_site_scope(principal):
+        raise HTTPException(status_code=403, detail="Global site scope required")
 
 
 def _effective_permissions(role: str, custom: list[str]) -> list[str]:
@@ -180,6 +253,7 @@ def ensure_legacy_admin_token_seed() -> None:
                     display_name="Legacy Bootstrap Admin",
                     role="owner",
                     permissions="*",
+                    site_scope=SITE_SCOPE_ALL,
                     is_active=True,
                     created_at=now,
                     updated_at=now,
@@ -194,6 +268,7 @@ def ensure_legacy_admin_token_seed() -> None:
                 .values(
                     role="owner",
                     permissions="*",
+                    site_scope=SITE_SCOPE_ALL,
                     is_active=True,
                     updated_at=now,
                 )
@@ -205,6 +280,7 @@ def ensure_legacy_admin_token_seed() -> None:
                 label="legacy-env-admin-token",
                 token_hash=token_hash,
                 is_active=True,
+                site_scope=None,
                 expires_at=None,
                 last_used_at=None,
                 created_at=now,
@@ -326,10 +402,12 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
             admin_tokens.c.id.label("token_id"),
             admin_tokens.c.user_id.label("user_id"),
             admin_tokens.c.expires_at.label("expires_at"),
+            admin_tokens.c.site_scope.label("token_site_scope"),
             admin_users.c.username.label("username"),
             admin_users.c.display_name.label("display_name"),
             admin_users.c.role.label("role"),
             admin_users.c.permissions.label("permissions"),
+            admin_users.c.site_scope.label("user_site_scope"),
         )
         .where(admin_tokens.c.token_hash == token_hash)
         .where(admin_tokens.c.is_active.is_(True))
@@ -358,12 +436,19 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
 
     custom_permissions = _permission_text_to_list(row["permissions"])
     permissions = _effective_permissions(str(row["role"]), custom_permissions)
+    user_scope = _site_scope_text_to_list(row["user_site_scope"], default_all=True)
+    token_scope_raw = row["token_site_scope"]
+    token_scope = None
+    if token_scope_raw is not None:
+        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
+    effective_site_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
     return {
         "user_id": int(row["user_id"]),
         "username": str(row["username"]),
         "display_name": str(row["display_name"] or row["username"]),
         "role": str(row["role"]),
         "permissions": permissions,
+        "site_scope": effective_site_scope,
         "is_legacy": str(row["username"]) == "legacy-admin",
     }
 
@@ -375,6 +460,7 @@ def _build_local_dev_principal() -> dict[str, Any]:
         "display_name": "Local Dev Bypass",
         "role": "owner",
         "permissions": ["*"],
+        "site_scope": [SITE_SCOPE_ALL],
         "is_legacy": True,
     }
 
@@ -394,6 +480,7 @@ def get_current_admin(
                 "display_name": "Legacy Env Token",
                 "role": "owner",
                 "permissions": ["*"],
+                "site_scope": [SITE_SCOPE_ALL],
                 "is_legacy": True,
             }
         raise HTTPException(status_code=401, detail="Invalid admin token")
@@ -789,12 +876,14 @@ def _dispatch_sla_alert(
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
     role = str(row["role"])
     custom_permissions = _permission_text_to_list(row["permissions"])
+    user_site_scope = _site_scope_text_to_list(row["site_scope"], default_all=True)
     return AdminUserRead(
         id=int(row["id"]),
         username=str(row["username"]),
         display_name=str(row["display_name"] or row["username"]),
         role=role,
         permissions=_effective_permissions(role, custom_permissions),
+        site_scope=user_site_scope,
         is_active=bool(row["is_active"]),
         created_at=_as_datetime(row["created_at"]),
         updated_at=_as_datetime(row["updated_at"]),
@@ -802,12 +891,19 @@ def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
 
 
 def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
+    user_scope = _site_scope_text_to_list(row.get("user_site_scope"), default_all=True)
+    token_scope_raw = row.get("token_site_scope")
+    token_scope = None
+    if token_scope_raw is not None:
+        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
+    effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
     return AdminTokenRead(
         token_id=int(row["token_id"]),
         user_id=int(row["user_id"]),
         username=str(row["username"]),
         label=str(row["label"] or ""),
         is_active=bool(row["is_active"]),
+        site_scope=effective_scope,
         expires_at=_as_optional_datetime(row["expires_at"]),
         last_used_at=_as_optional_datetime(row["last_used_at"]),
         created_at=_as_datetime(row["created_at"]),
@@ -844,6 +940,7 @@ def run_sla_escalation_job(
     site: str | None = None,
     dry_run: bool = False,
     limit: int = 200,
+    allowed_sites: list[str] | None = None,
     trigger: str = "manual",
 ) -> SlaEscalationRunResponse:
     started_at = datetime.now(timezone.utc)
@@ -859,6 +956,40 @@ def run_sla_escalation_job(
     )
     if site is not None:
         stmt = stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            finished_at = datetime.now(timezone.utc)
+            _write_job_run(
+                job_name="sla_escalation",
+                trigger=trigger,
+                status="success",
+                started_at=started_at,
+                finished_at=finished_at,
+                detail={
+                    "site": site,
+                    "dry_run": dry_run,
+                    "limit": limit,
+                    "allowed_sites": allowed_sites,
+                    "candidate_count": 0,
+                    "escalated_count": 0,
+                    "grace_minutes_by_site": {},
+                    "alert_dispatched": False,
+                    "alert_error": None,
+                    "alert_channels": [],
+                },
+            )
+            return SlaEscalationRunResponse(
+                checked_at=finished_at,
+                dry_run=dry_run,
+                site=site,
+                candidate_count=0,
+                escalated_count=0,
+                work_order_ids=[],
+                alert_dispatched=False,
+                alert_error=None,
+                alert_channels=[],
+            )
+        stmt = stmt.where(work_orders.c.site.in_(allowed_sites))
 
     grace_minutes_by_site: dict[str, int] = {}
 
@@ -914,6 +1045,7 @@ def run_sla_escalation_job(
             detail={
                 "site": site,
                 "dry_run": dry_run,
+                "allowed_sites": allowed_sites,
                 "candidate_count": len(ids),
                 "escalated_count": escalated_count,
                 "grace_minutes_by_site": grace_minutes_by_site,
@@ -935,6 +1067,7 @@ def run_sla_escalation_job(
             "site": site,
             "dry_run": dry_run,
             "limit": limit,
+            "allowed_sites": allowed_sites,
             "candidate_count": len(ids),
             "escalated_count": escalated_count,
             "grace_minutes_by_site": grace_minutes_by_site,
@@ -957,7 +1090,11 @@ def run_sla_escalation_job(
     )
 
 
-def build_monthly_report(month: str | None, site: str | None) -> MonthlyReportRead:
+def build_monthly_report(
+    month: str | None,
+    site: str | None,
+    allowed_sites: list[str] | None = None,
+) -> MonthlyReportRead:
     start, end, month_label = _month_window(month)
     now = datetime.now(timezone.utc)
 
@@ -974,6 +1111,24 @@ def build_monthly_report(month: str | None, site: str | None) -> MonthlyReportRe
     if site is not None:
         inspections_stmt = inspections_stmt.where(inspections.c.site == site)
         work_orders_stmt = work_orders_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return MonthlyReportRead(
+                month=month_label,
+                site=site,
+                generated_at=now,
+                inspections={"total": 0, "risk_counts": {"normal": 0, "warning": 0, "danger": 0}, "top_risk_flags": {}},
+                work_orders={
+                    "total": 0,
+                    "status_counts": {"open": 0, "acked": 0, "completed": 0, "canceled": 0},
+                    "escalated_count": 0,
+                    "overdue_open_count": 0,
+                    "completion_rate_percent": 0.0,
+                    "avg_resolution_hours": None,
+                },
+            )
+        inspections_stmt = inspections_stmt.where(inspections.c.site.in_(allowed_sites))
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.site.in_(allowed_sites))
 
     with get_conn() as conn:
         inspection_rows = conn.execute(inspections_stmt).mappings().all()
@@ -1041,6 +1196,7 @@ def build_dashboard_summary(
     site: str | None,
     days: int,
     recent_job_limit: int,
+    allowed_sites: list[str] | None = None,
 ) -> DashboardSummaryRead:
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=days)
@@ -1064,6 +1220,27 @@ def build_dashboard_summary(
         inspections_stmt = inspections_stmt.where(inspections.c.site == site)
         work_orders_window_stmt = work_orders_window_stmt.where(work_orders.c.site == site)
         work_orders_open_stmt = work_orders_open_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return DashboardSummaryRead(
+                generated_at=now,
+                site=site,
+                window_days=days,
+                inspections_total=0,
+                inspection_risk_counts={"normal": 0, "warning": 0, "danger": 0},
+                work_orders_total=0,
+                work_order_status_counts={"open": 0, "acked": 0, "completed": 0, "canceled": 0},
+                overdue_open_count=0,
+                escalated_open_count=0,
+                report_export_count=0,
+                sla_recent_runs=0,
+                sla_warning_runs=0,
+                sla_last_run_at=None,
+                recent_job_runs=[],
+            )
+        inspections_stmt = inspections_stmt.where(inspections.c.site.in_(allowed_sites))
+        work_orders_window_stmt = work_orders_window_stmt.where(work_orders.c.site.in_(allowed_sites))
+        work_orders_open_stmt = work_orders_open_stmt.where(work_orders.c.site.in_(allowed_sites))
 
     with get_conn() as conn:
         inspection_rows = conn.execute(inspections_stmt).mappings().all()
@@ -1237,6 +1414,7 @@ def auth_me(
         display_name=principal["display_name"],
         role=principal["role"],
         permissions=list(principal.get("permissions", [])),
+        site_scope=list(_principal_site_scope(principal)),
         is_legacy=bool(principal.get("is_legacy", False)),
     )
 
@@ -1259,6 +1437,7 @@ def create_admin_user(
 ) -> AdminUserRead:
     now = datetime.now(timezone.utc)
     permissions_text = _permission_list_to_text(payload.permissions)
+    site_scope_text = _site_scope_list_to_text(payload.site_scope)
     display_name = payload.display_name.strip() or payload.username
 
     with get_conn() as conn:
@@ -1274,6 +1453,7 @@ def create_admin_user(
                 display_name=display_name,
                 role=payload.role,
                 permissions=permissions_text,
+                site_scope=site_scope_text,
                 is_active=payload.is_active,
                 created_at=now,
                 updated_at=now,
@@ -1290,7 +1470,12 @@ def create_admin_user(
         action="admin_user_create",
         resource_type="admin_user",
         resource_id=str(model.id),
-        detail={"username": model.username, "role": model.role, "is_active": model.is_active},
+        detail={
+            "username": model.username,
+            "role": model.role,
+            "site_scope": model.site_scope,
+            "is_active": model.is_active,
+        },
     )
     return model
 
@@ -1349,6 +1534,8 @@ def issue_admin_token(
     token_plain = f"kaos_{secrets.token_urlsafe(24)}"
     token_hash = _hash_token(token_plain)
     expires_at = _as_optional_datetime(payload.expires_at)
+    token_scope_text: str | None = None
+    effective_scope: list[str] = [SITE_SCOPE_ALL]
 
     with get_conn() as conn:
         user_row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
@@ -1357,12 +1544,22 @@ def issue_admin_token(
         if not user_row["is_active"]:
             raise HTTPException(status_code=409, detail="Inactive user cannot receive token")
 
+        user_scope = _site_scope_text_to_list(user_row.get("site_scope"), default_all=True)
+        token_scope = None
+        if payload.site_scope is not None:
+            token_scope = _site_scope_text_to_list(payload.site_scope, default_all=True)
+            token_scope_text = _site_scope_list_to_text(token_scope)
+        effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+        if not effective_scope:
+            raise HTTPException(status_code=409, detail="Token site scope does not overlap user site scope")
+
         result = conn.execute(
             insert(admin_tokens).values(
                 user_id=user_id,
                 label=payload.label,
                 token_hash=token_hash,
                 is_active=True,
+                site_scope=token_scope_text,
                 expires_at=expires_at,
                 last_used_at=None,
                 created_at=now,
@@ -1375,6 +1572,7 @@ def issue_admin_token(
         user_id=user_id,
         label=payload.label,
         token=token_plain,
+        site_scope=effective_scope,
         expires_at=expires_at,
         created_at=now,
     )
@@ -1383,7 +1581,12 @@ def issue_admin_token(
         action="admin_token_issue",
         resource_type="admin_token",
         resource_id=str(token_id),
-        detail={"user_id": user_id, "label": payload.label, "expires_at": expires_at},
+        detail={
+            "user_id": user_id,
+            "label": payload.label,
+            "site_scope": effective_scope,
+            "expires_at": expires_at,
+        },
     )
     return response
 
@@ -1401,6 +1604,8 @@ def list_admin_tokens(
             admin_users.c.username.label("username"),
             admin_tokens.c.label.label("label"),
             admin_tokens.c.is_active.label("is_active"),
+            admin_tokens.c.site_scope.label("token_site_scope"),
+            admin_users.c.site_scope.label("user_site_scope"),
             admin_tokens.c.expires_at.label("expires_at"),
             admin_tokens.c.last_used_at.label("last_used_at"),
             admin_tokens.c.created_at.label("created_at"),
@@ -1462,16 +1667,24 @@ def get_dashboard_summary(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
     recent_job_limit: Annotated[int, Query(alias="job_limit", ge=1, le=50)] = 10,
-    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> DashboardSummaryRead:
-    return build_dashboard_summary(site=site, days=days, recent_job_limit=recent_job_limit)
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    return build_dashboard_summary(
+        site=site,
+        days=days,
+        recent_job_limit=recent_job_limit,
+        allowed_sites=allowed_sites,
+    )
 
 
 @app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)
 def get_sla_policy(
     site: Annotated[str | None, Query()] = None,
-    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> SlaPolicyRead:
+    _require_site_access(principal, site)
     policy, updated_at, source, resolved_site, policy_key = _load_sla_policy(site=site)
     return _sla_policy_to_model(
         policy_key=policy_key,
@@ -1488,6 +1701,10 @@ def set_sla_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> SlaPolicyRead:
+    if site is None:
+        _require_global_site_scope(principal)
+    else:
+        _require_site_access(principal, site)
     model = _upsert_sla_policy(payload, site=site)
     _write_audit_log(
         principal=principal,
@@ -1519,6 +1736,8 @@ def revoke_admin_token(
                 admin_users.c.username.label("username"),
                 admin_tokens.c.label.label("label"),
                 admin_tokens.c.is_active.label("is_active"),
+                admin_tokens.c.site_scope.label("token_site_scope"),
+                admin_users.c.site_scope.label("user_site_scope"),
                 admin_tokens.c.expires_at.label("expires_at"),
                 admin_tokens.c.last_used_at.label("last_used_at"),
                 admin_tokens.c.created_at.label("created_at"),
@@ -1545,6 +1764,8 @@ def revoke_admin_token(
                 admin_users.c.username.label("username"),
                 admin_tokens.c.label.label("label"),
                 admin_tokens.c.is_active.label("is_active"),
+                admin_tokens.c.site_scope.label("token_site_scope"),
+                admin_users.c.site_scope.label("user_site_scope"),
                 admin_tokens.c.expires_at.label("expires_at"),
                 admin_tokens.c.last_used_at.label("last_used_at"),
                 admin_tokens.c.created_at.label("created_at"),
@@ -1571,6 +1792,7 @@ def create_inspection(
     payload: InspectionCreate,
     principal: dict[str, Any] = Depends(require_permission("inspections:write")),
 ) -> InspectionRead:
+    _require_site_access(principal, payload.site)
     risk_level, flags = _calculate_risk(payload)
     now = datetime.now(timezone.utc)
     inspected_at = _to_utc(payload.inspected_at)
@@ -1622,16 +1844,25 @@ def create_inspection(
 
 @app.get("/api/inspections", response_model=list[InspectionRead])
 def list_inspections(
+    site: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    _: dict[str, Any] = Depends(require_permission("inspections:read")),
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
 ) -> list[InspectionRead]:
+    _require_site_access(principal, site)
+    stmt = select(inspections)
+    if site is not None:
+        stmt = stmt.where(inspections.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(inspections.c.site.in_(allowed_sites))
+
     with get_conn() as conn:
         rows = conn.execute(
-            select(inspections)
-            .order_by(inspections.c.inspected_at.desc(), inspections.c.id.desc())
-            .limit(limit)
-            .offset(offset)
+            stmt.order_by(inspections.c.inspected_at.desc(), inspections.c.id.desc()).limit(limit).offset(offset)
         ).mappings().all()
     return [_row_to_read_model(r) for r in rows]
 
@@ -1639,7 +1870,7 @@ def list_inspections(
 @app.get("/api/inspections/{inspection_id}", response_model=InspectionRead)
 def get_inspection(
     inspection_id: int,
-    _: dict[str, Any] = Depends(require_permission("inspections:read")),
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
 ) -> InspectionRead:
     with get_conn() as conn:
         row = conn.execute(
@@ -1647,13 +1878,14 @@ def get_inspection(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Inspection not found")
+    _require_site_access(principal, str(row["site"]))
     return _row_to_read_model(row)
 
 
 @app.get("/inspections/{inspection_id}/print", response_class=HTMLResponse)
 def print_inspection(
     inspection_id: int,
-    _: dict[str, Any] = Depends(require_permission("inspections:read")),
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
 ) -> str:
     with get_conn() as conn:
         row = conn.execute(
@@ -1661,6 +1893,7 @@ def print_inspection(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Inspection not found")
+    _require_site_access(principal, str(row["site"]))
 
     data = _row_to_read_model(row)
     return f"""
@@ -1708,6 +1941,7 @@ def create_work_order(
     payload: WorkOrderCreate,
     principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
+    _require_site_access(principal, payload.site)
     now = datetime.now(timezone.utc)
     due_at = _as_optional_datetime(payload.due_at)
     auto_due_applied = False
@@ -1770,13 +2004,20 @@ def list_work_orders(
     site: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     offset: Annotated[int, Query(ge=0)] = 0,
-    _: dict[str, Any] = Depends(require_permission("work_orders:read")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:read")),
 ) -> list[WorkOrderRead]:
+    _require_site_access(principal, site)
     stmt = select(work_orders)
     if status is not None:
         stmt = stmt.where(work_orders.c.status == status)
     if site is not None:
         stmt = stmt.where(work_orders.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(work_orders.c.site.in_(allowed_sites))
 
     stmt = stmt.order_by(work_orders.c.created_at.desc(), work_orders.c.id.desc()).limit(limit).offset(offset)
 
@@ -1788,7 +2029,7 @@ def list_work_orders(
 @app.get("/api/work-orders/{work_order_id}", response_model=WorkOrderRead)
 def get_work_order(
     work_order_id: int,
-    _: dict[str, Any] = Depends(require_permission("work_orders:read")),
+    principal: dict[str, Any] = Depends(require_permission("work_orders:read")),
 ) -> WorkOrderRead:
     with get_conn() as conn:
         row = conn.execute(
@@ -1796,6 +2037,7 @@ def get_work_order(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail="Work order not found")
+    _require_site_access(principal, str(row["site"]))
     return _row_to_work_order_model(row)
 
 
@@ -1812,6 +2054,7 @@ def ack_work_order(
         ).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
         if row["status"] == "completed":
             raise HTTPException(status_code=409, detail="Completed work order cannot be acked")
 
@@ -1856,6 +2099,7 @@ def complete_work_order(
         ).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
         if row["status"] == "completed":
             return _row_to_work_order_model(row)
 
@@ -1891,10 +2135,13 @@ def run_sla_escalation(
     payload: SlaEscalationRunRequest,
     principal: dict[str, Any] = Depends(require_permission("work_orders:escalate")),
 ) -> SlaEscalationRunResponse:
+    _require_site_access(principal, payload.site)
+    allowed_sites = _allowed_sites_for_principal(principal) if payload.site is None else None
     result = run_sla_escalation_job(
         site=payload.site,
         dry_run=payload.dry_run,
         limit=payload.limit,
+        allowed_sites=allowed_sites,
         trigger="api",
     )
     _write_audit_log(
@@ -1904,6 +2151,7 @@ def run_sla_escalation(
         resource_id="batch",
         detail={
             "site": payload.site,
+            "allowed_sites": allowed_sites,
             "dry_run": payload.dry_run,
             "limit": payload.limit,
             "candidate_count": result.candidate_count,
@@ -1919,9 +2167,11 @@ def run_sla_escalation(
 def get_monthly_report(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: dict[str, Any] = Depends(require_permission("reports:read")),
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> MonthlyReportRead:
-    return build_monthly_report(month=month, site=site)
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    return build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
 
 
 @app.get("/api/reports/monthly/csv")
@@ -1930,7 +2180,9 @@ def get_monthly_report_csv(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
-    report = build_monthly_report(month=month, site=site)
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
     csv_text = _build_monthly_report_csv(report)
     site_label = (report.site or "all").replace(" ", "_")
     file_name = f"monthly-report-{report.month}-{site_label}.csv"
@@ -1955,7 +2207,9 @@ def get_monthly_report_pdf(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
-    report = build_monthly_report(month=month, site=site)
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
     pdf_bytes = _build_monthly_report_pdf(report)
     site_label = (report.site or "all").replace(" ", "_")
     file_name = f"monthly-report-{report.month}-{site_label}.pdf"
@@ -1978,9 +2232,11 @@ def get_monthly_report_pdf(
 def print_monthly_report(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     site: Annotated[str | None, Query()] = None,
-    _: dict[str, Any] = Depends(require_permission("reports:read")),
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> str:
-    report = build_monthly_report(month=month, site=site)
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
     return f"""
 <!doctype html>
 <html lang="en">

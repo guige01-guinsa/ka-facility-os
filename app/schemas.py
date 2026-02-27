@@ -146,6 +146,7 @@ class AuthMeRead(BaseModel):
     display_name: str
     role: str
     permissions: list[str]
+    site_scope: list[str]
     is_legacy: bool = False
 
 
@@ -154,6 +155,7 @@ class AdminUserCreate(BaseModel):
     display_name: str = Field(default="", max_length=120)
     role: AdminRole = "operator"
     permissions: list[str] = Field(default_factory=list)
+    site_scope: list[str] = Field(default_factory=lambda: ["*"])
     is_active: bool = True
 
 
@@ -163,6 +165,7 @@ class AdminUserRead(BaseModel):
     display_name: str
     role: AdminRole
     permissions: list[str]
+    site_scope: list[str]
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -175,6 +178,7 @@ class AdminUserActiveUpdate(BaseModel):
 class AdminTokenIssueRequest(BaseModel):
     label: str = Field(default="default", min_length=1, max_length=120)
     expires_at: Optional[datetime] = None
+    site_scope: Optional[list[str]] = None
 
 
 class AdminTokenIssueResponse(BaseModel):
@@ -182,6 +186,7 @@ class AdminTokenIssueResponse(BaseModel):
     user_id: int
     label: str
     token: str
+    site_scope: list[str]
     expires_at: Optional[datetime] = None
     created_at: datetime
 
@@ -192,6 +197,7 @@ class AdminTokenRead(BaseModel):
     username: str
     label: str
     is_active: bool
+    site_scope: list[str]
     expires_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
     created_at: datetime

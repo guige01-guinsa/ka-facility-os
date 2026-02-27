@@ -54,6 +54,10 @@ Open:
 
 - Header key: `X-Admin-Token`
 - Tokens are stored as hash in DB (`admin_tokens`), linked to users (`admin_users`).
+- Site scope:
+  - `admin_users.site_scope`: allowed sites (`["*"]` means all sites)
+  - `admin_tokens.site_scope`: optional override (if omitted, inherits user scope)
+  - API access to inspections/work-orders/reports/escalation/dashboard is filtered by effective site scope
 - Role defaults:
   - `owner`: `*`
   - `manager`: inspections/work-orders/reports
@@ -75,7 +79,7 @@ Create admin user:
 curl -X POST "http://127.0.0.1:8001/api/admin/users" `
   -H "X-Admin-Token: <owner-token>" `
   -H "Content-Type: application/json" `
-  -d "{\"username\":\"ops_manager\",\"display_name\":\"Ops Manager\",\"role\":\"manager\",\"permissions\":[]}"
+  -d "{\"username\":\"ops_manager\",\"display_name\":\"Ops Manager\",\"role\":\"manager\",\"permissions\":[],\"site_scope\":[\"Site A\",\"Site B\"]}"
 ```
 
 Issue token for user:
@@ -84,7 +88,7 @@ Issue token for user:
 curl -X POST "http://127.0.0.1:8001/api/admin/users/2/tokens" `
   -H "X-Admin-Token: <owner-token>" `
   -H "Content-Type: application/json" `
-  -d "{\"label\":\"ops-manager-main\"}"
+  -d "{\"label\":\"ops-manager-main\",\"site_scope\":[\"Site A\"]}"
 ```
 
 ## SLA escalation automation

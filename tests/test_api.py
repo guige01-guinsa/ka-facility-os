@@ -85,6 +85,110 @@ def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     assert me3.status_code == 401
 
 
+def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "scope_manager_ci",
+            "display_name": "Scope Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["Scope Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+    assert created.json()["site_scope"] == ["Scope Site"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "scope-token"},
+    )
+    assert issued.status_code == 201
+    scoped_token = issued.json()["token"]
+    scoped_headers = {"X-Admin-Token": scoped_token}
+    assert issued.json()["site_scope"] == ["Scope Site"]
+
+    me = app_client.get("/api/auth/me", headers=scoped_headers)
+    assert me.status_code == 200
+    assert me.json()["site_scope"] == ["Scope Site"]
+
+    outside_due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    outside = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Outside Site WO",
+            "description": "owner created outside scope",
+            "site": "Outside Site",
+            "location": "B1",
+            "priority": "high",
+            "due_at": outside_due,
+        },
+    )
+    assert outside.status_code == 201
+    outside_id = outside.json()["id"]
+
+    allowed_due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    allowed = app_client.post(
+        "/api/work-orders",
+        headers=scoped_headers,
+        json={
+            "title": "Scoped Site WO",
+            "description": "scoped token",
+            "site": "Scope Site",
+            "location": "B1",
+            "priority": "high",
+            "due_at": allowed_due,
+        },
+    )
+    assert allowed.status_code == 201
+    allowed_id = allowed.json()["id"]
+
+    forbidden_create = app_client.post(
+        "/api/work-orders",
+        headers=scoped_headers,
+        json={
+            "title": "Forbidden create",
+            "description": "should fail",
+            "site": "Outside Site",
+            "location": "B1",
+            "priority": "high",
+            "due_at": allowed_due,
+        },
+    )
+    assert forbidden_create.status_code == 403
+
+    scoped_list = app_client.get("/api/work-orders", headers=scoped_headers)
+    assert scoped_list.status_code == 200
+    assert all(row["site"] == "Scope Site" for row in scoped_list.json())
+
+    outside_read = app_client.get(f"/api/work-orders/{outside_id}", headers=scoped_headers)
+    assert outside_read.status_code == 403
+
+    run = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=scoped_headers,
+        json={"dry_run": False, "limit": 200},
+    )
+    assert run.status_code == 200
+    escalated_ids = set(run.json()["work_order_ids"])
+    assert allowed_id in escalated_ids
+    assert outside_id not in escalated_ids
+
+    outside_after = app_client.get(f"/api/work-orders/{outside_id}", headers=_owner_headers())
+    assert outside_after.status_code == 200
+    assert outside_after.json()["is_escalated"] is False
+
+    forbidden_report = app_client.get(
+        "/api/reports/monthly?month=2099-01&site=Outside+Site",
+        headers=scoped_headers,
+    )
+    assert forbidden_report.status_code == 403
+
+
 def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
     due_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
     created = app_client.post(
