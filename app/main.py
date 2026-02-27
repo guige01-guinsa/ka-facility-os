@@ -5500,11 +5500,8 @@ def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
 
 
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
-    selected_tab = "adoption" if initial_tab == "adoption" else "system"
-    system_active = "active" if selected_tab == "system" else ""
-    adoption_active = "active" if selected_tab == "adoption" else ""
-    system_hidden = "false" if selected_tab == "system" else "true"
-    adoption_hidden = "false" if selected_tab == "adoption" else "true"
+    allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption"}
+    selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
     return f"""
 <!doctype html>
 <html lang="ko">
@@ -5567,6 +5564,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     }}
     .tab-head {{
       display: flex;
+      flex-wrap: wrap;
       gap: 0;
       border-bottom: 1px solid #e4edf8;
       background: #f8fbff;
@@ -5587,23 +5585,161 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       background: #ebfaf5;
       box-shadow: inset 0 -2px 0 #77c7b4;
     }}
+    .shell {{
+      padding: 12px;
+    }}
+    .auth-row {{
+      display: grid;
+      grid-template-columns: 1fr auto auto auto;
+      gap: 8px;
+      margin-bottom: 9px;
+    }}
+    .auth-row input, .filter-row input {{
+      width: 100%;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }}
+    .btn {{
+      border: 1px solid #97badf;
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: #f2f8ff;
+      color: #1f4e7c;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+      white-space: nowrap;
+    }}
+    .btn:hover {{ background: #e7f2ff; }}
+    .btn.run {{
+      border-color: #84cab6;
+      color: #0c614f;
+      background: #e9f8f2;
+    }}
+    .btn.run:hover {{ background: #e0f5ed; }}
+    .auth-state {{
+      margin-bottom: 12px;
+      border: 1px solid #c7d8ee;
+      border-radius: 10px;
+      background: #f2f8ff;
+      color: #264b70;
+      font-size: 12px;
+      padding: 7px 8px;
+    }}
     .tab-panel {{
       display: none;
-      padding: 12px;
       animation: fadeup 200ms ease-out both;
     }}
     .tab-panel.active {{ display: block; }}
-    .tab-frame {{
-      width: 100%;
-      min-height: 83vh;
-      border: 1px solid #d7e2f1;
-      border-radius: 12px;
-      background: #fff;
-    }}
     .tab-caption {{
-      margin: 0 0 9px;
+      margin: 0 0 10px;
       color: var(--muted);
       font-size: 13px;
+    }}
+    .filter-row {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .cards {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .card {{
+      border: 1px solid #d8e4f4;
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+    }}
+    .card .k {{ color: var(--muted); font-size: 12px; }}
+    .card .v {{ margin-top: 4px; font-size: 22px; font-weight: 800; }}
+    .box {{
+      border: 1px solid #d8e4f4;
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      margin-bottom: 10px;
+    }}
+    .box h3 {{ margin: 0 0 8px; font-size: 15px; color: #0b6150; }}
+    .table-wrap {{
+      overflow: auto;
+      border: 1px solid #dbe6f5;
+      border-radius: 10px;
+      background: #fff;
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 720px;
+      font-size: 12px;
+    }}
+    th, td {{
+      border-bottom: 1px solid #edf3fb;
+      text-align: left;
+      padding: 8px;
+      vertical-align: top;
+      word-break: break-word;
+    }}
+    th {{ background: #f7fbff; color: #274c75; }}
+    .empty {{
+      border: 1px dashed #c5d8ee;
+      border-radius: 10px;
+      padding: 14px;
+      text-align: center;
+      color: var(--muted);
+      background: #f8fbff;
+      font-size: 13px;
+    }}
+    .meta {{
+      margin-bottom: 10px;
+      border: 1px solid #c7d8ee;
+      border-radius: 10px;
+      background: #f2f8ff;
+      color: #264b70;
+      font-size: 12px;
+      padding: 7px 8px;
+    }}
+    .mini-links {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }}
+    .mini-links a {{
+      text-decoration: none;
+      border: 1px solid #bdd3eb;
+      border-radius: 8px;
+      padding: 5px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #235281;
+      background: #f3f8ff;
+    }}
+    .adopt-grid {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }}
+    .mono {{
+      margin: 8px 0 0;
+      max-height: 280px;
+      overflow: auto;
+      border: 1px solid #dbe6f5;
+      border-radius: 10px;
+      background: #f7fbff;
+      padding: 10px;
+      font-family: "Consolas", "D2Coding", "IBM Plex Mono", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #224a72;
     }}
     @keyframes fadeup {{
       from {{ opacity: 0; transform: translateY(8px); }}
@@ -5612,7 +5748,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     @media (max-width: 900px) {{
       .hero h1 {{ font-size: 21px; }}
       .tab-btn {{ font-size: 13px; padding: 10px; }}
-      .tab-frame {{ min-height: 78vh; }}
+      .auth-row {{ grid-template-columns: 1fr; }}
+      .filter-row {{ grid-template-columns: 1fr; }}
+      .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .adopt-grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -5620,41 +5759,235 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
   <div class="wrap">
     <header class="hero">
       <h1>시설관리시스템 메인</h1>
-      <p>기본 탭은 시설관리 운영 콘솔이며, 사용자 정착 계획/실행표는 별도 탭에서 동일하게 확인할 수 있습니다.</p>
+      <p>단일 셸 기반 운영 화면입니다. 탭 전환 시 같은 페이지에서 데이터를 즉시 조회하며, 링크 공유를 위해 탭 URL 상태도 유지합니다.</p>
       <div class="links">
         <a href="{html.escape(service_info.get("docs", "/docs"))}">Swagger Docs</a>
         <a href="/api/service-info">Service Info</a>
-        <a href="/web/console">Console Direct</a>
-        <a href="/web/adoption">Adoption Direct</a>
+        <a href="/web/console">Legacy Console</a>
+        <a href="/web/adoption">Legacy Adoption</a>
       </div>
     </header>
 
     <section class="tabs">
       <div class="tab-head" role="tablist" aria-label="Main tabs">
-        <button id="tabBtnSystem" class="tab-btn {system_active}" type="button" role="tab" aria-selected="{str(selected_tab == 'system').lower()}" data-tab="system">시설관리시스템</button>
-        <button id="tabBtnAdoption" class="tab-btn {adoption_active}" type="button" role="tab" aria-selected="{str(selected_tab == 'adoption').lower()}" data-tab="adoption">KA Facility OS 사용자 정착 계획</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="overview">운영요약</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="workorders">작업지시</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="inspections">점검</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="reports">월간리포트</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="adoption">사용자 정착 계획</button>
       </div>
-      <div id="panelSystem" class="tab-panel {system_active}" role="tabpanel" aria-hidden="{system_hidden}">
-        <p class="tab-caption">운영 데이터 조회/점검/작업지시/SLA/리포트는 이 탭에서 실행합니다.</p>
-        <iframe class="tab-frame" src="/web/console" title="Facility Console"></iframe>
-      </div>
-      <div id="panelAdoption" class="tab-panel {adoption_active}" role="tabpanel" aria-hidden="{adoption_hidden}">
-        <p class="tab-caption">주차별 실행표 + 교육자료 목차 + KPI + 일정관리(ICS/CSV)를 이 탭에서 확인합니다.</p>
-        <iframe class="tab-frame" src="/web/adoption" title="Adoption Plan"></iframe>
+      <div class="shell">
+        <div class="auth-row">
+          <input id="adminTokenInput" type="password" placeholder="X-Admin-Token 입력" autocomplete="off" />
+          <button id="saveTokenBtn" class="btn" type="button">토큰 저장</button>
+          <button id="testTokenBtn" class="btn run" type="button">권한 확인</button>
+          <button id="clearTokenBtn" class="btn" type="button">토큰 지우기</button>
+        </div>
+        <div id="authState" class="auth-state">토큰 상태: 없음</div>
+
+        <div id="panelOverview" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">SLA/점검/알림 상태를 한 화면에서 확인합니다.</p>
+          <div class="filter-row">
+            <input id="ovSite" placeholder="site (optional)" />
+            <input id="ovDays" value="30" placeholder="days (default 30)" />
+            <input id="ovJobLimit" value="10" placeholder="job_limit (default 10)" />
+            <input id="ovReserved" value="overview" disabled />
+            <button id="runOverviewBtn" class="btn run" type="button">요약 새로고침</button>
+          </div>
+          <div id="overviewMeta" class="meta">요약 데이터를 불러오세요.</div>
+          <div id="overviewCards" class="cards"></div>
+          <div class="box">
+            <h3>긴급 작업 상위 목록</h3>
+            <div id="overviewTopWorkOrders" class="empty">데이터 없음</div>
+          </div>
+        </div>
+
+        <div id="panelWorkorders" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">작업지시 조회/상태 추적을 수행합니다.</p>
+          <div class="filter-row">
+            <input id="woStatus" placeholder="status (open/acked/completed/...)" />
+            <input id="woSite" placeholder="site (optional)" />
+            <input id="woLimit" value="20" placeholder="limit" />
+            <input id="woOffset" value="0" placeholder="offset" />
+            <button id="runWorkordersBtn" class="btn run" type="button">작업지시 조회</button>
+          </div>
+          <div id="workordersMeta" class="meta">조회 전</div>
+          <div id="workordersTable" class="empty">데이터 없음</div>
+        </div>
+
+        <div id="panelInspections" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">점검 목록과 위험도 추이를 확인합니다.</p>
+          <div class="filter-row">
+            <input id="inSite" placeholder="site (optional)" />
+            <input id="inLimit" value="20" placeholder="limit" />
+            <input id="inOffset" value="0" placeholder="offset" />
+            <input id="inReserved" value="inspections" disabled />
+            <button id="runInspectionsBtn" class="btn run" type="button">점검 조회</button>
+          </div>
+          <div id="inspectionsMeta" class="meta">조회 전</div>
+          <div id="inspectionsTable" class="empty">데이터 없음</div>
+        </div>
+
+        <div id="panelReports" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">월간 리포트 집계와 출력 링크를 제공합니다.</p>
+          <div class="filter-row">
+            <input id="rpMonth" placeholder="month (YYYY-MM)" />
+            <input id="rpSite" placeholder="site (optional)" />
+            <input id="rpReserved1" value="reports" disabled />
+            <input id="rpReserved2" value="summary" disabled />
+            <button id="runReportsBtn" class="btn run" type="button">리포트 조회</button>
+          </div>
+          <div id="reportsMeta" class="meta">조회 전</div>
+          <div id="reportsSummary" class="cards"></div>
+          <div class="box">
+            <h3>리포트 다운로드/출력</h3>
+            <div class="mini-links">
+              <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">Print HTML</a>
+              <a id="reportCsvLink" href="/api/reports/monthly/csv" target="_blank" rel="noopener">CSV</a>
+              <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF</a>
+            </div>
+            <pre id="reportsRaw" class="mono">{{}}</pre>
+          </div>
+        </div>
+
+        <div id="panelAdoption" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">주차별 실행표 + 교육자료 + KPI + 일정관리 정보를 즉시 실행 가능한 형태로 확인합니다.</p>
+          <div class="filter-row">
+            <input id="adoptReserved1" value="public adoption plan" disabled />
+            <input id="adoptReserved2" value="training + kpi + schedule" disabled />
+            <input id="adoptReserved3" value="campaign ready" disabled />
+            <input id="adoptReserved4" value="weekly execution" disabled />
+            <button id="runAdoptionBtn" class="btn run" type="button">정착 계획 새로고침</button>
+          </div>
+          <div id="adoptionMeta" class="meta">조회 전</div>
+          <div id="adoptionTop" class="adopt-grid"></div>
+          <div class="box">
+            <h3>주차별 실행표</h3>
+            <div id="adoptionWeekly" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>교육자료 목차</h3>
+            <div id="adoptionTraining" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>KPI 대시보드 항목</h3>
+            <div id="adoptionKpi" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptScheduleCsv" href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
+              <a id="adoptScheduleIcs" href="/api/public/adoption-plan/schedule.ics">Schedule ICS</a>
+              <a href="/api/public/adoption-plan/campaign">Campaign Kit</a>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
   <script>
     (function() {{
+      const TOKEN_KEY = "kaFacilityMainToken";
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
       const panels = {{
-        system: document.getElementById("panelSystem"),
+        overview: document.getElementById("panelOverview"),
+        workorders: document.getElementById("panelWorkorders"),
+        inspections: document.getElementById("panelInspections"),
+        reports: document.getElementById("panelReports"),
         adoption: document.getElementById("panelAdoption")
       }};
       const url = new URL(window.location.href);
+      const authState = document.getElementById("authState");
+      const tokenInput = document.getElementById("adminTokenInput");
+      let authProfile = null;
+
+      function getToken() {{
+        return window.localStorage.getItem(TOKEN_KEY) || "";
+      }}
+
+      function setAuthState(text) {{
+        authState.textContent = text;
+      }}
+
+      function updateAuthStateFromToken() {{
+        const token = getToken();
+        if (!token) {{
+          setAuthState("토큰 상태: 없음");
+          return;
+        }}
+        if (authProfile) {{
+          const role = authProfile.role || "unknown";
+          const username = authProfile.username || "unknown";
+          setAuthState("토큰 상태: 저장됨 | 사용자: " + username + " | 역할: " + role);
+          return;
+        }}
+        setAuthState("토큰 상태: 저장됨 (연결 테스트 전)");
+      }}
+
+      function escapeHtml(value) {{
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#39;");
+      }}
+
+      function renderEmpty(text) {{
+        return '<div class="empty">' + escapeHtml(text) + "</div>";
+      }}
+
+      function renderTable(rows, columns) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("데이터가 없습니다.");
+        }}
+        const head = columns.map((c) => "<th>" + escapeHtml(c.label) + "</th>").join("");
+        const body = rows.map((row) => {{
+          const tds = columns.map((c) => {{
+            const value = c.render ? c.render(row[c.key], row) : row[c.key];
+            if (value === null || value === undefined) return "<td></td>";
+            return "<td>" + escapeHtml(value) + "</td>";
+          }}).join("");
+          return "<tr>" + tds + "</tr>";
+        }}).join("");
+        return '<div class="table-wrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + "</tbody></table></div>";
+      }}
+
+      function buildQuery(pairs) {{
+        const params = new URLSearchParams();
+        pairs.forEach((pair) => {{
+          const node = document.getElementById(pair.id);
+          if (!node) return;
+          const value = (node.value || "").trim();
+          if (value !== "") {{
+            params.set(pair.key, value);
+          }}
+        }});
+        return params.toString();
+      }}
+
+      async function fetchJson(path, requiresAuth) {{
+        const headers = {{ "Accept": "application/json" }};
+        if (requiresAuth) {{
+          const token = getToken();
+          if (!token) {{
+            throw new Error("인증 토큰이 없습니다.");
+          }}
+          headers["X-Admin-Token"] = token;
+        }}
+        const response = await fetch(path, {{ headers }});
+        const text = await response.text();
+        let data = null;
+        try {{
+          data = text ? JSON.parse(text) : null;
+        }} catch (err) {{
+          data = text;
+        }}
+        if (!response.ok) {{
+          throw new Error("HTTP " + response.status + " | " + (typeof data === "string" ? data : JSON.stringify(data)));
+        }}
+        return data;
+      }}
 
       function activate(tab, updateUrl) {{
-        const selected = tab === "adoption" ? "adoption" : "system";
+        const selected = panels[tab] ? tab : "overview";
         buttons.forEach((btn) => {{
           const active = btn.dataset.tab === selected;
           btn.classList.toggle("active", active);
@@ -5666,19 +5999,299 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           panel.setAttribute("aria-hidden", active ? "false" : "true");
         }});
         if (updateUrl) {{
-          if (selected === "adoption") {{
-            url.searchParams.set("tab", "adoption");
-          }} else {{
-            url.searchParams.delete("tab");
-          }}
+          url.searchParams.set("tab", selected);
           window.history.replaceState(null, "", url.pathname + (url.search || ""));
         }}
+      }}
+
+      async function runAuthMe() {{
+        try {{
+          authProfile = await fetchJson("/api/auth/me", true);
+          updateAuthStateFromToken();
+          return authProfile;
+        }} catch (err) {{
+          authProfile = null;
+          updateAuthStateFromToken();
+          throw err;
+        }}
+      }}
+
+      async function runOverview() {{
+        const query = buildQuery([
+          {{ key: "site", id: "ovSite" }},
+          {{ key: "days", id: "ovDays" }},
+          {{ key: "job_limit", id: "ovJobLimit" }}
+        ]);
+        const path = "/api/ops/dashboard/summary" + (query ? "?" + query : "");
+        const meta = document.getElementById("overviewMeta");
+        const cards = document.getElementById("overviewCards");
+        const topTable = document.getElementById("overviewTopWorkOrders");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          meta.textContent = "성공: " + path;
+          const stats = [
+            ["Open WO", data.open_work_orders],
+            ["Overdue WO", data.overdue_open_work_orders],
+            ["Due Soon", data.due_soon_work_orders],
+            ["Escalated", data.escalated_open_work_orders],
+            ["Unassigned High", data.unassigned_high_priority_open_work_orders],
+            ["New WO(Window)", data.new_work_orders_in_window],
+            ["High Risk Insp", data.high_risk_inspections_in_window],
+            ["Failed Alerts 24h", data.failed_alert_deliveries_24h]
+          ];
+          cards.innerHTML = stats.map((s) => (
+            '<div class="card"><div class="k">' + escapeHtml(s[0]) + '</div><div class="v">' + escapeHtml(s[1] || 0) + "</div></div>"
+          )).join("");
+          topTable.innerHTML = renderTable(
+            data.top_work_orders || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "priority", label: "Priority" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "urgency_score", label: "Score" }}
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          cards.innerHTML = "";
+          topTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runWorkorders() {{
+        const query = buildQuery([
+          {{ key: "status", id: "woStatus" }},
+          {{ key: "site", id: "woSite" }},
+          {{ key: "limit", id: "woLimit" }},
+          {{ key: "offset", id: "woOffset" }}
+        ]);
+        const path = "/api/work-orders" + (query ? "?" + query : "");
+        const meta = document.getElementById("workordersMeta");
+        const table = document.getElementById("workordersTable");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          meta.textContent = "성공: " + path + " | count=" + data.length;
+          table.innerHTML = renderTable(
+            data,
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "priority", label: "Priority" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "due_at", label: "Due At" }},
+              {{ key: "is_escalated", label: "Escalated" }}
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runInspections() {{
+        const query = buildQuery([
+          {{ key: "site", id: "inSite" }},
+          {{ key: "limit", id: "inLimit" }},
+          {{ key: "offset", id: "inOffset" }}
+        ]);
+        const path = "/api/inspections" + (query ? "?" + query : "");
+        const meta = document.getElementById("inspectionsMeta");
+        const table = document.getElementById("inspectionsTable");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          meta.textContent = "성공: " + path + " | count=" + data.length;
+          table.innerHTML = renderTable(
+            data,
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "location", label: "Location" }},
+              {{ key: "inspector", label: "Inspector" }},
+              {{ key: "risk_level", label: "Risk" }},
+              {{ key: "inspected_at", label: "Inspected At" }}
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      function updateReportLinks() {{
+        const query = buildQuery([
+          {{ key: "month", id: "rpMonth" }},
+          {{ key: "site", id: "rpSite" }}
+        ]);
+        const suffix = query ? "?" + query : "";
+        document.getElementById("reportPrintLink").setAttribute("href", "/reports/monthly/print" + suffix);
+        document.getElementById("reportCsvLink").setAttribute("href", "/api/reports/monthly/csv" + suffix);
+        document.getElementById("reportPdfLink").setAttribute("href", "/api/reports/monthly/pdf" + suffix);
+      }}
+
+      async function runReports() {{
+        const query = buildQuery([
+          {{ key: "month", id: "rpMonth" }},
+          {{ key: "site", id: "rpSite" }}
+        ]);
+        const path = "/api/reports/monthly" + (query ? "?" + query : "");
+        const meta = document.getElementById("reportsMeta");
+        const summary = document.getElementById("reportsSummary");
+        const raw = document.getElementById("reportsRaw");
+        updateReportLinks();
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          meta.textContent = "성공: " + path;
+          const summaryItems = [
+            ["Month", data.month],
+            ["Site", data.site || "ALL"],
+            ["Total Inspections", data.total_inspections],
+            ["High Risk Inspections", data.high_risk_inspections],
+            ["Total Work Orders", data.total_work_orders],
+            ["Escalated Work Orders", data.escalated_work_orders],
+            ["Completed Work Orders", data.completed_work_orders],
+            ["Overdue Open Work Orders", data.overdue_open_work_orders]
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1] ?? "") + "</div></div>"
+          )).join("");
+          raw.textContent = JSON.stringify(data, null, 2);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          raw.textContent = err.message;
+        }}
+      }}
+
+      async function runAdoption() {{
+        const meta = document.getElementById("adoptionMeta");
+        const top = document.getElementById("adoptionTop");
+        const weekly = document.getElementById("adoptionWeekly");
+        const training = document.getElementById("adoptionTraining");
+        const kpi = document.getElementById("adoptionKpi");
+        try {{
+          meta.textContent = "조회 중... /api/public/adoption-plan";
+          const data = await fetchJson("/api/public/adoption-plan", false);
+          meta.textContent = "성공: /api/public/adoption-plan";
+          const topItems = [
+            ["Start", data.timeline?.start_date || ""],
+            ["End", data.timeline?.end_date || ""],
+            ["Weeks", data.timeline?.duration_weeks || 0],
+            ["Training Modules", (data.training_outline || []).length],
+            ["KPI Items", (data.kpi_dashboard_items || []).length],
+            ["Next Review", data.schedule_management?.next_review_date || ""]
+          ];
+          top.innerHTML = topItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          weekly.innerHTML = renderTable(
+            data.weekly_execution || [],
+            [
+              {{ key: "week", label: "Week", render: (v) => "W" + String(v).padStart(2, "0") }},
+              {{ key: "phase", label: "Phase" }},
+              {{ key: "focus", label: "Focus" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "success_metric", label: "Success Metric" }}
+            ]
+          );
+          training.innerHTML = renderTable(
+            data.training_outline || [],
+            [
+              {{ key: "module", label: "Module" }},
+              {{ key: "audience", label: "Audience" }},
+              {{ key: "duration_min", label: "Duration(min)" }},
+              {{ key: "format", label: "Format" }}
+            ]
+          );
+          kpi.innerHTML = renderTable(
+            data.kpi_dashboard_items || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "name", label: "Name" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "frequency", label: "Frequency" }}
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          top.innerHTML = "";
+          weekly.innerHTML = renderEmpty(err.message);
+          training.innerHTML = renderEmpty(err.message);
+          kpi.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      function roleDefaultTab(profile) {{
+        const role = (profile && profile.role) || "";
+        if (role === "operator") return "workorders";
+        if (role === "auditor") return "reports";
+        return "overview";
       }}
 
       buttons.forEach((btn) => {{
         btn.addEventListener("click", () => activate(btn.dataset.tab, true));
       }});
+
+      document.getElementById("saveTokenBtn").addEventListener("click", () => {{
+        const token = (tokenInput.value || "").trim();
+        if (!token) {{
+          setAuthState("토큰 상태: 빈 값은 저장할 수 없습니다.");
+          return;
+        }}
+        window.localStorage.setItem(TOKEN_KEY, token);
+        authProfile = null;
+        updateAuthStateFromToken();
+      }});
+      document.getElementById("clearTokenBtn").addEventListener("click", () => {{
+        window.localStorage.removeItem(TOKEN_KEY);
+        tokenInput.value = "";
+        authProfile = null;
+        updateAuthStateFromToken();
+      }});
+      document.getElementById("testTokenBtn").addEventListener("click", async () => {{
+        try {{
+          const profile = await runAuthMe();
+          setAuthState("토큰 상태: 연결 성공 | 사용자: " + profile.username + " | 역할: " + profile.role);
+          if (!url.searchParams.get("tab")) {{
+            activate(roleDefaultTab(profile), true);
+          }}
+        }} catch (err) {{
+          setAuthState("토큰 상태: 연결 실패 | " + err.message);
+        }}
+      }});
+
+      document.getElementById("runOverviewBtn").addEventListener("click", runOverview);
+      document.getElementById("runWorkordersBtn").addEventListener("click", runWorkorders);
+      document.getElementById("runInspectionsBtn").addEventListener("click", runInspections);
+      document.getElementById("runReportsBtn").addEventListener("click", runReports);
+      document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
+      ["rpMonth", "rpSite"].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node) node.addEventListener("input", updateReportLinks);
+      }});
+
+      const savedToken = getToken();
+      if (savedToken) {{
+        tokenInput.value = savedToken;
+      }}
+      updateAuthStateFromToken();
+      updateReportLinks();
       activate("{selected_tab}", false);
+
+      runAdoption();
+      if (savedToken) {{
+        runAuthMe().then(() => runOverview()).catch(() => {{
+          setAuthState("토큰 상태: 저장되어 있으나 인증 실패. 토큰을 다시 확인하세요.");
+        }});
+      }}
     }})();
   </script>
 </body>

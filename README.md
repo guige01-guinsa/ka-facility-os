@@ -20,7 +20,7 @@ Open:
 ## API summary
 
 - Public
-  - `GET /` (browser tabbed main page; default tab is facility system, `?tab=adoption` opens adoption tab)
+  - `GET /` (browser single-shell tabbed main page; tabs: overview/work-orders/inspections/reports/adoption)
   - `GET /web/adoption` (browser HTML adoption/post-MVP portal page)
   - `GET /web/console` (browser HTML operations console for human-readable module views)
   - `GET /api/service-info` (machine-readable service endpoint map)

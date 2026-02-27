@@ -59,14 +59,17 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert root_html.status_code == 200
     assert root_html.headers["content-type"].startswith("text/html")
     assert "시설관리시스템 메인" in root_html.text
-    assert "시설관리시스템" in root_html.text
-    assert "KA Facility OS 사용자 정착 계획" in root_html.text
-    assert "src=\"/web/console\"" in root_html.text
-    assert "src=\"/web/adoption\"" in root_html.text
+    assert "운영요약" in root_html.text
+    assert "작업지시" in root_html.text
+    assert "점검" in root_html.text
+    assert "월간리포트" in root_html.text
+    assert "사용자 정착 계획" in root_html.text
+    assert "X-Admin-Token 입력" in root_html.text
+    assert "요약 새로고침" in root_html.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})
     assert root_html_adoption_tab.status_code == 200
-    assert "KA Facility OS 사용자 정착 계획" in root_html_adoption_tab.text
+    assert "사용자 정착 계획" in root_html_adoption_tab.text
 
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
