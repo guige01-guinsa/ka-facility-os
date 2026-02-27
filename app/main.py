@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import html
 import hmac
 import io
 import json
@@ -7,6 +8,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from datetime import datetime, timezone
 from datetime import timedelta
 from os import getenv
@@ -14,7 +16,7 @@ from typing import Annotated, Any, Callable
 from urllib import error as url_error
 from urllib import request as url_request
 
-from fastapi import Depends, FastAPI, HTTPException, Header, Query
+from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
@@ -136,6 +138,399 @@ SLA_PROPOSAL_STATUS_PENDING = "pending"
 SLA_PROPOSAL_STATUS_APPROVED = "approved"
 SLA_PROPOSAL_STATUS_REJECTED = "rejected"
 
+ADOPTION_PLAN_START = date(2026, 3, 2)
+ADOPTION_PLAN_END = date(2026, 5, 22)
+
+ADOPTION_WEEKLY_EXECUTION: list[dict[str, Any]] = [
+    {
+        "week": 1,
+        "start_date": "2026-03-02",
+        "end_date": "2026-03-06",
+        "phase": "Preparation",
+        "focus": "Role workflow lock",
+        "actions": [
+            "Lock 5 core workflows per role (owner/manager/operator/auditor).",
+            "Define first-7-day checklist and support channel.",
+            "Identify pilot users and site champions.",
+        ],
+        "deliverables": ["Workflow map v1", "First-7-day checklist v1", "Pilot roster"],
+        "owner": "PM + Ops Lead",
+        "success_metric": "Workflow agreement 100%",
+    },
+    {
+        "week": 2,
+        "start_date": "2026-03-09",
+        "end_date": "2026-03-13",
+        "phase": "Preparation",
+        "focus": "SOP and sandbox",
+        "actions": [
+            "Publish one-page SOP for each critical flow.",
+            "Prepare sandbox scenario for inspection/work-order/report.",
+            "Finalize FAQ top 20 from pilot dry-run.",
+        ],
+        "deliverables": ["SOP set v1", "Sandbox script", "FAQ v1"],
+        "owner": "Ops PM + QA",
+        "success_metric": "Pilot dry-run pass rate >= 90%",
+    },
+    {
+        "week": 3,
+        "start_date": "2026-03-16",
+        "end_date": "2026-03-20",
+        "phase": "Launch",
+        "focus": "Go-live onboarding",
+        "actions": [
+            "Run kickoff session (60m) + role-based workshop (20m x 4).",
+            "Enable in-app quick links to docs and handover brief.",
+            "Start daily office hours (15m) for first week.",
+        ],
+        "deliverables": ["Kickoff recording", "Role workshop deck", "Daily office-hour notes"],
+        "owner": "Product + Training Lead",
+        "success_metric": "First-week login rate >= 90%",
+    },
+    {
+        "week": 4,
+        "start_date": "2026-03-23",
+        "end_date": "2026-03-27",
+        "phase": "Adaptation",
+        "focus": "First success acceleration",
+        "actions": [
+            "Track first-success funnel and remove top 3 blockers.",
+            "Coach site champions on escalations and alerts.",
+            "Publish common mistakes and fast fixes.",
+        ],
+        "deliverables": ["TTV funnel report", "Champion coaching notes", "Mistake guide v1"],
+        "owner": "CS + Ops Lead",
+        "success_metric": "Median TTV <= 15 minutes",
+    },
+    {
+        "week": 5,
+        "start_date": "2026-03-30",
+        "end_date": "2026-04-03",
+        "phase": "Adaptation",
+        "focus": "Usage consistency",
+        "actions": [
+            "Launch weekly mission for each role.",
+            "Review overdue work-order behavior by site.",
+            "Tune help docs using real questions.",
+        ],
+        "deliverables": ["Weekly mission board", "Site behavior report", "Help docs v2"],
+        "owner": "Ops PM + Site Champions",
+        "success_metric": "2-week retention >= 65%",
+    },
+    {
+        "week": 6,
+        "start_date": "2026-04-06",
+        "end_date": "2026-04-10",
+        "phase": "Habit",
+        "focus": "Operational rhythm",
+        "actions": [
+            "Introduce Monday planning and Friday review cadence.",
+            "Use handover brief in daily operation meeting.",
+            "Audit token/role setup for each site.",
+        ],
+        "deliverables": ["Cadence template", "Handover routine checklist", "RBAC audit report"],
+        "owner": "Ops Manager",
+        "success_metric": "Weekly active rate >= 75%",
+    },
+    {
+        "week": 7,
+        "start_date": "2026-04-13",
+        "end_date": "2026-04-17",
+        "phase": "Habit",
+        "focus": "SLA quality",
+        "actions": [
+            "Review SLA overdue and escalation trends by site.",
+            "Run targeted coaching for low-performing teams.",
+            "Enforce alert retry follow-up policy.",
+        ],
+        "deliverables": ["SLA trend report", "Coaching action list", "Alert follow-up SOP"],
+        "owner": "Ops Lead + QA",
+        "success_metric": "SLA response time improves >= 10%",
+    },
+    {
+        "week": 8,
+        "start_date": "2026-04-20",
+        "end_date": "2026-04-24",
+        "phase": "Habit",
+        "focus": "Report discipline",
+        "actions": [
+            "Standardize monthly report generation and distribution.",
+            "Review data quality (missing fields, inconsistent statuses).",
+            "Close documentation gaps from previous weeks.",
+        ],
+        "deliverables": ["Reporting SOP v2", "Data quality dashboard", "Docs release note"],
+        "owner": "Auditor + Ops PM",
+        "success_metric": "Monthly report on-time rate >= 95%",
+    },
+    {
+        "week": 9,
+        "start_date": "2026-04-27",
+        "end_date": "2026-05-01",
+        "phase": "Autonomy",
+        "focus": "Shift to KPI operation",
+        "actions": [
+            "Switch management rhythm from training to KPI review.",
+            "Set red/yellow/green threshold per KPI.",
+            "Assign KPI owners and escalation path.",
+        ],
+        "deliverables": ["KPI threshold matrix", "Owner assignment table", "Escalation map"],
+        "owner": "Head of Ops",
+        "success_metric": "KPI owner coverage 100%",
+    },
+    {
+        "week": 10,
+        "start_date": "2026-05-04",
+        "end_date": "2026-05-08",
+        "phase": "Autonomy",
+        "focus": "Self-serve support",
+        "actions": [
+            "Convert repetitive support issues to self-serve guides.",
+            "Publish role-based troubleshooting runbook.",
+            "Reduce office-hour dependency.",
+        ],
+        "deliverables": ["Self-serve KB v1", "Troubleshooting runbook", "Support reduction report"],
+        "owner": "CS Lead",
+        "success_metric": "Support ticket repeat rate down >= 20%",
+    },
+    {
+        "week": 11,
+        "start_date": "2026-05-11",
+        "end_date": "2026-05-15",
+        "phase": "Autonomy",
+        "focus": "Scale readiness",
+        "actions": [
+            "Review process with expansion sites.",
+            "Validate onboarding package in a new-site simulation.",
+            "Finalize risk register and fallback playbook.",
+        ],
+        "deliverables": ["Scale checklist", "New-site simulation report", "Fallback playbook"],
+        "owner": "Program Manager",
+        "success_metric": "New-site simulation success >= 90%",
+    },
+    {
+        "week": 12,
+        "start_date": "2026-05-18",
+        "end_date": "2026-05-22",
+        "phase": "Autonomy",
+        "focus": "Closure and handoff",
+        "actions": [
+            "Run 8-week/12-week closure review.",
+            "Confirm independent execution ratio per core workflow.",
+            "Approve next-quarter operating plan.",
+        ],
+        "deliverables": ["Program closure report", "Independent execution scorecard", "Q3 roadmap draft"],
+        "owner": "Executive Sponsor + Ops Director",
+        "success_metric": "Independent execution >= 80%",
+    },
+]
+
+ADOPTION_TRAINING_OUTLINE: list[dict[str, Any]] = [
+    {
+        "module": "M1. Platform Quickstart",
+        "audience": "All roles",
+        "duration_min": 60,
+        "contents": ["Login and token basics", "Navigation and docs", "Daily routine overview"],
+        "format": "Live demo + guided practice",
+    },
+    {
+        "module": "M2. Inspection Execution",
+        "audience": "Operator, Manager",
+        "duration_min": 45,
+        "contents": ["Inspection entry", "Risk flag rules", "Print/export inspection report"],
+        "format": "Scenario lab",
+    },
+    {
+        "module": "M3. Work-Order Lifecycle",
+        "audience": "Operator, Manager",
+        "duration_min": 60,
+        "contents": ["Create/ack/complete/cancel/reopen", "Event timeline usage", "Comment standards"],
+        "format": "Hands-on lab",
+    },
+    {
+        "module": "M4. SLA and Escalation Ops",
+        "audience": "Manager, Owner",
+        "duration_min": 50,
+        "contents": ["SLA policy reading", "Escalation batch run", "Alert retry procedure"],
+        "format": "Live operation drill",
+    },
+    {
+        "module": "M5. Handover Brief and Daily Meeting",
+        "audience": "Manager, Owner",
+        "duration_min": 40,
+        "contents": ["Handover brief interpretation", "Top-work-order triage", "Action logging"],
+        "format": "Workshop",
+    },
+    {
+        "module": "M6. Monthly Audit Reporting",
+        "audience": "Auditor, Manager",
+        "duration_min": 45,
+        "contents": ["Monthly JSON read", "CSV/PDF export", "Distribution checklist"],
+        "format": "Report clinic",
+    },
+    {
+        "module": "M7. RBAC and Token Governance",
+        "audience": "Owner",
+        "duration_min": 35,
+        "contents": ["Role/site scope design", "Token issue/revoke policy", "Audit log review"],
+        "format": "Control workshop",
+    },
+    {
+        "module": "M8. Incident and Recovery Playbook",
+        "audience": "Owner, Manager",
+        "duration_min": 50,
+        "contents": ["Failed alert response", "SLA rollback process", "Escalation command center protocol"],
+        "format": "Table-top exercise",
+    },
+]
+
+ADOPTION_KPI_DASHBOARD_ITEMS: list[dict[str, str]] = [
+    {
+        "id": "KPI-01",
+        "name": "First-week login rate",
+        "formula": "users logged in at least once in first 7 days / activated users",
+        "target": ">= 90%",
+        "data_source": "Auth logs",
+        "frequency": "Daily",
+    },
+    {
+        "id": "KPI-02",
+        "name": "First success time (TTV)",
+        "formula": "median minutes from first login to first completed core action",
+        "target": "<= 15 min",
+        "data_source": "Audit logs + API events",
+        "frequency": "Daily",
+    },
+    {
+        "id": "KPI-03",
+        "name": "Weekly active rate",
+        "formula": "users active at least 3 days in week / total active users",
+        "target": ">= 75%",
+        "data_source": "Activity aggregation",
+        "frequency": "Weekly",
+    },
+    {
+        "id": "KPI-04",
+        "name": "Two-week retention",
+        "formula": "users active in week N and N+1 / users active in week N",
+        "target": ">= 65%",
+        "data_source": "Activity aggregation",
+        "frequency": "Weekly",
+    },
+    {
+        "id": "KPI-05",
+        "name": "SLA overdue response improvement",
+        "formula": "baseline overdue response time - current overdue response time",
+        "target": ">= 20% improvement",
+        "data_source": "Work-order + job-runs",
+        "frequency": "Weekly",
+    },
+    {
+        "id": "KPI-06",
+        "name": "Alert retry success rate",
+        "formula": "alert retries resolved / total alert retries",
+        "target": ">= 90%",
+        "data_source": "Alert deliveries",
+        "frequency": "Daily",
+    },
+    {
+        "id": "KPI-07",
+        "name": "Monthly report on-time rate",
+        "formula": "reports exported by due date / scheduled reports",
+        "target": ">= 95%",
+        "data_source": "Audit logs",
+        "frequency": "Monthly",
+    },
+    {
+        "id": "KPI-08",
+        "name": "Independent execution ratio",
+        "formula": "users completing all 5 core tasks without support / active users",
+        "target": ">= 80%",
+        "data_source": "Checklist + support records",
+        "frequency": "Bi-weekly",
+    },
+]
+
+ADOPTION_PROMOTION_PACK: list[dict[str, Any]] = [
+    {
+        "campaign": "Launch Week Wallboard",
+        "goal": "Create visibility and urgency for first-week adoption.",
+        "channels": ["Lobby display", "Team chat", "Email digest"],
+        "assets": [
+            "1-page launch poster",
+            "Daily KPI snapshot card",
+            "Top adopter spotlight template",
+        ],
+        "cadence": "Daily (week 1-2)",
+    },
+    {
+        "campaign": "Site Champion Story",
+        "goal": "Spread practical success cases across teams.",
+        "channels": ["Weekly townhall", "Internal newsletter"],
+        "assets": [
+            "Before/after process story template",
+            "3-minute demo recording format",
+            "Problem-solution-result summary card",
+        ],
+        "cadence": "Weekly",
+    },
+    {
+        "campaign": "Referral Sprint",
+        "goal": "Increase organic peer onboarding.",
+        "channels": ["Team challenge board", "Ops standup"],
+        "assets": [
+            "Invite checklist",
+            "Referral badge image set",
+            "Simple recognition leaderboard",
+        ],
+        "cadence": "Bi-weekly",
+    },
+]
+
+ADOPTION_EDUCATION_PACK: list[dict[str, Any]] = [
+    {
+        "track": "Starter Track",
+        "target_roles": ["Operator", "Manager"],
+        "components": ["Quickstart session", "Guided sandbox", "First-success checklist"],
+        "completion_rule": "Complete M1-M3 and pass hands-on check",
+        "duration_weeks": 2,
+    },
+    {
+        "track": "Control Track",
+        "target_roles": ["Owner", "Auditor"],
+        "components": ["RBAC governance lab", "Audit/report workshop", "Incident drill"],
+        "completion_rule": "Complete M6-M8 and submit governance quiz",
+        "duration_weeks": 3,
+    },
+    {
+        "track": "Champion Track",
+        "target_roles": ["Site Champion"],
+        "components": ["Coaching playbook", "Weekly blocker clinic", "KPI mentoring"],
+        "completion_rule": "Lead 2 weekly clinics and close top blocker",
+        "duration_weeks": 4,
+    },
+]
+
+ADOPTION_FUN_PACK: list[dict[str, Any]] = [
+    {
+        "program": "Weekly Mission Bingo",
+        "how_it_works": "Each role clears 5 mission tiles per week using real operations.",
+        "rewards": ["Mission badge", "Team shout-out"],
+        "anti_abuse_rule": "Only audited production actions count.",
+    },
+    {
+        "program": "SLA Rescue Challenge",
+        "how_it_works": "Teams compete to reduce overdue and failed-alert counts.",
+        "rewards": ["Rescue cup", "Priority coaching slot"],
+        "anti_abuse_rule": "Score uses net improvement and quality checks.",
+    },
+    {
+        "program": "Report Relay",
+        "how_it_works": "Cross-role relay to finish monthly report package on time.",
+        "rewards": ["Relay champion badge", "Quarterly recognition"],
+        "anti_abuse_rule": "Report must pass audit checklist for points.",
+    },
+]
+
 
 @asynccontextmanager
 async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -147,7 +542,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.17.0",
+    version="0.18.0",
     lifespan=app_lifespan,
 )
 
@@ -2382,8 +2777,7 @@ def _build_handover_brief_pdf(report: OpsHandoverBriefRead) -> bytes:
     return buf.getvalue()
 
 
-@app.get("/")
-def root() -> dict[str, str]:
+def _service_info_payload() -> dict[str, str]:
     return {
         "service": "ka-facility-os",
         "status": "running",
@@ -2404,6 +2798,10 @@ def root() -> dict[str, str]:
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
         "handover_brief_pdf_api": "/api/ops/handover/brief/pdf",
+        "public_adoption_plan_api": "/api/public/adoption-plan",
+        "public_adoption_schedule_csv_api": "/api/public/adoption-plan/schedule.csv",
+        "public_adoption_schedule_ics_api": "/api/public/adoption-plan/schedule.ics",
+        "public_adoption_campaign_api": "/api/public/adoption-plan/campaign",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
@@ -2411,6 +2809,548 @@ def root() -> dict[str, str]:
         "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
         "sla_policy_revisions_api": "/api/admin/policies/sla/revisions",
     }
+
+
+def _adoption_plan_payload() -> dict[str, Any]:
+    today = datetime.now(timezone.utc).date()
+    next_review_date = ADOPTION_PLAN_END.isoformat()
+    for item in ADOPTION_WEEKLY_EXECUTION:
+        week_end = date.fromisoformat(str(item["end_date"]))
+        if week_end >= today:
+            next_review_date = week_end.isoformat()
+            break
+
+    return {
+        "title": "KA Facility OS 사용자 정착 계획 (User Adoption Plan)",
+        "published_on": "2026-02-27",
+        "public": True,
+        "timeline": {
+            "start_date": ADOPTION_PLAN_START.isoformat(),
+            "end_date": ADOPTION_PLAN_END.isoformat(),
+            "duration_weeks": len(ADOPTION_WEEKLY_EXECUTION),
+        },
+        "weekly_execution": ADOPTION_WEEKLY_EXECUTION,
+        "training_outline": ADOPTION_TRAINING_OUTLINE,
+        "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
+        "campaign_kit": {
+            "promotion": ADOPTION_PROMOTION_PACK,
+            "education": ADOPTION_EDUCATION_PACK,
+            "fun": ADOPTION_FUN_PACK,
+        },
+        "schedule_management": {
+            "cadence": [
+                "Monday 09:00: Weekly kickoff and role mission assignment",
+                "Wednesday 16:00: Mid-week checkpoint and blocker removal",
+                "Friday 17:00: KPI review and next-week plan confirmation",
+            ],
+            "downloads": {
+                "schedule_csv": "/api/public/adoption-plan/schedule.csv",
+                "schedule_ics": "/api/public/adoption-plan/schedule.ics",
+            },
+            "next_review_date": next_review_date,
+        },
+    }
+
+
+def _build_adoption_plan_schedule_csv(plan: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "week",
+            "start_date",
+            "end_date",
+            "phase",
+            "focus",
+            "owner",
+            "actions",
+            "deliverables",
+            "success_metric",
+        ]
+    )
+    for item in plan.get("weekly_execution", []):
+        actions = " | ".join(item.get("actions", []))
+        deliverables = " | ".join(item.get("deliverables", []))
+        writer.writerow(
+            [
+                item.get("week", ""),
+                item.get("start_date", ""),
+                item.get("end_date", ""),
+                item.get("phase", ""),
+                item.get("focus", ""),
+                item.get("owner", ""),
+                actions,
+                deliverables,
+                item.get("success_metric", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _ics_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _build_adoption_plan_schedule_ics(plan: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+
+    for item in plan.get("weekly_execution", []):
+        week_num = int(item.get("week", 0))
+        week_start = date.fromisoformat(str(item.get("start_date")))
+        focus = str(item.get("focus", ""))
+        owner = str(item.get("owner", ""))
+        success_metric = str(item.get("success_metric", ""))
+        actions = [str(x) for x in item.get("actions", [])]
+
+        checkpoints = [
+            (0, "Kickoff"),
+            (2, "Checkpoint"),
+            (4, "Review"),
+        ]
+        for day_offset, checkpoint_label in checkpoints:
+            event_date = week_start + timedelta(days=day_offset)
+            event_end = event_date + timedelta(days=1)
+            summary = f"[W{week_num:02d}] {checkpoint_label} - {focus}"
+            description_lines = [
+                f"Phase: {item.get('phase', '')}",
+                f"Owner: {owner}",
+                f"Success metric: {success_metric}",
+            ]
+            for action in actions[:3]:
+                description_lines.append(f"- {action}")
+            description = "\n".join(description_lines)
+
+            uid = f"ka-facility-os-adoption-w{week_num:02d}-{checkpoint_label.lower()}@public"
+            events.extend(
+                [
+                    "BEGIN:VEVENT",
+                    f"UID:{uid}",
+                    f"DTSTAMP:{dtstamp}",
+                    f"DTSTART;VALUE=DATE:{event_date.strftime('%Y%m%d')}",
+                    f"DTEND;VALUE=DATE:{event_end.strftime('%Y%m%d')}",
+                    f"SUMMARY:{_ics_escape(summary)}",
+                    f"DESCRIPTION:{_ics_escape(description)}",
+                    "END:VEVENT",
+                ]
+            )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//User Adoption Plan//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
+def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, Any]) -> str:
+    weekly_rows: list[str] = []
+    for item in plan.get("weekly_execution", []):
+        actions_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("actions", []))
+        deliverables_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("deliverables", []))
+        weekly_rows.append(
+            f"""
+            <tr>
+              <td>W{int(item.get('week', 0)):02d}</td>
+              <td>{html.escape(str(item.get("start_date", "")))} ~ {html.escape(str(item.get("end_date", "")))}</td>
+              <td>{html.escape(str(item.get("phase", "")))}</td>
+              <td>{html.escape(str(item.get("focus", "")))}</td>
+              <td>{actions_html}</td>
+              <td>{deliverables_html}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("success_metric", "")))}</td>
+            </tr>
+            """
+        )
+
+    training_rows: list[str] = []
+    for module in plan.get("training_outline", []):
+        contents_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in module.get("contents", []))
+        training_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(module.get("module", "")))}</td>
+              <td>{html.escape(str(module.get("audience", "")))}</td>
+              <td>{html.escape(str(module.get("duration_min", "")))} min</td>
+              <td>{contents_html}</td>
+              <td>{html.escape(str(module.get("format", "")))}</td>
+            </tr>
+            """
+        )
+
+    kpi_rows: list[str] = []
+    for item in plan.get("kpi_dashboard_items", []):
+        kpi_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("name", "")))}</td>
+              <td>{html.escape(str(item.get("formula", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("data_source", "")))}</td>
+              <td>{html.escape(str(item.get("frequency", "")))}</td>
+            </tr>
+            """
+        )
+
+    campaign_kit = plan.get("campaign_kit", {})
+    promotion_cards: list[str] = []
+    for item in campaign_kit.get("promotion", []):
+        channels = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("channels", []))
+        assets = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("assets", []))
+        promotion_cards.append(
+            f"""
+            <div class="card">
+              <h3>{html.escape(str(item.get("campaign", "")))}</h3>
+              <p><strong>Goal:</strong> {html.escape(str(item.get("goal", "")))}</p>
+              <p><strong>Channels:</strong><br>{channels}</p>
+              <p><strong>Assets:</strong><br>{assets}</p>
+              <p><strong>Cadence:</strong> {html.escape(str(item.get("cadence", "")))}</p>
+            </div>
+            """
+        )
+
+    education_cards: list[str] = []
+    for item in campaign_kit.get("education", []):
+        components = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("components", []))
+        targets = ", ".join(html.escape(str(x)) for x in item.get("target_roles", []))
+        education_cards.append(
+            f"""
+            <div class="card">
+              <h3>{html.escape(str(item.get("track", "")))}</h3>
+              <p><strong>Target:</strong> {targets}</p>
+              <p><strong>Components:</strong><br>{components}</p>
+              <p><strong>Completion:</strong> {html.escape(str(item.get("completion_rule", "")))}</p>
+              <p><strong>Duration:</strong> {html.escape(str(item.get("duration_weeks", "")))} weeks</p>
+            </div>
+            """
+        )
+
+    fun_cards: list[str] = []
+    for item in campaign_kit.get("fun", []):
+        rewards = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("rewards", []))
+        fun_cards.append(
+            f"""
+            <div class="card">
+              <h3>{html.escape(str(item.get("program", "")))}</h3>
+              <p><strong>How it works:</strong> {html.escape(str(item.get("how_it_works", "")))}</p>
+              <p><strong>Rewards:</strong><br>{rewards}</p>
+              <p><strong>Anti-abuse:</strong> {html.escape(str(item.get("anti_abuse_rule", "")))}</p>
+            </div>
+            """
+        )
+
+    cadence_list = "".join(
+        f"<li>{html.escape(str(item))}</li>" for item in plan.get("schedule_management", {}).get("cadence", [])
+    )
+
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KA Facility OS - Public Main</title>
+  <style>
+    :root {{
+      --ink: #102a43;
+      --muted: #486581;
+      --line: #d9e2ec;
+      --brand: #0f766e;
+      --accent: #d9480f;
+      --card: #ffffff;
+      --bg: #f7fafc;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      font-family: "Noto Sans KR", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(1200px 500px at 10% -20%, #c7f9cc 0%, transparent 60%),
+        radial-gradient(900px 400px at 100% -10%, #ffe8cc 0%, transparent 60%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }}
+    .hero {{
+      border: 1px solid var(--line);
+      background: linear-gradient(135deg, #ffffff 0%, #f0fdfa 100%);
+      border-radius: 16px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(16, 42, 67, 0.08);
+    }}
+    .hero h1 {{ margin: 0 0 8px; font-size: 28px; }}
+    .hero p {{ margin: 0; color: var(--muted); }}
+    .pill {{
+      display: inline-block;
+      margin-top: 12px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #dcfce7;
+      border: 1px solid #86efac;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin-top: 16px;
+    }}
+    .card {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--card);
+      padding: 14px;
+    }}
+    .card h3 {{ margin: 0 0 8px; font-size: 14px; color: var(--brand); }}
+    .card p {{ margin: 0; font-size: 13px; color: var(--muted); }}
+    .section {{ margin-top: 24px; }}
+    .section h2 {{
+      margin: 0 0 10px;
+      font-size: 20px;
+      border-left: 4px solid var(--accent);
+      padding-left: 10px;
+    }}
+    .section .desc {{ margin: 0 0 12px; color: var(--muted); }}
+    .table-wrap {{
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+    }}
+    table {{
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 900px;
+      font-size: 13px;
+    }}
+    th, td {{
+      border-bottom: 1px solid #edf2f7;
+      padding: 10px;
+      vertical-align: top;
+      text-align: left;
+    }}
+    th {{
+      background: #f8fafc;
+      color: #1f2937;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }}
+    .links a {{
+      display: inline-block;
+      margin-right: 8px;
+      margin-bottom: 8px;
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      text-decoration: none;
+      color: var(--ink);
+      background: #fff;
+      font-size: 13px;
+      font-weight: 600;
+    }}
+    .links a:hover {{ border-color: var(--brand); color: var(--brand); }}
+    ul {{ margin: 8px 0 0 18px; }}
+    @media (max-width: 900px) {{
+      .grid {{ grid-template-columns: 1fr; }}
+      .hero h1 {{ font-size: 22px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <section class="hero">
+      <h1>KA Facility OS</h1>
+      <p>Public main page for service entry and adoption planning.</p>
+      <span class="pill">Public Plan Enabled</span>
+      <div class="grid">
+        <div class="card">
+          <h3>Service</h3>
+          <p>{html.escape(service_info.get("service", ""))}</p>
+        </div>
+        <div class="card">
+          <h3>Status</h3>
+          <p>{html.escape(service_info.get("status", ""))}</p>
+        </div>
+        <div class="card">
+          <h3>Docs</h3>
+          <p><a href="{html.escape(service_info.get("docs", "/docs"))}">{html.escape(service_info.get("docs", "/docs"))}</a></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>{html.escape(str(plan.get("title", "")))}</h2>
+      <p class="desc">
+        Timeline:
+        {html.escape(str(plan.get("timeline", {}).get("start_date", "")))}
+        ~
+        {html.escape(str(plan.get("timeline", {}).get("end_date", "")))}
+        |
+        Duration:
+        {html.escape(str(plan.get("timeline", {}).get("duration_weeks", "")))} weeks
+      </p>
+      <div class="links">
+        <a href="/api/public/adoption-plan">JSON API</a>
+        <a href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
+        <a href="/api/public/adoption-plan/schedule.ics">Calendar ICS</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Weekly Execution Table</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Week</th>
+              <th>Date</th>
+              <th>Phase</th>
+              <th>Focus</th>
+              <th>Actions</th>
+              <th>Deliverables</th>
+              <th>Owner</th>
+              <th>Success Metric</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(weekly_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Training Materials Outline</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Module</th>
+              <th>Audience</th>
+              <th>Duration</th>
+              <th>Contents</th>
+              <th>Format</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(training_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>KPI Dashboard Items</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Formula</th>
+              <th>Target</th>
+              <th>Data Source</th>
+              <th>Frequency</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(kpi_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Promotion + Education + Fun Kit</h2>
+      <p class="desc">A public-ready campaign kit to drive awareness, learning speed, and ongoing engagement.</p>
+      <h3>Promotion</h3>
+      <div class="grid">
+        {"".join(promotion_cards)}
+      </div>
+      <h3>Education</h3>
+      <div class="grid">
+        {"".join(education_cards)}
+      </div>
+      <h3>Fun</h3>
+      <div class="grid">
+        {"".join(fun_cards)}
+      </div>
+      <div class="links" style="margin-top: 12px;">
+        <a href="/api/public/adoption-plan/campaign">Campaign API</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Schedule Management</h2>
+      <p class="desc">Next review date: {html.escape(str(plan.get("schedule_management", {}).get("next_review_date", "")))}</p>
+      <div class="card">
+        <h3>Operating Cadence</h3>
+        <ul>{cadence_list}</ul>
+      </div>
+    </section>
+  </div>
+</body>
+</html>
+"""
+
+
+@app.get("/api/service-info")
+def service_info() -> dict[str, str]:
+    return _service_info_payload()
+
+
+@app.get("/", response_model=None)
+def root(request: Request) -> Any:
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" in accept:
+        return HTMLResponse(_build_public_main_page_html(_service_info_payload(), _adoption_plan_payload()))
+    return _service_info_payload()
+
+
+@app.get("/api/public/adoption-plan")
+def get_public_adoption_plan() -> dict[str, Any]:
+    return _adoption_plan_payload()
+
+
+@app.get("/api/public/adoption-plan/campaign")
+def get_public_adoption_campaign() -> dict[str, Any]:
+    plan = _adoption_plan_payload()
+    return {
+        "title": plan.get("title"),
+        "public": plan.get("public", True),
+        "campaign_kit": plan.get("campaign_kit", {}),
+    }
+
+
+@app.get("/api/public/adoption-plan/schedule.csv")
+def get_public_adoption_plan_schedule_csv() -> Response:
+    plan = _adoption_plan_payload()
+    csv_text = _build_adoption_plan_schedule_csv(plan)
+    file_name = f"ka-facility-os-adoption-plan-{ADOPTION_PLAN_START.isoformat()}-{ADOPTION_PLAN_END.isoformat()}.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/schedule.ics")
+def get_public_adoption_plan_schedule_ics() -> Response:
+    plan = _adoption_plan_payload()
+    ics_text = _build_adoption_plan_schedule_ics(plan)
+    file_name = f"ka-facility-os-adoption-plan-{ADOPTION_PLAN_START.isoformat()}-{ADOPTION_PLAN_END.isoformat()}.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/health")

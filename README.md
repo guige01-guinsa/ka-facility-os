@@ -19,6 +19,13 @@ Open:
 
 ## API summary
 
+- Public
+  - `GET /` (browser main page with public adoption plan section)
+  - `GET /api/service-info` (machine-readable service endpoint map)
+  - `GET /api/public/adoption-plan` (public JSON plan)
+  - `GET /api/public/adoption-plan/campaign` (public promotion/education/fun kit)
+  - `GET /api/public/adoption-plan/schedule.csv` (weekly execution schedule export)
+  - `GET /api/public/adoption-plan/schedule.ics` (calendar import for schedule management)
 - Auth/RBAC
   - `GET /api/auth/me`
   - `GET /api/admin/users` (permission: `admins:manage`)
@@ -137,6 +144,10 @@ Job monitoring:
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/pdf?window_hours=12&due_soon_hours=6&max_items=10`
+- `GET /api/public/adoption-plan`
+- `GET /api/public/adoption-plan/campaign`
+- `GET /api/public/adoption-plan/schedule.csv`
+- `GET /api/public/adoption-plan/schedule.ics`
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)

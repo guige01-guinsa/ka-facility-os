@@ -43,6 +43,56 @@ def test_health_and_meta(app_client: TestClient) -> None:
     assert meta.json()["env"] == "test"
 
 
+def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None:
+    root_json = app_client.get("/")
+    assert root_json.status_code == 200
+    assert root_json.json()["service"] == "ka-facility-os"
+    assert "public_adoption_plan_api" in root_json.json()
+    assert "public_adoption_campaign_api" in root_json.json()
+
+    root_html = app_client.get("/", headers={"Accept": "text/html"})
+    assert root_html.status_code == 200
+    assert root_html.headers["content-type"].startswith("text/html")
+    assert "KA Facility OS" in root_html.text
+    assert "User Adoption Plan" in root_html.text
+    assert "Promotion + Education + Fun Kit" in root_html.text
+
+    service_info = app_client.get("/api/service-info")
+    assert service_info.status_code == 200
+    assert service_info.json()["service"] == "ka-facility-os"
+
+    public_plan = app_client.get("/api/public/adoption-plan")
+    assert public_plan.status_code == 200
+    body = public_plan.json()
+    assert body["public"] is True
+    assert body["timeline"]["start_date"] == "2026-03-02"
+    assert body["timeline"]["end_date"] == "2026-05-22"
+    assert len(body["weekly_execution"]) == 12
+    assert len(body["training_outline"]) >= 8
+    assert len(body["kpi_dashboard_items"]) >= 8
+    assert "campaign_kit" in body
+    assert len(body["campaign_kit"]["promotion"]) >= 3
+    assert len(body["campaign_kit"]["education"]) >= 3
+    assert len(body["campaign_kit"]["fun"]) >= 3
+
+    campaign_api = app_client.get("/api/public/adoption-plan/campaign")
+    assert campaign_api.status_code == 200
+    campaign_body = campaign_api.json()
+    assert campaign_body["public"] is True
+    assert len(campaign_body["campaign_kit"]["promotion"]) >= 3
+
+    schedule_csv = app_client.get("/api/public/adoption-plan/schedule.csv")
+    assert schedule_csv.status_code == 200
+    assert schedule_csv.headers["content-type"].startswith("text/csv")
+    assert "week,start_date,end_date,phase,focus,owner" in schedule_csv.text
+
+    schedule_ics = app_client.get("/api/public/adoption-plan/schedule.ics")
+    assert schedule_ics.status_code == 200
+    assert schedule_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in schedule_ics.text
+    assert "SUMMARY:[W01] Kickoff - Role workflow lock" in schedule_ics.text
+
+
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())
     assert me.status_code == 200
