@@ -785,6 +785,53 @@ def test_ops_handover_brief_respects_site_scope(app_client: TestClient) -> None:
     assert forbidden.status_code == 403
 
 
+def test_ops_handover_brief_exports(app_client: TestClient) -> None:
+    now = datetime.now(timezone.utc)
+    seeded = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Export target",
+            "description": "for handover export",
+            "site": "Export Site",
+            "location": "B5",
+            "priority": "high",
+            "due_at": (now + timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert seeded.status_code == 201
+
+    csv_resp = app_client.get(
+        "/api/ops/handover/brief/csv?site=Export+Site&window_hours=24&due_soon_hours=4&max_items=10",
+        headers=_owner_headers(),
+    )
+    assert csv_resp.status_code == 200
+    assert csv_resp.headers["content-type"].startswith("text/csv")
+    assert "handover-brief-export_site" in csv_resp.headers.get("content-disposition", "").lower()
+    assert "open_work_orders" in csv_resp.text
+
+    pdf_resp = app_client.get(
+        "/api/ops/handover/brief/pdf?site=Export+Site&window_hours=24&due_soon_hours=4&max_items=10",
+        headers=_owner_headers(),
+    )
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"].startswith("application/pdf")
+
+    csv_logs = app_client.get(
+        "/api/admin/audit-logs?action=report_handover_export_csv",
+        headers=_owner_headers(),
+    )
+    assert csv_logs.status_code == 200
+    assert len(csv_logs.json()) >= 1
+
+    pdf_logs = app_client.get(
+        "/api/admin/audit-logs?action=report_handover_export_pdf",
+        headers=_owner_headers(),
+    )
+    assert pdf_logs.status_code == 200
+    assert len(pdf_logs.json()) >= 1
+
+
 def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert

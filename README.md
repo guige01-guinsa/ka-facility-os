@@ -41,6 +41,8 @@ Open:
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
+  - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
+  - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
@@ -133,6 +135,8 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
+- `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
+- `GET /api/ops/handover/brief/pdf?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)

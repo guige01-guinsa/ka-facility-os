@@ -147,7 +147,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.16.0",
+    version="0.17.0",
     lifespan=app_lifespan,
 )
 
@@ -1256,13 +1256,21 @@ def run_sla_escalation_job(
                 break
 
         escalated_count = 0
+        escalated_ids: list[int] = []
         if ids and not dry_run:
-            conn.execute(
-                update(work_orders)
-                .where(work_orders.c.id.in_(ids))
-                .values(is_escalated=True, updated_at=now)
-            )
-            escalated_count = len(ids)
+            for work_order_id in ids:
+                update_result = conn.execute(
+                    update(work_orders)
+                    .where(work_orders.c.id == work_order_id)
+                    .where(work_orders.c.status.in_(["open", "acked"]))
+                    .where(work_orders.c.is_escalated.is_(False))
+                    .values(is_escalated=True, updated_at=now)
+                )
+                if update_result.rowcount and update_result.rowcount > 0:
+                    escalated_ids.append(work_order_id)
+            escalated_count = len(escalated_ids)
+
+    work_order_ids = ids if dry_run else escalated_ids
 
     alert_dispatched = False
     alert_error: str | None = None
@@ -1272,7 +1280,7 @@ def run_sla_escalation_job(
             site=site,
             checked_at=now,
             escalated_count=escalated_count,
-            work_order_ids=ids,
+            work_order_ids=work_order_ids,
         )
         _write_audit_log(
             principal=None,
@@ -1290,7 +1298,7 @@ def run_sla_escalation_job(
                 "alert_dispatched": alert_dispatched,
                 "alert_error": alert_error,
                 "alert_channels": [channel.model_dump() for channel in alert_channels],
-                "work_order_ids": ids,
+                "work_order_ids": work_order_ids,
             },
         )
 
@@ -1321,7 +1329,7 @@ def run_sla_escalation_job(
         site=site,
         candidate_count=len(ids),
         escalated_count=escalated_count,
-        work_order_ids=ids,
+        work_order_ids=work_order_ids,
         alert_dispatched=alert_dispatched,
         alert_error=alert_error,
         alert_channels=alert_channels,
@@ -1370,6 +1378,22 @@ def run_alert_retry_job(
     with get_conn() as conn:
         for row in rows:
             delivery_id = int(row["id"])
+            current_status = str(row["status"] or "failed")
+            current_attempt_count = int(row["attempt_count"])
+            claim_result = conn.execute(
+                update(alert_deliveries)
+                .where(alert_deliveries.c.id == delivery_id)
+                .where(alert_deliveries.c.status == current_status)
+                .where(alert_deliveries.c.attempt_count == current_attempt_count)
+                .values(
+                    attempt_count=current_attempt_count + 1,
+                    last_attempt_at=now,
+                    updated_at=now,
+                )
+            )
+            if not claim_result.rowcount or claim_result.rowcount <= 0:
+                continue
+
             payload_raw = str(row["payload_json"] or "{}")
             try:
                 payload = json.loads(payload_raw)
@@ -1385,15 +1409,13 @@ def run_alert_retry_job(
                 timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
             )
             next_status = "success" if ok and err is None else ("warning" if ok else "failed")
-            next_attempt_count = int(row["attempt_count"]) + 1
             conn.execute(
                 update(alert_deliveries)
                 .where(alert_deliveries.c.id == delivery_id)
+                .where(alert_deliveries.c.attempt_count == (current_attempt_count + 1))
                 .values(
                     status=next_status,
                     error=err,
-                    attempt_count=next_attempt_count,
-                    last_attempt_at=now,
                     updated_at=now,
                 )
             )
@@ -2199,6 +2221,167 @@ def _build_monthly_report_pdf(report: MonthlyReportRead) -> bytes:
     return buf.getvalue()
 
 
+def _build_handover_brief_csv(report: OpsHandoverBriefRead) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["section", "key", "value"])
+    writer.writerow(["meta", "site", report.site or "ALL"])
+    writer.writerow(["meta", "generated_at", report.generated_at.isoformat()])
+    writer.writerow(["meta", "window_hours", report.window_hours])
+    writer.writerow(["meta", "due_soon_hours", report.due_soon_hours])
+
+    writer.writerow(["summary", "open_work_orders", report.open_work_orders])
+    writer.writerow(["summary", "overdue_open_work_orders", report.overdue_open_work_orders])
+    writer.writerow(["summary", "due_soon_work_orders", report.due_soon_work_orders])
+    writer.writerow(["summary", "escalated_open_work_orders", report.escalated_open_work_orders])
+    writer.writerow(
+        [
+            "summary",
+            "unassigned_high_priority_open_work_orders",
+            report.unassigned_high_priority_open_work_orders,
+        ]
+    )
+    writer.writerow(["summary", "new_work_orders_in_window", report.new_work_orders_in_window])
+    writer.writerow(["summary", "high_risk_inspections_in_window", report.high_risk_inspections_in_window])
+    writer.writerow(["summary", "failed_alert_deliveries_24h", report.failed_alert_deliveries_24h])
+
+    writer.writerow([])
+    writer.writerow(
+        [
+            "top_work_orders",
+            "id",
+            "site",
+            "location",
+            "title",
+            "priority",
+            "status",
+            "assignee",
+            "due_at",
+            "due_in_minutes",
+            "is_overdue",
+            "is_escalated",
+            "urgency_score",
+            "reasons",
+        ]
+    )
+    for item in report.top_work_orders:
+        writer.writerow(
+            [
+                "top_work_orders",
+                item.id,
+                item.site,
+                item.location,
+                item.title,
+                item.priority,
+                item.status,
+                item.assignee or "",
+                item.due_at.isoformat() if item.due_at is not None else "",
+                item.due_in_minutes if item.due_in_minutes is not None else "",
+                item.is_overdue,
+                item.is_escalated,
+                item.urgency_score,
+                ", ".join(item.reasons),
+            ]
+        )
+
+    writer.writerow([])
+    writer.writerow(
+        [
+            "recent_high_risk_inspections",
+            "id",
+            "site",
+            "location",
+            "inspector",
+            "risk_level",
+            "inspected_at",
+            "risk_flags",
+        ]
+    )
+    for item in report.recent_high_risk_inspections:
+        writer.writerow(
+            [
+                "recent_high_risk_inspections",
+                item.id,
+                item.site,
+                item.location,
+                item.inspector,
+                item.risk_level,
+                item.inspected_at.isoformat(),
+                ", ".join(item.risk_flags),
+            ]
+        )
+
+    writer.writerow([])
+    writer.writerow(["recommended_actions", "index", "action"])
+    for idx, action in enumerate(report.recommended_actions, start=1):
+        writer.writerow(["recommended_actions", idx, action])
+
+    return out.getvalue()
+
+
+def _build_handover_brief_pdf(report: OpsHandoverBriefRead) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF generator dependency not installed") from exc
+
+    lines = [
+        "Ops Handover Brief",
+        "",
+        f"Site: {report.site or 'ALL'}",
+        f"Generated At: {report.generated_at.isoformat()}",
+        f"Window Hours: {report.window_hours}",
+        f"Due Soon Hours: {report.due_soon_hours}",
+        "",
+        "[Summary]",
+        f"Open Work Orders: {report.open_work_orders}",
+        f"Overdue Open Work Orders: {report.overdue_open_work_orders}",
+        f"Due Soon Work Orders: {report.due_soon_work_orders}",
+        f"Escalated Open Work Orders: {report.escalated_open_work_orders}",
+        f"Unassigned High Priority Open Work Orders: {report.unassigned_high_priority_open_work_orders}",
+        f"New Work Orders In Window: {report.new_work_orders_in_window}",
+        f"High Risk Inspections In Window: {report.high_risk_inspections_in_window}",
+        f"Failed Alert Deliveries 24h: {report.failed_alert_deliveries_24h}",
+        "",
+        "[Top Work Orders]",
+    ]
+    for item in report.top_work_orders:
+        due_text = item.due_at.isoformat() if item.due_at is not None else "-"
+        lines.append(
+            f"#{item.id} {item.priority}/{item.status} score={item.urgency_score} site={item.site} due={due_text}"
+        )
+        lines.append(f"  {item.title[:120]}")
+
+    lines.append("")
+    lines.append("[Recent High Risk Inspections]")
+    for item in report.recent_high_risk_inspections:
+        lines.append(f"#{item.id} {item.risk_level} site={item.site} inspected_at={item.inspected_at.isoformat()}")
+        if item.risk_flags:
+            lines.append(f"  flags={', '.join(item.risk_flags)[:140]}")
+
+    lines.append("")
+    lines.append("[Recommended Actions]")
+    for idx, action in enumerate(report.recommended_actions, start=1):
+        lines.append(f"{idx}. {action}")
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    _, height = A4
+    margin_left = 36
+    y = height - 40
+    pdf.setFont("Helvetica", 10)
+    for line in lines:
+        if y < 40:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 10)
+            y = height - 40
+        pdf.drawString(margin_left, y, line[:180])
+        y -= 14
+    pdf.save()
+    return buf.getvalue()
+
+
 @app.get("/")
 def root() -> dict[str, str]:
     return {
@@ -2219,6 +2402,8 @@ def root() -> dict[str, str]:
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
         "handover_brief_api": "/api/ops/handover/brief",
+        "handover_brief_csv_api": "/api/ops/handover/brief/csv",
+        "handover_brief_pdf_api": "/api/ops/handover/brief/pdf",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
@@ -2558,6 +2743,88 @@ def get_ops_handover_brief(
         },
     )
     return report
+
+
+@app.get("/api/ops/handover/brief/csv")
+def get_ops_handover_brief_csv(
+    site: Annotated[str | None, Query()] = None,
+    window_hours: Annotated[int, Query(ge=1, le=168)] = 12,
+    due_soon_hours: Annotated[int, Query(ge=1, le=72)] = 6,
+    max_items: Annotated[int, Query(ge=1, le=50)] = 10,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = build_ops_handover_brief(
+        site=site,
+        window_hours=window_hours,
+        due_soon_hours=due_soon_hours,
+        max_items=max_items,
+        allowed_sites=allowed_sites,
+    )
+    csv_text = _build_handover_brief_csv(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    ts = report.generated_at.strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"handover-brief-{site_label}-{ts}.csv"
+    response = Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+    _write_audit_log(
+        principal=principal,
+        action="report_handover_export_csv",
+        resource_type="report",
+        resource_id=f"{report.site or 'ALL'}:{ts}",
+        detail={
+            "site": site,
+            "window_hours": window_hours,
+            "due_soon_hours": due_soon_hours,
+            "max_items": max_items,
+        },
+    )
+    return response
+
+
+@app.get("/api/ops/handover/brief/pdf")
+def get_ops_handover_brief_pdf(
+    site: Annotated[str | None, Query()] = None,
+    window_hours: Annotated[int, Query(ge=1, le=168)] = 12,
+    due_soon_hours: Annotated[int, Query(ge=1, le=72)] = 6,
+    max_items: Annotated[int, Query(ge=1, le=50)] = 10,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = build_ops_handover_brief(
+        site=site,
+        window_hours=window_hours,
+        due_soon_hours=due_soon_hours,
+        max_items=max_items,
+        allowed_sites=allowed_sites,
+    )
+    pdf_bytes = _build_handover_brief_pdf(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    ts = report.generated_at.strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"handover-brief-{site_label}-{ts}.pdf"
+    response = Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+    _write_audit_log(
+        principal=principal,
+        action="report_handover_export_pdf",
+        resource_type="report",
+        resource_id=f"{report.site or 'ALL'}:{ts}",
+        detail={
+            "site": site,
+            "window_hours": window_hours,
+            "due_soon_hours": due_soon_hours,
+            "max_items": max_items,
+        },
+    )
+    return response
 
 
 @app.get("/api/ops/alerts/deliveries", response_model=list[AlertDeliveryRead])
