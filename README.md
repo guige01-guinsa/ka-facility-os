@@ -43,6 +43,10 @@ Open:
   - `GET /api/work-orders/{id}` (`work_orders:read`)
   - `PATCH /api/work-orders/{id}/ack` (`work_orders:write`)
   - `PATCH /api/work-orders/{id}/complete` (`work_orders:write`)
+  - `PATCH /api/work-orders/{id}/cancel` (`work_orders:write`)
+  - `PATCH /api/work-orders/{id}/reopen` (`work_orders:write`)
+  - `POST /api/work-orders/{id}/comments` (`work_orders:write`)
+  - `GET /api/work-orders/{id}/events` (`work_orders:read`)
   - `POST /api/work-orders/escalations/run` (`work_orders:escalate`)
 - Monthly audit reports
   - `GET /api/reports/monthly?month=YYYY-MM&site=...` (`reports:read`)
@@ -123,6 +127,16 @@ SLA policy (rule engine):
   - `default_due_hours`: per-priority default due time (applied when `due_at` is omitted on work-order create)
   - `escalation_grace_minutes`: additional grace before escalation batch marks overdue work orders as escalated
 - global escalation run (`site` omitted) resolves grace per work-order site
+
+## Work-order workflow
+
+- Status transition rules:
+  - `open -> acked|completed|canceled`
+  - `acked -> completed|canceled`
+  - `completed -> open` (reopen)
+  - `canceled -> open` (reopen)
+- Timeline events are stored in `work_order_events` and can be queried via:
+  - `GET /api/work-orders/{id}/events`
 
 ## Audit logs
 

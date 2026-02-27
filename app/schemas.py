@@ -71,6 +71,18 @@ class WorkOrderComplete(BaseModel):
     resolution_notes: str = ""
 
 
+class WorkOrderCancel(BaseModel):
+    reason: str = ""
+
+
+class WorkOrderReopen(BaseModel):
+    reason: str = ""
+
+
+class WorkOrderCommentCreate(BaseModel):
+    comment: str = Field(min_length=1, max_length=2000)
+
+
 class WorkOrderRead(BaseModel):
     id: int
     title: str
@@ -90,6 +102,18 @@ class WorkOrderRead(BaseModel):
     is_overdue: bool
     created_at: datetime
     updated_at: datetime
+
+
+class WorkOrderEventRead(BaseModel):
+    id: int
+    work_order_id: int
+    event_type: str
+    actor_username: str
+    from_status: Optional[WorkOrderStatus] = None
+    to_status: Optional[WorkOrderStatus] = None
+    note: str
+    detail: dict[str, Any]
+    created_at: datetime
 
 
 class SlaEscalationRunRequest(BaseModel):

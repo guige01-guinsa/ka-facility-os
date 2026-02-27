@@ -78,6 +78,20 @@ work_orders = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+work_order_events = Table(
+    "work_order_events",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("work_order_id", Integer, nullable=False),
+    Column("event_type", String(40), nullable=False),
+    Column("actor_username", String(80), nullable=False, default="system"),
+    Column("from_status", String(20), nullable=True),
+    Column("to_status", String(20), nullable=True),
+    Column("note", Text, nullable=False, default=""),
+    Column("detail_json", Text, nullable=False, default="{}"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 admin_users = Table(
     "admin_users",
     metadata,

@@ -29,6 +29,7 @@ from app.database import (
     inspections,
     job_runs,
     sla_policies,
+    work_order_events,
     work_orders,
 )
 from app.schemas import (
@@ -51,8 +52,12 @@ from app.schemas import (
     SlaPolicyRead,
     SlaPolicyUpdate,
     WorkOrderAck,
+    WorkOrderCancel,
+    WorkOrderCommentCreate,
     WorkOrderComplete,
     WorkOrderCreate,
+    WorkOrderEventRead,
+    WorkOrderReopen,
     WorkOrderRead,
 )
 
@@ -103,6 +108,12 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "critical": 2,
 }
 SITE_SCOPE_ALL = "*"
+WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
+    "open": {"acked", "completed", "canceled"},
+    "acked": {"completed", "canceled"},
+    "completed": {"open"},
+    "canceled": {"open"},
+}
 
 
 @asynccontextmanager
@@ -115,7 +126,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.9.0",
+    version="0.10.0",
     lifespan=app_lifespan,
 )
 
@@ -935,6 +946,59 @@ def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
     )
 
 
+def _validate_work_order_transition(current_status: str, next_status: str) -> None:
+    allowed = WORK_ORDER_TRANSITIONS.get(current_status, set())
+    if next_status not in allowed:
+        raise HTTPException(status_code=409, detail=f"Invalid status transition: {current_status} -> {next_status}")
+
+
+def _append_work_order_event(
+    conn: Any,
+    *,
+    work_order_id: int,
+    event_type: str,
+    actor_username: str,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    note: str = "",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    conn.execute(
+        insert(work_order_events).values(
+            work_order_id=work_order_id,
+            event_type=event_type,
+            actor_username=actor_username,
+            from_status=from_status,
+            to_status=to_status,
+            note=note,
+            detail_json=_to_json_text(detail),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+
+def _row_to_work_order_event_model(row: dict[str, Any]) -> WorkOrderEventRead:
+    raw = str(row["detail_json"] or "{}")
+    try:
+        detail = json.loads(raw)
+    except json.JSONDecodeError:
+        detail = {"raw": raw}
+    if not isinstance(detail, dict):
+        detail = {"value": detail}
+
+    return WorkOrderEventRead(
+        id=int(row["id"]),
+        work_order_id=int(row["work_order_id"]),
+        event_type=str(row["event_type"]),
+        actor_username=str(row["actor_username"]),
+        from_status=row["from_status"],
+        to_status=row["to_status"],
+        note=str(row["note"] or ""),
+        detail=detail,
+        created_at=_as_datetime(row["created_at"]),
+    )
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -1380,6 +1444,7 @@ def root() -> dict[str, str]:
         "docs": "/docs",
         "inspection_api": "/api/inspections",
         "work_order_api": "/api/work-orders",
+        "work_order_events_api": "/api/work-orders/{id}/events",
         "escalation_api": "/api/work-orders/escalations/run",
         "monthly_report_api": "/api/reports/monthly",
         "monthly_report_csv_api": "/api/reports/monthly/csv",
@@ -1943,6 +2008,7 @@ def create_work_order(
 ) -> WorkOrderRead:
     _require_site_access(principal, payload.site)
     now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
     due_at = _as_optional_datetime(payload.due_at)
     auto_due_applied = False
     policy_source = "manual"
@@ -1975,6 +2041,16 @@ def create_work_order(
             )
         )
         work_order_id = result.inserted_primary_key[0]
+        _append_work_order_event(
+            conn,
+            work_order_id=int(work_order_id),
+            event_type="created",
+            actor_username=actor_username,
+            from_status=None,
+            to_status="open",
+            note=payload.description or "",
+            detail={"priority": payload.priority, "assignee": payload.assignee, "reporter": payload.reporter},
+        )
         row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
         ).mappings().first()
@@ -2048,6 +2124,7 @@ def ack_work_order(
     principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
     with get_conn() as conn:
         row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -2055,8 +2132,7 @@ def ack_work_order(
         if row is None:
             raise HTTPException(status_code=404, detail="Work order not found")
         _require_site_access(principal, str(row["site"]))
-        if row["status"] == "completed":
-            raise HTTPException(status_code=409, detail="Completed work order cannot be acked")
+        _validate_work_order_transition(str(row["status"]), "acked")
 
         assignee = payload.assignee if payload.assignee is not None else row["assignee"]
         conn.execute(
@@ -2068,6 +2144,16 @@ def ack_work_order(
                 acknowledged_at=now,
                 updated_at=now,
             )
+        )
+        _append_work_order_event(
+            conn,
+            work_order_id=work_order_id,
+            event_type="status_changed",
+            actor_username=actor_username,
+            from_status=str(row["status"]),
+            to_status="acked",
+            note="Acknowledged work order",
+            detail={"assignee": assignee},
         )
         updated_row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -2093,6 +2179,7 @@ def complete_work_order(
     principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
 ) -> WorkOrderRead:
     now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
     with get_conn() as conn:
         row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -2102,6 +2189,7 @@ def complete_work_order(
         _require_site_access(principal, str(row["site"]))
         if row["status"] == "completed":
             return _row_to_work_order_model(row)
+        _validate_work_order_transition(str(row["status"]), "completed")
 
         conn.execute(
             update(work_orders)
@@ -2112,6 +2200,16 @@ def complete_work_order(
                 resolution_notes=payload.resolution_notes,
                 updated_at=now,
             )
+        )
+        _append_work_order_event(
+            conn,
+            work_order_id=work_order_id,
+            event_type="status_changed",
+            actor_username=actor_username,
+            from_status=str(row["status"]),
+            to_status="completed",
+            note=payload.resolution_notes,
+            detail={"resolution_notes": payload.resolution_notes},
         )
         updated_row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -2128,6 +2226,184 @@ def complete_work_order(
         detail={"status": model.status},
     )
     return model
+
+
+@app.patch("/api/work-orders/{work_order_id}/cancel", response_model=WorkOrderRead)
+def cancel_work_order(
+    work_order_id: int,
+    payload: WorkOrderCancel,
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
+) -> WorkOrderRead:
+    now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
+        _validate_work_order_transition(str(row["status"]), "canceled")
+
+        conn.execute(
+            update(work_orders)
+            .where(work_orders.c.id == work_order_id)
+            .values(
+                status="canceled",
+                resolution_notes=payload.reason or row["resolution_notes"] or "",
+                updated_at=now,
+            )
+        )
+        _append_work_order_event(
+            conn,
+            work_order_id=work_order_id,
+            event_type="status_changed",
+            actor_username=actor_username,
+            from_status=str(row["status"]),
+            to_status="canceled",
+            note=payload.reason or "Canceled work order",
+            detail={"reason": payload.reason},
+        )
+        updated_row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to cancel work order")
+    model = _row_to_work_order_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_cancel",
+        resource_type="work_order",
+        resource_id=str(model.id),
+        detail={"status": model.status, "reason": payload.reason},
+    )
+    return model
+
+
+@app.patch("/api/work-orders/{work_order_id}/reopen", response_model=WorkOrderRead)
+def reopen_work_order(
+    work_order_id: int,
+    payload: WorkOrderReopen,
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
+) -> WorkOrderRead:
+    now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
+        _validate_work_order_transition(str(row["status"]), "open")
+
+        conn.execute(
+            update(work_orders)
+            .where(work_orders.c.id == work_order_id)
+            .values(
+                status="open",
+                completed_at=None,
+                acknowledged_at=None,
+                is_escalated=False,
+                updated_at=now,
+            )
+        )
+        _append_work_order_event(
+            conn,
+            work_order_id=work_order_id,
+            event_type="status_changed",
+            actor_username=actor_username,
+            from_status=str(row["status"]),
+            to_status="open",
+            note=payload.reason or "Reopened work order",
+            detail={"reason": payload.reason},
+        )
+        updated_row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to reopen work order")
+    model = _row_to_work_order_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_reopen",
+        resource_type="work_order",
+        resource_id=str(model.id),
+        detail={"status": model.status, "reason": payload.reason},
+    )
+    return model
+
+
+@app.post("/api/work-orders/{work_order_id}/comments", response_model=WorkOrderEventRead, status_code=201)
+def add_work_order_comment(
+    work_order_id: int,
+    payload: WorkOrderCommentCreate,
+    principal: dict[str, Any] = Depends(require_permission("work_orders:write")),
+) -> WorkOrderEventRead:
+    actor_username = str(principal.get("username") or "unknown")
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
+
+        result = conn.execute(
+            insert(work_order_events).values(
+                work_order_id=work_order_id,
+                event_type="comment",
+                actor_username=actor_username,
+                from_status=row["status"],
+                to_status=row["status"],
+                note=payload.comment,
+                detail_json=_to_json_text({"comment": payload.comment}),
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        event_id = int(result.inserted_primary_key[0])
+        event_row = conn.execute(
+            select(work_order_events).where(work_order_events.c.id == event_id)
+        ).mappings().first()
+
+    if event_row is None:
+        raise HTTPException(status_code=500, detail="Failed to create work order comment")
+    model = _row_to_work_order_event_model(event_row)
+    _write_audit_log(
+        principal=principal,
+        action="work_order_comment_add",
+        resource_type="work_order",
+        resource_id=str(work_order_id),
+        detail={"event_id": model.id},
+    )
+    return model
+
+
+@app.get("/api/work-orders/{work_order_id}/events", response_model=list[WorkOrderEventRead])
+def list_work_order_events(
+    work_order_id: int,
+    limit: Annotated[int, Query(ge=1, le=300)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("work_orders:read")),
+) -> list[WorkOrderEventRead]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        _require_site_access(principal, str(row["site"]))
+
+        rows = conn.execute(
+            select(work_order_events)
+            .where(work_order_events.c.work_order_id == work_order_id)
+            .order_by(work_order_events.c.created_at.asc(), work_order_events.c.id.asc())
+            .limit(limit)
+            .offset(offset)
+        ).mappings().all()
+    return [_row_to_work_order_event_model(item) for item in rows]
 
 
 @app.post("/api/work-orders/escalations/run", response_model=SlaEscalationRunResponse)

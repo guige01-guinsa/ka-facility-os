@@ -223,6 +223,86 @@ def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
     assert len(logs.json()) >= 1
 
 
+def test_work_order_workflow_transitions_and_events(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Workflow test",
+            "description": "initial",
+            "site": "Workflow Site",
+            "location": "B7",
+            "priority": "medium",
+        },
+    )
+    assert created.status_code == 201
+    work_order_id = created.json()["id"]
+    assert created.json()["status"] == "open"
+
+    comment = app_client.post(
+        f"/api/work-orders/{work_order_id}/comments",
+        headers=_owner_headers(),
+        json={"comment": "Needs vendor coordination"},
+    )
+    assert comment.status_code == 201
+    assert comment.json()["event_type"] == "comment"
+
+    ack = app_client.patch(
+        f"/api/work-orders/{work_order_id}/ack",
+        headers=_owner_headers(),
+        json={"assignee": "Ops Team"},
+    )
+    assert ack.status_code == 200
+    assert ack.json()["status"] == "acked"
+
+    cancel = app_client.patch(
+        f"/api/work-orders/{work_order_id}/cancel",
+        headers=_owner_headers(),
+        json={"reason": "Duplicate request"},
+    )
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "canceled"
+
+    invalid_complete = app_client.patch(
+        f"/api/work-orders/{work_order_id}/complete",
+        headers=_owner_headers(),
+        json={"resolution_notes": "Should fail from canceled"},
+    )
+    assert invalid_complete.status_code == 409
+
+    reopen = app_client.patch(
+        f"/api/work-orders/{work_order_id}/reopen",
+        headers=_owner_headers(),
+        json={"reason": "Not duplicate after review"},
+    )
+    assert reopen.status_code == 200
+    assert reopen.json()["status"] == "open"
+
+    complete = app_client.patch(
+        f"/api/work-orders/{work_order_id}/complete",
+        headers=_owner_headers(),
+        json={"resolution_notes": "Resolved after reopen"},
+    )
+    assert complete.status_code == 200
+    assert complete.json()["status"] == "completed"
+
+    events = app_client.get(
+        f"/api/work-orders/{work_order_id}/events",
+        headers=_owner_headers(),
+    )
+    assert events.status_code == 200
+    body = events.json()
+    assert len(body) >= 6
+    event_types = [row["event_type"] for row in body]
+    assert "created" in event_types
+    assert "comment" in event_types
+    status_changes = [row for row in body if row["event_type"] == "status_changed"]
+    assert any(row["from_status"] == "open" and row["to_status"] == "acked" for row in status_changes)
+    assert any(row["from_status"] == "acked" and row["to_status"] == "canceled" for row in status_changes)
+    assert any(row["from_status"] == "canceled" and row["to_status"] == "open" for row in status_changes)
+    assert any(row["from_status"] == "open" and row["to_status"] == "completed" for row in status_changes)
+
+
 def test_sla_policy_auto_due_and_grace(app_client: TestClient) -> None:
     updated = app_client.put(
         "/api/admin/policies/sla",
