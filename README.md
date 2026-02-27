@@ -21,6 +21,7 @@ Open:
 
 - Public
   - `GET /` (browser main page: facility web hub + adoption/post-MVP sections)
+  - `GET /web/console` (browser HTML operations console for human-readable module views)
   - `GET /api/service-info` (machine-readable service endpoint map)
   - `GET /api/public/modules` (public module registry for main hub navigation)
   - `GET /api/public/adoption-plan` (public JSON plan)
@@ -153,6 +154,7 @@ Job monitoring:
 - `GET /api/public/adoption-plan`
 - `GET /api/public/adoption-plan/campaign`
 - `GET /api/public/modules`
+- `GET /web/console`
 - `GET /api/public/adoption-plan/schedule.csv`
 - `GET /api/public/adoption-plan/schedule.ics`
 - `GET /api/public/post-mvp`

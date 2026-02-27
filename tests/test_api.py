@@ -50,6 +50,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
+    assert root_json.json()["facility_console_html"] == "/web/console"
     assert "public_post_mvp_plan_api" in root_json.json()
     assert "public_post_mvp_backlog_csv_api" in root_json.json()
 
@@ -60,6 +61,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "User Adoption Plan" in root_html.text
     assert "Promotion + Education + Fun Kit" in root_html.text
     assert "Facility Web Modules" in root_html.text
+    assert "Operations Console HTML" in root_html.text
     assert "요약 모드 (핵심 5줄): OFF" in root_html.text
     assert "핵심 5줄 요약" in root_html.text
     assert "Post-MVP Execution Pack" in root_html.text
@@ -68,13 +70,22 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.status_code == 200
     assert service_info.json()["service"] == "ka-facility-os"
     assert "public_modules_api" in service_info.json()
+    assert service_info.json()["facility_console_html"] == "/web/console"
     assert "public_post_mvp_release_ics_api" in service_info.json()
+
+    console_html = app_client.get("/web/console")
+    assert console_html.status_code == 200
+    assert console_html.headers["content-type"].startswith("text/html")
+    assert "KA Facility OS 시설관리 운영 콘솔" in console_html.text
+    assert "X-Admin-Token" in console_html.text
+    assert "Result Viewer" in console_html.text
 
     modules = app_client.get("/api/public/modules")
     assert modules.status_code == 200
     modules_body = modules.json()
     assert modules_body["public"] is True
     assert modules_body["main_page"] == "/"
+    assert modules_body["console_html"] == "/web/console"
     assert len(modules_body["modules"]) >= 7
 
     public_plan = app_client.get("/api/public/adoption-plan")
