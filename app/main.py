@@ -36,6 +36,8 @@ from app.database import (
     work_orders,
 )
 from app.schemas import (
+    AlertRetryRunRequest,
+    AlertRetryRunResponse,
     AlertDeliveryRead,
     AdminAuditLogRead,
     AdminTokenIssueRequest,
@@ -142,7 +144,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.14.0",
+    version="0.15.0",
     lifespan=app_lifespan,
 )
 
@@ -1323,6 +1325,117 @@ def run_sla_escalation_job(
     )
 
 
+def run_alert_retry_job(
+    *,
+    event_type: str | None = None,
+    only_status: list[str] | None = None,
+    limit: int = 200,
+    max_attempt_count: int = 10,
+    min_last_attempt_age_sec: int = 30,
+    trigger: str = "manual",
+) -> AlertRetryRunResponse:
+    started_at = datetime.now(timezone.utc)
+    now = started_at
+    statuses = [s.strip().lower() for s in (only_status or ["failed", "warning"]) if s.strip()]
+    if not statuses:
+        statuses = ["failed", "warning"]
+    statuses = sorted(set(statuses))
+    normalized_limit = max(1, min(limit, 5000))
+    normalized_max_attempt_count = max(1, min(max_attempt_count, 1000))
+    cooldown_cutoff = now - timedelta(seconds=max(0, min(min_last_attempt_age_sec, 86400)))
+
+    stmt = (
+        select(alert_deliveries)
+        .where(alert_deliveries.c.status.in_(statuses))
+        .where(alert_deliveries.c.attempt_count < normalized_max_attempt_count)
+        .where(alert_deliveries.c.last_attempt_at <= cooldown_cutoff)
+        .order_by(alert_deliveries.c.last_attempt_at.asc(), alert_deliveries.c.id.asc())
+        .limit(normalized_limit)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    processed_count = 0
+    success_count = 0
+    warning_count = 0
+    failed_count = 0
+    delivery_ids: list[int] = []
+
+    with get_conn() as conn:
+        for row in rows:
+            delivery_id = int(row["id"])
+            payload_raw = str(row["payload_json"] or "{}")
+            try:
+                payload = json.loads(payload_raw)
+            except json.JSONDecodeError:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            ok, err = _post_json_with_retries(
+                url=str(row["target"]),
+                payload=payload,
+                retries=1,
+                timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+            )
+            next_status = "success" if ok and err is None else ("warning" if ok else "failed")
+            next_attempt_count = int(row["attempt_count"]) + 1
+            conn.execute(
+                update(alert_deliveries)
+                .where(alert_deliveries.c.id == delivery_id)
+                .values(
+                    status=next_status,
+                    error=err,
+                    attempt_count=next_attempt_count,
+                    last_attempt_at=now,
+                    updated_at=now,
+                )
+            )
+
+            processed_count += 1
+            delivery_ids.append(delivery_id)
+            if next_status == "success":
+                success_count += 1
+            elif next_status == "warning":
+                warning_count += 1
+            else:
+                failed_count += 1
+
+    finished_at = datetime.now(timezone.utc)
+    _write_job_run(
+        job_name="alert_retry",
+        trigger=trigger,
+        status="warning" if failed_count > 0 else "success",
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "statuses": statuses,
+            "limit": normalized_limit,
+            "max_attempt_count": normalized_max_attempt_count,
+            "min_last_attempt_age_sec": min_last_attempt_age_sec,
+            "processed_count": processed_count,
+            "success_count": success_count,
+            "warning_count": warning_count,
+            "failed_count": failed_count,
+            "delivery_ids": delivery_ids,
+        },
+    )
+    return AlertRetryRunResponse(
+        checked_at=finished_at,
+        event_type=event_type,
+        limit=normalized_limit,
+        processed_count=processed_count,
+        success_count=success_count,
+        warning_count=warning_count,
+        failed_count=failed_count,
+        delivery_ids=delivery_ids,
+    )
+
+
 def simulate_sla_policy_change(
     *,
     policy: SlaPolicyUpdate,
@@ -1873,6 +1986,7 @@ def root() -> dict[str, str]:
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
+        "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
         "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
@@ -2232,6 +2346,35 @@ def simulate_sla(
     return result
 
 
+@app.post("/api/ops/alerts/retries/run", response_model=AlertRetryRunResponse)
+def run_alert_retries(
+    payload: AlertRetryRunRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AlertRetryRunResponse:
+    result = run_alert_retry_job(
+        event_type=payload.event_type,
+        only_status=payload.only_status,
+        limit=payload.limit,
+        max_attempt_count=payload.max_attempt_count,
+        min_last_attempt_age_sec=payload.min_last_attempt_age_sec,
+        trigger="api",
+    )
+    _write_audit_log(
+        principal=principal,
+        action="alert_retry_batch_run",
+        resource_type="alert_delivery",
+        resource_id="batch",
+        detail={
+            "event_type": payload.event_type,
+            "statuses": payload.only_status,
+            "limit": payload.limit,
+            "processed_count": result.processed_count,
+            "failed_count": result.failed_count,
+        },
+    )
+    return result
+
+
 @app.post("/api/admin/policies/sla/proposals", response_model=SlaPolicyProposalRead, status_code=201)
 def create_sla_policy_proposal(
     payload: SlaPolicyProposalCreate,
@@ -2373,6 +2516,8 @@ def approve_sla_policy_proposal(
 
         if str(row["status"]) != SLA_PROPOSAL_STATUS_PENDING:
             raise HTTPException(status_code=409, detail="Only pending proposal can be approved")
+        if str(row["requested_by"]) == decided_by:
+            raise HTTPException(status_code=409, detail="Proposal cannot be self-approved")
 
     policy_raw = str(row["policy_json"] or "{}")
     try:

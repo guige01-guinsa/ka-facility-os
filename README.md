@@ -42,6 +42,7 @@ Open:
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
+  - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
   - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
@@ -113,6 +114,7 @@ Manual batch:
 ```powershell
 python -m app.jobs.sla_escalation --limit 500
 python -m app.jobs.sla_escalation --dry-run
+python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30
 ```
 
 Render cron target command:
@@ -130,6 +132,7 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/alerts/deliveries?status=failed`
+- `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)
 
 SLA approval flow:
@@ -139,6 +142,7 @@ SLA approval flow:
 - `POST /api/admin/policies/sla/proposals/{id}/reject` to close without apply
 - `GET /api/admin/policies/sla/revisions` to inspect change history
 - `POST /api/admin/policies/sla/revisions/{id}/restore` to rollback policy snapshot
+- approval safety: proposal requester cannot self-approve
 
 SLA policy (rule engine):
 - `GET /api/admin/policies/sla` (default policy)
@@ -215,6 +219,7 @@ Startup behavior:
 `render.yaml` includes:
 - Web service `ka-facility-os`
 - Cron service `ka-facility-os-sla-escalation`
+- Cron service `ka-facility-os-alert-retry`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`

@@ -349,6 +349,25 @@ class AlertDeliveryRead(BaseModel):
     updated_at: datetime
 
 
+class AlertRetryRunRequest(BaseModel):
+    event_type: Optional[str] = Field(default=None, max_length=80)
+    only_status: list[str] = Field(default_factory=lambda: ["failed", "warning"])
+    limit: int = Field(default=200, ge=1, le=5000)
+    max_attempt_count: int = Field(default=10, ge=1, le=1000)
+    min_last_attempt_age_sec: int = Field(default=30, ge=0, le=86400)
+
+
+class AlertRetryRunResponse(BaseModel):
+    checked_at: datetime
+    event_type: Optional[str] = None
+    limit: int
+    processed_count: int
+    success_count: int
+    warning_count: int
+    failed_count: int
+    delivery_ids: list[int]
+
+
 class DashboardTrendPoint(BaseModel):
     date: str
     inspections_count: int

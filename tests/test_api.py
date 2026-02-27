@@ -773,9 +773,37 @@ def test_sla_policy_proposal_approval_flow(app_client: TestClient) -> None:
     ids = [row["id"] for row in listed.json()]
     assert proposal_id in ids
 
-    approved = app_client.post(
+    approver_user = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "proposal_approver_ci",
+            "display_name": "Proposal Approver CI",
+            "role": "owner",
+            "permissions": [],
+            "site_scope": ["*"],
+        },
+    )
+    assert approver_user.status_code == 201
+    approver_user_id = approver_user.json()["id"]
+    approver_token_issue = app_client.post(
+        f"/api/admin/users/{approver_user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "proposal-approver"},
+    )
+    assert approver_token_issue.status_code == 201
+    approver_headers = {"X-Admin-Token": approver_token_issue.json()["token"]}
+
+    self_approve = app_client.post(
         f"/api/admin/policies/sla/proposals/{proposal_id}/approve",
         headers=_owner_headers(),
+        json={"note": "self approve should fail"},
+    )
+    assert self_approve.status_code == 409
+
+    approved = app_client.post(
+        f"/api/admin/policies/sla/proposals/{proposal_id}/approve",
+        headers=approver_headers,
         json={"note": "Approved for next sprint"},
     )
     assert approved.status_code == 200
@@ -792,7 +820,7 @@ def test_sla_policy_proposal_approval_flow(app_client: TestClient) -> None:
 
     approve_again = app_client.post(
         f"/api/admin/policies/sla/proposals/{proposal_id}/approve",
-        headers=_owner_headers(),
+        headers=approver_headers,
         json={"note": "should fail"},
     )
     assert approve_again.status_code == 409
@@ -814,7 +842,7 @@ def test_sla_policy_proposal_approval_flow(app_client: TestClient) -> None:
 
     rejected = app_client.post(
         f"/api/admin/policies/sla/proposals/{proposal2_id}/reject",
-        headers=_owner_headers(),
+        headers=approver_headers,
         json={"note": "Not needed"},
     )
     assert rejected.status_code == 200
@@ -915,3 +943,51 @@ def test_sla_policy_revisions_and_restore(app_client: TestClient) -> None:
     )
     assert restore_rows.status_code == 200
     assert len(restore_rows.json()) >= 1
+
+
+def test_alert_retry_batch_api(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import insert
+
+    now = datetime.now(timezone.utc) - timedelta(minutes=5)
+    with db_module.get_conn() as conn:
+        result = conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target="http://127.0.0.1:1/hook",
+                status="failed",
+                error="seeded failure",
+                payload_json="{}",
+                attempt_count=1,
+                last_attempt_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        delivery_id = int(result.inserted_primary_key[0])
+
+    batch = app_client.post(
+        "/api/ops/alerts/retries/run",
+        headers=_owner_headers(),
+        json={
+            "event_type": "sla_escalation",
+            "only_status": ["failed"],
+            "limit": 50,
+            "max_attempt_count": 10,
+            "min_last_attempt_age_sec": 0,
+        },
+    )
+    assert batch.status_code == 200
+    body = batch.json()
+    assert body["processed_count"] >= 1
+    assert delivery_id in body["delivery_ids"]
+
+    refreshed = app_client.get(
+        "/api/ops/alerts/deliveries",
+        headers=_owner_headers(),
+    )
+    assert refreshed.status_code == 200
+    rows = refreshed.json()
+    target = next((row for row in rows if row["id"] == delivery_id), None)
+    assert target is not None
+    assert target["attempt_count"] == 2
