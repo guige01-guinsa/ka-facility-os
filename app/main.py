@@ -531,6 +531,93 @@ ADOPTION_FUN_PACK: list[dict[str, Any]] = [
     },
 ]
 
+FACILITY_WEB_MODULES: list[dict[str, Any]] = [
+    {
+        "id": "inspection-ops",
+        "name": "Inspection Operations",
+        "name_ko": "점검 관리",
+        "description": "시설 점검 등록, 조회, 출력까지 점검 업무 전체를 처리합니다.",
+        "kpi_hint": "High risk detection lead time",
+        "links": [
+            {"label": "Create Inspection", "href": "/api/inspections"},
+            {"label": "List Inspections", "href": "/api/inspections"},
+            {"label": "Print Inspection", "href": "/inspections/{id}/print"},
+        ],
+    },
+    {
+        "id": "work-order-ops",
+        "name": "Work-Order Operations",
+        "name_ko": "작업지시 관리",
+        "description": "작업지시 생성부터 ACK/완료/취소/재오픈까지 라이프사이클을 관리합니다.",
+        "kpi_hint": "Time-To-First-Action",
+        "links": [
+            {"label": "Create Work-Order", "href": "/api/work-orders"},
+            {"label": "Work-Order Timeline", "href": "/api/work-orders/{id}/events"},
+            {"label": "Escalation Batch Run", "href": "/api/work-orders/escalations/run"},
+        ],
+    },
+    {
+        "id": "sla-alerts",
+        "name": "SLA and Alerts",
+        "name_ko": "SLA/알림 운영",
+        "description": "SLA 정책, 시뮬레이션, 에스컬레이션, 알림 재시도를 운영합니다.",
+        "kpi_hint": "SLA on-time rate and alert success",
+        "links": [
+            {"label": "SLA Simulator", "href": "/api/ops/sla/simulate"},
+            {"label": "Failed Deliveries", "href": "/api/ops/alerts/deliveries"},
+            {"label": "Retry Batch Run", "href": "/api/ops/alerts/retries/run"},
+        ],
+    },
+    {
+        "id": "reporting-audit",
+        "name": "Reporting and Audit",
+        "name_ko": "리포트/감사",
+        "description": "월간 리포트 조회와 CSV/PDF 내보내기, 감사 기준 운영을 지원합니다.",
+        "kpi_hint": "Monthly report on-time rate",
+        "links": [
+            {"label": "Monthly Report", "href": "/api/reports/monthly"},
+            {"label": "Monthly CSV", "href": "/api/reports/monthly/csv"},
+            {"label": "Monthly PDF", "href": "/api/reports/monthly/pdf"},
+        ],
+    },
+    {
+        "id": "ops-command",
+        "name": "Ops Command Center",
+        "name_ko": "운영 상황실",
+        "description": "대시보드 요약/추세와 핸드오버 브리프로 일일 운영 회의를 지원합니다.",
+        "kpi_hint": "Open risk backlog burn-down",
+        "links": [
+            {"label": "Dashboard Summary", "href": "/api/ops/dashboard/summary"},
+            {"label": "Dashboard Trends", "href": "/api/ops/dashboard/trends"},
+            {"label": "Handover Brief", "href": "/api/ops/handover/brief"},
+        ],
+    },
+    {
+        "id": "rbac-governance",
+        "name": "RBAC and Governance",
+        "name_ko": "권한/거버넌스",
+        "description": "사용자/토큰/RBAC/SLA 정책 변경을 통제하고 감사로그를 추적합니다.",
+        "kpi_hint": "Policy drift unresolved > 7d",
+        "links": [
+            {"label": "Auth Me", "href": "/api/auth/me"},
+            {"label": "Admin Users", "href": "/api/admin/users"},
+            {"label": "Admin Audit Logs", "href": "/api/admin/audit-logs"},
+        ],
+    },
+    {
+        "id": "growth-roadmap",
+        "name": "Growth and Post-MVP",
+        "name_ko": "확장 로드맵",
+        "description": "Post-MVP 로드맵, 백로그, 릴리즈 캘린더, 리스크 레지스터를 관리합니다.",
+        "kpi_hint": "Release gate pass ratio",
+        "links": [
+            {"label": "Post-MVP Plan", "href": "/api/public/post-mvp"},
+            {"label": "Backlog CSV", "href": "/api/public/post-mvp/backlog.csv"},
+            {"label": "Release ICS", "href": "/api/public/post-mvp/releases.ics"},
+        ],
+    },
+]
+
 POST_MVP_PLAN_START = date(2026, 5, 25)
 POST_MVP_PLAN_END = date(2026, 11, 27)
 
@@ -961,7 +1048,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.21.0",
+    version="0.22.0",
     lifespan=app_lifespan,
 )
 
@@ -3226,6 +3313,7 @@ def _service_info_payload() -> dict[str, str]:
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
         "public_post_mvp_kpi_api": "/api/public/post-mvp/kpi-dashboard",
         "public_post_mvp_risks_api": "/api/public/post-mvp/risks",
+        "public_modules_api": "/api/public/modules",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
@@ -3402,6 +3490,16 @@ def _post_mvp_payload() -> dict[str, Any]:
     }
 
 
+def _facility_modules_payload() -> dict[str, Any]:
+    return {
+        "title": "KA Facility OS Facility Web Modules",
+        "published_on": "2026-02-27",
+        "public": True,
+        "main_page": "/",
+        "modules": FACILITY_WEB_MODULES,
+    }
+
+
 def _build_post_mvp_backlog_csv(plan: dict[str, Any]) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
@@ -3487,6 +3585,8 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     training = plan.get("training_outline", [])
     kpis = plan.get("kpi_dashboard_items", [])
     post_mvp = _post_mvp_payload()
+    module_hub = _facility_modules_payload()
+    facility_modules = module_hub.get("modules", [])
 
     weekly_rows: list[str] = []
     for item in plan.get("weekly_execution", []):
@@ -3625,6 +3725,24 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         f"<li><strong>{html.escape(str(key).replace('_', ' ').title())}:</strong> {html.escape(str(value))}</li>"
         for key, value in post_governance.items()
     )
+
+    module_cards: list[str] = []
+    for item in facility_modules:
+        links_html = "".join(
+            f'<a href="{html.escape(str(link.get("href", "#")))}">{html.escape(str(link.get("label", "Open")))}'
+            "</a>"
+            for link in item.get("links", [])
+        )
+        module_cards.append(
+            f"""
+            <div class="card module-card">
+              <h3>{html.escape(str(item.get("name_ko", "")))} <span class="module-en">{html.escape(str(item.get("name", "")))}</span></h3>
+              <p>{html.escape(str(item.get("description", "")))}</p>
+              <p><strong>KPI Hint:</strong> {html.escape(str(item.get("kpi_hint", "")))}</p>
+              <div class="module-links">{links_html}</div>
+            </div>
+            """
+        )
 
     campaign_kit = plan.get("campaign_kit", {})
     promotion_cards: list[str] = []
@@ -3792,9 +3910,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     summary_lines = [
         f"기간 {timeline_start}~{timeline_end}, 진행률 {progress_percent}% ({completed_weeks}/{total_weeks}주 완료).",
         active_line,
+        f"시설관리 웹 모듈 {len(facility_modules)}개를 메인 허브에서 즉시 연결.",
         f"교육 모듈 {len(training)}개: 역할별 표준 학습경로와 실습 중심 운영.",
         f"KPI {len(kpis)}개 주간 추적, 다음 리뷰일 {plan.get('schedule_management', {}).get('next_review_date', '')}.",
-        "일정 파일(CSV/ICS) + 캠페인 킷(Promotion/Education/Fun)으로 즉시 실행 가능.",
+        "일정 파일(CSV/ICS) + 캠페인 킷 + Post-MVP 실행팩으로 즉시 실행 가능.",
     ]
     summary_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in summary_lines)
 
@@ -3885,6 +4004,30 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     }}
     .card h3 {{ margin: 0 0 8px; font-size: 14px; color: var(--brand); }}
     .card p {{ margin: 0; font-size: 13px; color: var(--muted); }}
+    .module-card .module-en {{
+      color: #4c6b97;
+      font-size: 12px;
+      font-weight: 700;
+      margin-left: 4px;
+    }}
+    .module-links {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }}
+    .module-links a {{
+      display: inline-block;
+      padding: 6px 9px;
+      border-radius: 8px;
+      border: 1px solid #bfd5ef;
+      text-decoration: none;
+      color: #1f4f82;
+      background: #f3f8ff;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .module-links a:hover {{ border-color: #88add8; background: #e8f2ff; }}
     .section {{ margin-top: 24px; }}
     .section h2 {{
       margin: 0 0 10px;
@@ -4136,6 +4279,17 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
         <a href="/api/public/adoption-plan/schedule.ics">Calendar ICS</a>
         <a href="/api/service-info">Service Info</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Facility Web Modules</h2>
+      <p class="sub">메인 페이지를 시설관리 허브로 사용하고, 핵심 모듈을 카드형으로 바로 연결합니다.</p>
+      <div class="links">
+        <a href="/api/public/modules">Modules API</a>
+      </div>
+      <div class="grid">
+        {"".join(module_cards)}
       </div>
     </section>
 
@@ -4437,6 +4591,11 @@ def get_public_adoption_campaign() -> dict[str, Any]:
         "public": plan.get("public", True),
         "campaign_kit": plan.get("campaign_kit", {}),
     }
+
+
+@app.get("/api/public/modules")
+def get_public_modules() -> dict[str, Any]:
+    return _facility_modules_payload()
 
 
 @app.get("/api/public/adoption-plan/schedule.csv")

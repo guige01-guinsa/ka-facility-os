@@ -49,6 +49,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert root_json.json()["service"] == "ka-facility-os"
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
+    assert "public_modules_api" in root_json.json()
     assert "public_post_mvp_plan_api" in root_json.json()
     assert "public_post_mvp_backlog_csv_api" in root_json.json()
 
@@ -58,6 +59,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "KA Facility OS" in root_html.text
     assert "User Adoption Plan" in root_html.text
     assert "Promotion + Education + Fun Kit" in root_html.text
+    assert "Facility Web Modules" in root_html.text
     assert "요약 모드 (핵심 5줄): OFF" in root_html.text
     assert "핵심 5줄 요약" in root_html.text
     assert "Post-MVP Execution Pack" in root_html.text
@@ -65,7 +67,15 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     assert service_info.json()["service"] == "ka-facility-os"
+    assert "public_modules_api" in service_info.json()
     assert "public_post_mvp_release_ics_api" in service_info.json()
+
+    modules = app_client.get("/api/public/modules")
+    assert modules.status_code == 200
+    modules_body = modules.json()
+    assert modules_body["public"] is True
+    assert modules_body["main_page"] == "/"
+    assert len(modules_body["modules"]) >= 7
 
     public_plan = app_client.get("/api/public/adoption-plan")
     assert public_plan.status_code == 200
