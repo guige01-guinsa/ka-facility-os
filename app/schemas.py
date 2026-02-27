@@ -264,3 +264,31 @@ class DashboardSummaryRead(BaseModel):
     sla_warning_runs: int
     sla_last_run_at: Optional[datetime] = None
     recent_job_runs: list[JobRunRead]
+
+
+class AlertDeliveryRead(BaseModel):
+    id: int
+    event_type: str
+    target: str
+    status: str
+    error: Optional[str] = None
+    payload: dict[str, Any]
+    attempt_count: int
+    last_attempt_at: datetime
+    created_at: datetime
+    updated_at: datetime
+
+
+class DashboardTrendPoint(BaseModel):
+    date: str
+    inspections_count: int
+    work_orders_created_count: int
+    work_orders_completed_count: int
+    work_orders_escalated_count: int
+
+
+class DashboardTrendsRead(BaseModel):
+    generated_at: datetime
+    site: Optional[str] = None
+    window_days: int
+    points: list[DashboardTrendPoint]

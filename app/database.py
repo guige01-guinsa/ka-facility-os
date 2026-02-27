@@ -155,6 +155,21 @@ job_runs = Table(
     Column("detail_json", Text, nullable=False, default="{}"),
 )
 
+alert_deliveries = Table(
+    "alert_deliveries",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("event_type", String(80), nullable=False),
+    Column("target", Text, nullable=False),
+    Column("status", String(20), nullable=False, default="success"),
+    Column("error", Text, nullable=True),
+    Column("payload_json", Text, nullable=False, default="{}"),
+    Column("attempt_count", Integer, nullable=False, default=1),
+    Column("last_attempt_at", DateTime(timezone=True), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

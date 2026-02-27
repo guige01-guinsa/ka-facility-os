@@ -21,6 +21,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import (
     DATABASE_URL,
+    alert_deliveries,
     admin_audit_logs,
     admin_tokens,
     admin_users,
@@ -33,6 +34,7 @@ from app.database import (
     work_orders,
 )
 from app.schemas import (
+    AlertDeliveryRead,
     AdminAuditLogRead,
     AdminTokenIssueRequest,
     AdminTokenIssueResponse,
@@ -42,6 +44,8 @@ from app.schemas import (
     AdminUserRead,
     AuthMeRead,
     DashboardSummaryRead,
+    DashboardTrendPoint,
+    DashboardTrendsRead,
     InspectionCreate,
     InspectionRead,
     JobRunRead,
@@ -126,7 +130,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.10.0",
+    version="0.11.0",
     lifespan=app_lifespan,
 )
 
@@ -629,6 +633,58 @@ def _row_to_job_run_model(row: dict[str, Any]) -> JobRunRead:
     )
 
 
+def _write_alert_delivery(
+    *,
+    event_type: str,
+    target: str,
+    status: str,
+    error: str | None,
+    payload: dict[str, Any],
+) -> int | None:
+    now = datetime.now(timezone.utc)
+    try:
+        with get_conn() as conn:
+            result = conn.execute(
+                insert(alert_deliveries).values(
+                    event_type=event_type,
+                    target=target,
+                    status=status,
+                    error=error,
+                    payload_json=_to_json_text(payload),
+                    attempt_count=1,
+                    last_attempt_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            return int(result.inserted_primary_key[0])
+    except SQLAlchemyError:
+        return None
+
+
+def _row_to_alert_delivery_model(row: dict[str, Any]) -> AlertDeliveryRead:
+    raw = str(row["payload_json"] or "{}")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        payload = {"raw": raw}
+    if not isinstance(payload, dict):
+        payload = {"value": payload}
+
+    return AlertDeliveryRead(
+        id=int(row["id"]),
+        event_type=str(row["event_type"]),
+        target=str(row["target"]),
+        status=str(row["status"]),
+        error=row["error"],
+        payload=payload,
+        attempt_count=int(row["attempt_count"]),
+        last_attempt_at=_as_datetime(row["last_attempt_at"]),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
 def _normalize_sla_due_hours(value: Any) -> dict[str, int]:
     source = value if isinstance(value, dict) else {}
     normalized: dict[str, int] = {}
@@ -870,6 +926,14 @@ def _dispatch_sla_alert(
             payload=payload,
             retries=ALERT_WEBHOOK_RETRIES,
             timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        delivery_status = "success" if ok and err is None else ("warning" if ok else "failed")
+        delivery_id = _write_alert_delivery(
+            event_type="sla_escalation",
+            target=target,
+            status=delivery_status,
+            error=err,
+            payload=payload,
         )
         if ok:
             success_count += 1
@@ -1355,6 +1419,112 @@ def build_dashboard_summary(
     )
 
 
+def build_dashboard_trends(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> DashboardTrendsRead:
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    inspections_stmt = select(inspections.c.inspected_at, inspections.c.site).where(inspections.c.inspected_at >= start)
+    work_orders_stmt = select(
+        work_orders.c.created_at,
+        work_orders.c.completed_at,
+        work_orders.c.site,
+    ).where((work_orders.c.created_at >= start) | (work_orders.c.completed_at >= start))
+    escalations_stmt = (
+        select(job_runs.c.finished_at, job_runs.c.detail_json)
+        .where(job_runs.c.job_name == "sla_escalation")
+        .where(job_runs.c.finished_at >= start)
+    )
+
+    if site is not None:
+        inspections_stmt = inspections_stmt.where(inspections.c.site == site)
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return DashboardTrendsRead(generated_at=now, site=site, window_days=days, points=[])
+        inspections_stmt = inspections_stmt.where(inspections.c.site.in_(allowed_sites))
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        inspection_rows = conn.execute(inspections_stmt).mappings().all()
+        work_order_rows = conn.execute(work_orders_stmt).mappings().all()
+        escalation_rows = conn.execute(escalations_stmt).mappings().all()
+
+    buckets: dict[str, dict[str, int]] = {}
+    for i in range(days):
+        bucket_day = (start + timedelta(days=i)).date().isoformat()
+        buckets[bucket_day] = {
+            "inspections_count": 0,
+            "work_orders_created_count": 0,
+            "work_orders_completed_count": 0,
+            "work_orders_escalated_count": 0,
+        }
+
+    for row in inspection_rows:
+        inspected_at = _as_optional_datetime(row["inspected_at"])
+        if inspected_at is None:
+            continue
+        key = inspected_at.date().isoformat()
+        if key in buckets:
+            buckets[key]["inspections_count"] += 1
+
+    for row in work_order_rows:
+        created_at = _as_optional_datetime(row["created_at"])
+        completed_at = _as_optional_datetime(row["completed_at"])
+        if created_at is not None:
+            key = created_at.date().isoformat()
+            if key in buckets:
+                buckets[key]["work_orders_created_count"] += 1
+        if completed_at is not None:
+            key = completed_at.date().isoformat()
+            if key in buckets:
+                buckets[key]["work_orders_completed_count"] += 1
+
+    for row in escalation_rows:
+        finished_at = _as_optional_datetime(row["finished_at"])
+        if finished_at is None:
+            continue
+        key = finished_at.date().isoformat()
+        if key not in buckets:
+            continue
+
+        detail = {}
+        raw = str(row["detail_json"] or "{}")
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                detail = parsed
+        except json.JSONDecodeError:
+            detail = {}
+
+        detail_site = detail.get("site")
+        if site is not None and detail_site not in {site, None}:
+            continue
+        escalated_count = int(detail.get("escalated_count", 0) or 0)
+        buckets[key]["work_orders_escalated_count"] += max(0, escalated_count)
+
+    points = [
+        DashboardTrendPoint(
+            date=date_key,
+            inspections_count=data["inspections_count"],
+            work_orders_created_count=data["work_orders_created_count"],
+            work_orders_completed_count=data["work_orders_completed_count"],
+            work_orders_escalated_count=data["work_orders_escalated_count"],
+        )
+        for date_key, data in buckets.items()
+    ]
+    return DashboardTrendsRead(
+        generated_at=now,
+        site=site,
+        window_days=days,
+        points=points,
+    )
+
+
 def _json_or_scalar(value: Any) -> str:
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False)
@@ -1454,6 +1624,8 @@ def root() -> dict[str, str]:
         "admin_audit_api": "/api/admin/audit-logs",
         "job_runs_api": "/api/ops/job-runs",
         "dashboard_summary_api": "/api/ops/dashboard/summary",
+        "dashboard_trends_api": "/api/ops/dashboard/trends",
+        "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "sla_policy_api": "/api/admin/policies/sla",
     }
 
@@ -1742,6 +1914,98 @@ def get_dashboard_summary(
         recent_job_limit=recent_job_limit,
         allowed_sites=allowed_sites,
     )
+
+
+@app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)
+def get_dashboard_trends(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> DashboardTrendsRead:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    return build_dashboard_trends(site=site, days=days, allowed_sites=allowed_sites)
+
+
+@app.get("/api/ops/alerts/deliveries", response_model=list[AlertDeliveryRead])
+def list_alert_deliveries(
+    event_type: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=300)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[AlertDeliveryRead]:
+    stmt = select(alert_deliveries).order_by(
+        alert_deliveries.c.last_attempt_at.desc(),
+        alert_deliveries.c.id.desc(),
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+    if status is not None:
+        stmt = stmt.where(alert_deliveries.c.status == status)
+    stmt = stmt.limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_alert_delivery_model(row) for row in rows]
+
+
+@app.post("/api/ops/alerts/deliveries/{delivery_id}/retry", response_model=AlertDeliveryRead)
+def retry_alert_delivery(
+    delivery_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AlertDeliveryRead:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(alert_deliveries).where(alert_deliveries.c.id == delivery_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Alert delivery not found")
+
+        payload_raw = str(row["payload_json"] or "{}")
+        try:
+            payload = json.loads(payload_raw)
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+
+        ok, err = _post_json_with_retries(
+            url=str(row["target"]),
+            payload=payload,
+            retries=ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        next_status = "success" if ok and err is None else ("warning" if ok else "failed")
+        next_attempt_count = int(row["attempt_count"]) + 1
+        conn.execute(
+            update(alert_deliveries)
+            .where(alert_deliveries.c.id == delivery_id)
+            .values(
+                status=next_status,
+                error=err,
+                attempt_count=next_attempt_count,
+                last_attempt_at=now,
+                updated_at=now,
+            )
+        )
+        updated_row = conn.execute(
+            select(alert_deliveries).where(alert_deliveries.c.id == delivery_id).limit(1)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to retry alert delivery")
+    model = _row_to_alert_delivery_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="alert_delivery_retry",
+        resource_type="alert_delivery",
+        resource_id=str(model.id),
+        status=model.status,
+        detail={"target": model.target, "status": model.status, "attempt_count": model.attempt_count},
+    )
+    return model
 
 
 @app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)

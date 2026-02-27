@@ -583,3 +583,93 @@ def test_ops_dashboard_summary(app_client: TestClient) -> None:
     assert "work_order_status_counts" in body
     assert "recent_job_runs" in body
     assert body["sla_recent_runs"] >= 1
+
+
+def test_ops_dashboard_trends(app_client: TestClient) -> None:
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=_owner_headers(),
+        json={
+            "site": "Trend Site",
+            "location": "B8",
+            "cycle": "monthly",
+            "inspector": "Trend Bot",
+            "inspected_at": inspected_at,
+        },
+    )
+    assert inspection.status_code == 201
+
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Trend work order",
+            "description": "for trends",
+            "site": "Trend Site",
+            "location": "B8",
+            "priority": "high",
+        },
+    )
+    assert work_order.status_code == 201
+    work_order_id = work_order.json()["id"]
+
+    completed = app_client.patch(
+        f"/api/work-orders/{work_order_id}/complete",
+        headers=_owner_headers(),
+        json={"resolution_notes": "done"},
+    )
+    assert completed.status_code == 200
+
+    trends = app_client.get(
+        "/api/ops/dashboard/trends?site=Trend+Site&days=7",
+        headers=_owner_headers(),
+    )
+    assert trends.status_code == 200
+    body = trends.json()
+    assert body["site"] == "Trend Site"
+    assert body["window_days"] == 7
+    assert len(body["points"]) == 7
+    assert sum(point["inspections_count"] for point in body["points"]) >= 1
+    assert sum(point["work_orders_created_count"] for point in body["points"]) >= 1
+    assert sum(point["work_orders_completed_count"] for point in body["points"]) >= 1
+
+
+def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import insert
+
+    now = datetime.now(timezone.utc)
+    with db_module.get_conn() as conn:
+        result = conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target="http://127.0.0.1:1/hook",
+                status="failed",
+                error="seeded failure",
+                payload_json="{}",
+                attempt_count=1,
+                last_attempt_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        delivery_id = int(result.inserted_primary_key[0])
+
+    listed = app_client.get(
+        "/api/ops/alerts/deliveries?status=failed",
+        headers=_owner_headers(),
+    )
+    assert listed.status_code == 200
+    ids = [row["id"] for row in listed.json()]
+    assert delivery_id in ids
+
+    retried = app_client.post(
+        f"/api/ops/alerts/deliveries/{delivery_id}/retry",
+        headers=_owner_headers(),
+    )
+    assert retried.status_code == 200
+    body = retried.json()
+    assert body["id"] == delivery_id
+    assert body["attempt_count"] == 2
+    assert body["status"] in {"success", "warning", "failed"}
