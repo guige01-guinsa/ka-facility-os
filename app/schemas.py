@@ -180,6 +180,38 @@ class SlaWhatIfResponse(BaseModel):
     notes: list[str]
 
 
+SlaPolicyProposalStatus = Literal["pending", "approved", "rejected"]
+
+
+class SlaPolicyProposalCreate(BaseModel):
+    site: Optional[str] = Field(default=None, max_length=120)
+    policy: SlaPolicyUpdate
+    note: str = ""
+    simulation_limit: int = Field(default=3000, ge=1, le=20000)
+    include_work_order_ids: bool = True
+    sample_size: int = Field(default=200, ge=0, le=1000)
+    recompute_due_from_policy: bool = False
+
+
+class SlaPolicyProposalDecision(BaseModel):
+    note: str = ""
+
+
+class SlaPolicyProposalRead(BaseModel):
+    id: int
+    site: Optional[str] = None
+    status: SlaPolicyProposalStatus
+    policy: dict[str, Any]
+    simulation: dict[str, Any]
+    note: str
+    requested_by: str
+    decided_by: Optional[str] = None
+    decision_note: Optional[str] = None
+    created_at: datetime
+    decided_at: Optional[datetime] = None
+    applied_at: Optional[datetime] = None
+
+
 class MonthlyReportRead(BaseModel):
     month: str
     site: Optional[str] = None

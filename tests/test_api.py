@@ -723,3 +723,136 @@ def test_sla_simulator_what_if(app_client: TestClient) -> None:
     assert body["simulated_escalate_count"] == 0
     assert body["delta_escalate_count"] <= 0
     assert len(body["no_longer_escalated_ids"]) >= 1
+
+
+def test_sla_policy_proposal_approval_flow(app_client: TestClient) -> None:
+    due_old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    wo = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Proposal target",
+            "description": "proposal approval flow",
+            "site": "Approval Site",
+            "location": "B10",
+            "priority": "high",
+            "due_at": due_old,
+        },
+    )
+    assert wo.status_code == 201
+
+    created = app_client.post(
+        "/api/admin/policies/sla/proposals",
+        headers=_owner_headers(),
+        json={
+            "site": "Approval Site",
+            "policy": {
+                "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+                "escalation_grace_minutes": 60,
+            },
+            "note": "Increase grace for maintenance window",
+            "simulation_limit": 500,
+            "sample_size": 50,
+            "include_work_order_ids": True,
+            "recompute_due_from_policy": False,
+        },
+    )
+    assert created.status_code == 201
+    proposal = created.json()
+    proposal_id = proposal["id"]
+    assert proposal["status"] == "pending"
+    assert proposal["site"] == "Approval Site"
+    assert proposal["simulation"]["baseline_escalate_count"] >= 1
+    assert proposal["simulation"]["simulated_escalate_count"] == 0
+
+    listed = app_client.get(
+        "/api/admin/policies/sla/proposals?status=pending&site=Approval+Site",
+        headers=_owner_headers(),
+    )
+    assert listed.status_code == 200
+    ids = [row["id"] for row in listed.json()]
+    assert proposal_id in ids
+
+    approved = app_client.post(
+        f"/api/admin/policies/sla/proposals/{proposal_id}/approve",
+        headers=_owner_headers(),
+        json={"note": "Approved for next sprint"},
+    )
+    assert approved.status_code == 200
+    approved_body = approved.json()
+    assert approved_body["status"] == "approved"
+    assert approved_body["applied_at"] is not None
+
+    policy_after = app_client.get(
+        "/api/admin/policies/sla?site=Approval+Site",
+        headers=_owner_headers(),
+    )
+    assert policy_after.status_code == 200
+    assert policy_after.json()["escalation_grace_minutes"] == 60
+
+    approve_again = app_client.post(
+        f"/api/admin/policies/sla/proposals/{proposal_id}/approve",
+        headers=_owner_headers(),
+        json={"note": "should fail"},
+    )
+    assert approve_again.status_code == 409
+
+    created2 = app_client.post(
+        "/api/admin/policies/sla/proposals",
+        headers=_owner_headers(),
+        json={
+            "site": "Approval Site",
+            "policy": {
+                "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+                "escalation_grace_minutes": 15,
+            },
+            "note": "Alternative proposal",
+        },
+    )
+    assert created2.status_code == 201
+    proposal2_id = created2.json()["id"]
+
+    rejected = app_client.post(
+        f"/api/admin/policies/sla/proposals/{proposal2_id}/reject",
+        headers=_owner_headers(),
+        json={"note": "Not needed"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["status"] == "rejected"
+
+
+def test_site_scoped_admin_cannot_create_global_sla_proposal(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "proposal_scope_ci",
+            "display_name": "Proposal Scope CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["Scoped Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "proposal-scope-token"},
+    )
+    assert issued.status_code == 201
+    scoped_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    forbidden_global = app_client.post(
+        "/api/admin/policies/sla/proposals",
+        headers=scoped_headers,
+        json={
+            "policy": {
+                "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+                "escalation_grace_minutes": 5,
+            },
+            "note": "global proposal should be blocked",
+        },
+    )
+    assert forbidden_global.status_code == 403

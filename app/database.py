@@ -170,6 +170,23 @@ alert_deliveries = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+sla_policy_proposals = Table(
+    "sla_policy_proposals",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=True),
+    Column("policy_json", Text, nullable=False, default="{}"),
+    Column("simulation_json", Text, nullable=False, default="{}"),
+    Column("note", Text, nullable=False, default=""),
+    Column("status", String(20), nullable=False, default="pending"),
+    Column("requested_by", String(80), nullable=False),
+    Column("decided_by", String(80), nullable=True),
+    Column("decision_note", Text, nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("decided_at", DateTime(timezone=True), nullable=True),
+    Column("applied_at", DateTime(timezone=True), nullable=True),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

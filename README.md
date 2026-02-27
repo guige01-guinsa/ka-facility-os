@@ -30,6 +30,11 @@ Open:
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
   - `GET /api/admin/policies/sla?site=...` (permission: `admins:manage`)
   - `PUT /api/admin/policies/sla?site=...` (permission: `admins:manage`)
+  - `POST /api/admin/policies/sla/proposals` (permission: `admins:manage`)
+  - `GET /api/admin/policies/sla/proposals` (permission: `admins:manage`)
+  - `GET /api/admin/policies/sla/proposals/{id}` (permission: `admins:manage`)
+  - `POST /api/admin/policies/sla/proposals/{id}/approve` (permission: `admins:manage`)
+  - `POST /api/admin/policies/sla/proposals/{id}/reject` (permission: `admins:manage`)
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
@@ -124,6 +129,12 @@ Job monitoring:
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `POST /api/ops/sla/simulate` (what-if simulator)
+
+SLA approval flow:
+- `POST /api/ops/sla/simulate` to preview impact
+- `POST /api/admin/policies/sla/proposals` to create pending proposal
+- `POST /api/admin/policies/sla/proposals/{id}/approve` to apply policy
+- `POST /api/admin/policies/sla/proposals/{id}/reject` to close without apply
 
 SLA policy (rule engine):
 - `GET /api/admin/policies/sla` (default policy)

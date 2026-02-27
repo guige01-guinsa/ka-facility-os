@@ -30,6 +30,7 @@ from app.database import (
     inspections,
     job_runs,
     sla_policies,
+    sla_policy_proposals,
     work_order_events,
     work_orders,
 )
@@ -54,6 +55,9 @@ from app.schemas import (
     SlaEscalationRunRequest,
     SlaEscalationRunResponse,
     SlaPolicyRead,
+    SlaPolicyProposalCreate,
+    SlaPolicyProposalDecision,
+    SlaPolicyProposalRead,
     SlaPolicyUpdate,
     SlaWhatIfRequest,
     SlaWhatIfResponse,
@@ -120,6 +124,9 @@ WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "completed": {"open"},
     "canceled": {"open"},
 }
+SLA_PROPOSAL_STATUS_PENDING = "pending"
+SLA_PROPOSAL_STATUS_APPROVED = "approved"
+SLA_PROPOSAL_STATUS_REJECTED = "rejected"
 
 
 @asynccontextmanager
@@ -132,7 +139,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.12.0",
+    version="0.13.0",
     lifespan=app_lifespan,
 )
 
@@ -684,6 +691,39 @@ def _row_to_alert_delivery_model(row: dict[str, Any]) -> AlertDeliveryRead:
         last_attempt_at=_as_datetime(row["last_attempt_at"]),
         created_at=_as_datetime(row["created_at"]),
         updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_sla_policy_proposal_model(row: dict[str, Any]) -> SlaPolicyProposalRead:
+    policy_raw = str(row["policy_json"] or "{}")
+    simulation_raw = str(row["simulation_json"] or "{}")
+    try:
+        policy = json.loads(policy_raw)
+    except json.JSONDecodeError:
+        policy = {"raw": policy_raw}
+    if not isinstance(policy, dict):
+        policy = {"value": policy}
+
+    try:
+        simulation = json.loads(simulation_raw)
+    except json.JSONDecodeError:
+        simulation = {"raw": simulation_raw}
+    if not isinstance(simulation, dict):
+        simulation = {"value": simulation}
+
+    return SlaPolicyProposalRead(
+        id=int(row["id"]),
+        site=row["site"],
+        status=str(row["status"]),
+        policy=policy,
+        simulation=simulation,
+        note=str(row["note"] or ""),
+        requested_by=str(row["requested_by"]),
+        decided_by=row["decided_by"],
+        decision_note=row["decision_note"],
+        created_at=_as_datetime(row["created_at"]),
+        decided_at=_as_optional_datetime(row["decided_at"]),
+        applied_at=_as_optional_datetime(row["applied_at"]),
     )
 
 
@@ -1772,6 +1812,7 @@ def root() -> dict[str, str]:
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
+        "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
     }
 
 
@@ -2125,6 +2166,246 @@ def simulate_sla(
         },
     )
     return result
+
+
+@app.post("/api/admin/policies/sla/proposals", response_model=SlaPolicyProposalRead, status_code=201)
+def create_sla_policy_proposal(
+    payload: SlaPolicyProposalCreate,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyProposalRead:
+    now = datetime.now(timezone.utc)
+    normalized_site = _normalize_site_name(payload.site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    else:
+        _require_site_access(principal, normalized_site)
+
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    simulation = simulate_sla_policy_change(
+        policy=payload.policy,
+        site=normalized_site,
+        limit=payload.simulation_limit,
+        include_work_order_ids=payload.include_work_order_ids,
+        sample_size=payload.sample_size,
+        recompute_due_from_policy=payload.recompute_due_from_policy,
+        allowed_sites=allowed_sites,
+    )
+    requested_by = str(principal.get("username") or "unknown")
+
+    with get_conn() as conn:
+        result = conn.execute(
+            insert(sla_policy_proposals).values(
+                site=normalized_site,
+                policy_json=_to_json_text(_normalize_sla_policy(payload.policy.model_dump())),
+                simulation_json=_to_json_text(simulation.model_dump()),
+                note=payload.note or "",
+                status=SLA_PROPOSAL_STATUS_PENDING,
+                requested_by=requested_by,
+                decided_by=None,
+                decision_note=None,
+                created_at=now,
+                decided_at=None,
+                applied_at=None,
+            )
+        )
+        proposal_id = int(result.inserted_primary_key[0])
+        row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to create SLA policy proposal")
+    model = _row_to_sla_policy_proposal_model(row)
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_proposal_create",
+        resource_type="sla_policy_proposal",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "baseline_escalate_count": simulation.baseline_escalate_count,
+            "simulated_escalate_count": simulation.simulated_escalate_count,
+            "delta_escalate_count": simulation.delta_escalate_count,
+        },
+    )
+    return model
+
+
+@app.get("/api/admin/policies/sla/proposals", response_model=list[SlaPolicyProposalRead])
+def list_sla_policy_proposals(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=300)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[SlaPolicyProposalRead]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is not None:
+        _require_site_access(principal, normalized_site)
+
+    stmt = select(sla_policy_proposals).order_by(
+        sla_policy_proposals.c.created_at.desc(),
+        sla_policy_proposals.c.id.desc(),
+    )
+    if normalized_site is not None:
+        stmt = stmt.where(sla_policy_proposals.c.site == normalized_site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(sla_policy_proposals.c.site.in_(allowed_sites))
+    if status is not None:
+        stmt = stmt.where(sla_policy_proposals.c.status == status)
+    stmt = stmt.limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_sla_policy_proposal_model(row) for row in rows]
+
+
+@app.get("/api/admin/policies/sla/proposals/{proposal_id}", response_model=SlaPolicyProposalRead)
+def get_sla_policy_proposal(
+    proposal_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyProposalRead:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="SLA policy proposal not found")
+
+    proposal_site = row["site"]
+    if proposal_site is None:
+        _require_global_site_scope(principal)
+    else:
+        _require_site_access(principal, str(proposal_site))
+    return _row_to_sla_policy_proposal_model(row)
+
+
+@app.post("/api/admin/policies/sla/proposals/{proposal_id}/approve", response_model=SlaPolicyProposalRead)
+def approve_sla_policy_proposal(
+    proposal_id: int,
+    payload: SlaPolicyProposalDecision,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyProposalRead:
+    now = datetime.now(timezone.utc)
+    decided_by = str(principal.get("username") or "unknown")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="SLA policy proposal not found")
+
+        proposal_site = row["site"]
+        if proposal_site is None:
+            _require_global_site_scope(principal)
+        else:
+            _require_site_access(principal, str(proposal_site))
+
+        if str(row["status"]) != SLA_PROPOSAL_STATUS_PENDING:
+            raise HTTPException(status_code=409, detail="Only pending proposal can be approved")
+
+    policy_raw = str(row["policy_json"] or "{}")
+    try:
+        policy_dict = json.loads(policy_raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Invalid proposal policy payload") from exc
+    if not isinstance(policy_dict, dict):
+        raise HTTPException(status_code=500, detail="Invalid proposal policy payload")
+
+    policy_model = SlaPolicyUpdate(**policy_dict)
+    applied_policy = _upsert_sla_policy(policy_model, site=row["site"])
+
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policy_proposals)
+            .where(sla_policy_proposals.c.id == proposal_id)
+            .values(
+                status=SLA_PROPOSAL_STATUS_APPROVED,
+                decided_by=decided_by,
+                decision_note=payload.note or "",
+                decided_at=now,
+                applied_at=now,
+            )
+        )
+        updated_row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to approve SLA policy proposal")
+    model = _row_to_sla_policy_proposal_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_proposal_approve",
+        resource_type="sla_policy_proposal",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "applied_policy_key": applied_policy.policy_key,
+            "decision_note": payload.note,
+        },
+    )
+    return model
+
+
+@app.post("/api/admin/policies/sla/proposals/{proposal_id}/reject", response_model=SlaPolicyProposalRead)
+def reject_sla_policy_proposal(
+    proposal_id: int,
+    payload: SlaPolicyProposalDecision,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyProposalRead:
+    now = datetime.now(timezone.utc)
+    decided_by = str(principal.get("username") or "unknown")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="SLA policy proposal not found")
+
+        proposal_site = row["site"]
+        if proposal_site is None:
+            _require_global_site_scope(principal)
+        else:
+            _require_site_access(principal, str(proposal_site))
+
+        if str(row["status"]) != SLA_PROPOSAL_STATUS_PENDING:
+            raise HTTPException(status_code=409, detail="Only pending proposal can be rejected")
+
+        conn.execute(
+            update(sla_policy_proposals)
+            .where(sla_policy_proposals.c.id == proposal_id)
+            .values(
+                status=SLA_PROPOSAL_STATUS_REJECTED,
+                decided_by=decided_by,
+                decision_note=payload.note or "",
+                decided_at=now,
+                applied_at=None,
+            )
+        )
+        updated_row = conn.execute(
+            select(sla_policy_proposals).where(sla_policy_proposals.c.id == proposal_id)
+        ).mappings().first()
+
+    if updated_row is None:
+        raise HTTPException(status_code=500, detail="Failed to reject SLA policy proposal")
+    model = _row_to_sla_policy_proposal_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_proposal_reject",
+        resource_type="sla_policy_proposal",
+        resource_id=str(model.id),
+        detail={"site": model.site, "status": model.status, "decision_note": payload.note},
+    )
+    return model
 
 
 @app.post("/api/ops/alerts/deliveries/{delivery_id}/retry", response_model=AlertDeliveryRead)
