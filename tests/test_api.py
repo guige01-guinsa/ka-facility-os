@@ -56,6 +56,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "KA Facility OS" in root_html.text
     assert "User Adoption Plan" in root_html.text
     assert "Promotion + Education + Fun Kit" in root_html.text
+    assert "요약 모드 (핵심 5줄): OFF" in root_html.text
+    assert "핵심 5줄 요약" in root_html.text
 
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200

@@ -542,7 +542,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.19.0",
+    version="0.20.0",
     lifespan=app_lifespan,
 )
 
@@ -2948,6 +2948,9 @@ def _build_adoption_plan_schedule_ics(plan: dict[str, Any]) -> str:
 
 
 def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, Any]) -> str:
+    training = plan.get("training_outline", [])
+    kpis = plan.get("kpi_dashboard_items", [])
+
     weekly_rows: list[str] = []
     for item in plan.get("weekly_execution", []):
         actions_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("actions", []))
@@ -2968,7 +2971,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         )
 
     training_rows: list[str] = []
-    for module in plan.get("training_outline", []):
+    for module in training:
         contents_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in module.get("contents", []))
         training_rows.append(
             f"""
@@ -2983,7 +2986,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         )
 
     kpi_rows: list[str] = []
-    for item in plan.get("kpi_dashboard_items", []):
+    for item in kpis:
         kpi_rows.append(
             f"""
             <tr>
@@ -3151,6 +3154,24 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         </div>
         """
 
+    if active_week_item is not None:
+        active_line = (
+            f"W{int(active_week_item.get('week', 0)):02d} 진행중: "
+            f"{str(active_week_item.get('focus', ''))} "
+            f"(Owner: {str(active_week_item.get('owner', ''))})"
+        )
+    else:
+        active_line = "현재 진행중인 주차 없음: 다음 주차 계획을 우선 확인하세요."
+
+    summary_lines = [
+        f"기간 {timeline_start}~{timeline_end}, 진행률 {progress_percent}% ({completed_weeks}/{total_weeks}주 완료).",
+        active_line,
+        f"교육 모듈 {len(training)}개: 역할별 표준 학습경로와 실습 중심 운영.",
+        f"KPI {len(kpis)}개 주간 추적, 다음 리뷰일 {plan.get('schedule_management', {}).get('next_review_date', '')}.",
+        "일정 파일(CSV/ICS) + 캠페인 킷(Promotion/Education/Fun)으로 즉시 실행 가능.",
+    ]
+    summary_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in summary_lines)
+
     return f"""
 <!doctype html>
 <html lang="ko">
@@ -3202,6 +3223,18 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     }}
     .hero h1 {{ margin: 0 0 8px; font-size: 28px; }}
     .hero p {{ margin: 0; color: var(--muted); }}
+    .summary-toggle {{
+      margin-top: 10px;
+      border: 1px solid #8ecfbf;
+      background: #eaf9f4;
+      color: #0b5c4d;
+      border-radius: 10px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      cursor: pointer;
+    }}
+    .summary-toggle:hover {{ background: #ddf5ec; }}
     .pill {{
       display: inline-block;
       margin-top: 12px;
@@ -3395,6 +3428,24 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     .active-week-box p {{ margin: 0 0 8px; color: var(--muted); }}
     .active-week-box ul {{ margin: 0 0 0 18px; }}
     .active-week-box li {{ margin: 4px 0; }}
+    .summary-panel {{
+      display: none;
+      margin-top: 12px;
+      border: 1px solid #9dc4ea;
+      border-radius: 12px;
+      background: #eef7ff;
+      padding: 12px;
+    }}
+    .summary-panel h3 {{ margin: 0 0 8px; font-size: 16px; }}
+    .summary-panel ul {{ margin: 0 0 0 18px; }}
+    .summary-panel li {{ margin: 4px 0; color: #26415f; }}
+    body.summary-mode .section {{ display: none; }}
+    body.summary-mode .hero .grid,
+    body.summary-mode .hero .hero-stats,
+    body.summary-mode .hero .chip-row,
+    body.summary-mode .hero .pill {{ display: none; }}
+    body.summary-mode .summary-panel {{ display: block; }}
+    body.summary-mode .hero p {{ margin-top: 6px; }}
     @keyframes fadeup {{
       from {{ opacity: 0; transform: translateY(10px); }}
       to {{ opacity: 1; transform: translateY(0); }}
@@ -3414,11 +3465,16 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     <section class="hero">
       <h1>KA Facility OS</h1>
       <p>브라우저에서 바로 이해할 수 있는 공개 운영 포털입니다. 계획, 교육, KPI, 일정, 캠페인을 한 페이지에서 읽고 실행할 수 있습니다.</p>
+      <button id="summaryModeToggle" class="summary-toggle" type="button" aria-pressed="false">요약 모드 (핵심 5줄): OFF</button>
       <span class="pill">Public Plan Enabled</span>
       <div class="chip-row">
         <span class="chip">User Adoption Plan</span>
         <span class="chip">Schedule Management</span>
         <span class="chip">Promotion + Education + Fun Kit</span>
+      </div>
+      <div id="summaryPanel" class="summary-panel">
+        <h3>핵심 5줄 요약</h3>
+        <ul>{summary_lines_html}</ul>
       </div>
       <div class="hero-stats">
         <div class="stat"><div class="k">Weeks</div><div class="v">{total_weeks}</div></div>
@@ -3592,6 +3648,20 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         searchInput.addEventListener("input", applyFilters);
       }}
       applyFilters();
+
+      const summaryToggle = document.getElementById("summaryModeToggle");
+      if (summaryToggle) {{
+        summaryToggle.addEventListener("click", () => {{
+          const enabled = document.body.classList.toggle("summary-mode");
+          summaryToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+          summaryToggle.textContent = enabled
+            ? "요약 모드 (핵심 5줄): ON"
+            : "요약 모드 (핵심 5줄): OFF";
+          if (enabled) {{
+            window.scrollTo({{ top: 0, behavior: "smooth" }});
+          }}
+        }});
+      }}
     }})();
   </script>
 </body>
