@@ -20,7 +20,8 @@ Open:
 ## API summary
 
 - Public
-  - `GET /` (browser main page: facility web hub + adoption/post-MVP sections)
+  - `GET /` (browser tabbed main page; default tab is facility system, `?tab=adoption` opens adoption tab)
+  - `GET /web/adoption` (browser HTML adoption/post-MVP portal page)
   - `GET /web/console` (browser HTML operations console for human-readable module views)
   - `GET /api/service-info` (machine-readable service endpoint map)
   - `GET /api/public/modules` (public module registry; browser `Accept: text/html` renders card view)
@@ -154,6 +155,7 @@ Job monitoring:
 - `GET /api/public/adoption-plan`
 - `GET /api/public/adoption-plan/campaign`
 - `GET /api/public/modules`
+- `GET /web/adoption`
 - `GET /web/console`
 - `GET /api/public/adoption-plan/schedule.csv`
 - `GET /api/public/adoption-plan/schedule.ics`

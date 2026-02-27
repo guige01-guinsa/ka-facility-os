@@ -1048,7 +1048,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.25.0",
+    version="0.26.0",
     lifespan=app_lifespan,
 )
 
@@ -3426,6 +3426,7 @@ def _service_info_payload() -> dict[str, str]:
     return {
         "service": "ka-facility-os",
         "status": "running",
+        "main_html": "/",
         "docs": "/docs",
         "inspection_api": "/api/inspections",
         "work_order_api": "/api/work-orders",
@@ -3453,6 +3454,7 @@ def _service_info_payload() -> dict[str, str]:
         "public_post_mvp_kpi_api": "/api/public/post-mvp/kpi-dashboard",
         "public_post_mvp_risks_api": "/api/public/post-mvp/risks",
         "public_modules_api": "/api/public/modules",
+        "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_retry_api": "/api/ops/alerts/retries/run",
@@ -5497,6 +5499,193 @@ def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
 """
 
 
+def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
+    selected_tab = "adoption" if initial_tab == "adoption" else "system"
+    system_active = "active" if selected_tab == "system" else ""
+    adoption_active = "active" if selected_tab == "adoption" else ""
+    system_hidden = "false" if selected_tab == "system" else "true"
+    adoption_hidden = "false" if selected_tab == "adoption" else "true"
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KA Facility OS - Main</title>
+  <style>
+    :root {{
+      --ink: #0d203b;
+      --muted: #496081;
+      --line: #d6e1ef;
+      --bg: #f4f8ff;
+      --card: #fff;
+      --brand: #0e6f5d;
+      --accent: #d25c2e;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      font-family: "SUIT", "Pretendard", "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+      background:
+        radial-gradient(860px 320px at 10% -20%, #ddf6ff 0%, transparent 58%),
+        radial-gradient(760px 320px at 95% -20%, #ffedd7 0%, transparent 58%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 1300px; margin: 0 auto; padding: 18px 14px 44px; }}
+    .hero {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+      background: linear-gradient(140deg, #fff 0%, #eef8f5 54%, #fff4e8 100%);
+      box-shadow: 0 10px 26px rgba(12, 34, 64, 0.08);
+    }}
+    .hero h1 {{ margin: 0; font-size: 26px; }}
+    .hero p {{ margin: 8px 0 0; color: var(--muted); }}
+    .links {{
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }}
+    .links a {{
+      text-decoration: none;
+      border: 1px solid #b9cfe8;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #1f4f7e;
+      background: #f3f8ff;
+    }}
+    .tabs {{
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      overflow: hidden;
+    }}
+    .tab-head {{
+      display: flex;
+      gap: 0;
+      border-bottom: 1px solid #e4edf8;
+      background: #f8fbff;
+    }}
+    .tab-btn {{
+      appearance: none;
+      border: 0;
+      border-right: 1px solid #e4edf8;
+      background: transparent;
+      color: #35587f;
+      font-size: 14px;
+      font-weight: 800;
+      padding: 12px 14px;
+      cursor: pointer;
+    }}
+    .tab-btn.active {{
+      color: #0b5f4e;
+      background: #ebfaf5;
+      box-shadow: inset 0 -2px 0 #77c7b4;
+    }}
+    .tab-panel {{
+      display: none;
+      padding: 12px;
+      animation: fadeup 200ms ease-out both;
+    }}
+    .tab-panel.active {{ display: block; }}
+    .tab-frame {{
+      width: 100%;
+      min-height: 83vh;
+      border: 1px solid #d7e2f1;
+      border-radius: 12px;
+      background: #fff;
+    }}
+    .tab-caption {{
+      margin: 0 0 9px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    @keyframes fadeup {{
+      from {{ opacity: 0; transform: translateY(8px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
+    }}
+    @media (max-width: 900px) {{
+      .hero h1 {{ font-size: 21px; }}
+      .tab-btn {{ font-size: 13px; padding: 10px; }}
+      .tab-frame {{ min-height: 78vh; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>시설관리시스템 메인</h1>
+      <p>기본 탭은 시설관리 운영 콘솔이며, 사용자 정착 계획/실행표는 별도 탭에서 동일하게 확인할 수 있습니다.</p>
+      <div class="links">
+        <a href="{html.escape(service_info.get("docs", "/docs"))}">Swagger Docs</a>
+        <a href="/api/service-info">Service Info</a>
+        <a href="/web/console">Console Direct</a>
+        <a href="/web/adoption">Adoption Direct</a>
+      </div>
+    </header>
+
+    <section class="tabs">
+      <div class="tab-head" role="tablist" aria-label="Main tabs">
+        <button id="tabBtnSystem" class="tab-btn {system_active}" type="button" role="tab" aria-selected="{str(selected_tab == 'system').lower()}" data-tab="system">시설관리시스템</button>
+        <button id="tabBtnAdoption" class="tab-btn {adoption_active}" type="button" role="tab" aria-selected="{str(selected_tab == 'adoption').lower()}" data-tab="adoption">KA Facility OS 사용자 정착 계획</button>
+      </div>
+      <div id="panelSystem" class="tab-panel {system_active}" role="tabpanel" aria-hidden="{system_hidden}">
+        <p class="tab-caption">운영 데이터 조회/점검/작업지시/SLA/리포트는 이 탭에서 실행합니다.</p>
+        <iframe class="tab-frame" src="/web/console" title="Facility Console"></iframe>
+      </div>
+      <div id="panelAdoption" class="tab-panel {adoption_active}" role="tabpanel" aria-hidden="{adoption_hidden}">
+        <p class="tab-caption">주차별 실행표 + 교육자료 목차 + KPI + 일정관리(ICS/CSV)를 이 탭에서 확인합니다.</p>
+        <iframe class="tab-frame" src="/web/adoption" title="Adoption Plan"></iframe>
+      </div>
+    </section>
+  </div>
+  <script>
+    (function() {{
+      const buttons = Array.from(document.querySelectorAll(".tab-btn"));
+      const panels = {{
+        system: document.getElementById("panelSystem"),
+        adoption: document.getElementById("panelAdoption")
+      }};
+      const url = new URL(window.location.href);
+
+      function activate(tab, updateUrl) {{
+        const selected = tab === "adoption" ? "adoption" : "system";
+        buttons.forEach((btn) => {{
+          const active = btn.dataset.tab === selected;
+          btn.classList.toggle("active", active);
+          btn.setAttribute("aria-selected", active ? "true" : "false");
+        }});
+        Object.entries(panels).forEach(([key, panel]) => {{
+          const active = key === selected;
+          panel.classList.toggle("active", active);
+          panel.setAttribute("aria-hidden", active ? "false" : "true");
+        }});
+        if (updateUrl) {{
+          if (selected === "adoption") {{
+            url.searchParams.set("tab", "adoption");
+          }} else {{
+            url.searchParams.delete("tab");
+          }}
+          window.history.replaceState(null, "", url.pathname + (url.search || ""));
+        }}
+      }}
+
+      buttons.forEach((btn) => {{
+        btn.addEventListener("click", () => activate(btn.dataset.tab, true));
+      }});
+      activate("{selected_tab}", false);
+    }})();
+  </script>
+</body>
+</html>
+"""
+
+
 @app.get("/api/service-info")
 def service_info() -> dict[str, str]:
     return _service_info_payload()
@@ -5507,11 +5696,17 @@ def facility_console() -> HTMLResponse:
     return HTMLResponse(_build_facility_console_html(_service_info_payload(), _facility_modules_payload()))
 
 
+@app.get("/web/adoption", response_model=None)
+def adoption_portal() -> HTMLResponse:
+    return HTMLResponse(_build_public_main_page_html(_service_info_payload(), _adoption_plan_payload()))
+
+
 @app.get("/", response_model=None)
 def root(request: Request) -> Any:
     accept = request.headers.get("accept", "").lower()
     if "text/html" in accept:
-        return HTMLResponse(_build_public_main_page_html(_service_info_payload(), _adoption_plan_payload()))
+        selected_tab = request.query_params.get("tab", "").strip().lower()
+        return HTMLResponse(_build_system_main_tabs_html(_service_info_payload(), initial_tab=selected_tab))
     return _service_info_payload()
 
 
