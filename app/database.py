@@ -187,6 +187,18 @@ sla_policy_proposals = Table(
     Column("applied_at", DateTime(timezone=True), nullable=True),
 )
 
+sla_policy_revisions = Table(
+    "sla_policy_revisions",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=True),
+    Column("policy_json", Text, nullable=False, default="{}"),
+    Column("source_action", String(40), nullable=False, default="manual_update"),
+    Column("actor_username", String(80), nullable=False, default="system"),
+    Column("note", Text, nullable=False, default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

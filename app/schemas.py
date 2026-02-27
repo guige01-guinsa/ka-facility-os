@@ -212,6 +212,20 @@ class SlaPolicyProposalRead(BaseModel):
     applied_at: Optional[datetime] = None
 
 
+class SlaPolicyRevisionRead(BaseModel):
+    id: int
+    site: Optional[str] = None
+    policy: dict[str, Any]
+    source_action: str
+    actor_username: str
+    note: str
+    created_at: datetime
+
+
+class SlaPolicyRestoreRequest(BaseModel):
+    note: str = ""
+
+
 class MonthlyReportRead(BaseModel):
     month: str
     site: Optional[str] = None

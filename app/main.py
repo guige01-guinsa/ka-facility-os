@@ -31,6 +31,7 @@ from app.database import (
     job_runs,
     sla_policies,
     sla_policy_proposals,
+    sla_policy_revisions,
     work_order_events,
     work_orders,
 )
@@ -58,6 +59,8 @@ from app.schemas import (
     SlaPolicyProposalCreate,
     SlaPolicyProposalDecision,
     SlaPolicyProposalRead,
+    SlaPolicyRestoreRequest,
+    SlaPolicyRevisionRead,
     SlaPolicyUpdate,
     SlaWhatIfRequest,
     SlaWhatIfResponse,
@@ -139,7 +142,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.13.0",
+    version="0.14.0",
     lifespan=app_lifespan,
 )
 
@@ -727,6 +730,51 @@ def _row_to_sla_policy_proposal_model(row: dict[str, Any]) -> SlaPolicyProposalR
     )
 
 
+def _write_sla_policy_revision(
+    *,
+    site: str | None,
+    policy: dict[str, Any],
+    source_action: str,
+    actor_username: str,
+    note: str = "",
+) -> None:
+    now = datetime.now(timezone.utc)
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                insert(sla_policy_revisions).values(
+                    site=site,
+                    policy_json=_to_json_text(policy),
+                    source_action=source_action,
+                    actor_username=actor_username,
+                    note=note,
+                    created_at=now,
+                )
+            )
+    except SQLAlchemyError:
+        return
+
+
+def _row_to_sla_policy_revision_model(row: dict[str, Any]) -> SlaPolicyRevisionRead:
+    raw = str(row["policy_json"] or "{}")
+    try:
+        policy = json.loads(raw)
+    except json.JSONDecodeError:
+        policy = {"raw": raw}
+    if not isinstance(policy, dict):
+        policy = {"value": policy}
+
+    return SlaPolicyRevisionRead(
+        id=int(row["id"]),
+        site=row["site"],
+        policy=policy,
+        source_action=str(row["source_action"]),
+        actor_username=str(row["actor_username"]),
+        note=str(row["note"] or ""),
+        created_at=_as_datetime(row["created_at"]),
+    )
+
+
 def _normalize_sla_due_hours(value: Any) -> dict[str, int]:
     source = value if isinstance(value, dict) else {}
     normalized: dict[str, int] = {}
@@ -846,7 +894,14 @@ def _load_sla_policy(
     return policy, updated_at, "site", normalized_site, site_policy_key
 
 
-def _upsert_sla_policy(payload: SlaPolicyUpdate, site: str | None = None) -> SlaPolicyRead:
+def _upsert_sla_policy(
+    payload: SlaPolicyUpdate,
+    site: str | None = None,
+    *,
+    source_action: str = "manual_update",
+    actor_username: str = "system",
+    note: str = "",
+) -> SlaPolicyRead:
     now = datetime.now(timezone.utc)
     policy = _normalize_sla_policy(payload.model_dump())
     normalized_site = _normalize_site_name(site)
@@ -873,6 +928,14 @@ def _upsert_sla_policy(payload: SlaPolicyUpdate, site: str | None = None) -> Sla
                 .where(sla_policies.c.policy_key == policy_key)
                 .values(policy_json=_to_json_text(policy), updated_at=now)
             )
+
+    _write_sla_policy_revision(
+        site=normalized_site,
+        policy=policy,
+        source_action=source_action,
+        actor_username=actor_username,
+        note=note,
+    )
 
     return _sla_policy_to_model(
         policy_key=policy_key,
@@ -1813,6 +1876,7 @@ def root() -> dict[str, str]:
         "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
         "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
+        "sla_policy_revisions_api": "/api/admin/policies/sla/revisions",
     }
 
 
@@ -2319,7 +2383,13 @@ def approve_sla_policy_proposal(
         raise HTTPException(status_code=500, detail="Invalid proposal policy payload")
 
     policy_model = SlaPolicyUpdate(**policy_dict)
-    applied_policy = _upsert_sla_policy(policy_model, site=row["site"])
+    applied_policy = _upsert_sla_policy(
+        policy_model,
+        site=row["site"],
+        source_action="proposal_approval",
+        actor_username=decided_by,
+        note=f"proposal_id={proposal_id}; {payload.note or ''}".strip(),
+    )
 
     with get_conn() as conn:
         conn.execute(
@@ -2492,7 +2562,14 @@ def set_sla_policy(
         _require_global_site_scope(principal)
     else:
         _require_site_access(principal, site)
-    model = _upsert_sla_policy(payload, site=site)
+    actor_username = str(principal.get("username") or "unknown")
+    model = _upsert_sla_policy(
+        payload,
+        site=site,
+        source_action="manual_update",
+        actor_username=actor_username,
+        note="direct policy update",
+    )
     _write_audit_log(
         principal=principal,
         action="sla_policy_update",
@@ -2503,6 +2580,89 @@ def set_sla_policy(
             "source": model.source,
             "default_due_hours": model.default_due_hours,
             "escalation_grace_minutes": model.escalation_grace_minutes,
+        },
+    )
+    return model
+
+
+@app.get("/api/admin/policies/sla/revisions", response_model=list[SlaPolicyRevisionRead])
+def list_sla_policy_revisions(
+    site: Annotated[str | None, Query()] = None,
+    source_action: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[SlaPolicyRevisionRead]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is not None:
+        _require_site_access(principal, normalized_site)
+
+    stmt = select(sla_policy_revisions).order_by(
+        sla_policy_revisions.c.created_at.desc(),
+        sla_policy_revisions.c.id.desc(),
+    )
+    if normalized_site is not None:
+        stmt = stmt.where(sla_policy_revisions.c.site == normalized_site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(sla_policy_revisions.c.site.in_(allowed_sites))
+    if source_action is not None:
+        stmt = stmt.where(sla_policy_revisions.c.source_action == source_action)
+    stmt = stmt.limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_sla_policy_revision_model(row) for row in rows]
+
+
+@app.post("/api/admin/policies/sla/revisions/{revision_id}/restore", response_model=SlaPolicyRead)
+def restore_sla_policy_revision(
+    revision_id: int,
+    payload: SlaPolicyRestoreRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaPolicyRead:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policy_revisions).where(sla_policy_revisions.c.id == revision_id)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="SLA policy revision not found")
+
+    revision_site = row["site"]
+    if revision_site is None:
+        _require_global_site_scope(principal)
+    else:
+        _require_site_access(principal, str(revision_site))
+
+    raw_policy = str(row["policy_json"] or "{}")
+    try:
+        policy_dict = json.loads(raw_policy)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=500, detail="Invalid revision policy payload") from exc
+    if not isinstance(policy_dict, dict):
+        raise HTTPException(status_code=500, detail="Invalid revision policy payload")
+
+    policy_model = SlaPolicyUpdate(**policy_dict)
+    actor_username = str(principal.get("username") or "unknown")
+    model = _upsert_sla_policy(
+        policy_model,
+        site=revision_site,
+        source_action="revision_restore",
+        actor_username=actor_username,
+        note=f"revision_id={revision_id}; {payload.note or ''}".strip(),
+    )
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_restore",
+        resource_type="sla_policy_revision",
+        resource_id=str(revision_id),
+        detail={
+            "site": revision_site,
+            "policy_key": model.policy_key,
+            "decision_note": payload.note,
         },
     )
     return model

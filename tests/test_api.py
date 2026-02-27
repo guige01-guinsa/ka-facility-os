@@ -856,3 +856,62 @@ def test_site_scoped_admin_cannot_create_global_sla_proposal(app_client: TestCli
         },
     )
     assert forbidden_global.status_code == 403
+
+
+def test_sla_policy_revisions_and_restore(app_client: TestClient) -> None:
+    set_v1 = app_client.put(
+        "/api/admin/policies/sla?site=Revision+Site",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 5,
+        },
+    )
+    assert set_v1.status_code == 200
+
+    set_v2 = app_client.put(
+        "/api/admin/policies/sla?site=Revision+Site",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 45,
+        },
+    )
+    assert set_v2.status_code == 200
+
+    listed = app_client.get(
+        "/api/admin/policies/sla/revisions?site=Revision+Site&limit=50",
+        headers=_owner_headers(),
+    )
+    assert listed.status_code == 200
+    rows = listed.json()
+    assert len(rows) >= 2
+
+    revision_v1 = None
+    for row in rows:
+        if row["policy"]["escalation_grace_minutes"] == 5:
+            revision_v1 = row
+            break
+    assert revision_v1 is not None
+
+    restored = app_client.post(
+        f"/api/admin/policies/sla/revisions/{revision_v1['id']}/restore",
+        headers=_owner_headers(),
+        json={"note": "rollback for test"},
+    )
+    assert restored.status_code == 200
+    assert restored.json()["escalation_grace_minutes"] == 5
+
+    policy_after = app_client.get(
+        "/api/admin/policies/sla?site=Revision+Site",
+        headers=_owner_headers(),
+    )
+    assert policy_after.status_code == 200
+    assert policy_after.json()["escalation_grace_minutes"] == 5
+
+    restore_rows = app_client.get(
+        "/api/admin/policies/sla/revisions?site=Revision+Site&source_action=revision_restore&limit=20",
+        headers=_owner_headers(),
+    )
+    assert restore_rows.status_code == 200
+    assert len(restore_rows.json()) >= 1

@@ -35,6 +35,8 @@ Open:
   - `GET /api/admin/policies/sla/proposals/{id}` (permission: `admins:manage`)
   - `POST /api/admin/policies/sla/proposals/{id}/approve` (permission: `admins:manage`)
   - `POST /api/admin/policies/sla/proposals/{id}/reject` (permission: `admins:manage`)
+  - `GET /api/admin/policies/sla/revisions` (permission: `admins:manage`)
+  - `POST /api/admin/policies/sla/revisions/{id}/restore` (permission: `admins:manage`)
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
@@ -135,6 +137,8 @@ SLA approval flow:
 - `POST /api/admin/policies/sla/proposals` to create pending proposal
 - `POST /api/admin/policies/sla/proposals/{id}/approve` to apply policy
 - `POST /api/admin/policies/sla/proposals/{id}/reject` to close without apply
+- `GET /api/admin/policies/sla/revisions` to inspect change history
+- `POST /api/admin/policies/sla/revisions/{id}/restore` to rollback policy snapshot
 
 SLA policy (rule engine):
 - `GET /api/admin/policies/sla` (default policy)
