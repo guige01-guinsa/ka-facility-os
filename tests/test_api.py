@@ -673,3 +673,53 @@ def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     assert body["id"] == delivery_id
     assert body["attempt_count"] == 2
     assert body["status"] in {"success", "warning", "failed"}
+
+
+def test_sla_simulator_what_if(app_client: TestClient) -> None:
+    set_default = app_client.put(
+        "/api/admin/policies/sla",
+        headers=_owner_headers(),
+        json={
+            "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+            "escalation_grace_minutes": 0,
+        },
+    )
+    assert set_default.status_code == 200
+
+    due_old = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    wo = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Simulator target",
+            "description": "simulate grace increase",
+            "site": "Sim Site",
+            "location": "B9",
+            "priority": "high",
+            "due_at": due_old,
+        },
+    )
+    assert wo.status_code == 201
+
+    simulated = app_client.post(
+        "/api/ops/sla/simulate",
+        headers=_owner_headers(),
+        json={
+            "site": "Sim Site",
+            "policy": {
+                "default_due_hours": {"low": 72, "medium": 24, "high": 8, "critical": 2},
+                "escalation_grace_minutes": 60,
+            },
+            "limit": 500,
+            "include_work_order_ids": True,
+            "sample_size": 50,
+            "recompute_due_from_policy": False,
+        },
+    )
+    assert simulated.status_code == 200
+    body = simulated.json()
+    assert body["site"] == "Sim Site"
+    assert body["baseline_escalate_count"] >= 1
+    assert body["simulated_escalate_count"] == 0
+    assert body["delta_escalate_count"] <= 0
+    assert len(body["no_longer_escalated_ids"]) >= 1

@@ -55,6 +55,8 @@ from app.schemas import (
     SlaEscalationRunResponse,
     SlaPolicyRead,
     SlaPolicyUpdate,
+    SlaWhatIfRequest,
+    SlaWhatIfResponse,
     WorkOrderAck,
     WorkOrderCancel,
     WorkOrderCommentCreate,
@@ -130,7 +132,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.11.0",
+    version="0.12.0",
     lifespan=app_lifespan,
 )
 
@@ -1218,6 +1220,148 @@ def run_sla_escalation_job(
     )
 
 
+def simulate_sla_policy_change(
+    *,
+    policy: SlaPolicyUpdate,
+    site: str | None = None,
+    limit: int = 3000,
+    include_work_order_ids: bool = True,
+    sample_size: int = 200,
+    recompute_due_from_policy: bool = False,
+    allowed_sites: list[str] | None = None,
+) -> SlaWhatIfResponse:
+    now = datetime.now(timezone.utc)
+    normalized_site = _normalize_site_name(site)
+    normalized_limit = max(1, min(limit, 20000))
+    normalized_sample_size = max(0, min(sample_size, 1000))
+    simulated_policy = _normalize_sla_policy(policy.model_dump())
+
+    stmt = (
+        select(work_orders)
+        .where(work_orders.c.status.in_(["open", "acked"]))
+        .where(work_orders.c.is_escalated.is_(False))
+        .order_by(work_orders.c.due_at.asc(), work_orders.c.id.asc())
+        .limit(normalized_limit)
+    )
+    if normalized_site is not None:
+        stmt = stmt.where(work_orders.c.site == normalized_site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return SlaWhatIfResponse(
+                checked_at=now,
+                site=normalized_site,
+                limit=normalized_limit,
+                total_candidates=0,
+                baseline_escalate_count=0,
+                simulated_escalate_count=0,
+                delta_escalate_count=0,
+                baseline_by_site={},
+                simulated_by_site={},
+                newly_escalated_ids=[],
+                no_longer_escalated_ids=[],
+                notes=["No accessible sites in current principal scope."],
+            )
+        stmt = stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    current_policy_cache: dict[str, dict[str, Any]] = {}
+
+    def _current_policy_for_site(site_name: str) -> dict[str, Any]:
+        key = site_name.strip()
+        if key in current_policy_cache:
+            return current_policy_cache[key]
+        loaded, _, _, _, _ = _load_sla_policy(site=key if key else None)
+        current_policy_cache[key] = loaded
+        return loaded
+
+    baseline_count = 0
+    simulated_count = 0
+    baseline_by_site: dict[str, int] = {}
+    simulated_by_site: dict[str, int] = {}
+    newly_escalated_ids: list[int] = []
+    no_longer_escalated_ids: list[int] = []
+
+    for row in rows:
+        row_id = int(row["id"])
+        row_site = str(row["site"] or "")
+        row_priority = str(row["priority"] or "medium")
+
+        due_at_baseline = _as_optional_datetime(row["due_at"])
+        created_at = _as_optional_datetime(row["created_at"])
+        if due_at_baseline is None and not recompute_due_from_policy:
+            continue
+        if created_at is None:
+            continue
+
+        current_policy = _current_policy_for_site(row_site)
+        current_grace = int(current_policy["escalation_grace_minutes"])
+        baseline_cutoff = now - timedelta(minutes=current_grace)
+
+        simulated_applies = normalized_site is None or row_site == normalized_site
+        simulated_grace = (
+            int(simulated_policy["escalation_grace_minutes"])
+            if simulated_applies
+            else int(current_policy["escalation_grace_minutes"])
+        )
+        simulated_cutoff = now - timedelta(minutes=simulated_grace)
+
+        due_at_for_baseline = due_at_baseline
+        due_at_for_simulated = due_at_baseline
+        if recompute_due_from_policy and simulated_applies:
+            simulated_hours = int(
+                simulated_policy["default_due_hours"].get(
+                    row_priority, SLA_DEFAULT_DUE_HOURS.get(row_priority, SLA_DEFAULT_DUE_HOURS["medium"])
+                )
+            )
+            due_at_for_simulated = created_at + timedelta(hours=simulated_hours)
+        if due_at_for_baseline is None:
+            baseline_hours = int(
+                current_policy["default_due_hours"].get(
+                    row_priority, SLA_DEFAULT_DUE_HOURS.get(row_priority, SLA_DEFAULT_DUE_HOURS["medium"])
+                )
+            )
+            due_at_for_baseline = created_at + timedelta(hours=baseline_hours)
+        if due_at_for_simulated is None:
+            due_at_for_simulated = due_at_for_baseline
+
+        baseline_escalates = due_at_for_baseline < baseline_cutoff
+        simulated_escalates = due_at_for_simulated < simulated_cutoff
+
+        if baseline_escalates:
+            baseline_count += 1
+            baseline_by_site[row_site] = baseline_by_site.get(row_site, 0) + 1
+        if simulated_escalates:
+            simulated_count += 1
+            simulated_by_site[row_site] = simulated_by_site.get(row_site, 0) + 1
+
+        if include_work_order_ids and normalized_sample_size > 0:
+            if simulated_escalates and not baseline_escalates and len(newly_escalated_ids) < normalized_sample_size:
+                newly_escalated_ids.append(row_id)
+            if baseline_escalates and not simulated_escalates and len(no_longer_escalated_ids) < normalized_sample_size:
+                no_longer_escalated_ids.append(row_id)
+
+    notes = [
+        "Simulation is read-only and does not mutate work-order state.",
+        "Due-hours policy mainly affects future created work orders unless recompute_due_from_policy=true.",
+    ]
+    return SlaWhatIfResponse(
+        checked_at=now,
+        site=normalized_site,
+        limit=normalized_limit,
+        total_candidates=len(rows),
+        baseline_escalate_count=baseline_count,
+        simulated_escalate_count=simulated_count,
+        delta_escalate_count=simulated_count - baseline_count,
+        baseline_by_site=baseline_by_site,
+        simulated_by_site=simulated_by_site,
+        newly_escalated_ids=newly_escalated_ids,
+        no_longer_escalated_ids=no_longer_escalated_ids,
+        notes=notes,
+    )
+
+
 def build_monthly_report(
     month: str | None,
     site: str | None,
@@ -1626,6 +1770,7 @@ def root() -> dict[str, str]:
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
+        "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
     }
 
@@ -1948,6 +2093,38 @@ def list_alert_deliveries(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_alert_delivery_model(row) for row in rows]
+
+
+@app.post("/api/ops/sla/simulate", response_model=SlaWhatIfResponse)
+def simulate_sla(
+    payload: SlaWhatIfRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> SlaWhatIfResponse:
+    _require_site_access(principal, payload.site)
+    allowed_sites = _allowed_sites_for_principal(principal) if payload.site is None else None
+    result = simulate_sla_policy_change(
+        policy=payload.policy,
+        site=payload.site,
+        limit=payload.limit,
+        include_work_order_ids=payload.include_work_order_ids,
+        sample_size=payload.sample_size,
+        recompute_due_from_policy=payload.recompute_due_from_policy,
+        allowed_sites=allowed_sites,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="sla_policy_simulation_run",
+        resource_type="sla_policy",
+        resource_id=payload.site or "global",
+        detail={
+            "site": payload.site,
+            "limit": payload.limit,
+            "baseline_escalate_count": result.baseline_escalate_count,
+            "simulated_escalate_count": result.simulated_escalate_count,
+            "delta_escalate_count": result.delta_escalate_count,
+        },
+    )
+    return result
 
 
 @app.post("/api/ops/alerts/deliveries/{delivery_id}/retry", response_model=AlertDeliveryRead)

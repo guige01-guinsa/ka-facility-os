@@ -35,6 +35,7 @@ Open:
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
+  - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -122,6 +123,7 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/alerts/deliveries?status=failed`
+- `POST /api/ops/sla/simulate` (what-if simulator)
 
 SLA policy (rule engine):
 - `GET /api/admin/policies/sla` (default policy)

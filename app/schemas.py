@@ -156,6 +156,30 @@ class SlaPolicyRead(BaseModel):
     updated_at: datetime
 
 
+class SlaWhatIfRequest(BaseModel):
+    site: Optional[str] = Field(default=None, max_length=120)
+    policy: SlaPolicyUpdate
+    limit: int = Field(default=3000, ge=1, le=20000)
+    include_work_order_ids: bool = True
+    sample_size: int = Field(default=200, ge=0, le=1000)
+    recompute_due_from_policy: bool = False
+
+
+class SlaWhatIfResponse(BaseModel):
+    checked_at: datetime
+    site: Optional[str] = None
+    limit: int
+    total_candidates: int
+    baseline_escalate_count: int
+    simulated_escalate_count: int
+    delta_escalate_count: int
+    baseline_by_site: dict[str, int]
+    simulated_by_site: dict[str, int]
+    newly_escalated_ids: list[int]
+    no_longer_escalated_ids: list[int]
+    notes: list[str]
+
+
 class MonthlyReportRead(BaseModel):
     month: str
     site: Optional[str] = None
