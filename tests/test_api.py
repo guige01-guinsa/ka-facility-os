@@ -635,6 +635,156 @@ def test_ops_dashboard_trends(app_client: TestClient) -> None:
     assert sum(point["work_orders_completed_count"] for point in body["points"]) >= 1
 
 
+def test_ops_handover_brief_prioritization(app_client: TestClient) -> None:
+    now = datetime.now(timezone.utc)
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=_owner_headers(),
+        json={
+            "site": "Handover Site",
+            "location": "B2",
+            "cycle": "monthly",
+            "inspector": "Handover Bot",
+            "inspected_at": now.isoformat(),
+            "grounding_ohm": 30.0,
+            "insulation_mohm": 0.1,
+        },
+    )
+    assert inspection.status_code == 201
+    assert inspection.json()["risk_level"] in {"warning", "danger"}
+
+    overdue = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Critical overdue issue",
+            "description": "handover priority",
+            "site": "Handover Site",
+            "location": "B2",
+            "priority": "critical",
+            "due_at": (now - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert overdue.status_code == 201
+    overdue_id = overdue.json()["id"]
+
+    due_soon = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Due soon issue",
+            "description": "needs prep",
+            "site": "Handover Site",
+            "location": "B2",
+            "priority": "high",
+            "assignee": "Ops Team",
+            "due_at": (now + timedelta(minutes=45)).isoformat(),
+        },
+    )
+    assert due_soon.status_code == 201
+
+    normal = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Normal backlog",
+            "description": "low risk",
+            "site": "Handover Site",
+            "location": "B3",
+            "priority": "low",
+        },
+    )
+    assert normal.status_code == 201
+
+    run = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=_owner_headers(),
+        json={"site": "Handover Site", "dry_run": False, "limit": 50},
+    )
+    assert run.status_code == 200
+
+    brief = app_client.get(
+        "/api/ops/handover/brief?site=Handover+Site&window_hours=24&due_soon_hours=2&max_items=5",
+        headers=_owner_headers(),
+    )
+    assert brief.status_code == 200
+    body = brief.json()
+    assert body["site"] == "Handover Site"
+    assert body["open_work_orders"] >= 3
+    assert body["overdue_open_work_orders"] >= 1
+    assert body["due_soon_work_orders"] >= 1
+    assert body["high_risk_inspections_in_window"] >= 1
+    assert len(body["top_work_orders"]) >= 1
+    assert body["top_work_orders"][0]["id"] == overdue_id
+    assert any("overdue" in action.lower() for action in body["recommended_actions"])
+
+
+def test_ops_handover_brief_respects_site_scope(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "handover_scope_ci",
+            "display_name": "Handover Scope CI",
+            "role": "owner",
+            "permissions": [],
+            "site_scope": ["Scope Handover"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "handover-scope-token"},
+    )
+    assert issued.status_code == 201
+    scoped_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    in_scope = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Scope visible",
+            "description": "visible in scope",
+            "site": "Scope Handover",
+            "location": "B1",
+            "priority": "high",
+        },
+    )
+    assert in_scope.status_code == 201
+
+    out_scope = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Scope hidden",
+            "description": "hidden by scope",
+            "site": "Outside Handover",
+            "location": "B1",
+            "priority": "high",
+        },
+    )
+    assert out_scope.status_code == 201
+
+    brief = app_client.get(
+        "/api/ops/handover/brief?window_hours=24&due_soon_hours=6&max_items=10",
+        headers=scoped_headers,
+    )
+    assert brief.status_code == 200
+    body = brief.json()
+    assert body["open_work_orders"] == 1
+    assert all(item["site"] == "Scope Handover" for item in body["top_work_orders"])
+
+    forbidden = app_client.get(
+        "/api/ops/handover/brief?site=Outside+Handover",
+        headers=scoped_headers,
+    )
+    assert forbidden.status_code == 403
+
+
 def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert

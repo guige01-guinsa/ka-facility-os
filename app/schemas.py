@@ -336,6 +336,51 @@ class DashboardSummaryRead(BaseModel):
     recent_job_runs: list[JobRunRead]
 
 
+class OpsHandoverWorkOrderRead(BaseModel):
+    id: int
+    site: str
+    location: str
+    title: str
+    priority: WorkOrderPriority
+    status: WorkOrderStatus
+    assignee: Optional[str] = None
+    due_at: Optional[datetime] = None
+    created_at: datetime
+    is_escalated: bool
+    is_overdue: bool
+    due_in_minutes: Optional[int] = None
+    urgency_score: int
+    reasons: list[str]
+
+
+class OpsHandoverInspectionRead(BaseModel):
+    id: int
+    site: str
+    location: str
+    inspector: str
+    risk_level: str
+    inspected_at: datetime
+    risk_flags: list[str]
+
+
+class OpsHandoverBriefRead(BaseModel):
+    generated_at: datetime
+    site: Optional[str] = None
+    window_hours: int
+    due_soon_hours: int
+    open_work_orders: int
+    overdue_open_work_orders: int
+    due_soon_work_orders: int
+    escalated_open_work_orders: int
+    unassigned_high_priority_open_work_orders: int
+    new_work_orders_in_window: int
+    high_risk_inspections_in_window: int
+    failed_alert_deliveries_24h: int
+    top_work_orders: list[OpsHandoverWorkOrderRead]
+    recent_high_risk_inspections: list[OpsHandoverInspectionRead]
+    recommended_actions: list[str]
+
+
 class AlertDeliveryRead(BaseModel):
     id: int
     event_type: str
