@@ -542,7 +542,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.18.0",
+    version="0.19.0",
     lifespan=app_lifespan,
 )
 
@@ -3047,6 +3047,109 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     cadence_list = "".join(
         f"<li>{html.escape(str(item))}</li>" for item in plan.get("schedule_management", {}).get("cadence", [])
     )
+    timeline = plan.get("timeline", {})
+    timeline_start = str(timeline.get("start_date", ""))
+    timeline_end = str(timeline.get("end_date", ""))
+    total_weeks = int(timeline.get("duration_weeks", len(plan.get("weekly_execution", [])) or 1))
+
+    today = datetime.now(timezone.utc).date()
+    weekly_items = plan.get("weekly_execution", [])
+    completed_weeks = 0
+    active_week_item: dict[str, Any] | None = None
+    phase_keys: list[str] = []
+    for item in weekly_items:
+        phase = str(item.get("phase", ""))
+        phase_key = "".join(ch.lower() if ch.isalnum() else "-" for ch in phase).strip("-")
+        if phase_key and phase_key not in phase_keys:
+            phase_keys.append(phase_key)
+
+        start_raw = str(item.get("start_date", ""))
+        end_raw = str(item.get("end_date", ""))
+        try:
+            start_date = date.fromisoformat(start_raw)
+            end_date = date.fromisoformat(end_raw)
+        except ValueError:
+            continue
+
+        if end_date < today:
+            completed_weeks += 1
+        elif start_date <= today <= end_date:
+            active_week_item = item
+
+    progress_percent = int(round((completed_weeks / total_weeks) * 100))
+    campaign_total = (
+        len(campaign_kit.get("promotion", []))
+        + len(campaign_kit.get("education", []))
+        + len(campaign_kit.get("fun", []))
+    )
+
+    phase_filter_buttons = ['<button class="filter-btn active" type="button" data-phase="all">All</button>']
+    for key in phase_keys:
+        phase_filter_buttons.append(
+            f'<button class="filter-btn" type="button" data-phase="{html.escape(key)}">{html.escape(key.replace("-", " ").title())}</button>'
+        )
+
+    week_cards: list[str] = []
+    for item in weekly_items:
+        week = int(item.get("week", 0))
+        phase = str(item.get("phase", ""))
+        phase_key = "".join(ch.lower() if ch.isalnum() else "-" for ch in phase).strip("-")
+        focus = str(item.get("focus", ""))
+        owner = str(item.get("owner", ""))
+        metric = str(item.get("success_metric", ""))
+        start_raw = str(item.get("start_date", ""))
+        end_raw = str(item.get("end_date", ""))
+        status_label = "Scheduled"
+        status_class = "scheduled"
+        try:
+            start_date = date.fromisoformat(start_raw)
+            end_date = date.fromisoformat(end_raw)
+            if end_date < today:
+                status_label = "Done"
+                status_class = "done"
+            elif start_date <= today <= end_date:
+                status_label = "Active"
+                status_class = "active"
+        except ValueError:
+            pass
+
+        keywords = f"{phase} {focus} {owner} {metric}".lower()
+        week_cards.append(
+            f"""
+            <article class="week-card {status_class}" data-phase="{html.escape(phase_key)}" data-keywords="{html.escape(keywords)}">
+              <div class="week-top">
+                <span class="week-num">W{week:02d}</span>
+                <span class="week-status">{html.escape(status_label)}</span>
+              </div>
+              <h4>{html.escape(focus)}</h4>
+              <p>{html.escape(start_raw)} ~ {html.escape(end_raw)}</p>
+              <p>Owner: {html.escape(owner)}</p>
+              <p class="week-metric">{html.escape(metric)}</p>
+            </article>
+            """
+        )
+
+    if active_week_item is not None:
+        active_focus = html.escape(str(active_week_item.get("focus", "")))
+        active_week = int(active_week_item.get("week", 0))
+        active_owner = html.escape(str(active_week_item.get("owner", "")))
+        active_actions = "".join(
+            f"<li>{html.escape(str(x))}</li>" for x in active_week_item.get("actions", [])
+        )
+        active_week_guide = f"""
+        <div class="active-week-box">
+          <h3>이번 주 실행 가이드: W{active_week:02d} - {active_focus}</h3>
+          <p>Owner: {active_owner}</p>
+          <ul>{active_actions}</ul>
+        </div>
+        """
+    else:
+        active_week_guide = """
+        <div class="active-week-box">
+          <h3>이번 주 실행 가이드</h3>
+          <p>현재 진행중인 주차가 없습니다. 아래 Timeline Board에서 다음 주차를 확인하세요.</p>
+        </div>
+        """
 
     return f"""
 <!doctype html>
@@ -3057,31 +3160,45 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
   <title>KA Facility OS - Public Main</title>
   <style>
     :root {{
-      --ink: #102a43;
-      --muted: #486581;
-      --line: #d9e2ec;
-      --brand: #0f766e;
-      --accent: #d9480f;
+      --ink: #0d1f3a;
+      --muted: #3f5576;
+      --line: #d1dced;
+      --brand: #0e6f5d;
+      --accent: #d55222;
       --card: #ffffff;
-      --bg: #f7fafc;
+      --bg: #f4f8fd;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       color: var(--ink);
-      font-family: "Noto Sans KR", "Segoe UI", sans-serif;
+      font-family: "SUIT", "Pretendard", "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
       background:
-        radial-gradient(1200px 500px at 10% -20%, #c7f9cc 0%, transparent 60%),
-        radial-gradient(900px 400px at 100% -10%, #ffe8cc 0%, transparent 60%),
+        radial-gradient(1200px 500px at 10% -20%, #d8f6ff 0%, transparent 60%),
+        radial-gradient(900px 400px at 100% -10%, #ffe7ca 0%, transparent 60%),
         var(--bg);
     }}
     .wrap {{ max-width: 1200px; margin: 0 auto; padding: 24px 16px 64px; }}
     .hero {{
+      position: relative;
+      overflow: hidden;
       border: 1px solid var(--line);
-      background: linear-gradient(135deg, #ffffff 0%, #f0fdfa 100%);
+      background: linear-gradient(135deg, #ffffff 0%, #eff8f6 56%, #fff3e6 100%);
       border-radius: 16px;
       padding: 20px;
       box-shadow: 0 10px 30px rgba(16, 42, 67, 0.08);
+      animation: fadeup 520ms ease-out both;
+    }}
+    .hero::after {{
+      content: "";
+      position: absolute;
+      width: 220px;
+      height: 220px;
+      border-radius: 999px;
+      right: -80px;
+      top: -90px;
+      background: radial-gradient(circle at center, rgba(14, 111, 93, 0.22) 0%, rgba(14, 111, 93, 0) 70%);
+      pointer-events: none;
     }}
     .hero h1 {{ margin: 0 0 8px; font-size: 28px; }}
     .hero p {{ margin: 0; color: var(--muted); }}
@@ -3156,9 +3273,138 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       font-weight: 600;
     }}
     .links a:hover {{ border-color: var(--brand); color: var(--brand); }}
+    .chip-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }}
+    .chip {{
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #addbcf;
+      background: #edfaf5;
+      color: #0d5b4d;
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .hero-stats {{
+      margin-top: 14px;
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }}
+    .stat {{
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+    }}
+    .stat .k {{ color: var(--muted); font-size: 12px; }}
+    .stat .v {{ font-size: 22px; font-weight: 800; margin-top: 2px; }}
+    .section .sub {{
+      margin: 0 0 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    .filter-row {{
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .filter-btn {{
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 6px 11px;
+      cursor: pointer;
+    }}
+    .filter-btn.active {{
+      border-color: #8ecfbf;
+      background: #e8f9f3;
+      color: #0b5c4d;
+    }}
+    .search-input {{
+      margin-left: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 8px 10px;
+      min-width: 220px;
+      font-size: 13px;
+    }}
+    .timeline-board {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }}
+    .week-card {{
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fff;
+      padding: 11px;
+      transition: transform 180ms ease, box-shadow 180ms ease;
+      animation: fadeup 600ms ease-out both;
+    }}
+    .week-card:hover {{
+      transform: translateY(-2px);
+      box-shadow: 0 8px 22px rgba(16, 42, 67, 0.10);
+    }}
+    .week-card .week-top {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }}
+    .week-card .week-num {{ font-size: 12px; font-weight: 800; color: var(--muted); letter-spacing: 0.04em; }}
+    .week-card .week-status {{
+      font-size: 11px;
+      font-weight: 700;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+    }}
+    .week-card.done {{ background: linear-gradient(160deg, #f2fff7 0%, #ffffff 60%); }}
+    .week-card.done .week-status {{ border-color: #9ad8bf; color: #0b6e5a; background: #ebfff4; }}
+    .week-card.active {{ background: linear-gradient(160deg, #eef7ff 0%, #ffffff 60%); border-color: #a9c8e8; }}
+    .week-card.active .week-status {{ border-color: #a0bee2; color: #1f5f9f; background: #f0f7ff; }}
+    .week-card.scheduled {{ background: linear-gradient(160deg, #fff9f0 0%, #ffffff 60%); }}
+    .week-card.scheduled .week-status {{ border-color: #f2c58d; color: #ab6100; background: #fff5e8; }}
+    .week-card h4 {{ margin: 0 0 6px; font-size: 15px; }}
+    .week-card p {{ margin: 0 0 4px; color: var(--muted); font-size: 12px; }}
+    .week-card .week-metric {{
+      margin-top: 6px;
+      background: #f7fbff;
+      border: 1px solid #d8e4f4;
+      border-radius: 8px;
+      padding: 6px;
+      color: #2b3b52;
+    }}
+    .active-week-box {{
+      margin-top: 12px;
+      border: 1px solid #abc8e8;
+      border-radius: 12px;
+      background: #f2f9ff;
+      padding: 12px;
+    }}
+    .active-week-box h3 {{ margin: 0 0 8px; font-size: 16px; }}
+    .active-week-box p {{ margin: 0 0 8px; color: var(--muted); }}
+    .active-week-box ul {{ margin: 0 0 0 18px; }}
+    .active-week-box li {{ margin: 4px 0; }}
+    @keyframes fadeup {{
+      from {{ opacity: 0; transform: translateY(10px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
+    }}
     ul {{ margin: 8px 0 0 18px; }}
     @media (max-width: 900px) {{
       .grid {{ grid-template-columns: 1fr; }}
+      .hero-stats {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .timeline-board {{ grid-template-columns: 1fr; }}
+      .search-input {{ margin-left: 0; width: 100%; min-width: 0; }}
       .hero h1 {{ font-size: 22px; }}
     }}
   </style>
@@ -3167,8 +3413,19 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
   <div class="wrap">
     <section class="hero">
       <h1>KA Facility OS</h1>
-      <p>Public main page for service entry and adoption planning.</p>
+      <p>브라우저에서 바로 이해할 수 있는 공개 운영 포털입니다. 계획, 교육, KPI, 일정, 캠페인을 한 페이지에서 읽고 실행할 수 있습니다.</p>
       <span class="pill">Public Plan Enabled</span>
+      <div class="chip-row">
+        <span class="chip">User Adoption Plan</span>
+        <span class="chip">Schedule Management</span>
+        <span class="chip">Promotion + Education + Fun Kit</span>
+      </div>
+      <div class="hero-stats">
+        <div class="stat"><div class="k">Weeks</div><div class="v">{total_weeks}</div></div>
+        <div class="stat"><div class="k">Completed</div><div class="v">{completed_weeks}</div></div>
+        <div class="stat"><div class="k">Progress</div><div class="v">{progress_percent}%</div></div>
+        <div class="stat"><div class="k">Campaign Items</div><div class="v">{campaign_total}</div></div>
+      </div>
       <div class="grid">
         <div class="card">
           <h3>Service</h3>
@@ -3187,24 +3444,30 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 
     <section class="section">
       <h2>{html.escape(str(plan.get("title", "")))}</h2>
-      <p class="desc">
-        Timeline:
-        {html.escape(str(plan.get("timeline", {}).get("start_date", "")))}
-        ~
-        {html.escape(str(plan.get("timeline", {}).get("end_date", "")))}
-        |
-        Duration:
-        {html.escape(str(plan.get("timeline", {}).get("duration_weeks", "")))} weeks
+      <p class="sub">
+        Timeline: {html.escape(timeline_start)} ~ {html.escape(timeline_end)} |
+        Duration: {total_weeks} weeks
       </p>
       <div class="links">
         <a href="/api/public/adoption-plan">JSON API</a>
+        <a href="/api/public/adoption-plan/campaign">Campaign API</a>
         <a href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
         <a href="/api/public/adoption-plan/schedule.ics">Calendar ICS</a>
+        <a href="/api/service-info">Service Info</a>
       </div>
     </section>
 
     <section class="section">
       <h2>Weekly Execution Table</h2>
+      <p class="sub">상단 카드에서 주차별 상태를 먼저 확인하고, 아래 표에서 상세 액션을 참고하세요.</p>
+      <div class="filter-row">
+        {"".join(phase_filter_buttons)}
+        <input id="weekSearch" class="search-input" type="text" placeholder="phase/focus/owner 검색" />
+      </div>
+      <div id="timelineBoard" class="timeline-board">
+        {"".join(week_cards)}
+      </div>
+      {active_week_guide}
       <div class="table-wrap">
         <table>
           <thead>
@@ -3228,6 +3491,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 
     <section class="section">
       <h2>Training Materials Outline</h2>
+      <p class="sub">역할별 학습 경로를 표준화하여 신입도 빠르게 실무에 진입하도록 설계했습니다.</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -3248,6 +3512,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 
     <section class="section">
       <h2>KPI Dashboard Items</h2>
+      <p class="sub">운영 전환 이후에는 교육보다 KPI 기반 리뷰 비중을 높이는 것을 권장합니다.</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -3269,7 +3534,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 
     <section class="section">
       <h2>Promotion + Education + Fun Kit</h2>
-      <p class="desc">A public-ready campaign kit to drive awareness, learning speed, and ongoing engagement.</p>
+      <p class="sub">홍보 + 교육 + 재미를 동시에 설계해 사용자 적응속도와 참여 지속성을 함께 확보합니다.</p>
       <h3>Promotion</h3>
       <div class="grid">
         {"".join(promotion_cards)}
@@ -3289,13 +3554,46 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 
     <section class="section">
       <h2>Schedule Management</h2>
-      <p class="desc">Next review date: {html.escape(str(plan.get("schedule_management", {}).get("next_review_date", "")))}</p>
+      <p class="sub">Next review date: {html.escape(str(plan.get("schedule_management", {}).get("next_review_date", "")))}</p>
       <div class="card">
         <h3>Operating Cadence</h3>
         <ul>{cadence_list}</ul>
       </div>
     </section>
   </div>
+  <script>
+    (function() {{
+      const buttons = Array.from(document.querySelectorAll(".filter-btn"));
+      const cards = Array.from(document.querySelectorAll(".week-card"));
+      const searchInput = document.getElementById("weekSearch");
+      let selectedPhase = "all";
+
+      function applyFilters() {{
+        const query = ((searchInput && searchInput.value) || "").toLowerCase().trim();
+        cards.forEach((card) => {{
+          const phase = (card.dataset.phase || "").toLowerCase();
+          const keywords = (card.dataset.keywords || "").toLowerCase();
+          const phaseMatched = selectedPhase === "all" || phase === selectedPhase;
+          const queryMatched = query === "" || keywords.includes(query);
+          card.style.display = phaseMatched && queryMatched ? "" : "none";
+        }});
+      }}
+
+      buttons.forEach((btn) => {{
+        btn.addEventListener("click", () => {{
+          selectedPhase = (btn.dataset.phase || "all").toLowerCase();
+          buttons.forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          applyFilters();
+        }});
+      }});
+
+      if (searchInput) {{
+        searchInput.addEventListener("input", applyFilters);
+      }}
+      applyFilters();
+    }})();
+  </script>
 </body>
 </html>
 """
