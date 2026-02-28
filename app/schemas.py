@@ -50,6 +50,7 @@ WorkOrderPriority = Literal["low", "medium", "high", "critical"]
 WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
 AdminRole = Literal["owner", "manager", "operator", "auditor"]
 WorkflowLockStatus = Literal["draft", "review", "approved", "locked"]
+W02TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -158,6 +159,67 @@ class WorkflowLockRead(BaseModel):
     approved_at: Optional[datetime] = None
     locked_at: Optional[datetime] = None
     unlocked_at: Optional[datetime] = None
+
+
+class W02TrackerBootstrapRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+
+
+class W02TrackerItemUpdate(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=120)
+    status: Optional[W02TrackerStatus] = None
+    completion_checked: Optional[bool] = None
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+
+
+class W02TrackerItemRead(BaseModel):
+    id: int
+    site: str
+    item_type: str
+    item_key: str
+    item_name: str
+    assignee: Optional[str] = None
+    status: W02TrackerStatus
+    completion_checked: bool
+    completion_note: str
+    due_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    evidence_count: int
+    created_by: str
+    updated_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class W02EvidenceRead(BaseModel):
+    id: int
+    tracker_item_id: int
+    site: str
+    file_name: str
+    content_type: str
+    file_size: int
+    note: str
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class W02TrackerBootstrapResponse(BaseModel):
+    site: str
+    created_count: int
+    total_count: int
+    items: list[W02TrackerItemRead]
+
+
+class W02TrackerOverviewRead(BaseModel):
+    site: str
+    total_items: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    evidence_total_count: int
+    assignee_breakdown: dict[str, int]
 
 
 class SlaEscalationRunRequest(BaseModel):

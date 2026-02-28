@@ -16,13 +16,15 @@ from typing import Annotated, Any, Callable
 from urllib import error as url_error
 from urllib import request as url_request
 
-from fastapi import Depends, FastAPI, HTTPException, Header, Query, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.database import (
     DATABASE_URL,
+    adoption_w02_evidence_files,
+    adoption_w02_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -72,6 +74,12 @@ from app.schemas import (
     SlaPolicyUpdate,
     SlaWhatIfRequest,
     SlaWhatIfResponse,
+    W02EvidenceRead,
+    W02TrackerBootstrapRequest,
+    W02TrackerBootstrapResponse,
+    W02TrackerItemRead,
+    W02TrackerItemUpdate,
+    W02TrackerOverviewRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -112,6 +120,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "workflow_locks:read",
         "workflow_locks:review",
         "workflow_locks:approve",
+        "adoption_w02:read",
+        "adoption_w02:write",
     },
     "operator": {
         "inspections:read",
@@ -120,6 +130,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "work_orders:write",
         "workflow_locks:read",
         "workflow_locks:write",
+        "adoption_w02:read",
+        "adoption_w02:write",
     },
     "auditor": {
         "inspections:read",
@@ -127,6 +139,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "reports:read",
         "reports:export",
         "workflow_locks:read",
+        "adoption_w02:read",
     },
 }
 
@@ -158,6 +171,17 @@ WORKFLOW_LOCK_STATUS_SET = {
     WORKFLOW_LOCK_STATUS_APPROVED,
     WORKFLOW_LOCK_STATUS_LOCKED,
 }
+W02_TRACKER_STATUS_PENDING = "pending"
+W02_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W02_TRACKER_STATUS_DONE = "done"
+W02_TRACKER_STATUS_BLOCKED = "blocked"
+W02_TRACKER_STATUS_SET = {
+    W02_TRACKER_STATUS_PENDING,
+    W02_TRACKER_STATUS_IN_PROGRESS,
+    W02_TRACKER_STATUS_DONE,
+    W02_TRACKER_STATUS_BLOCKED,
+}
+W02_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 5, 22)
@@ -1281,7 +1305,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.28.0",
+    version="0.29.0",
     lifespan=app_lifespan,
 )
 
@@ -2527,6 +2551,122 @@ def _row_to_workflow_lock_model(row: dict[str, Any]) -> WorkflowLockRead:
     )
 
 
+def _row_to_w02_tracker_item_model(row: dict[str, Any]) -> W02TrackerItemRead:
+    return W02TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w02_evidence_model(row: dict[str, Any]) -> W02EvidenceRead:
+    return W02EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w02_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w02_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W02_SOP_RUNBOOKS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sop_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("name", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W02_SANDBOX_SCENARIOS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sandbox_scenario",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("objective", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W02_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w02_tracker_overview(site: str, rows: list[W02TrackerItemRead]) -> W02TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W02TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -3765,6 +3905,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w02_api": "/api/public/adoption-plan/w02",
         "public_adoption_w02_checklist_csv_api": "/api/public/adoption-plan/w02/checklist.csv",
         "public_adoption_w02_schedule_ics_api": "/api/public/adoption-plan/w02/schedule.ics",
+        "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
+        "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
+        "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -5000,6 +5143,8 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w02">W02 JSON</a>
         <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+        <a href="/api/adoption/w02/tracker/items">W02 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w02/tracker/overview?site=HQ">W02 Tracker Overview API (Token)</a>
       </div>
       <div class="table-wrap">
         <table>
@@ -6494,6 +6639,44 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
           </div>
           <div class="box">
+            <h3>W02 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w02TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w02TrackItemId" placeholder="tracker_item_id" />
+              <input id="w02TrackAssignee" placeholder="assignee" />
+              <select id="w02TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w02TrackBootstrapBtn" class="btn run" type="button">W02 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w02TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w02TrackNote" placeholder="completion note (optional)" />
+              <input id="w02EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w02EvidenceFile" type="file" />
+              <button id="w02TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w02EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w02Reserved1" value="token required for write actions" disabled />
+              <input id="w02Reserved2" value="site scope enforced" disabled />
+              <input id="w02Reserved3" value="max file 5MB" disabled />
+              <button id="w02TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div id="w02TrackerMeta" class="meta">조회 전</div>
+            <div id="w02TrackerSummary" class="cards"></div>
+            <div id="w02TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w02EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -6582,6 +6765,31 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         return '<div class="table-wrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + "</tbody></table></div>";
       }}
 
+      function renderEvidenceTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("증빙 파일이 없습니다.");
+        }}
+        const body = rows.map((row) => {{
+          const downloadHref = "/api/adoption/w02/tracker/evidence/" + encodeURIComponent(String(row.id || "")) + "/download";
+          return (
+            "<tr>" +
+              "<td>" + escapeHtml(row.id ?? "") + "</td>" +
+              "<td>" + escapeHtml(row.file_name ?? "") + "</td>" +
+              "<td>" + escapeHtml(row.file_size ?? "") + "</td>" +
+              "<td>" + escapeHtml(row.uploaded_by ?? "") + "</td>" +
+              "<td>" + escapeHtml(row.uploaded_at ?? "") + "</td>" +
+              "<td>" + escapeHtml(row.note ?? "") + "</td>" +
+              '<td><a href="' + downloadHref + '" target="_blank" rel="noopener">download</a></td>' +
+            "</tr>"
+          );
+        }}).join("");
+        return (
+          '<div class="table-wrap"><table><thead><tr>' +
+          "<th>ID</th><th>File</th><th>Size</th><th>Uploaded By</th><th>Uploaded At</th><th>Note</th><th>Download</th>" +
+          "</tr></thead><tbody>" + body + "</tbody></table></div>"
+        );
+      }}
+
       function buildQuery(pairs) {{
         const params = new URLSearchParams();
         pairs.forEach((pair) => {{
@@ -6595,8 +6803,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         return params.toString();
       }}
 
-      async function fetchJson(path, requiresAuth) {{
+      async function fetchJson(path, requiresAuth, options = {{}}) {{
         const headers = {{ "Accept": "application/json" }};
+        const optionHeaders = options.headers || {{}};
+        Object.keys(optionHeaders).forEach((key) => {{
+          headers[key] = optionHeaders[key];
+        }});
         if (requiresAuth) {{
           const token = getToken();
           if (!token) {{
@@ -6604,7 +6816,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           }}
           headers["X-Admin-Token"] = token;
         }}
-        const response = await fetch(path, {{ headers }});
+        const requestOptions = {{
+          method: options.method || "GET",
+          headers,
+        }};
+        if (Object.prototype.hasOwnProperty.call(options, "body")) {{
+          requestOptions.body = options.body;
+        }}
+        const response = await fetch(path, requestOptions);
         const text = await response.text();
         let data = null;
         try {{
@@ -6802,6 +7021,177 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW02Tracker() {{
+        const meta = document.getElementById("w02TrackerMeta");
+        const summary = document.getElementById("w02TrackerSummary");
+        const table = document.getElementById("w02TrackerTable");
+        const evidenceTable = document.getElementById("w02EvidenceTable");
+        const site = (document.getElementById("w02TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중... W02 tracker";
+          const [overview, items] = await Promise.all([
+            fetchJson("/api/adoption/w02/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w02/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+          ]);
+          meta.textContent = "성공: W02 tracker (" + site + ")";
+          const summaryItems = [
+            ["Total", overview.total_items || 0],
+            ["Pending", overview.pending_count || 0],
+            ["In Progress", overview.in_progress_count || 0],
+            ["Done", overview.done_count || 0],
+            ["Blocked", overview.blocked_count || 0],
+            ["Completion %", overview.completion_rate_percent || 0],
+            ["Evidence", overview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          table.innerHTML = renderTable(
+            items || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w02EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w02TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w02/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || []);
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW02TrackerBootstrap() {{
+        const meta = document.getElementById("w02TrackerMeta");
+        const site = (document.getElementById("w02TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중... W02 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w02/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW02Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW02TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w02TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w02TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w02TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w02TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w02TrackCompleted").checked;
+        const note = (document.getElementById("w02TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w02EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중... tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w02/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w02EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w02/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w02EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW02Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
@@ -6934,6 +7324,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               {{ key: "frequency", label: "Frequency" }}
             ]
           );
+          if (getToken()) {{
+            runW02Tracker().catch(() => null);
+          }} else {{
+            const w02TrackerMeta = document.getElementById("w02TrackerMeta");
+            const w02TrackerSummary = document.getElementById("w02TrackerSummary");
+            const w02TrackerTable = document.getElementById("w02TrackerTable");
+            const w02EvidenceTable = document.getElementById("w02EvidenceTable");
+            w02TrackerMeta.textContent = "토큰 저장 후 실행 추적 API를 사용할 수 있습니다.";
+            w02TrackerSummary.innerHTML = "";
+            w02TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w02EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+          }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           top.innerHTML = "";
@@ -6992,6 +7394,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("runInspectionsBtn").addEventListener("click", runInspections);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
+      document.getElementById("w02TrackBootstrapBtn").addEventListener("click", runW02TrackerBootstrap);
+      document.getElementById("w02TrackRefreshBtn").addEventListener("click", runW02Tracker);
+      document.getElementById("w02TrackUpdateBtn").addEventListener("click", runW02TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -7003,6 +7408,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       updateAuthStateFromToken();
       updateReportLinks();
+      if (!document.getElementById("w02TrackSite").value) {{
+        document.getElementById("w02TrackSite").value = "HQ";
+      }}
       activate("{selected_tab}", false);
 
       runAdoption();
@@ -7168,6 +7576,358 @@ def get_public_post_mvp_risks() -> dict[str, Any]:
         "timeline": plan.get("timeline", {}),
         "risk_register": plan.get("risk_register", []),
     }
+
+
+@app.post("/api/adoption/w02/tracker/bootstrap", response_model=W02TrackerBootstrapResponse)
+def bootstrap_w02_tracker_items(
+    payload: W02TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
+) -> W02TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w02_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w02_tracker_items.c.item_type,
+                adoption_w02_tracker_items.c.item_key,
+            ).where(adoption_w02_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w02_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W02_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        rows = conn.execute(
+            select(adoption_w02_tracker_items)
+            .where(adoption_w02_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w02_tracker_items.c.item_type.asc(),
+                adoption_w02_tracker_items.c.item_key.asc(),
+                adoption_w02_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w02_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w02_tracker_bootstrap",
+        resource_type="adoption_w02_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W02TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w02/tracker/items", response_model=list[W02TrackerItemRead])
+def list_w02_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> list[W02TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W02_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W02 tracker status")
+
+    stmt = select(adoption_w02_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w02_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w02_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w02_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w02_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w02_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w02_tracker_items.c.updated_at.desc(),
+        adoption_w02_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w02_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w02/tracker/overview", response_model=W02TrackerOverviewRead)
+def get_w02_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> W02TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w02_tracker_item_model(row) for row in rows]
+    return _compute_w02_tracker_overview(site, models)
+
+
+@app.patch("/api/adoption/w02/tracker/items/{tracker_item_id}", response_model=W02TrackerItemRead)
+def update_w02_tracker_item(
+    tracker_item_id: int,
+    payload: W02TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
+) -> W02TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W02 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W02_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W02_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W02_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W02_TRACKER_STATUS_DONE:
+            next_status = W02_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W02_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W02 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w02_tracker_items)
+            .where(adoption_w02_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W02 tracker item")
+    model = _row_to_w02_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w02_tracker_item_update",
+        resource_type="adoption_w02_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w02/tracker/items/{tracker_item_id}/evidence", response_model=W02EvidenceRead, status_code=201)
+async def upload_w02_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
+) -> W02EvidenceRead:
+    file_name = (file.filename or "").strip() or "evidence.bin"
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120]
+    file_bytes = await file.read(W02_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) > W02_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W02_EVIDENCE_MAX_BYTES} bytes)")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W02 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w02_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name[:255],
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=file_bytes,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w02_tracker_items)
+            .where(adoption_w02_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        evidence_row = conn.execute(
+            select(adoption_w02_evidence_files).where(adoption_w02_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w02_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w02_tracker_evidence_upload",
+        resource_type="adoption_w02_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w02/tracker/items/{tracker_item_id}/evidence", response_model=list[W02EvidenceRead])
+def list_w02_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> list[W02EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W02 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w02_evidence_files)
+            .where(adoption_w02_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w02_evidence_files.c.uploaded_at.desc(), adoption_w02_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w02_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w02/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w02_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w02_evidence_files).where(adoption_w02_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W02 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = str(row.get("file_name") or "evidence.bin").replace("\"", "")
+    data = row.get("file_bytes") or b""
+    if not isinstance(data, (bytes, bytearray)):
+        data = bytes(data)
+
+    _write_audit_log(
+        principal=principal,
+        action="w02_tracker_evidence_download",
+        resource_type="adoption_w02_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/health")

@@ -75,6 +75,14 @@ Open:
   - `POST /api/workflow-locks/{id}/reject` (`workflow_locks:approve` on `review`)
   - `POST /api/workflow-locks/{id}/lock` (`owner` on `approved`)
   - `POST /api/workflow-locks/{id}/unlock` (`workflow_locks:admin` override only; requires `reason` + `requested_ticket`)
+- W02 execution tracker (assignee/completion/evidence upload)
+  - `POST /api/adoption/w02/tracker/bootstrap` (`adoption_w02:write`)
+  - `GET /api/adoption/w02/tracker/items` (`adoption_w02:read`)
+  - `GET /api/adoption/w02/tracker/overview?site=...` (`adoption_w02:read`)
+  - `PATCH /api/adoption/w02/tracker/items/{id}` (`adoption_w02:write`)
+  - `POST /api/adoption/w02/tracker/items/{id}/evidence` (`adoption_w02:write`, multipart upload, max 5MB)
+  - `GET /api/adoption/w02/tracker/items/{id}/evidence` (`adoption_w02:read`)
+  - `GET /api/adoption/w02/tracker/evidence/{id}/download` (`adoption_w02:read`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -115,6 +123,9 @@ Open:
     - `manager`: review approve/reject
     - `owner`: approved lock
     - locked unlock: admin override only (`workflow_locks:admin`)
+  - W02 tracker:
+    - `manager/operator`: read + write
+    - `auditor`: read
 - Legacy bootstrap:
   - If `ADMIN_TOKEN` env exists, startup seeds `legacy-admin` owner token.
   - Existing `ADMIN_TOKEN` remains backward-compatible.

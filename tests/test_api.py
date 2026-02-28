@@ -50,6 +50,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
     assert "public_adoption_w02_api" in root_json.json()
+    assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -84,6 +85,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w02_api"] == "/api/public/adoption-plan/w02"
     assert service_info.json()["public_adoption_w02_checklist_csv_api"] == "/api/public/adoption-plan/w02/checklist.csv"
     assert service_info.json()["public_adoption_w02_schedule_ics_api"] == "/api/public/adoption-plan/w02/schedule.ics"
+    assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
+    assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -539,6 +542,117 @@ def test_workflow_lock_matrix_enforcement(app_client: TestClient) -> None:
     )
     assert auditor_read.status_code == 200
     assert auditor_read.json()["status"] == "approved"
+
+
+def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w02_manager_ci",
+            "display_name": "W02 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W02 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w02-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    bootstrap = app_client.post(
+        "/api/adoption/w02/tracker/bootstrap",
+        headers=manager_headers,
+        json={"site": "W02 Site"},
+    )
+    assert bootstrap.status_code == 200
+    bootstrap_body = bootstrap.json()
+    assert bootstrap_body["site"] == "W02 Site"
+    assert bootstrap_body["total_count"] >= 10
+
+    overview = app_client.get(
+        "/api/adoption/w02/tracker/overview?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert overview.status_code == 200
+    overview_body = overview.json()
+    assert overview_body["site"] == "W02 Site"
+    assert overview_body["total_items"] >= 10
+    assert overview_body["done_count"] == 0
+
+    listed = app_client.get(
+        "/api/adoption/w02/tracker/items?site=W02+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) >= 10
+    tracker_item_id = items[0]["id"]
+
+    updated = app_client.patch(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}",
+        headers=manager_headers,
+        json={
+            "assignee": "Ops QA",
+            "status": "done",
+            "completion_checked": True,
+            "completion_note": "W02 checklist done",
+        },
+    )
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["assignee"] == "Ops QA"
+    assert updated_body["status"] == "done"
+    assert updated_body["completion_checked"] is True
+    assert updated_body["completed_at"] is not None
+
+    uploaded = app_client.post(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
+        headers=manager_headers,
+        data={"note": "proof text"},
+        files={"file": ("proof.txt", b"w02 evidence", "text/plain")},
+    )
+    assert uploaded.status_code == 201
+    evidence = uploaded.json()
+    evidence_id = evidence["id"]
+    assert evidence["tracker_item_id"] == tracker_item_id
+    assert evidence["file_name"] == "proof.txt"
+    assert evidence["file_size"] == 12
+
+    evidence_list = app_client.get(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
+        headers=manager_headers,
+    )
+    assert evidence_list.status_code == 200
+    assert len(evidence_list.json()) >= 1
+
+    downloaded = app_client.get(
+        f"/api/adoption/w02/tracker/evidence/{evidence_id}/download",
+        headers=manager_headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"].startswith("text/plain")
+    assert downloaded.content == b"w02 evidence"
+
+    owner_seed_other_site = app_client.post(
+        "/api/adoption/w02/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "Outside Site"},
+    )
+    assert owner_seed_other_site.status_code == 200
+
+    forbidden_other_site = app_client.get(
+        "/api/adoption/w02/tracker/overview?site=Outside+Site",
+        headers=manager_headers,
+    )
+    assert forbidden_other_site.status_code == 403
 
 
 def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:

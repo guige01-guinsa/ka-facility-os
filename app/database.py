@@ -5,7 +5,7 @@ from typing import Iterator
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import Boolean, Column, DateTime, Float, Integer, MetaData, String, Table, Text, create_engine
+from sqlalchemy import Boolean, Column, DateTime, Float, Integer, LargeBinary, MetaData, String, Table, Text, create_engine
 from sqlalchemy.engine import Connection, make_url
 
 DEFAULT_SQLITE_URL = "sqlite:///data/facility.db"
@@ -223,6 +223,42 @@ workflow_locks = Table(
     Column("approved_at", DateTime(timezone=True), nullable=True),
     Column("locked_at", DateTime(timezone=True), nullable=True),
     Column("unlocked_at", DateTime(timezone=True), nullable=True),
+)
+
+adoption_w02_tracker_items = Table(
+    "adoption_w02_tracker_items",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("item_type", String(40), nullable=False),
+    Column("item_key", String(120), nullable=False),
+    Column("item_name", String(200), nullable=False),
+    Column("assignee", String(120), nullable=True),
+    Column("status", String(20), nullable=False, default="pending"),
+    Column("completion_checked", Boolean, nullable=False, default=False),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("due_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("evidence_count", Integer, nullable=False, default=0),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+adoption_w02_evidence_files = Table(
+    "adoption_w02_evidence_files",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tracker_item_id", Integer, nullable=False),
+    Column("site", String(120), nullable=False),
+    Column("file_name", String(255), nullable=False),
+    Column("content_type", String(120), nullable=False, default="application/octet-stream"),
+    Column("file_size", Integer, nullable=False, default=0),
+    Column("file_bytes", LargeBinary, nullable=False),
+    Column("note", Text, nullable=False, default=""),
+    Column("uploaded_by", String(80), nullable=False, default="system"),
+    Column("uploaded_at", DateTime(timezone=True), nullable=False),
 )
 
 
