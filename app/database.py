@@ -199,6 +199,32 @@ sla_policy_revisions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+workflow_locks = Table(
+    "workflow_locks",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("workflow_key", String(120), nullable=False),
+    Column("status", String(20), nullable=False, default="draft"),
+    Column("content_json", Text, nullable=False, default="{}"),
+    Column("requested_ticket", String(120), nullable=True),
+    Column("last_comment", Text, nullable=False, default=""),
+    Column("lock_reason", Text, nullable=True),
+    Column("unlock_reason", Text, nullable=True),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("reviewed_by", String(80), nullable=True),
+    Column("approved_by", String(80), nullable=True),
+    Column("locked_by", String(80), nullable=True),
+    Column("unlocked_by", String(80), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("reviewed_at", DateTime(timezone=True), nullable=True),
+    Column("approved_at", DateTime(timezone=True), nullable=True),
+    Column("locked_at", DateTime(timezone=True), nullable=True),
+    Column("unlocked_at", DateTime(timezone=True), nullable=True),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

@@ -62,6 +62,16 @@ Open:
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
   - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
+- Workflow locks (W01 role workflow lock)
+  - `GET /api/workflow-locks` (`workflow_locks:read`)
+  - `POST /api/workflow-locks` (`workflow_locks:write` or admin override)
+  - `GET /api/workflow-locks/{id}` (`workflow_locks:read`)
+  - `PATCH /api/workflow-locks/{id}/draft` (`workflow_locks:write` on `draft`)
+  - `POST /api/workflow-locks/{id}/submit` (`workflow_locks:write` on `draft`)
+  - `POST /api/workflow-locks/{id}/approve` (`workflow_locks:approve` on `review`)
+  - `POST /api/workflow-locks/{id}/reject` (`workflow_locks:approve` on `review`)
+  - `POST /api/workflow-locks/{id}/lock` (`owner` on `approved`)
+  - `POST /api/workflow-locks/{id}/unlock` (`workflow_locks:admin` override only; requires `reason` + `requested_ticket`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -97,6 +107,11 @@ Open:
   - `manager`: inspections/work-orders/reports
   - `operator`: inspections/work-orders
   - `auditor`: read + report export
+  - workflow-lock matrix:
+    - `operator`: draft edit + submit
+    - `manager`: review approve/reject
+    - `owner`: approved lock
+    - locked unlock: admin override only (`workflow_locks:admin`)
 - Legacy bootstrap:
   - If `ADMIN_TOKEN` env exists, startup seeds `legacy-admin` owner token.
   - Existing `ADMIN_TOKEN` remains backward-compatible.

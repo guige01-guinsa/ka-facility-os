@@ -34,6 +34,7 @@ from app.database import (
     sla_policies,
     sla_policy_proposals,
     sla_policy_revisions,
+    workflow_locks,
     work_order_events,
     work_orders,
 )
@@ -71,6 +72,10 @@ from app.schemas import (
     SlaPolicyUpdate,
     SlaWhatIfRequest,
     SlaWhatIfResponse,
+    WorkflowLockCreate,
+    WorkflowLockDraftUpdate,
+    WorkflowLockRead,
+    WorkflowLockTransitionRequest,
     WorkOrderAck,
     WorkOrderCancel,
     WorkOrderCommentCreate,
@@ -104,18 +109,24 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "work_orders:escalate",
         "reports:read",
         "reports:export",
+        "workflow_locks:read",
+        "workflow_locks:review",
+        "workflow_locks:approve",
     },
     "operator": {
         "inspections:read",
         "inspections:write",
         "work_orders:read",
         "work_orders:write",
+        "workflow_locks:read",
+        "workflow_locks:write",
     },
     "auditor": {
         "inspections:read",
         "work_orders:read",
         "reports:read",
         "reports:export",
+        "workflow_locks:read",
     },
 }
 
@@ -137,6 +148,16 @@ WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
 SLA_PROPOSAL_STATUS_PENDING = "pending"
 SLA_PROPOSAL_STATUS_APPROVED = "approved"
 SLA_PROPOSAL_STATUS_REJECTED = "rejected"
+WORKFLOW_LOCK_STATUS_DRAFT = "draft"
+WORKFLOW_LOCK_STATUS_REVIEW = "review"
+WORKFLOW_LOCK_STATUS_APPROVED = "approved"
+WORKFLOW_LOCK_STATUS_LOCKED = "locked"
+WORKFLOW_LOCK_STATUS_SET = {
+    WORKFLOW_LOCK_STATUS_DRAFT,
+    WORKFLOW_LOCK_STATUS_REVIEW,
+    WORKFLOW_LOCK_STATUS_APPROVED,
+    WORKFLOW_LOCK_STATUS_LOCKED,
+}
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 5, 22)
@@ -531,6 +552,48 @@ ADOPTION_FUN_PACK: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_WORKFLOW_LOCK_MATRIX: dict[str, Any] = {
+    "states": ["DRAFT", "REVIEW", "APPROVED", "LOCKED"],
+    "rows": [
+        {
+            "role": "점검자 (Operator)",
+            "permissions": {
+                "DRAFT": "수정",
+                "REVIEW": "읽기",
+                "APPROVED": "읽기",
+                "LOCKED": "읽기",
+            },
+        },
+        {
+            "role": "팀장 (Manager)",
+            "permissions": {
+                "DRAFT": "읽기",
+                "REVIEW": "승인/반려",
+                "APPROVED": "읽기",
+                "LOCKED": "읽기",
+            },
+        },
+        {
+            "role": "관리소장 (Owner)",
+            "permissions": {
+                "DRAFT": "읽기",
+                "REVIEW": "승인/반려",
+                "APPROVED": "잠금",
+                "LOCKED": "읽기",
+            },
+        },
+        {
+            "role": "관리자(Admin)",
+            "permissions": {
+                "DRAFT": "전체 가능",
+                "REVIEW": "전체 가능",
+                "APPROVED": "전체 가능",
+                "LOCKED": "제한적 해제(사유+요청번호 필수)",
+            },
+        },
+    ],
+}
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -602,6 +665,7 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "Auth Me", "href": "/api/auth/me"},
             {"label": "Admin Users", "href": "/api/admin/users"},
             {"label": "Admin Audit Logs", "href": "/api/admin/audit-logs"},
+            {"label": "Workflow Locks", "href": "/api/workflow-locks"},
         ],
     },
     {
@@ -1048,7 +1112,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.26.0",
+    version="0.27.0",
     lifespan=app_lifespan,
 )
 
@@ -1583,6 +1647,53 @@ def require_permission(permission: str) -> Callable[[dict[str, Any]], dict[str, 
         return principal
 
     return dependency
+
+
+def _has_explicit_permission(principal: dict[str, Any], permission: str) -> bool:
+    permissions = set(principal.get("permissions", []))
+    return permission in permissions
+
+
+def _is_workflow_admin_override(principal: dict[str, Any]) -> bool:
+    if bool(principal.get("is_legacy", False)):
+        return True
+    return _has_explicit_permission(principal, "workflow_locks:admin")
+
+
+def _require_workflow_lock_action(
+    principal: dict[str, Any],
+    *,
+    action: str,
+    status: str | None = None,
+) -> None:
+    role = str(principal.get("role") or "")
+    is_admin = _is_workflow_admin_override(principal)
+    allowed = False
+
+    if action == "read":
+        allowed = role in {"operator", "manager", "owner", "auditor"} or is_admin
+    elif action in {"create", "update_draft", "submit"}:
+        allowed = role == "operator" or is_admin
+    elif action in {"approve", "reject"}:
+        allowed = role in {"manager", "owner"} or is_admin
+    elif action == "lock":
+        allowed = role == "owner" or is_admin
+    elif action == "unlock":
+        allowed = is_admin
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail=f"Workflow lock action denied: {action}")
+
+    if status is None:
+        return
+    if action in {"update_draft", "submit"} and status != WORKFLOW_LOCK_STATUS_DRAFT:
+        raise HTTPException(status_code=409, detail=f"{action} requires draft status")
+    if action in {"approve", "reject"} and status != WORKFLOW_LOCK_STATUS_REVIEW:
+        raise HTTPException(status_code=409, detail=f"{action} requires review status")
+    if action == "lock" and status != WORKFLOW_LOCK_STATUS_APPROVED:
+        raise HTTPException(status_code=409, detail="lock requires approved status")
+    if action == "unlock" and status != WORKFLOW_LOCK_STATUS_LOCKED:
+        raise HTTPException(status_code=409, detail="unlock requires locked status")
 
 
 def _to_json_text(value: dict[str, Any] | None) -> str:
@@ -2210,6 +2321,40 @@ def _row_to_work_order_event_model(row: dict[str, Any]) -> WorkOrderEventRead:
         note=str(row["note"] or ""),
         detail=detail,
         created_at=_as_datetime(row["created_at"]),
+    )
+
+
+def _row_to_workflow_lock_model(row: dict[str, Any]) -> WorkflowLockRead:
+    raw = str(row["content_json"] or "{}")
+    try:
+        content = json.loads(raw)
+    except json.JSONDecodeError:
+        content = {"raw": raw}
+    if not isinstance(content, dict):
+        content = {"value": content}
+
+    return WorkflowLockRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        workflow_key=str(row["workflow_key"]),
+        status=str(row["status"]),
+        content=content,
+        requested_ticket=row.get("requested_ticket"),
+        last_comment=str(row.get("last_comment") or ""),
+        lock_reason=row.get("lock_reason"),
+        unlock_reason=row.get("unlock_reason"),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        reviewed_by=row.get("reviewed_by"),
+        approved_by=row.get("approved_by"),
+        locked_by=row.get("locked_by"),
+        unlocked_by=row.get("unlocked_by"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+        reviewed_at=_as_optional_datetime(row.get("reviewed_at")),
+        approved_at=_as_optional_datetime(row.get("approved_at")),
+        locked_at=_as_optional_datetime(row.get("locked_at")),
+        unlocked_at=_as_optional_datetime(row.get("unlocked_at")),
     )
 
 
@@ -3462,6 +3607,7 @@ def _service_info_payload() -> dict[str, str]:
         "sla_policy_api": "/api/admin/policies/sla",
         "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
         "sla_policy_revisions_api": "/api/admin/policies/sla/revisions",
+        "workflow_locks_api": "/api/workflow-locks",
     }
 
 
@@ -3484,6 +3630,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
             "duration_weeks": len(ADOPTION_WEEKLY_EXECUTION),
         },
         "weekly_execution": ADOPTION_WEEKLY_EXECUTION,
+        "workflow_lock_matrix": ADOPTION_WORKFLOW_LOCK_MATRIX,
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -3776,6 +3923,21 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
               <td>{html.escape(str(item.get("target", "")))}</td>
               <td>{html.escape(str(item.get("data_source", "")))}</td>
               <td>{html.escape(str(item.get("frequency", "")))}</td>
+            </tr>
+            """
+        )
+
+    workflow_matrix_rows: list[str] = []
+    for item in plan.get("workflow_lock_matrix", {}).get("rows", []):
+        perms = item.get("permissions", {})
+        workflow_matrix_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("role", "")))}</td>
+              <td>{html.escape(str(perms.get("DRAFT", "")))}</td>
+              <td>{html.escape(str(perms.get("REVIEW", "")))}</td>
+              <td>{html.escape(str(perms.get("APPROVED", "")))}</td>
+              <td>{html.escape(str(perms.get("LOCKED", "")))}</td>
             </tr>
             """
         )
@@ -4435,6 +4597,30 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       </div>
       <div class="grid">
         {"".join(module_cards)}
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W01 Role Workflow Lock Matrix</h2>
+      <p class="sub">DRAFT/REVIEW/APPROVED/LOCKED 단계별 역할 권한 매트릭스를 운영 규칙으로 고정합니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>DRAFT</th>
+              <th>REVIEW</th>
+              <th>APPROVED</th>
+              <th>LOCKED</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(workflow_matrix_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="links" style="margin-top: 10px;">
+        <a href="/api/workflow-locks">Workflow Lock API</a>
       </div>
     </section>
 
@@ -5862,6 +6048,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div id="adoptionMeta" class="meta">조회 전</div>
           <div id="adoptionTop" class="adopt-grid"></div>
           <div class="box">
+            <h3>W01 Role Workflow Lock Matrix</h3>
+            <div id="adoptionWorkflowMatrix" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -6173,6 +6363,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
+        const matrix = document.getElementById("adoptionWorkflowMatrix");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -6191,6 +6382,27 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           top.innerHTML = topItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
+
+          const workflowRows = (data.workflow_lock_matrix && data.workflow_lock_matrix.rows) || [];
+          matrix.innerHTML = renderTable(
+            workflowRows.map((row) => {{
+              const perms = row.permissions || {{}};
+              return {{
+                role: row.role || "",
+                draft: perms.DRAFT || "",
+                review: perms.REVIEW || "",
+                approved: perms.APPROVED || "",
+                locked: perms.LOCKED || "",
+              }};
+            }}),
+            [
+              {{ key: "role", label: "Role" }},
+              {{ key: "draft", label: "DRAFT" }},
+              {{ key: "review", label: "REVIEW" }},
+              {{ key: "approved", label: "APPROVED" }},
+              {{ key: "locked", label: "LOCKED" }},
+            ]
+          );
 
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
@@ -6223,6 +6435,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           top.innerHTML = "";
+          matrix.innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -7420,6 +7633,430 @@ def revoke_admin_token(
         resource_type="admin_token",
         resource_id=str(model.token_id),
         detail={"user_id": model.user_id, "label": model.label},
+    )
+    return model
+
+
+@app.get("/api/workflow-locks", response_model=list[WorkflowLockRead])
+def list_workflow_locks(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    workflow_key: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> list[WorkflowLockRead]:
+    _require_workflow_lock_action(principal, action="read")
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in WORKFLOW_LOCK_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid workflow lock status")
+
+    stmt = select(workflow_locks)
+    if site is not None:
+        stmt = stmt.where(workflow_locks.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(workflow_locks.c.site.in_(allowed_sites))
+    if normalized_status is not None:
+        stmt = stmt.where(workflow_locks.c.status == normalized_status)
+    if workflow_key is not None:
+        stmt = stmt.where(workflow_locks.c.workflow_key == workflow_key)
+    stmt = stmt.order_by(workflow_locks.c.created_at.desc(), workflow_locks.c.id.desc()).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_workflow_lock_model(row) for row in rows]
+
+
+@app.post("/api/workflow-locks", response_model=WorkflowLockRead, status_code=201)
+def create_workflow_lock(
+    payload: WorkflowLockCreate,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    _require_site_access(principal, payload.site)
+    _require_workflow_lock_action(principal, action="create", status=WORKFLOW_LOCK_STATUS_DRAFT)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        result = conn.execute(
+            insert(workflow_locks).values(
+                site=payload.site,
+                workflow_key=payload.workflow_key,
+                status=WORKFLOW_LOCK_STATUS_DRAFT,
+                content_json=_to_json_text(payload.content),
+                requested_ticket=payload.requested_ticket,
+                last_comment="",
+                lock_reason=None,
+                unlock_reason=None,
+                created_by=actor_username,
+                updated_by=actor_username,
+                reviewed_by=None,
+                approved_by=None,
+                locked_by=None,
+                unlocked_by=None,
+                created_at=now,
+                updated_at=now,
+                reviewed_at=None,
+                approved_at=None,
+                locked_at=None,
+                unlocked_at=None,
+            )
+        )
+        workflow_lock_id = int(result.inserted_primary_key[0])
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to create workflow lock")
+    model = _row_to_workflow_lock_model(row)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_create",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "workflow_key": model.workflow_key,
+            "status": model.status,
+            "requested_ticket": model.requested_ticket,
+        },
+    )
+    return model
+
+
+@app.get("/api/workflow-locks/{workflow_lock_id}", response_model=WorkflowLockRead)
+def get_workflow_lock(
+    workflow_lock_id: int,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    _require_workflow_lock_action(principal, action="read")
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Workflow lock not found")
+    _require_site_access(principal, str(row["site"]))
+    return _row_to_workflow_lock_model(row)
+
+
+@app.patch("/api/workflow-locks/{workflow_lock_id}/draft", response_model=WorkflowLockRead)
+def update_workflow_lock_draft(
+    workflow_lock_id: int,
+    payload: WorkflowLockDraftUpdate,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="update_draft", status=str(row["status"]))
+
+        next_content_json = row["content_json"]
+        if payload.content is not None:
+            next_content_json = _to_json_text(payload.content)
+        next_ticket = row["requested_ticket"] if payload.requested_ticket is None else payload.requested_ticket
+        next_comment = payload.comment or str(row.get("last_comment") or "")
+
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                content_json=next_content_json,
+                requested_ticket=next_ticket,
+                last_comment=next_comment,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update workflow lock draft")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_update_draft",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={"status": model.status, "requested_ticket": model.requested_ticket},
+    )
+    return model
+
+
+@app.post("/api/workflow-locks/{workflow_lock_id}/submit", response_model=WorkflowLockRead)
+def submit_workflow_lock_for_review(
+    workflow_lock_id: int,
+    payload: WorkflowLockTransitionRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="submit", status=str(row["status"]))
+
+        next_comment = payload.comment or str(row.get("last_comment") or "")
+        next_ticket = row["requested_ticket"] if payload.requested_ticket is None else payload.requested_ticket
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                status=WORKFLOW_LOCK_STATUS_REVIEW,
+                requested_ticket=next_ticket,
+                last_comment=next_comment,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to submit workflow lock")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_submit",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={"status": model.status, "requested_ticket": model.requested_ticket, "comment": payload.comment},
+    )
+    return model
+
+
+@app.post("/api/workflow-locks/{workflow_lock_id}/approve", response_model=WorkflowLockRead)
+def approve_workflow_lock(
+    workflow_lock_id: int,
+    payload: WorkflowLockTransitionRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="approve", status=str(row["status"]))
+
+        next_comment = payload.comment or str(row.get("last_comment") or "")
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                status=WORKFLOW_LOCK_STATUS_APPROVED,
+                last_comment=next_comment,
+                reviewed_by=actor_username,
+                reviewed_at=now,
+                approved_by=actor_username,
+                approved_at=now,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to approve workflow lock")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_approve",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={"status": model.status, "comment": payload.comment},
+    )
+    return model
+
+
+@app.post("/api/workflow-locks/{workflow_lock_id}/reject", response_model=WorkflowLockRead)
+def reject_workflow_lock(
+    workflow_lock_id: int,
+    payload: WorkflowLockTransitionRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="reject", status=str(row["status"]))
+
+        next_comment = payload.comment or "Rejected in review"
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                status=WORKFLOW_LOCK_STATUS_DRAFT,
+                last_comment=next_comment,
+                reviewed_by=actor_username,
+                reviewed_at=now,
+                approved_by=None,
+                approved_at=None,
+                locked_by=None,
+                locked_at=None,
+                lock_reason=None,
+                unlocked_by=None,
+                unlocked_at=None,
+                unlock_reason=None,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to reject workflow lock")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_reject",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={"status": model.status, "comment": payload.comment},
+    )
+    return model
+
+
+@app.post("/api/workflow-locks/{workflow_lock_id}/lock", response_model=WorkflowLockRead)
+def lock_workflow_lock(
+    workflow_lock_id: int,
+    payload: WorkflowLockTransitionRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="lock", status=str(row["status"]))
+
+        next_comment = payload.comment or str(row.get("last_comment") or "")
+        next_ticket = row["requested_ticket"] if payload.requested_ticket is None else payload.requested_ticket
+        lock_reason = payload.reason.strip() or "Approved workflow lock"
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                status=WORKFLOW_LOCK_STATUS_LOCKED,
+                requested_ticket=next_ticket,
+                lock_reason=lock_reason,
+                last_comment=next_comment,
+                locked_by=actor_username,
+                locked_at=now,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to lock workflow")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_lock",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={"status": model.status, "lock_reason": model.lock_reason, "requested_ticket": model.requested_ticket},
+    )
+    return model
+
+
+@app.post("/api/workflow-locks/{workflow_lock_id}/unlock", response_model=WorkflowLockRead)
+def unlock_workflow_lock(
+    workflow_lock_id: int,
+    payload: WorkflowLockTransitionRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> WorkflowLockRead:
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    reason = payload.reason.strip()
+    ticket = (payload.requested_ticket or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="Unlock reason is required")
+    if not ticket:
+        raise HTTPException(status_code=400, detail="Unlock request ticket is required")
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Workflow lock not found")
+        _require_site_access(principal, str(row["site"]))
+        _require_workflow_lock_action(principal, action="unlock", status=str(row["status"]))
+
+        next_comment = payload.comment or str(row.get("last_comment") or "")
+        conn.execute(
+            update(workflow_locks)
+            .where(workflow_locks.c.id == workflow_lock_id)
+            .values(
+                status=WORKFLOW_LOCK_STATUS_APPROVED,
+                requested_ticket=ticket,
+                unlock_reason=reason,
+                last_comment=next_comment,
+                unlocked_by=actor_username,
+                unlocked_at=now,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        updated = conn.execute(
+            select(workflow_locks).where(workflow_locks.c.id == workflow_lock_id).limit(1)
+        ).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to unlock workflow")
+    model = _row_to_workflow_lock_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="workflow_lock_unlock",
+        resource_type="workflow_lock",
+        resource_id=str(model.id),
+        detail={
+            "status": model.status,
+            "unlock_reason": reason,
+            "requested_ticket": ticket,
+            "comment": payload.comment,
+        },
     )
     return model
 

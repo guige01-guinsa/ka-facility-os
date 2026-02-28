@@ -64,6 +64,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "점검" in root_html.text
     assert "월간리포트" in root_html.text
     assert "사용자 정착 계획" in root_html.text
+    assert "W01 Role Workflow Lock Matrix" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
     assert "요약 새로고침" in root_html.text
 
@@ -119,6 +120,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert body["timeline"]["start_date"] == "2026-03-02"
     assert body["timeline"]["end_date"] == "2026-05-22"
     assert len(body["weekly_execution"]) == 12
+    assert body["workflow_lock_matrix"]["states"] == ["DRAFT", "REVIEW", "APPROVED", "LOCKED"]
+    assert len(body["workflow_lock_matrix"]["rows"]) == 4
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -328,6 +331,183 @@ def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:
         headers=scoped_headers,
     )
     assert forbidden_report.status_code == 403
+
+
+def test_workflow_lock_matrix_enforcement(app_client: TestClient) -> None:
+    def issue_token(
+        *,
+        username: str,
+        display_name: str,
+        role: str,
+        permissions: list[str] | None = None,
+        site_scope: list[str] | None = None,
+    ) -> str:
+        created = app_client.post(
+            "/api/admin/users",
+            headers=_owner_headers(),
+            json={
+                "username": username,
+                "display_name": display_name,
+                "role": role,
+                "permissions": permissions or [],
+                "site_scope": site_scope or ["WF Site"],
+            },
+        )
+        assert created.status_code == 201
+        user_id = created.json()["id"]
+        issued = app_client.post(
+            f"/api/admin/users/{user_id}/tokens",
+            headers=_owner_headers(),
+            json={"label": f"{username}-token"},
+        )
+        assert issued.status_code == 201
+        return issued.json()["token"]
+
+    operator_token = issue_token(
+        username="wf_operator_ci",
+        display_name="WF Operator",
+        role="operator",
+    )
+    manager_token = issue_token(
+        username="wf_manager_ci",
+        display_name="WF Manager",
+        role="manager",
+    )
+    owner_token = issue_token(
+        username="wf_owner_ci",
+        display_name="WF Owner",
+        role="owner",
+    )
+    admin_token = issue_token(
+        username="wf_admin_ci",
+        display_name="WF Admin Override",
+        role="manager",
+        permissions=["workflow_locks:admin"],
+    )
+    auditor_token = issue_token(
+        username="wf_auditor_ci",
+        display_name="WF Auditor",
+        role="auditor",
+    )
+
+    operator_headers = {"X-Admin-Token": operator_token}
+    manager_headers = {"X-Admin-Token": manager_token}
+    owner_headers = {"X-Admin-Token": owner_token}
+    admin_headers = {"X-Admin-Token": admin_token}
+    auditor_headers = {"X-Admin-Token": auditor_token}
+
+    created = app_client.post(
+        "/api/workflow-locks",
+        headers=operator_headers,
+        json={
+            "site": "WF Site",
+            "workflow_key": "inspection.approval",
+            "content": {"step": "draft-v1"},
+        },
+    )
+    assert created.status_code == 201
+    workflow_lock_id = created.json()["id"]
+    assert created.json()["status"] == "draft"
+
+    manager_update_draft = app_client.patch(
+        f"/api/workflow-locks/{workflow_lock_id}/draft",
+        headers=manager_headers,
+        json={"comment": "manager should not edit draft"},
+    )
+    assert manager_update_draft.status_code == 403
+
+    owner_update_draft = app_client.patch(
+        f"/api/workflow-locks/{workflow_lock_id}/draft",
+        headers=owner_headers,
+        json={"comment": "owner should not edit draft"},
+    )
+    assert owner_update_draft.status_code == 403
+
+    operator_update_draft = app_client.patch(
+        f"/api/workflow-locks/{workflow_lock_id}/draft",
+        headers=operator_headers,
+        json={
+            "content": {"step": "draft-v2"},
+            "requested_ticket": "REQ-1001",
+            "comment": "operator update",
+        },
+    )
+    assert operator_update_draft.status_code == 200
+    assert operator_update_draft.json()["status"] == "draft"
+    assert operator_update_draft.json()["content"]["step"] == "draft-v2"
+
+    submitted = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/submit",
+        headers=operator_headers,
+        json={"comment": "submit for review"},
+    )
+    assert submitted.status_code == 200
+    assert submitted.json()["status"] == "review"
+
+    operator_approve = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/approve",
+        headers=operator_headers,
+        json={"comment": "operator cannot approve"},
+    )
+    assert operator_approve.status_code == 403
+
+    approved = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/approve",
+        headers=manager_headers,
+        json={"comment": "manager approve"},
+    )
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "approved"
+
+    manager_lock = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/lock",
+        headers=manager_headers,
+        json={"reason": "manager cannot lock"},
+    )
+    assert manager_lock.status_code == 403
+
+    locked = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/lock",
+        headers=owner_headers,
+        json={"reason": "owner lock", "requested_ticket": "REQ-1001"},
+    )
+    assert locked.status_code == 200
+    assert locked.json()["status"] == "locked"
+
+    owner_unlock = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/unlock",
+        headers=owner_headers,
+        json={"reason": "owner cannot unlock", "requested_ticket": "REQ-1002"},
+    )
+    assert owner_unlock.status_code == 403
+
+    invalid_admin_unlock = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/unlock",
+        headers=admin_headers,
+        json={"comment": "missing reason and ticket"},
+    )
+    assert invalid_admin_unlock.status_code == 400
+
+    unlocked = app_client.post(
+        f"/api/workflow-locks/{workflow_lock_id}/unlock",
+        headers=admin_headers,
+        json={
+            "reason": "Emergency rollback",
+            "requested_ticket": "REQ-1002",
+            "comment": "admin override",
+        },
+    )
+    assert unlocked.status_code == 200
+    assert unlocked.json()["status"] == "approved"
+    assert unlocked.json()["unlock_reason"] == "Emergency rollback"
+    assert unlocked.json()["requested_ticket"] == "REQ-1002"
+
+    auditor_read = app_client.get(
+        f"/api/workflow-locks/{workflow_lock_id}",
+        headers=auditor_headers,
+    )
+    assert auditor_read.status_code == 200
+    assert auditor_read.json()["status"] == "approved"
 
 
 def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:

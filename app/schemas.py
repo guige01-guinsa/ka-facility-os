@@ -49,6 +49,7 @@ class InspectionRead(BaseModel):
 WorkOrderPriority = Literal["low", "medium", "high", "critical"]
 WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
 AdminRole = Literal["owner", "manager", "operator", "auditor"]
+WorkflowLockStatus = Literal["draft", "review", "approved", "locked"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -114,6 +115,49 @@ class WorkOrderEventRead(BaseModel):
     note: str
     detail: dict[str, Any]
     created_at: datetime
+
+
+class WorkflowLockCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    workflow_key: str = Field(min_length=1, max_length=120)
+    content: dict[str, Any] = Field(default_factory=dict)
+    requested_ticket: Optional[str] = Field(default=None, max_length=120)
+
+
+class WorkflowLockDraftUpdate(BaseModel):
+    content: Optional[dict[str, Any]] = None
+    requested_ticket: Optional[str] = Field(default=None, max_length=120)
+    comment: str = ""
+
+
+class WorkflowLockTransitionRequest(BaseModel):
+    comment: str = ""
+    reason: str = ""
+    requested_ticket: Optional[str] = Field(default=None, max_length=120)
+
+
+class WorkflowLockRead(BaseModel):
+    id: int
+    site: str
+    workflow_key: str
+    status: WorkflowLockStatus
+    content: dict[str, Any]
+    requested_ticket: Optional[str] = None
+    last_comment: str
+    lock_reason: Optional[str] = None
+    unlock_reason: Optional[str] = None
+    created_by: str
+    updated_by: str
+    reviewed_by: Optional[str] = None
+    approved_by: Optional[str] = None
+    locked_by: Optional[str] = None
+    unlocked_by: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    reviewed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    locked_at: Optional[datetime] = None
+    unlocked_at: Optional[datetime] = None
 
 
 class SlaEscalationRunRequest(BaseModel):
