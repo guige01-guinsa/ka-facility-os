@@ -4,21 +4,24 @@ import html
 import hmac
 import io
 import json
+import math
 import secrets
 import string
 import time
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from datetime import datetime, timezone
 from datetime import timedelta
 from os import getenv
+from threading import Lock
 from typing import Annotated, Any, Callable
 from urllib import error as url_error
 from urllib import request as url_request
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -95,18 +98,38 @@ from app.schemas import (
     WorkOrderRead,
 )
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
+    raw = getenv(name)
+    if raw is None:
+        return max(default, min_value)
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return max(default, min_value)
+    return max(value, min_value)
+
+
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
 ENV_NAME = getenv("ENV", "local").lower()
-ALLOW_INSECURE_LOCAL_AUTH = getenv("ALLOW_INSECURE_LOCAL_AUTH", "1").lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
+ALLOW_INSECURE_LOCAL_AUTH = _env_bool("ALLOW_INSECURE_LOCAL_AUTH", True)
 ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
 ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
+API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
+API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
+API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
+API_RATE_LIMIT_MAX_AUTH = _env_int("API_RATE_LIMIT_MAX_AUTH", 300, min_value=1)
+ADMIN_TOKEN_REQUIRE_EXPIRY = _env_bool("ADMIN_TOKEN_REQUIRE_EXPIRY", True)
+ADMIN_TOKEN_MAX_TTL_DAYS = _env_int("ADMIN_TOKEN_MAX_TTL_DAYS", 30, min_value=1)
+ADMIN_TOKEN_ROTATE_AFTER_DAYS = _env_int("ADMIN_TOKEN_ROTATE_AFTER_DAYS", 45, min_value=1)
 EVIDENCE_ALLOWED_CONTENT_TYPES = {
     value.strip().lower()
     for value in getenv(
@@ -141,6 +164,8 @@ HTML_CSP_POLICY = (
     "base-uri 'self'; "
     "form-action 'self'"
 )
+_RATE_LIMIT_LOCK = Lock()
+_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
 
 ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "owner": {"*"},
@@ -1340,7 +1365,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.30.0",
+    version="0.31.0",
     lifespan=app_lifespan,
 )
 
@@ -1444,6 +1469,37 @@ def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: i
 """
 
 
+def _rate_limit_identity(request: Request) -> tuple[str, int]:
+    token = request.headers.get("x-admin-token", "").strip()
+    if token:
+        # Token hash prefix avoids storing raw secrets in memory keys.
+        return f"auth:{_hash_token(token)[:16]}", API_RATE_LIMIT_MAX_AUTH
+    client_host = request.client.host if request.client is not None else "unknown"
+    return f"ip:{client_host}", API_RATE_LIMIT_MAX_PUBLIC
+
+
+def _check_api_rate_limit(identity: str, *, max_requests: int, window_sec: int) -> tuple[bool, int, int]:
+    now = time.monotonic()
+    with _RATE_LIMIT_LOCK:
+        bucket = _RATE_LIMIT_BUCKETS.get(identity)
+        if bucket is None:
+            bucket = deque()
+            _RATE_LIMIT_BUCKETS[identity] = bucket
+
+        cutoff = now - float(window_sec)
+        while bucket and bucket[0] <= cutoff:
+            bucket.popleft()
+
+        if len(bucket) >= max_requests:
+            wait = max(1, int(math.ceil(float(window_sec) - (now - bucket[0]))))
+            return False, 0, wait
+
+        bucket.append(now)
+        remaining = max(0, max_requests - len(bucket))
+        reset = max(1, int(math.ceil(float(window_sec) - (now - bucket[0]))))
+        return True, remaining, reset
+
+
 @app.middleware("http")
 async def browser_json_to_html_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
     response = await call_next(request)
@@ -1482,6 +1538,40 @@ async def browser_json_to_html_middleware(request: Request, call_next: Callable[
         raw_href = f"{request.url.path}?{request.url.query}&raw=1"
 
     return HTMLResponse(_build_browser_json_view_html(path_label, raw_href, response.status_code, payload), status_code=response.status_code)
+
+
+@app.middleware("http")
+async def api_rate_limit_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
+    if (
+        not API_RATE_LIMIT_ENABLED
+        or request.method.upper() == "OPTIONS"
+        or not request.url.path.startswith("/api/")
+    ):
+        return await call_next(request)
+
+    identity, limit = _rate_limit_identity(request)
+    allowed, remaining, reset_sec = _check_api_rate_limit(
+        identity,
+        max_requests=limit,
+        window_sec=API_RATE_LIMIT_WINDOW_SEC,
+    )
+    headers = {
+        "X-RateLimit-Limit": str(limit),
+        "X-RateLimit-Remaining": str(max(0, remaining)),
+        "X-RateLimit-Reset": str(reset_sec),
+    }
+    if not allowed:
+        headers["Retry-After"] = str(reset_sec)
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Rate limit exceeded"},
+            headers=headers,
+        )
+
+    response = await call_next(request)
+    for key, value in headers.items():
+        response.headers.setdefault(key, value)
+    return response
 
 
 @app.middleware("http")
@@ -1814,6 +1904,7 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
             admin_tokens.c.id.label("token_id"),
             admin_tokens.c.user_id.label("user_id"),
             admin_tokens.c.expires_at.label("expires_at"),
+            admin_tokens.c.created_at.label("created_at"),
             admin_tokens.c.site_scope.label("token_site_scope"),
             admin_users.c.username.label("username"),
             admin_users.c.display_name.label("display_name"),
@@ -1835,7 +1926,27 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
                 return None
 
             expires_at = _as_optional_datetime(row["expires_at"])
-            if expires_at is not None and expires_at <= now:
+            created_at = _as_datetime(row["created_at"])
+            if ADMIN_TOKEN_ROTATE_AFTER_DAYS > 0:
+                rotate_cutoff = now - timedelta(days=ADMIN_TOKEN_ROTATE_AFTER_DAYS)
+                if created_at <= rotate_cutoff:
+                    conn.execute(
+                        update(admin_tokens)
+                        .where(admin_tokens.c.id == row["token_id"])
+                        .values(is_active=False, last_used_at=now)
+                    )
+                    return None
+
+            effective_expires_at = expires_at
+            if effective_expires_at is None and ADMIN_TOKEN_REQUIRE_EXPIRY:
+                effective_expires_at = created_at + timedelta(days=ADMIN_TOKEN_MAX_TTL_DAYS)
+
+            if effective_expires_at is not None and effective_expires_at <= now:
+                conn.execute(
+                    update(admin_tokens)
+                    .where(admin_tokens.c.id == row["token_id"])
+                    .values(is_active=False, last_used_at=now)
+                )
                 return None
 
             conn.execute(
@@ -8164,6 +8275,16 @@ def issue_admin_token(
     token_plain = f"kaos_{secrets.token_urlsafe(24)}"
     token_hash = _hash_token(token_plain)
     expires_at = _as_optional_datetime(payload.expires_at)
+    max_allowed_expires_at = now + timedelta(days=ADMIN_TOKEN_MAX_TTL_DAYS)
+    if expires_at is None and ADMIN_TOKEN_REQUIRE_EXPIRY:
+        expires_at = max_allowed_expires_at
+    if expires_at is not None and expires_at <= now:
+        raise HTTPException(status_code=400, detail="Token expiry must be in the future")
+    if expires_at is not None and expires_at > max_allowed_expires_at:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Token expiry exceeds max TTL ({ADMIN_TOKEN_MAX_TTL_DAYS} days)",
+        )
     token_scope_text: str | None = None
     effective_scope: list[str] = [SITE_SCOPE_ALL]
 

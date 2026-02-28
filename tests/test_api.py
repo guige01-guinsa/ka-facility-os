@@ -16,6 +16,40 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
     monkeypatch.setenv("ADMIN_TOKEN", "test-owner-token")
+    monkeypatch.setenv("API_RATE_LIMIT_ENABLED", "1")
+    monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "10000")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "10000")
+    monkeypatch.setenv("ADMIN_TOKEN_REQUIRE_EXPIRY", "1")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_TTL_DAYS", "30")
+    monkeypatch.setenv("ADMIN_TOKEN_ROTATE_AFTER_DAYS", "45")
+    monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
+    monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
+
+    import app.database as database_module
+    import app.main as main_module
+
+    importlib.reload(database_module)
+    importlib.reload(main_module)
+
+    with TestClient(main_module.app) as client:
+        yield client
+
+
+@pytest.fixture()
+def strict_rate_limit_client(tmp_path, monkeypatch):
+    db_path = tmp_path / "test_rate_limit.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("ENV", "test")
+    monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
+    monkeypatch.setenv("ADMIN_TOKEN", "test-owner-token")
+    monkeypatch.setenv("API_RATE_LIMIT_ENABLED", "1")
+    monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "3")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "3")
+    monkeypatch.setenv("ADMIN_TOKEN_REQUIRE_EXPIRY", "1")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_TTL_DAYS", "30")
+    monkeypatch.setenv("ADMIN_TOKEN_ROTATE_AFTER_DAYS", "45")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
 
@@ -41,6 +75,22 @@ def test_health_and_meta(app_client: TestClient) -> None:
     meta = app_client.get("/meta")
     assert meta.status_code == 200
     assert meta.json()["env"] == "test"
+
+
+def test_api_rate_limit_enforced(strict_rate_limit_client: TestClient) -> None:
+    first = strict_rate_limit_client.get("/api/public/adoption-plan?raw=1")
+    second = strict_rate_limit_client.get("/api/public/adoption-plan?raw=1")
+    third = strict_rate_limit_client.get("/api/public/adoption-plan?raw=1")
+    fourth = strict_rate_limit_client.get("/api/public/adoption-plan?raw=1")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 200
+    assert fourth.status_code == 429
+    assert fourth.json()["detail"] == "Rate limit exceeded"
+    assert fourth.headers.get("retry-after") is not None
+    assert fourth.headers.get("x-ratelimit-limit") == "3"
+    assert fourth.headers.get("x-ratelimit-remaining") == "0"
 
 
 def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None:
@@ -266,6 +316,64 @@ def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
 
     me3 = app_client.get("/api/auth/me", headers={"X-Admin-Token": issued_token})
     assert me3.status_code == 401
+
+
+def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import select, update
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "token_policy_ci",
+            "display_name": "Token Policy CI",
+            "role": "manager",
+            "permissions": [],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    too_far_future = (datetime.now(timezone.utc) + timedelta(days=120)).isoformat()
+    rejected = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "too-long", "expires_at": too_far_future},
+    )
+    assert rejected.status_code == 400
+    assert "max TTL" in rejected.json()["detail"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "policy-token"},
+    )
+    assert issued.status_code == 201
+    token_id = issued.json()["token_id"]
+    token_plain = issued.json()["token"]
+    assert issued.json()["expires_at"] is not None
+
+    me = app_client.get("/api/auth/me", headers={"X-Admin-Token": token_plain})
+    assert me.status_code == 200
+
+    very_old = datetime.now(timezone.utc) - timedelta(days=60)
+    with db_module.get_conn() as conn:
+        conn.execute(
+            update(db_module.admin_tokens)
+            .where(db_module.admin_tokens.c.id == token_id)
+            .values(created_at=very_old)
+        )
+
+    me_after_rotate_window = app_client.get("/api/auth/me", headers={"X-Admin-Token": token_plain})
+    assert me_after_rotate_window.status_code == 401
+
+    with db_module.get_conn() as conn:
+        row = conn.execute(
+            select(db_module.admin_tokens.c.is_active).where(db_module.admin_tokens.c.id == token_id)
+        ).first()
+    assert row is not None
+    assert row[0] is False
 
 
 def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:

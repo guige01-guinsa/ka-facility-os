@@ -174,12 +174,21 @@ Optional alert webhook env:
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
 - `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
+- `API_RATE_LIMIT_ENABLED` (default `1`)
+- `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
+- `API_RATE_LIMIT_MAX_PUBLIC` (default `120` requests/window per IP)
+- `API_RATE_LIMIT_MAX_AUTH` (default `300` requests/window per admin token)
+- `ADMIN_TOKEN_REQUIRE_EXPIRY` (default `1`)
+- `ADMIN_TOKEN_MAX_TTL_DAYS` (default `30`)
+- `ADMIN_TOKEN_ROTATE_AFTER_DAYS` (default `45`)
 
 Security hardening:
 - common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
 - HTML endpoints (`/`, `/web/*`, `/api/*` browser view) include CSP header
 - authenticated API responses include `Cache-Control: no-store`
 - W02 evidence upload blocks unsupported content types and empty files, max size 5MB
+- API rate limit returns `429` with `Retry-After` and `X-RateLimit-*` headers
+- admin token policy enforces bounded TTL and auto-invalidates tokens older than rotate window
 
 Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
