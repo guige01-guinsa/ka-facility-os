@@ -160,6 +160,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W01 Role Workflow Lock Matrix" in root_html.text
     assert "W02 Scheduled SOP and Sandbox" in root_html.text
     assert "알림 채널 KPI" in root_html.text
+    assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
     assert "요약 새로고침" in root_html.text
 
@@ -187,6 +188,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
+    assert service_info.json()["alert_channel_mttr_kpi_api"] == "/api/ops/alerts/kpi/mttr"
     assert service_info.json()["alert_channel_guard_api"] == "/api/ops/alerts/channels/guard"
     assert service_info.json()["alert_channel_guard_recover_api"] == "/api/ops/alerts/channels/guard/recover"
     assert service_info.json()["alert_channel_guard_recover_batch_api"] == "/api/ops/alerts/channels/guard/recover-batch"
@@ -1928,6 +1930,124 @@ def test_alert_channel_kpi_windows(app_client: TestClient) -> None:
     assert filtered_windows[30]["total_deliveries"] == 2
     assert filtered_windows[30]["warning_count"] == 1
     assert filtered_windows[30]["success_count"] == 1
+
+
+def test_alert_channel_mttr_kpi_api(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import insert
+
+    now = datetime.now(timezone.utc)
+    seed_rows = [
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "failed",
+            "error": "seed-a1",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=10),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=9),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "failed",
+            "error": "seed-a2",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=2),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=2) + timedelta(hours=4),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-b.example/hook",
+            "status": "warning",
+            "error": "seed-b1",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=3),
+        },
+        {
+            "event_type": "ops_daily_check",
+            "target": "https://chan-c.example/hook",
+            "status": "failed",
+            "error": "noise",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=1),
+        },
+    ]
+    with db_module.get_conn() as conn:
+        for row in seed_rows:
+            conn.execute(
+                insert(db_module.alert_deliveries).values(
+                    **row,
+                    created_at=row["last_attempt_at"],
+                    updated_at=row["last_attempt_at"],
+                )
+            )
+
+    response = app_client.get(
+        "/api/ops/alerts/kpi/mttr",
+        headers=_owner_headers(),
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["event_type"] is None
+    windows = {int(item["days"]): item for item in body["windows"]}
+    assert set(windows.keys()) == {7, 30}
+
+    win_7 = windows[7]
+    assert win_7["incident_count"] == 3
+    assert win_7["recovered_incidents"] == 1
+    assert win_7["unresolved_incidents"] == 2
+    assert win_7["mttr_minutes"] == 240.0
+
+    win_30 = windows[30]
+    assert win_30["incident_count"] == 4
+    assert win_30["recovered_incidents"] == 2
+    assert win_30["unresolved_incidents"] == 2
+    assert win_30["mttr_minutes"] == 840.0
+    assert win_30["median_recovery_minutes"] == 840.0
+    assert win_30["longest_recovery_minutes"] == 1440.0
+
+    channels_30 = {item["target"]: item for item in win_30["channels"]}
+    assert set(channels_30.keys()) == {"https://chan-a.example/hook", "https://chan-b.example/hook", "https://chan-c.example/hook"}
+    assert channels_30["https://chan-a.example/hook"]["incident_count"] == 2
+    assert channels_30["https://chan-a.example/hook"]["recovered_incidents"] == 2
+    assert channels_30["https://chan-a.example/hook"]["unresolved_incidents"] == 0
+    assert channels_30["https://chan-a.example/hook"]["mttr_minutes"] == 840.0
+    assert channels_30["https://chan-b.example/hook"]["recovered_incidents"] == 0
+    assert channels_30["https://chan-b.example/hook"]["unresolved_incidents"] == 1
+    assert channels_30["https://chan-b.example/hook"]["mttr_minutes"] is None
+    assert channels_30["https://chan-c.example/hook"]["incident_count"] == 1
+    assert channels_30["https://chan-c.example/hook"]["unresolved_incidents"] == 1
+
+    filtered = app_client.get(
+        "/api/ops/alerts/kpi/mttr?event_type=sla_escalation",
+        headers=_owner_headers(),
+    )
+    assert filtered.status_code == 200
+    filtered_windows = {int(item["days"]): item for item in filtered.json()["windows"]}
+    assert filtered_windows[7]["incident_count"] == 2
+    assert filtered_windows[30]["incident_count"] == 3
+    assert filtered_windows[30]["unresolved_incidents"] == 1
 
 
 def test_alert_channel_guard_and_recover_api(app_client: TestClient, monkeypatch) -> None:

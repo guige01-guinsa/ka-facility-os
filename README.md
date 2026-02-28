@@ -72,6 +72,7 @@ Open:
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `GET /api/ops/alerts/kpi/channels` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/kpi/mttr` (permission: `admins:manage`)
   - `GET /api/ops/alerts/channels/guard` (permission: `admins:manage`)
   - `POST /api/ops/alerts/channels/guard/recover?target=...` (permission: `admins:manage`)
   - `POST /api/ops/alerts/channels/guard/recover-batch` (permission: `admins:manage`)
@@ -271,6 +272,7 @@ Job monitoring:
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `GET /api/ops/alerts/deliveries?event_type=ops_daily_check`
 - `GET /api/ops/alerts/kpi/channels` (7d/30d channel success KPI)
+- `GET /api/ops/alerts/kpi/mttr` (7d/30d channel MTTR KPI)
 - `GET /api/ops/alerts/channels/guard` (channel quarantine/health snapshot)
 - `POST /api/ops/alerts/channels/guard/recover?target=https://...` (manual recovery probe)
 - `POST /api/ops/alerts/channels/guard/recover-batch?state=quarantined&max_targets=30`

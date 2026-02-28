@@ -5325,6 +5325,7 @@ def _service_info_payload() -> dict[str, str]:
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
+        "alert_channel_mttr_kpi_api": "/api/ops/alerts/kpi/mttr",
         "alert_channel_guard_api": "/api/ops/alerts/channels/guard",
         "alert_channel_guard_recover_api": "/api/ops/alerts/channels/guard/recover",
         "alert_channel_guard_recover_batch_api": "/api/ops/alerts/channels/guard/recover-batch",
@@ -8034,11 +8035,34 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="overviewAlertKpiChannels" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>알림 채널 MTTR (복구시간, 최근 7/30일)</h3>
+            <div id="overviewAlertMttrSummary" class="cards"></div>
+            <div id="overviewAlertMttrChannels" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a href="/api/ops/alerts/kpi/mttr">MTTR KPI API</a>
+            </div>
+          </div>
+          <div class="box">
             <h3>알림 채널 보호/보관 상태</h3>
             <div id="overviewAlertGuardMeta" class="meta">조회 전</div>
             <div id="overviewAlertGuardTable" class="empty">데이터 없음</div>
+            <div class="filter-row">
+              <select id="overviewGuardRecoverState">
+                <option value="quarantined">state=quarantined</option>
+                <option value="warning">state=warning</option>
+                <option value="all">state=all</option>
+              </select>
+              <input id="overviewGuardRecoverMaxTargets" value="20" placeholder="max_targets" />
+              <button id="runOverviewGuardRecoverDryBtn" class="btn" type="button">배치복구 점검</button>
+              <button id="runOverviewGuardRecoverRunBtn" class="btn run" type="button">배치복구 실행</button>
+              <button id="runOverviewGuardRecoverLatestBtn" class="btn" type="button">최근 결과</button>
+            </div>
+            <div id="overviewGuardRecoverMeta" class="meta">복구 실행 전</div>
+            <div id="overviewGuardRecoverTable" class="empty">데이터 없음</div>
             <div class="mini-links">
               <a href="/api/ops/alerts/channels/guard">Guard API</a>
+              <a href="/api/ops/alerts/channels/guard/recover-batch">Guard Recover Batch API</a>
+              <a href="/api/ops/alerts/channels/guard/recover/latest">Guard Recover Latest API</a>
               <a href="/api/ops/alerts/retention/policy">Retention Policy API</a>
               <a href="/api/ops/alerts/retention/latest">Retention Latest API</a>
             </div>
@@ -8370,15 +8394,21 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const topTable = document.getElementById("overviewTopWorkOrders");
         const alertKpiSummary = document.getElementById("overviewAlertKpiSummary");
         const alertKpiChannels = document.getElementById("overviewAlertKpiChannels");
+        const alertMttrSummary = document.getElementById("overviewAlertMttrSummary");
+        const alertMttrChannels = document.getElementById("overviewAlertMttrChannels");
         const alertGuardMeta = document.getElementById("overviewAlertGuardMeta");
         const alertGuardTable = document.getElementById("overviewAlertGuardTable");
+        const alertGuardRecoverMeta = document.getElementById("overviewGuardRecoverMeta");
+        const alertGuardRecoverTable = document.getElementById("overviewGuardRecoverTable");
         try {{
           meta.textContent = "조회 중... " + path;
-          const [data, handover, kpi, guard, retentionPolicy, retentionLatest] = await Promise.all([
+          const [data, handover, kpi, mttr, guard, guardRecoverLatest, retentionPolicy, retentionLatest] = await Promise.all([
             fetchJson(path, true),
             fetchJson(handoverPath, true).catch(() => null),
             fetchJson("/api/ops/alerts/kpi/channels", true).catch(() => null),
+            fetchJson("/api/ops/alerts/kpi/mttr", true).catch(() => null),
             fetchJson("/api/ops/alerts/channels/guard", true).catch(() => null),
+            fetchJson("/api/ops/alerts/channels/guard/recover/latest", true).catch(() => null),
             fetchJson("/api/ops/alerts/retention/policy", true).catch(() => null),
             fetchJson("/api/ops/alerts/retention/latest", true).catch(() => null),
           ]);
@@ -8452,11 +8482,47 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             alertKpiChannels.innerHTML = renderEmpty("알림 KPI 데이터가 없습니다.");
           }}
 
+          const mttrWindows = (mttr && Array.isArray(mttr.windows)) ? mttr.windows : [];
+          const sortedMttrWindows = mttrWindows.slice().sort((a, b) => Number(a.days || 0) - Number(b.days || 0));
+          if (sortedMttrWindows.length > 0) {{
+            const mttrCards = [];
+            sortedMttrWindows.forEach((win) => {{
+              mttrCards.push(["" + String(win.days || 0) + "d MTTR(min)", win.mttr_minutes ?? "-"]);
+              mttrCards.push(["" + String(win.days || 0) + "d Recovered", win.recovered_incidents ?? 0]);
+              mttrCards.push(["" + String(win.days || 0) + "d Unresolved", win.unresolved_incidents ?? 0]);
+            }});
+            alertMttrSummary.innerHTML = mttrCards.map((x) => (
+              '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+            )).join("");
+
+            const window30Mttr = sortedMttrWindows.find((item) => Number(item.days || 0) === 30) || sortedMttrWindows[sortedMttrWindows.length - 1];
+            const mttrChannels = Array.isArray(window30Mttr.channels) ? window30Mttr.channels : [];
+            alertMttrChannels.innerHTML = renderTable(
+              mttrChannels.slice(0, 20),
+              [
+                {{ key: "target", label: "Target" }},
+                {{ key: "incident_count", label: "Incidents" }},
+                {{ key: "recovered_incidents", label: "Recovered" }},
+                {{ key: "unresolved_incidents", label: "Unresolved" }},
+                {{ key: "mttr_minutes", label: "MTTR(min)" }},
+                {{ key: "median_recovery_minutes", label: "Median(min)" }},
+                {{ key: "longest_recovery_minutes", label: "Longest(min)" }},
+                {{ key: "last_recovery_at", label: "Last Recovery" }},
+              ]
+            );
+          }} else {{
+            alertMttrSummary.innerHTML = "";
+            alertMttrChannels.innerHTML = renderEmpty("알림 MTTR 데이터가 없습니다.");
+          }}
+
           if (guard && guard.summary) {{
             const summary = guard.summary || {{}};
             const latestRetention = retentionLatest && retentionLatest.run_id
               ? ("최근 정리: run#" + String(retentionLatest.run_id) + " deleted=" + String(retentionLatest.deleted_count || 0))
               : "최근 정리: 없음";
+            const latestRecover = guardRecoverLatest && guardRecoverLatest.run_id
+              ? (" | 최근 복구: run#" + String(guardRecoverLatest.run_id) + " processed=" + String(guardRecoverLatest.processed_count || 0) + " failed=" + String(guardRecoverLatest.failed_count || 0))
+              : " | 최근 복구: 없음";
             const policyText = retentionPolicy
               ? (" | retention=" + String(retentionPolicy.retention_days || "-") + "d archive=" + String(retentionPolicy.archive_enabled))
               : "";
@@ -8466,6 +8532,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               + " | warning=" + String(summary.warning_count || 0)
               + " | targets=" + String(summary.target_count || 0)
               + " | " + latestRetention
+              + latestRecover
               + policyText;
             alertGuardTable.innerHTML = renderTable(
               (guard.channels || []).slice(0, 20),
@@ -8482,14 +8549,118 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             alertGuardMeta.textContent = "보호 상태 조회 실패 또는 데이터 없음";
             alertGuardTable.innerHTML = renderEmpty("알림 채널 보호 상태 데이터가 없습니다.");
           }}
+
+          if (guardRecoverLatest && guardRecoverLatest.run_id) {{
+            alertGuardRecoverMeta.textContent =
+              "최근 배치복구 run#" + String(guardRecoverLatest.run_id)
+              + " | status=" + String(guardRecoverLatest.status || "-")
+              + " | processed=" + String(guardRecoverLatest.processed_count || 0)
+              + " | success=" + String(guardRecoverLatest.success_count || 0)
+              + " | failed=" + String(guardRecoverLatest.failed_count || 0)
+              + " | skipped=" + String(guardRecoverLatest.skipped_count || 0);
+            alertGuardRecoverTable.innerHTML = renderTable(
+              (guardRecoverLatest.results || []).slice(0, 20),
+              [
+                {{ key: "target", label: "Target" }},
+                {{ key: "status", label: "Probe" }},
+                {{ key: "before_state", label: "Before" }},
+                {{ key: "after_state", label: "After" }},
+                {{ key: "delivery_id", label: "Delivery ID" }},
+                {{ key: "error", label: "Error" }},
+              ]
+            );
+          }} else {{
+            alertGuardRecoverMeta.textContent = "최근 배치복구 이력 없음";
+            alertGuardRecoverTable.innerHTML = renderEmpty("배치복구 실행 이력이 없습니다.");
+          }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           cards.innerHTML = "";
           topTable.innerHTML = renderEmpty(err.message);
           alertKpiSummary.innerHTML = "";
           alertKpiChannels.innerHTML = renderEmpty(err.message);
+          alertMttrSummary.innerHTML = "";
+          alertMttrChannels.innerHTML = renderEmpty(err.message);
           alertGuardMeta.textContent = "실패: " + err.message;
           alertGuardTable.innerHTML = renderEmpty(err.message);
+          alertGuardRecoverMeta.textContent = "실패: " + err.message;
+          alertGuardRecoverTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runOverviewGuardRecover(dryRun) {{
+        const meta = document.getElementById("overviewGuardRecoverMeta");
+        const table = document.getElementById("overviewGuardRecoverTable");
+        const state = (document.getElementById("overviewGuardRecoverState").value || "quarantined").trim() || "quarantined";
+        const maxTargetsRaw = (document.getElementById("overviewGuardRecoverMaxTargets").value || "").trim();
+        const params = new URLSearchParams();
+        params.set("state", state);
+        if (maxTargetsRaw !== "") {{
+          params.set("max_targets", maxTargetsRaw);
+        }}
+        params.set("dry_run", dryRun ? "true" : "false");
+        const path = "/api/ops/alerts/channels/guard/recover-batch?" + params.toString();
+        try {{
+          meta.textContent = "실행 중... " + path;
+          const data = await fetchJson(
+            path,
+            true,
+            {{
+              method: "POST",
+            }}
+          );
+          meta.textContent =
+            "성공: run#" + String(data.run_id || "-")
+            + " | status=" + String(data.status || "-")
+            + " | processed=" + String(data.processed_count || 0)
+            + " | success=" + String(data.success_count || 0)
+            + " | failed=" + String(data.failed_count || 0)
+            + " | skipped=" + String(data.skipped_count || 0);
+          table.innerHTML = renderTable(
+            (data.results || []).slice(0, 30),
+            [
+              {{ key: "target", label: "Target" }},
+              {{ key: "status", label: "Probe" }},
+              {{ key: "before_state", label: "Before" }},
+              {{ key: "after_state", label: "After" }},
+              {{ key: "delivery_id", label: "Delivery ID" }},
+              {{ key: "error", label: "Error" }},
+            ]
+          );
+          await runOverview();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runOverviewGuardRecoverLatest() {{
+        const meta = document.getElementById("overviewGuardRecoverMeta");
+        const table = document.getElementById("overviewGuardRecoverTable");
+        try {{
+          meta.textContent = "조회 중... /api/ops/alerts/channels/guard/recover/latest";
+          const data = await fetchJson("/api/ops/alerts/channels/guard/recover/latest", true);
+          meta.textContent =
+            "최근 run#" + String(data.run_id || "-")
+            + " | status=" + String(data.status || "-")
+            + " | processed=" + String(data.processed_count || 0)
+            + " | success=" + String(data.success_count || 0)
+            + " | failed=" + String(data.failed_count || 0)
+            + " | skipped=" + String(data.skipped_count || 0);
+          table.innerHTML = renderTable(
+            (data.results || []).slice(0, 30),
+            [
+              {{ key: "target", label: "Target" }},
+              {{ key: "status", label: "Probe" }},
+              {{ key: "before_state", label: "Before" }},
+              {{ key: "after_state", label: "After" }},
+              {{ key: "delivery_id", label: "Delivery ID" }},
+              {{ key: "error", label: "Error" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
         }}
       }}
 
@@ -8971,6 +9142,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }});
 
       document.getElementById("runOverviewBtn").addEventListener("click", runOverview);
+      document.getElementById("runOverviewGuardRecoverDryBtn").addEventListener("click", () => runOverviewGuardRecover(true));
+      document.getElementById("runOverviewGuardRecoverRunBtn").addEventListener("click", () => runOverviewGuardRecover(false));
+      document.getElementById("runOverviewGuardRecoverLatestBtn").addEventListener("click", runOverviewGuardRecoverLatest);
       document.getElementById("runWorkordersBtn").addEventListener("click", runWorkorders);
       document.getElementById("runInspectionsBtn").addEventListener("click", runInspections);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
@@ -10775,6 +10949,186 @@ def _build_alert_channel_kpi_snapshot(
     }
 
 
+def _compute_recovery_minutes_stats(recovery_minutes: list[float]) -> dict[str, float | None]:
+    values: list[float] = []
+    for item in recovery_minutes:
+        try:
+            parsed = float(item)
+        except (TypeError, ValueError):
+            continue
+        if parsed < 0.0:
+            continue
+        values.append(parsed)
+    if not values:
+        return {
+            "mttr_minutes": None,
+            "median_recovery_minutes": None,
+            "longest_recovery_minutes": None,
+        }
+
+    sorted_values = sorted(values)
+    count = len(sorted_values)
+    mid = count // 2
+    if count % 2 == 1:
+        median = sorted_values[mid]
+    else:
+        median = (sorted_values[mid - 1] + sorted_values[mid]) / 2.0
+
+    return {
+        "mttr_minutes": round(sum(sorted_values) / count, 2),
+        "median_recovery_minutes": round(median, 2),
+        "longest_recovery_minutes": round(sorted_values[-1], 2),
+    }
+
+
+def _build_alert_channel_mttr_snapshot(
+    *,
+    event_type: str | None = None,
+    windows: list[int] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    normalized_windows = sorted({int(value) for value in (windows or [7, 30]) if int(value) > 0})
+    if not normalized_windows:
+        normalized_windows = [7, 30]
+
+    max_days = max(normalized_windows)
+    # Include pre-window history so incidents already open at window start can be tracked.
+    history_start = generated_at - timedelta(days=max_days + 30)
+    stmt = (
+        select(
+            alert_deliveries.c.target,
+            alert_deliveries.c.status,
+            alert_deliveries.c.last_attempt_at,
+        )
+        .where(alert_deliveries.c.last_attempt_at >= history_start)
+        .order_by(alert_deliveries.c.target.asc(), alert_deliveries.c.last_attempt_at.asc(), alert_deliveries.c.id.asc())
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    history_by_target: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        attempted_at = _as_optional_datetime(row.get("last_attempt_at"))
+        if attempted_at is None:
+            continue
+        target = str(row.get("target") or "unknown")
+        history_by_target.setdefault(target, []).append(
+            {
+                "status": str(row.get("status") or "failed").strip().lower(),
+                "attempted_at": attempted_at,
+            }
+        )
+
+    window_payloads: list[dict[str, Any]] = []
+    for days in normalized_windows:
+        cutoff = generated_at - timedelta(days=days)
+        channels: list[dict[str, Any]] = []
+        overall_incidents = 0
+        overall_recovered = 0
+        overall_unresolved = 0
+        overall_recovery_minutes: list[float] = []
+
+        for target, history in history_by_target.items():
+            in_incident = False
+            for item in history:
+                attempted_at = item["attempted_at"]
+                if attempted_at >= cutoff:
+                    break
+                status = item["status"]
+                if _is_alert_failure_status(status):
+                    in_incident = True
+                elif status == "success":
+                    in_incident = False
+
+            incident_start: datetime | None = cutoff if in_incident else None
+            last_incident_start: datetime | None = cutoff if in_incident else None
+            last_recovery_at: datetime | None = None
+            incident_count = 1 if in_incident else 0
+            recovered_incidents = 0
+            unresolved_incidents = 0
+            channel_recovery_minutes: list[float] = []
+
+            for item in history:
+                attempted_at = item["attempted_at"]
+                if attempted_at < cutoff or attempted_at > generated_at:
+                    continue
+                status = item["status"]
+                if _is_alert_failure_status(status):
+                    if not in_incident:
+                        in_incident = True
+                        incident_start = attempted_at
+                        last_incident_start = attempted_at
+                        incident_count += 1
+                    continue
+                if status == "success" and in_incident:
+                    effective_start = incident_start or cutoff
+                    recovery_minutes = max((attempted_at - effective_start).total_seconds() / 60.0, 0.0)
+                    channel_recovery_minutes.append(recovery_minutes)
+                    recovered_incidents += 1
+                    in_incident = False
+                    incident_start = None
+                    last_recovery_at = attempted_at
+
+            if in_incident:
+                unresolved_incidents = 1
+
+            if incident_count == 0:
+                continue
+
+            stats = _compute_recovery_minutes_stats(channel_recovery_minutes)
+            channels.append(
+                {
+                    "target": target,
+                    "incident_count": incident_count,
+                    "recovered_incidents": recovered_incidents,
+                    "unresolved_incidents": unresolved_incidents,
+                    "mttr_minutes": stats["mttr_minutes"],
+                    "median_recovery_minutes": stats["median_recovery_minutes"],
+                    "longest_recovery_minutes": stats["longest_recovery_minutes"],
+                    "last_incident_start": last_incident_start.isoformat() if last_incident_start else None,
+                    "last_recovery_at": last_recovery_at.isoformat() if last_recovery_at else None,
+                }
+            )
+
+            overall_incidents += incident_count
+            overall_recovered += recovered_incidents
+            overall_unresolved += unresolved_incidents
+            overall_recovery_minutes.extend(channel_recovery_minutes)
+
+        channels.sort(
+            key=lambda item: (
+                -int(item.get("unresolved_incidents") or 0),
+                -float(item.get("mttr_minutes") or -1.0),
+                str(item.get("target") or ""),
+            )
+        )
+        overall_stats = _compute_recovery_minutes_stats(overall_recovery_minutes)
+        window_payloads.append(
+            {
+                "days": days,
+                "window_start": cutoff.isoformat(),
+                "window_end": generated_at.isoformat(),
+                "incident_count": overall_incidents,
+                "recovered_incidents": overall_recovered,
+                "unresolved_incidents": overall_unresolved,
+                "mttr_minutes": overall_stats["mttr_minutes"],
+                "median_recovery_minutes": overall_stats["median_recovery_minutes"],
+                "longest_recovery_minutes": overall_stats["longest_recovery_minutes"],
+                "channels": channels,
+            }
+        )
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "event_type": event_type,
+        "windows": window_payloads,
+    }
+
+
 @app.get("/api/ops/alerts/deliveries", response_model=list[AlertDeliveryRead])
 def list_alert_deliveries(
     event_type: Annotated[str | None, Query()] = None,
@@ -10816,6 +11170,36 @@ def get_alert_channel_kpi(
     _write_audit_log(
         principal=principal,
         action="ops_alert_channel_kpi_view",
+        resource_type="alert_delivery",
+        resource_id=event_type or "all",
+        detail={
+            "event_type": event_type,
+            "windows": summaries,
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/alerts/kpi/mttr")
+def get_alert_channel_mttr_kpi(
+    event_type: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_alert_channel_mttr_snapshot(event_type=event_type, windows=[7, 30])
+    summaries = [
+        {
+            "days": int(item.get("days") or 0),
+            "incident_count": int(item.get("incident_count") or 0),
+            "recovered_incidents": int(item.get("recovered_incidents") or 0),
+            "unresolved_incidents": int(item.get("unresolved_incidents") or 0),
+            "mttr_minutes": item.get("mttr_minutes"),
+        }
+        for item in snapshot.get("windows", [])
+        if isinstance(item, dict)
+    ]
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_mttr_kpi_view",
         resource_type="alert_delivery",
         resource_id=event_type or "all",
         detail={
