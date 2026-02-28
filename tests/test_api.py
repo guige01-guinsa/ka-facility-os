@@ -1001,6 +1001,43 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert repaired_integrity.json()["chain"]["chain_ok"] is True
 
 
+def test_audit_chain_anchor_hash_support() -> None:
+    import app.main as main_module
+
+    created_at = datetime.now(timezone.utc)
+    initial_prev = "abc123"
+    detail_json = "{}"
+    expected_hash = main_module._compute_audit_entry_hash(
+        prev_hash=initial_prev,
+        actor_user_id=1,
+        actor_username="ci-user",
+        action="ci_action",
+        resource_type="ci_resource",
+        resource_id="ci_id",
+        status="success",
+        detail_json=detail_json,
+        created_at=created_at,
+    )
+    row = {
+        "id": 1,
+        "actor_user_id": 1,
+        "actor_username": "ci-user",
+        "action": "ci_action",
+        "resource_type": "ci_resource",
+        "resource_id": "ci_id",
+        "status": "success",
+        "detail_json": detail_json,
+        "created_at": created_at,
+        "prev_hash": initial_prev,
+        "entry_hash": expected_hash,
+    }
+
+    ok = main_module._verify_audit_chain([row], initial_prev_hash=initial_prev)
+    assert ok["chain_ok"] is True
+    bad = main_module._verify_audit_chain([row], initial_prev_hash="")
+    assert bad["chain_ok"] is False
+
+
 def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     checks = app_client.get(
         "/api/ops/runbook/checks",

@@ -2511,8 +2511,8 @@ def _row_to_admin_audit_log_model(row: dict[str, Any]) -> AdminAuditLogRead:
     )
 
 
-def _verify_audit_chain(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    previous_hash = ""
+def _verify_audit_chain(rows: list[dict[str, Any]], *, initial_prev_hash: str = "") -> dict[str, Any]:
+    previous_hash = initial_prev_hash
     issues: list[dict[str, Any]] = []
     checked = 0
     for row in rows:
@@ -2541,6 +2541,7 @@ def _verify_audit_chain(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "checked_count": checked,
         "issue_count": len(issues),
         "issues": issues[:100],
+        "initial_prev_hash": initial_prev_hash or None,
         "last_entry_hash": previous_hash or None,
         "chain_ok": len(issues) == 0,
     }
@@ -2554,6 +2555,13 @@ def build_monthly_audit_archive(
 ) -> dict[str, Any]:
     start, end, normalized = _month_window(month)
     with get_conn() as conn:
+        anchor_row = conn.execute(
+            select(admin_audit_logs.c.entry_hash)
+            .where(admin_audit_logs.c.created_at < start)
+            .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        anchor_hash = str(anchor_row.get("entry_hash") or "") if anchor_row is not None else ""
         rows = conn.execute(
             select(admin_audit_logs)
             .where(admin_audit_logs.c.created_at >= start)
@@ -2562,7 +2570,7 @@ def build_monthly_audit_archive(
             .limit(max_entries)
         ).mappings().all()
 
-    chain = _verify_audit_chain([dict(row) for row in rows])
+    chain = _verify_audit_chain([dict(row) for row in rows], initial_prev_hash=anchor_hash)
     archive_rows: list[dict[str, Any]] = []
     if include_entries:
         for row in rows:
