@@ -27,6 +27,20 @@ services:
         value: "3"
       - key: OPS_DAILY_CHECK_ALERT_LEVEL
         value: critical
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
+      - key: ALERT_RETENTION_DAYS
+        value: "90"
+      - key: ALERT_RETENTION_MAX_DELETE
+        value: "5000"
+      - key: ALERT_RETENTION_ARCHIVE_ENABLED
+        value: "true"
+      - key: ALERT_RETENTION_ARCHIVE_PATH
+        value: data/alert-archives
       - key: API_RATE_LIMIT_STORE
         value: auto
       - key: API_RATE_LIMIT_REDIS_URL
@@ -71,6 +85,12 @@ services:
         value: "5"
       - key: ALERT_WEBHOOK_RETRIES
         value: "3"
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -143,5 +163,35 @@ services:
         value: "3"
       - key: OPS_DAILY_CHECK_ALERT_LEVEL
         value: critical
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
+  - type: cron
+    name: ka-facility-os-alert-retention
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "35 1 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.alert_retention --write-archive
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: ALERT_RETENTION_DAYS
+        value: "90"
+      - key: ALERT_RETENTION_MAX_DELETE
+        value: "5000"
+      - key: ALERT_RETENTION_ARCHIVE_ENABLED
+        value: "true"
+      - key: ALERT_RETENTION_ARCHIVE_PATH
+        value: data/alert-archives

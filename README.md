@@ -72,6 +72,11 @@ Open:
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `GET /api/ops/alerts/kpi/channels` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/channels/guard` (permission: `admins:manage`)
+  - `POST /api/ops/alerts/channels/guard/recover?target=...` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/retention/policy` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/retention/latest` (permission: `admins:manage`)
+  - `POST /api/ops/alerts/retention/run` (permission: `admins:manage`)
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
   - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
@@ -175,6 +180,7 @@ python -m app.jobs.sla_escalation --dry-run
 python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30
 python -m app.jobs.monthly_audit_archive --write-file
 python -m app.jobs.ops_daily_check
+python -m app.jobs.alert_retention --write-archive
 ```
 
 Render cron target commands:
@@ -182,6 +188,7 @@ Render cron target commands:
 - `python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30` (`*/10 * * * *`)
 - `python -m app.jobs.monthly_audit_archive --write-file` (`5 0 1 * *`)
 - `python -m app.jobs.ops_daily_check` (`15 0 * * *`)
+- `python -m app.jobs.alert_retention --write-archive` (`35 1 * * *`)
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
@@ -189,6 +196,13 @@ Optional alert webhook env:
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
 - `OPS_DAILY_CHECK_ALERT_LEVEL` (`off|critical|warning|always`, default `critical`)
+- `ALERT_CHANNEL_GUARD_ENABLED` (default `true`)
+- `ALERT_CHANNEL_GUARD_FAIL_THRESHOLD` (default `3`)
+- `ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES` (default `30`)
+- `ALERT_RETENTION_DAYS` (default `90`)
+- `ALERT_RETENTION_MAX_DELETE` (default `5000`)
+- `ALERT_RETENTION_ARCHIVE_ENABLED` (default `true`)
+- `ALERT_RETENTION_ARCHIVE_PATH` (default `data/alert-archives`)
 - `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
 - `API_RATE_LIMIT_ENABLED` (default `1`)
 - `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
@@ -252,6 +266,11 @@ Job monitoring:
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `GET /api/ops/alerts/deliveries?event_type=ops_daily_check`
 - `GET /api/ops/alerts/kpi/channels` (7d/30d channel success KPI)
+- `GET /api/ops/alerts/channels/guard` (channel quarantine/health snapshot)
+- `POST /api/ops/alerts/channels/guard/recover?target=https://...` (manual recovery probe)
+- `GET /api/ops/alerts/retention/policy`
+- `GET /api/ops/alerts/retention/latest`
+- `POST /api/ops/alerts/retention/run?dry_run=true`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)
 
@@ -374,6 +393,7 @@ Startup behavior:
 - Cron service `ka-facility-os-alert-retry`
 - Cron service `ka-facility-os-audit-archive`
 - Cron service `ka-facility-os-ops-daily-check`
+- Cron service `ka-facility-os-alert-retention`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`

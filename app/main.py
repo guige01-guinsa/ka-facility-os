@@ -23,7 +23,7 @@ from urllib import request as url_request
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 try:
@@ -130,6 +130,13 @@ ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
 OPS_DAILY_CHECK_ALERT_LEVEL = getenv("OPS_DAILY_CHECK_ALERT_LEVEL", "critical").strip().lower() or "critical"
+ALERT_CHANNEL_GUARD_ENABLED = _env_bool("ALERT_CHANNEL_GUARD_ENABLED", True)
+ALERT_CHANNEL_GUARD_FAIL_THRESHOLD = _env_int("ALERT_CHANNEL_GUARD_FAIL_THRESHOLD", 3, min_value=1)
+ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES = _env_int("ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES", 30, min_value=1)
+ALERT_RETENTION_DAYS = _env_int("ALERT_RETENTION_DAYS", 90, min_value=1)
+ALERT_RETENTION_MAX_DELETE = _env_int("ALERT_RETENTION_MAX_DELETE", 5000, min_value=1)
+ALERT_RETENTION_ARCHIVE_ENABLED = _env_bool("ALERT_RETENTION_ARCHIVE_ENABLED", True)
+ALERT_RETENTION_ARCHIVE_PATH = getenv("ALERT_RETENTION_ARCHIVE_PATH", "data/alert-archives").strip() or "data/alert-archives"
 API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
 API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
@@ -3084,6 +3091,318 @@ def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
     return "critical"
 
 
+def _is_alert_failure_status(status: str) -> bool:
+    return status.strip().lower() in {"failed", "warning"}
+
+
+def _compute_alert_channel_guard_state(
+    target: str,
+    *,
+    now: datetime | None = None,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+) -> dict[str, Any]:
+    current_time = now or datetime.now(timezone.utc)
+    normalized_lookback_days = max(1, lookback_days)
+    history_start = current_time - timedelta(days=normalized_lookback_days)
+    stmt = (
+        select(
+            alert_deliveries.c.status,
+            alert_deliveries.c.error,
+            alert_deliveries.c.last_attempt_at,
+        )
+        .where(alert_deliveries.c.target == target)
+        .where(alert_deliveries.c.last_attempt_at >= history_start)
+        .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+        .limit(200)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    last_attempt_at: datetime | None = None
+    last_status: str | None = None
+    last_error: str | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    consecutive_failures = 0
+
+    for idx, row in enumerate(rows):
+        attempted_at = _as_optional_datetime(row.get("last_attempt_at"))
+        if attempted_at is None:
+            continue
+        status = str(row.get("status") or "failed").strip().lower()
+        error_text = str(row.get("error") or "")
+        if idx == 0:
+            last_attempt_at = attempted_at
+            last_status = status
+            last_error = error_text or None
+
+        if status == "success":
+            last_success_at = attempted_at
+            # Consecutive failure run is determined from most recent attempt backward
+            break
+        if _is_alert_failure_status(status):
+            if last_failure_at is None:
+                last_failure_at = attempted_at
+            consecutive_failures += 1
+            continue
+        break
+
+    threshold = max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD)
+    cooldown_minutes = max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES)
+    quarantined_until: datetime | None = None
+    state = "healthy"
+    if consecutive_failures >= threshold and last_failure_at is not None:
+        quarantined_until = last_failure_at + timedelta(minutes=cooldown_minutes)
+        if current_time < quarantined_until:
+            state = "quarantined"
+        else:
+            state = "warning"
+    elif consecutive_failures > 0:
+        state = "warning"
+
+    remaining_quarantine_minutes = 0
+    if quarantined_until is not None and current_time < quarantined_until:
+        remaining_quarantine_minutes = max(
+            1,
+            int(math.ceil((quarantined_until - current_time).total_seconds() / 60.0)),
+        )
+
+    return {
+        "target": target,
+        "state": state if ALERT_CHANNEL_GUARD_ENABLED else "disabled",
+        "state_computed": state,
+        "consecutive_failures": consecutive_failures,
+        "threshold": threshold,
+        "cooldown_minutes": cooldown_minutes,
+        "remaining_quarantine_minutes": remaining_quarantine_minutes,
+        "quarantined_until": quarantined_until.isoformat() if quarantined_until is not None else None,
+        "last_attempt_at": last_attempt_at.isoformat() if last_attempt_at is not None else None,
+        "last_status": last_status,
+        "last_error": last_error,
+        "last_success_at": last_success_at.isoformat() if last_success_at is not None else None,
+        "last_failure_at": last_failure_at.isoformat() if last_failure_at is not None else None,
+        "delivery_count_lookback": len(rows),
+    }
+
+
+def _build_alert_channel_guard_snapshot(
+    *,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+    max_targets: int = 100,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current_time = now or datetime.now(timezone.utc)
+    normalized_lookback_days = max(1, lookback_days)
+    normalized_max_targets = max(1, min(max_targets, 500))
+    history_start = current_time - timedelta(days=normalized_lookback_days)
+    target_set: set[str] = set(_configured_alert_targets())
+
+    stmt = (
+        select(alert_deliveries.c.target)
+        .where(alert_deliveries.c.last_attempt_at >= history_start)
+        .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+        .limit(2000)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+    with get_conn() as conn:
+        recent_targets = conn.execute(stmt).all()
+    for row in recent_targets:
+        value = str(row[0] or "").strip()
+        if value:
+            target_set.add(value)
+
+    channels = [
+        _compute_alert_channel_guard_state(
+            target,
+            now=current_time,
+            event_type=event_type,
+            lookback_days=normalized_lookback_days,
+        )
+        for target in sorted(target_set)
+    ]
+
+    def _state_rank(item: dict[str, Any]) -> int:
+        state = str(item.get("state_computed") or "healthy")
+        if state == "quarantined":
+            return 0
+        if state == "warning":
+            return 1
+        return 2
+
+    channels.sort(key=lambda item: (_state_rank(item), str(item.get("target") or "")))
+    limited_channels = channels[:normalized_max_targets]
+    quarantined_count = sum(1 for item in channels if str(item.get("state_computed")) == "quarantined")
+    warning_count = sum(1 for item in channels if str(item.get("state_computed")) == "warning")
+    healthy_count = sum(1 for item in channels if str(item.get("state_computed")) == "healthy")
+    status = "ok"
+    if quarantined_count > 0:
+        status = "critical"
+    elif warning_count > 0:
+        status = "warning"
+    if not ALERT_CHANNEL_GUARD_ENABLED:
+        status = "warning" if warning_count > 0 else "ok"
+
+    return {
+        "generated_at": current_time.isoformat(),
+        "event_type": event_type,
+        "lookback_days": normalized_lookback_days,
+        "policy": {
+            "enabled": ALERT_CHANNEL_GUARD_ENABLED,
+            "failure_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
+            "cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
+            "recovery_steps": [
+                "1) 원인 채널(네트워크/토큰/권한) 확인",
+                "2) /api/ops/alerts/channels/guard/recover로 probe 실행",
+                "3) 성공 시 채널 상태 healthy 복귀 확인",
+            ],
+        },
+        "summary": {
+            "status": status,
+            "target_count": len(channels),
+            "healthy_count": healthy_count,
+            "warning_count": warning_count,
+            "quarantined_count": quarantined_count,
+            "returned_count": len(limited_channels),
+        },
+        "channels": limited_channels,
+    }
+
+
+def _build_alert_delivery_archive_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "event_type",
+            "target",
+            "status",
+            "error",
+            "attempt_count",
+            "last_attempt_at",
+            "created_at",
+            "updated_at",
+            "payload_json",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                int(row.get("id") or 0),
+                str(row.get("event_type") or ""),
+                str(row.get("target") or ""),
+                str(row.get("status") or ""),
+                str(row.get("error") or ""),
+                int(row.get("attempt_count") or 0),
+                _as_optional_datetime(row.get("last_attempt_at")).isoformat()
+                if _as_optional_datetime(row.get("last_attempt_at")) is not None
+                else "",
+                _as_optional_datetime(row.get("created_at")).isoformat()
+                if _as_optional_datetime(row.get("created_at")) is not None
+                else "",
+                _as_optional_datetime(row.get("updated_at")).isoformat()
+                if _as_optional_datetime(row.get("updated_at")) is not None
+                else "",
+                str(row.get("payload_json") or "{}"),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def run_alert_retention_job(
+    *,
+    retention_days: int | None = None,
+    max_delete: int | None = None,
+    dry_run: bool = False,
+    write_archive: bool | None = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    resolved_retention_days = max(1, int(retention_days if retention_days is not None else ALERT_RETENTION_DAYS))
+    resolved_max_delete = max(1, min(int(max_delete if max_delete is not None else ALERT_RETENTION_MAX_DELETE), 50000))
+    resolved_write_archive = ALERT_RETENTION_ARCHIVE_ENABLED if write_archive is None else bool(write_archive)
+    cutoff = started_at - timedelta(days=resolved_retention_days)
+
+    archive_file: str | None = None
+    archive_error: str | None = None
+    deleted_count = 0
+    candidate_count = 0
+    candidate_ids: list[int] = []
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(alert_deliveries)
+            .where(alert_deliveries.c.last_attempt_at < cutoff)
+            .order_by(alert_deliveries.c.last_attempt_at.asc(), alert_deliveries.c.id.asc())
+            .limit(resolved_max_delete)
+        ).mappings().all()
+        candidate_count = len(rows)
+        candidate_ids = [int(row["id"]) for row in rows]
+
+        can_delete = not dry_run
+        if rows and not dry_run and resolved_write_archive:
+            try:
+                archive_dir = Path(ALERT_RETENTION_ARCHIVE_PATH)
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+                first_id = candidate_ids[0]
+                last_id = candidate_ids[-1]
+                file_path = archive_dir / f"alert-deliveries-{stamp}-{first_id}-{last_id}.csv"
+                file_path.write_text(_build_alert_delivery_archive_csv([dict(row) for row in rows]), encoding="utf-8")
+                archive_file = str(file_path)
+            except Exception as exc:  # pragma: no cover - defensive path
+                archive_error = str(exc)
+                can_delete = False
+
+        if rows and can_delete:
+            delete_result = conn.execute(
+                delete(alert_deliveries).where(alert_deliveries.c.id.in_(candidate_ids))
+            )
+            deleted_count = int(delete_result.rowcount or 0)
+
+    finished_at = datetime.now(timezone.utc)
+    status = "success" if archive_error is None else "warning"
+    run_id = _write_job_run(
+        job_name="alert_retention",
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "retention_days": resolved_retention_days,
+            "max_delete": resolved_max_delete,
+            "dry_run": dry_run,
+            "write_archive": resolved_write_archive,
+            "cutoff": cutoff.isoformat(),
+            "candidate_count": candidate_count,
+            "deleted_count": deleted_count,
+            "archive_file": archive_file,
+            "archive_error": archive_error,
+            "candidate_ids": candidate_ids[:200],
+        },
+    )
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": status,
+        "retention_days": resolved_retention_days,
+        "max_delete": resolved_max_delete,
+        "dry_run": dry_run,
+        "write_archive": resolved_write_archive,
+        "cutoff": cutoff.isoformat(),
+        "candidate_count": candidate_count,
+        "deleted_count": deleted_count,
+        "archive_file": archive_file,
+        "archive_error": archive_error,
+    }
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -3132,6 +3451,33 @@ def _dispatch_alert_event(
     failed_count = 0
 
     for target in targets:
+        guard_state = _compute_alert_channel_guard_state(target, event_type=event_type)
+        if ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
+            guard_error = (
+                "channel quarantined until "
+                + str(guard_state.get("quarantined_until") or "unknown")
+                + " (consecutive_failures="
+                + str(guard_state.get("consecutive_failures") or 0)
+                + ")"
+            )
+            _write_alert_delivery(
+                event_type=event_type,
+                target=target,
+                status="warning",
+                error=guard_error,
+                payload={
+                    **payload,
+                    "guard": {
+                        "state": guard_state.get("state_computed"),
+                        "consecutive_failures": guard_state.get("consecutive_failures"),
+                        "quarantined_until": guard_state.get("quarantined_until"),
+                    },
+                },
+            )
+            failed_count += 1
+            results.append(SlaAlertChannelResult(target=target, success=False, error=guard_error))
+            continue
+
         ok, err = _post_json_with_retries(
             url=target,
             payload=payload,
@@ -4827,7 +5173,12 @@ def _service_info_payload() -> dict[str, str]:
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
+        "alert_channel_guard_api": "/api/ops/alerts/channels/guard",
+        "alert_channel_guard_recover_api": "/api/ops/alerts/channels/guard/recover",
         "alert_retry_api": "/api/ops/alerts/retries/run",
+        "alert_retention_policy_api": "/api/ops/alerts/retention/policy",
+        "alert_retention_latest_api": "/api/ops/alerts/retention/latest",
+        "alert_retention_run_api": "/api/ops/alerts/retention/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
         "sla_policy_proposals_api": "/api/admin/policies/sla/proposals",
@@ -6739,6 +7090,34 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
           </article>
 
           <article class="query-card">
+            <h3>알림 채널 KPI (7/30일)</h3>
+            <div class="query-fields">
+              <input id="q-alert-event-type" placeholder="event_type (optional)" />
+            </div>
+            <button class="btn run run-btn" data-panel="alertChannelKpi" type="button">조회 실행</button>
+          </article>
+
+          <article class="query-card">
+            <h3>알림 채널 보호상태</h3>
+            <div class="query-fields">
+              <div class="query-inline">
+                <input id="q-alert-guard-lookback" placeholder="lookback_days (default 30)" value="30" />
+                <input id="q-alert-guard-max-targets" placeholder="max_targets (default 100)" value="100" />
+              </div>
+            </div>
+            <button class="btn run run-btn" data-panel="alertChannelGuard" type="button">조회 실행</button>
+          </article>
+
+          <article class="query-card">
+            <h3>알림 데이터 보관정책</h3>
+            <p>보관일/아카이브 설정과 최근 정리 작업 결과를 조회합니다.</p>
+            <div class="query-inline">
+              <button class="btn run run-btn" data-panel="alertRetentionPolicy" type="button">정책 조회</button>
+              <button class="btn run run-btn" data-panel="alertRetentionLatest" type="button">최근 실행 조회</button>
+            </div>
+          </article>
+
+          <article class="query-card">
             <h3>핸드오버 브리프</h3>
             <div class="query-fields">
               <input id="q-handover-site" placeholder="site (optional)" />
@@ -6829,6 +7208,30 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
             { key: 'days', id: 'q-dash-days' },
             { key: 'job_limit', id: 'q-dash-jobs' }
           ]
+        },
+        alertChannelKpi: {
+          path: '/api/ops/alerts/kpi/channels',
+          auth: true,
+          params: [{ key: 'event_type', id: 'q-alert-event-type' }]
+        },
+        alertChannelGuard: {
+          path: '/api/ops/alerts/channels/guard',
+          auth: true,
+          params: [
+            { key: 'event_type', id: 'q-alert-event-type' },
+            { key: 'lookback_days', id: 'q-alert-guard-lookback' },
+            { key: 'max_targets', id: 'q-alert-guard-max-targets' }
+          ]
+        },
+        alertRetentionPolicy: {
+          path: '/api/ops/alerts/retention/policy',
+          auth: true,
+          params: []
+        },
+        alertRetentionLatest: {
+          path: '/api/ops/alerts/retention/latest',
+          auth: true,
+          params: []
         },
         handoverBrief: {
           path: '/api/ops/handover/brief',
@@ -7471,6 +7874,21 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <h3>긴급 작업 상위 목록</h3>
             <div id="overviewTopWorkOrders" class="empty">데이터 없음</div>
           </div>
+          <div class="box">
+            <h3>알림 채널 KPI (최근 7/30일)</h3>
+            <div id="overviewAlertKpiSummary" class="cards"></div>
+            <div id="overviewAlertKpiChannels" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>알림 채널 보호/보관 상태</h3>
+            <div id="overviewAlertGuardMeta" class="meta">조회 전</div>
+            <div id="overviewAlertGuardTable" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a href="/api/ops/alerts/channels/guard">Guard API</a>
+              <a href="/api/ops/alerts/retention/policy">Retention Policy API</a>
+              <a href="/api/ops/alerts/retention/latest">Retention Latest API</a>
+            </div>
+          </div>
         </div>
 
         <div id="panelWorkorders" class="tab-panel" role="tabpanel">
@@ -7784,41 +8202,140 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           {{ key: "job_limit", id: "ovJobLimit" }}
         ]);
         const path = "/api/ops/dashboard/summary" + (query ? "?" + query : "");
+        const siteValue = (document.getElementById("ovSite").value || "").trim();
+        const handoverParams = new URLSearchParams();
+        if (siteValue) {{
+          handoverParams.set("site", siteValue);
+        }}
+        handoverParams.set("window_hours", "12");
+        handoverParams.set("due_soon_hours", "6");
+        handoverParams.set("max_items", "10");
+        const handoverPath = "/api/ops/handover/brief?" + handoverParams.toString();
         const meta = document.getElementById("overviewMeta");
         const cards = document.getElementById("overviewCards");
         const topTable = document.getElementById("overviewTopWorkOrders");
+        const alertKpiSummary = document.getElementById("overviewAlertKpiSummary");
+        const alertKpiChannels = document.getElementById("overviewAlertKpiChannels");
+        const alertGuardMeta = document.getElementById("overviewAlertGuardMeta");
+        const alertGuardTable = document.getElementById("overviewAlertGuardTable");
         try {{
           meta.textContent = "조회 중... " + path;
-          const data = await fetchJson(path, true);
+          const [data, handover, kpi, guard, retentionPolicy, retentionLatest] = await Promise.all([
+            fetchJson(path, true),
+            fetchJson(handoverPath, true).catch(() => null),
+            fetchJson("/api/ops/alerts/kpi/channels", true).catch(() => null),
+            fetchJson("/api/ops/alerts/channels/guard", true).catch(() => null),
+            fetchJson("/api/ops/alerts/retention/policy", true).catch(() => null),
+            fetchJson("/api/ops/alerts/retention/latest", true).catch(() => null),
+          ]);
           meta.textContent = "성공: " + path;
           const stats = [
-            ["Open WO", data.open_work_orders],
-            ["Overdue WO", data.overdue_open_work_orders],
-            ["Due Soon", data.due_soon_work_orders],
-            ["Escalated", data.escalated_open_work_orders],
-            ["Unassigned High", data.unassigned_high_priority_open_work_orders],
-            ["New WO(Window)", data.new_work_orders_in_window],
-            ["High Risk Insp", data.high_risk_inspections_in_window],
-            ["Failed Alerts 24h", data.failed_alert_deliveries_24h]
+            ["Inspections", data.inspections_total ?? 0],
+            ["Work Orders", data.work_orders_total ?? 0],
+            ["Overdue Open", data.overdue_open_count ?? 0],
+            ["Escalated Open", data.escalated_open_count ?? 0],
+            ["Report Exports", data.report_export_count ?? 0],
+            ["SLA Runs", data.sla_recent_runs ?? 0],
+            ["SLA Warning Runs", data.sla_warning_runs ?? 0],
+            ["Last SLA Run", data.sla_last_run_at || "-"],
           ];
           cards.innerHTML = stats.map((s) => (
             '<div class="card"><div class="k">' + escapeHtml(s[0]) + '</div><div class="v">' + escapeHtml(s[1] || 0) + "</div></div>"
           )).join("");
-          topTable.innerHTML = renderTable(
-            data.top_work_orders || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "site", label: "Site" }},
-              {{ key: "title", label: "Title" }},
-              {{ key: "priority", label: "Priority" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "urgency_score", label: "Score" }}
-            ]
-          );
+
+          if (handover && Array.isArray(handover.top_work_orders)) {{
+            topTable.innerHTML = renderTable(
+              handover.top_work_orders || [],
+              [
+                {{ key: "id", label: "ID" }},
+                {{ key: "site", label: "Site" }},
+                {{ key: "title", label: "Title" }},
+                {{ key: "priority", label: "Priority" }},
+                {{ key: "status", label: "Status" }},
+                {{ key: "urgency_score", label: "Score" }}
+              ]
+            );
+          }} else {{
+            topTable.innerHTML = renderTable(
+              data.recent_job_runs || [],
+              [
+                {{ key: "job_name", label: "Job" }},
+                {{ key: "status", label: "Status" }},
+                {{ key: "finished_at", label: "Finished At" }},
+                {{ key: "trigger", label: "Trigger" }},
+              ]
+            );
+          }}
+
+          const windows = (kpi && Array.isArray(kpi.windows)) ? kpi.windows : [];
+          const sortedWindows = windows.slice().sort((a, b) => Number(a.days || 0) - Number(b.days || 0));
+          if (sortedWindows.length > 0) {{
+            const kpiCards = [];
+            sortedWindows.forEach((win) => {{
+              kpiCards.push(["" + String(win.days || 0) + "d Success %", (win.success_rate_percent ?? 0) + "%"]);
+              kpiCards.push(["" + String(win.days || 0) + "d Deliveries", win.total_deliveries ?? 0]);
+            }});
+            alertKpiSummary.innerHTML = kpiCards.map((x) => (
+              '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+            )).join("");
+
+            const window30 = sortedWindows.find((item) => Number(item.days || 0) === 30) || sortedWindows[sortedWindows.length - 1];
+            const channels = Array.isArray(window30.channels) ? window30.channels : [];
+            alertKpiChannels.innerHTML = renderTable(
+              channels.slice(0, 20),
+              [
+                {{ key: "target", label: "Target" }},
+                {{ key: "total_deliveries", label: "Total" }},
+                {{ key: "success_count", label: "Success" }},
+                {{ key: "warning_count", label: "Warning" }},
+                {{ key: "failed_count", label: "Failed" }},
+                {{ key: "success_rate_percent", label: "Success %" }},
+                {{ key: "last_attempt_at", label: "Last Attempt" }},
+              ]
+            );
+          }} else {{
+            alertKpiSummary.innerHTML = "";
+            alertKpiChannels.innerHTML = renderEmpty("알림 KPI 데이터가 없습니다.");
+          }}
+
+          if (guard && guard.summary) {{
+            const summary = guard.summary || {{}};
+            const latestRetention = retentionLatest && retentionLatest.run_id
+              ? ("최근 정리: run#" + String(retentionLatest.run_id) + " deleted=" + String(retentionLatest.deleted_count || 0))
+              : "최근 정리: 없음";
+            const policyText = retentionPolicy
+              ? (" | retention=" + String(retentionPolicy.retention_days || "-") + "d archive=" + String(retentionPolicy.archive_enabled))
+              : "";
+            alertGuardMeta.textContent =
+              "Guard=" + String(summary.status || "-")
+              + " | quarantined=" + String(summary.quarantined_count || 0)
+              + " | warning=" + String(summary.warning_count || 0)
+              + " | targets=" + String(summary.target_count || 0)
+              + " | " + latestRetention
+              + policyText;
+            alertGuardTable.innerHTML = renderTable(
+              (guard.channels || []).slice(0, 20),
+              [
+                {{ key: "target", label: "Target" }},
+                {{ key: "state", label: "State" }},
+                {{ key: "consecutive_failures", label: "Consecutive Failures" }},
+                {{ key: "quarantined_until", label: "Quarantined Until" }},
+                {{ key: "last_status", label: "Last Status" }},
+                {{ key: "last_attempt_at", label: "Last Attempt" }},
+              ]
+            );
+          }} else {{
+            alertGuardMeta.textContent = "보호 상태 조회 실패 또는 데이터 없음";
+            alertGuardTable.innerHTML = renderEmpty("알림 채널 보호 상태 데이터가 없습니다.");
+          }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           cards.innerHTML = "";
           topTable.innerHTML = renderEmpty(err.message);
+          alertKpiSummary.innerHTML = "";
+          alertKpiChannels.innerHTML = renderEmpty(err.message);
+          alertGuardMeta.textContent = "실패: " + err.message;
+          alertGuardTable.innerHTML = renderEmpty(err.message);
         }}
       }}
 
@@ -9537,6 +10054,12 @@ def _build_ops_runbook_checks_snapshot(
             .where(job_runs.c.finished_at >= horizon)
             .limit(1)
         ).first()
+        retention_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == "alert_retention")
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=36)))
+            .limit(1)
+        ).first()
         expiring_soon_cutoff = generated_at + timedelta(days=3)
         expiring_count = conn.execute(
             select(admin_tokens.c.id)
@@ -9547,6 +10070,10 @@ def _build_ops_runbook_checks_snapshot(
 
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
+    guard_snapshot = _build_alert_channel_guard_snapshot(now=generated_at, lookback_days=30, max_targets=200)
+    guard_summary = guard_snapshot.get("summary", {})
+    quarantined_count = int(guard_summary.get("quarantined_count") or 0)
+    guard_warning_count = int(guard_summary.get("warning_count") or 0)
     current_month_archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
     checks = [
         {
@@ -9593,6 +10120,29 @@ def _build_ops_runbook_checks_snapshot(
             "algorithm": signing_snapshot["algorithm"],
             "enabled": signing_snapshot["enabled"],
         },
+        {
+            "id": "alert_channel_guard",
+            "status": str(guard_summary.get("status") or "ok"),
+            "message": (
+                f"{quarantined_count} alert channel(s) are quarantined."
+                if quarantined_count > 0
+                else (
+                    f"{guard_warning_count} alert channel(s) show warning state."
+                    if guard_warning_count > 0
+                    else "All alert channels are healthy."
+                )
+            ),
+            "quarantined_count": quarantined_count,
+            "warning_count": guard_warning_count,
+            "target_count": int(guard_summary.get("target_count") or 0),
+        },
+        {
+            "id": "alert_retention_recent",
+            "status": "ok" if retention_recent is not None else "warning",
+            "message": "Alert retention job observed within last 36 hours."
+            if retention_recent is not None
+            else "No recent alert retention job run in last 36 hours.",
+        },
     ]
     overall = "ok"
     if any(check["status"] == "critical" for check in checks):
@@ -9619,6 +10169,12 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
         "alerting": {
             "webhook_target_count": len(alert_targets),
             "ops_daily_check_alert_level": _normalize_ops_daily_check_alert_level(OPS_DAILY_CHECK_ALERT_LEVEL),
+            "channel_guard_enabled": ALERT_CHANNEL_GUARD_ENABLED,
+            "channel_guard_fail_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
+            "channel_guard_cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
+            "retention_days": max(1, ALERT_RETENTION_DAYS),
+            "retention_max_delete": max(1, ALERT_RETENTION_MAX_DELETE),
+            "retention_archive_enabled": ALERT_RETENTION_ARCHIVE_ENABLED,
         },
         "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
         "token_policy": {
@@ -9777,6 +10333,9 @@ def get_ops_security_posture(
             "evidence_storage_backend": snapshot["evidence_storage_backend"],
             "ops_daily_check_alert_level": snapshot.get("alerting", {}).get("ops_daily_check_alert_level"),
             "alert_webhook_target_count": snapshot.get("alerting", {}).get("webhook_target_count"),
+            "alert_channel_guard_enabled": snapshot.get("alerting", {}).get("channel_guard_enabled"),
+            "alert_channel_guard_fail_threshold": snapshot.get("alerting", {}).get("channel_guard_fail_threshold"),
+            "alert_retention_days": snapshot.get("alerting", {}).get("retention_days"),
         },
     )
     return snapshot
@@ -10087,6 +10646,222 @@ def get_alert_channel_kpi(
         },
     )
     return snapshot
+
+
+@app.get("/api/ops/alerts/channels/guard")
+def get_alert_channel_guard(
+    event_type: Annotated[str | None, Query()] = None,
+    lookback_days: Annotated[int, Query(ge=1, le=90)] = 30,
+    max_targets: Annotated[int, Query(ge=1, le=200)] = 100,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_alert_channel_guard_snapshot(
+        event_type=event_type,
+        lookback_days=lookback_days,
+        max_targets=max_targets,
+    )
+    summary = snapshot.get("summary", {})
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_guard_view",
+        resource_type="alert_delivery",
+        resource_id=event_type or "all",
+        detail={
+            "event_type": event_type,
+            "lookback_days": lookback_days,
+            "max_targets": max_targets,
+            "status": summary.get("status"),
+            "target_count": summary.get("target_count"),
+            "warning_count": summary.get("warning_count"),
+            "quarantined_count": summary.get("quarantined_count"),
+        },
+    )
+    return snapshot
+
+
+@app.post("/api/ops/alerts/channels/guard/recover")
+def recover_alert_channel_guard(
+    target: Annotated[str, Query(min_length=3, max_length=400)],
+    event_type: Annotated[str | None, Query()] = None,
+    note: Annotated[str | None, Query(max_length=300)] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    normalized_target = target.strip()
+    if not normalized_target:
+        raise HTTPException(status_code=400, detail="target is required")
+
+    now = datetime.now(timezone.utc)
+    before = _compute_alert_channel_guard_state(
+        normalized_target,
+        now=now,
+        event_type=event_type,
+    )
+    probe_payload = {
+        "event": "alert_channel_recovery_probe",
+        "target": normalized_target,
+        "event_type_scope": event_type,
+        "checked_at": now.isoformat(),
+        "requested_by": str(principal.get("username") or "unknown"),
+        "note": note or "",
+    }
+    ok, err = _post_json_with_retries(
+        url=normalized_target,
+        payload=probe_payload,
+        retries=ALERT_WEBHOOK_RETRIES,
+        timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+    )
+    probe_event_type = event_type or "alert_channel_recovery_probe"
+    probe_status = "success" if ok and err is None else ("warning" if ok else "failed")
+    delivery_id = _write_alert_delivery(
+        event_type=probe_event_type,
+        target=normalized_target,
+        status=probe_status,
+        error=err,
+        payload={**probe_payload, "probe": True},
+    )
+    after = _compute_alert_channel_guard_state(
+        normalized_target,
+        now=datetime.now(timezone.utc),
+        event_type=event_type,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_guard_recover",
+        resource_type="alert_delivery",
+        resource_id=normalized_target,
+        status=probe_status,
+        detail={
+            "target": normalized_target,
+            "event_type": event_type,
+            "probe_delivery_id": delivery_id,
+            "probe_status": probe_status,
+            "probe_error": err,
+            "before_state": before.get("state"),
+            "after_state": after.get("state"),
+            "before_consecutive_failures": before.get("consecutive_failures"),
+            "after_consecutive_failures": after.get("consecutive_failures"),
+        },
+    )
+    return {
+        "target": normalized_target,
+        "event_type": event_type,
+        "probe_delivery_id": delivery_id,
+        "probe_status": probe_status,
+        "probe_error": err,
+        "before": before,
+        "after": after,
+        "recommended_recovery_steps": [
+            "1) 채널 endpoint 접근성/인증정보를 재확인합니다.",
+            "2) guard/recover probe 결과가 success인지 확인합니다.",
+            "3) /api/ops/alerts/channels/guard에서 state=healthy로 복귀했는지 확인합니다.",
+        ],
+    }
+
+
+@app.get("/api/ops/alerts/retention/policy")
+def get_alert_retention_policy(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_retention_policy_view",
+        resource_type="alert_delivery",
+        resource_id="policy",
+        detail={
+            "retention_days": ALERT_RETENTION_DAYS,
+            "max_delete": ALERT_RETENTION_MAX_DELETE,
+            "archive_enabled": ALERT_RETENTION_ARCHIVE_ENABLED,
+            "archive_path": ALERT_RETENTION_ARCHIVE_PATH,
+        },
+    )
+    return {
+        "retention_days": max(1, ALERT_RETENTION_DAYS),
+        "max_delete": max(1, ALERT_RETENTION_MAX_DELETE),
+        "archive_enabled": ALERT_RETENTION_ARCHIVE_ENABLED,
+        "archive_path": ALERT_RETENTION_ARCHIVE_PATH,
+    }
+
+
+@app.get("/api/ops/alerts/retention/latest")
+def get_alert_retention_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "alert_retention")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No alert_retention run found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    response = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        "retention_days": detail.get("retention_days"),
+        "max_delete": detail.get("max_delete"),
+        "dry_run": bool(detail.get("dry_run", False)),
+        "write_archive": bool(detail.get("write_archive", False)),
+        "candidate_count": int(detail.get("candidate_count") or 0),
+        "deleted_count": int(detail.get("deleted_count") or 0),
+        "archive_file": detail.get("archive_file"),
+        "archive_error": detail.get("archive_error"),
+        "cutoff": detail.get("cutoff"),
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_retention_latest_view",
+        resource_type="alert_delivery",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+            "deleted_count": response["deleted_count"],
+            "archive_error": response["archive_error"],
+        },
+    )
+    return response
+
+
+@app.post("/api/ops/alerts/retention/run")
+def run_alert_retention(
+    retention_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+    max_delete: Annotated[int | None, Query(ge=1, le=50000)] = None,
+    dry_run: Annotated[bool, Query()] = False,
+    write_archive: Annotated[bool | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_alert_retention_job(
+        retention_days=retention_days,
+        max_delete=max_delete,
+        dry_run=dry_run,
+        write_archive=write_archive,
+        trigger="api",
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_retention_run",
+        resource_type="alert_delivery",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "success"),
+        detail={
+            "retention_days": result.get("retention_days"),
+            "max_delete": result.get("max_delete"),
+            "dry_run": result.get("dry_run"),
+            "write_archive": result.get("write_archive"),
+            "candidate_count": result.get("candidate_count"),
+            "deleted_count": result.get("deleted_count"),
+            "archive_file": result.get("archive_file"),
+            "archive_error": result.get("archive_error"),
+        },
+    )
+    return result
 
 
 @app.post("/api/ops/sla/simulate", response_model=SlaWhatIfResponse)

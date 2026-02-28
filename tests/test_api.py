@@ -159,6 +159,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "사용자 정착 계획" in root_html.text
     assert "W01 Role Workflow Lock Matrix" in root_html.text
     assert "W02 Scheduled SOP and Sandbox" in root_html.text
+    assert "알림 채널 KPI" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
     assert "요약 새로고침" in root_html.text
 
@@ -186,6 +187,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
+    assert service_info.json()["alert_channel_guard_api"] == "/api/ops/alerts/channels/guard"
+    assert service_info.json()["alert_channel_guard_recover_api"] == "/api/ops/alerts/channels/guard/recover"
+    assert service_info.json()["alert_retention_policy_api"] == "/api/ops/alerts/retention/policy"
+    assert service_info.json()["alert_retention_latest_api"] == "/api/ops/alerts/retention/latest"
+    assert service_info.json()["alert_retention_run_api"] == "/api/ops/alerts/retention/run"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -193,6 +199,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "KA Facility OS 시설관리 운영 콘솔" in console_html.text
     assert "X-Admin-Token" in console_html.text
     assert "Result Viewer" in console_html.text
+    assert "알림 채널 KPI (7/30일)" in console_html.text
+    assert "알림 데이터 보관정책" in console_html.text
 
     adoption_html = app_client.get("/web/adoption")
     assert adoption_html.status_code == 200
@@ -1054,6 +1062,8 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "token_expiry_pressure" in ids
     assert "rate_limit_backend" in ids
     assert "audit_archive_signing" in ids
+    assert "alert_channel_guard" in ids
+    assert "alert_retention_recent" in ids
 
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -1071,6 +1081,12 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
     assert body["alerting"]["ops_daily_check_alert_level"] == "critical"
     assert isinstance(body["alerting"]["webhook_target_count"], int)
+    assert body["alerting"]["channel_guard_enabled"] is True
+    assert body["alerting"]["channel_guard_fail_threshold"] == 3
+    assert body["alerting"]["channel_guard_cooldown_minutes"] == 30
+    assert body["alerting"]["retention_days"] == 90
+    assert body["alerting"]["retention_max_delete"] == 5000
+    assert body["alerting"]["retention_archive_enabled"] is True
     assert body["token_policy"]["max_ttl_days"] == 30
 
 
@@ -1908,6 +1924,176 @@ def test_alert_channel_kpi_windows(app_client: TestClient) -> None:
     assert filtered_windows[30]["total_deliveries"] == 2
     assert filtered_windows[30]["warning_count"] == 1
     assert filtered_windows[30]["success_count"] == 1
+
+
+def test_alert_channel_guard_and_recover_api(app_client: TestClient, monkeypatch) -> None:
+    import app.database as db_module
+    import app.main as main_module
+    from sqlalchemy import insert, select
+
+    target = "https://guard-target.example/hook"
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(main_module, "ALERT_CHANNEL_GUARD_FAIL_THRESHOLD", 2)
+    monkeypatch.setattr(main_module, "ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES", 120)
+
+    with db_module.get_conn() as conn:
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target=target,
+                status="failed",
+                error="seed-1",
+                payload_json="{}",
+                attempt_count=1,
+                last_attempt_at=now - timedelta(minutes=5),
+                created_at=now - timedelta(minutes=5),
+                updated_at=now - timedelta(minutes=5),
+            )
+        )
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target=target,
+                status="failed",
+                error="seed-2",
+                payload_json="{}",
+                attempt_count=2,
+                last_attempt_at=now - timedelta(minutes=2),
+                created_at=now - timedelta(minutes=2),
+                updated_at=now - timedelta(minutes=2),
+            )
+        )
+
+    guard = app_client.get(
+        "/api/ops/alerts/channels/guard",
+        params={"event_type": "sla_escalation"},
+        headers=_owner_headers(),
+    )
+    assert guard.status_code == 200
+    guard_body = guard.json()
+    channel = next((item for item in guard_body["channels"] if item["target"] == target), None)
+    assert channel is not None
+    assert channel["state"] == "quarantined"
+    assert channel["consecutive_failures"] >= 2
+
+    monkeypatch.setattr(main_module, "_post_json_with_retries", lambda **kwargs: (True, None))
+    recover = app_client.post(
+        "/api/ops/alerts/channels/guard/recover",
+        params={"target": target, "event_type": "sla_escalation", "note": "manual probe"},
+        headers=_owner_headers(),
+    )
+    assert recover.status_code == 200
+    recover_body = recover.json()
+    assert recover_body["probe_status"] == "success"
+    assert recover_body["after"]["state"] in {"healthy", "disabled"}
+    assert recover_body["after"]["consecutive_failures"] == 0
+
+    with db_module.get_conn() as conn:
+        latest = conn.execute(
+            select(db_module.alert_deliveries)
+            .where(db_module.alert_deliveries.c.target == target)
+            .where(db_module.alert_deliveries.c.event_type == "sla_escalation")
+            .order_by(db_module.alert_deliveries.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    assert latest is not None
+    assert str(latest["status"]) == "success"
+
+
+def test_alert_retention_policy_run_and_latest(
+    app_client: TestClient, monkeypatch, tmp_path: Path
+) -> None:
+    import app.database as db_module
+    import app.main as main_module
+    from sqlalchemy import insert, select
+
+    monkeypatch.setattr(main_module, "ALERT_RETENTION_ARCHIVE_PATH", tmp_path.as_posix())
+    monkeypatch.setattr(main_module, "ALERT_RETENTION_ARCHIVE_ENABLED", True)
+
+    now = datetime.now(timezone.utc)
+    old_target = "https://retention-old.example/hook"
+    keep_target = "https://retention-keep.example/hook"
+    with db_module.get_conn() as conn:
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target=old_target,
+                status="failed",
+                error="old",
+                payload_json="{}",
+                attempt_count=1,
+                last_attempt_at=now - timedelta(days=40),
+                created_at=now - timedelta(days=40),
+                updated_at=now - timedelta(days=40),
+            )
+        )
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target=keep_target,
+                status="success",
+                error=None,
+                payload_json="{}",
+                attempt_count=1,
+                last_attempt_at=now - timedelta(days=1),
+                created_at=now - timedelta(days=1),
+                updated_at=now - timedelta(days=1),
+            )
+        )
+
+    policy = app_client.get(
+        "/api/ops/alerts/retention/policy",
+        headers=_owner_headers(),
+    )
+    assert policy.status_code == 200
+    policy_body = policy.json()
+    assert policy_body["archive_enabled"] is True
+    assert policy_body["archive_path"] == tmp_path.as_posix()
+
+    dry_run = app_client.post(
+        "/api/ops/alerts/retention/run",
+        params={"retention_days": 7, "max_delete": 100, "dry_run": "true", "write_archive": "false"},
+        headers=_owner_headers(),
+    )
+    assert dry_run.status_code == 200
+    dry_body = dry_run.json()
+    assert dry_body["candidate_count"] == 1
+    assert dry_body["deleted_count"] == 0
+
+    run = app_client.post(
+        "/api/ops/alerts/retention/run",
+        params={"retention_days": 7, "max_delete": 100, "dry_run": "false", "write_archive": "true"},
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["candidate_count"] == 1
+    assert run_body["deleted_count"] == 1
+    assert run_body["archive_file"]
+    assert Path(run_body["archive_file"]).exists()
+
+    latest = app_client.get(
+        "/api/ops/alerts/retention/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "alert_retention"
+    assert latest_body["deleted_count"] == 1
+
+    with db_module.get_conn() as conn:
+        old_row = conn.execute(
+            select(db_module.alert_deliveries)
+            .where(db_module.alert_deliveries.c.target == old_target)
+            .limit(1)
+        ).mappings().first()
+        kept_row = conn.execute(
+            select(db_module.alert_deliveries)
+            .where(db_module.alert_deliveries.c.target == keep_target)
+            .limit(1)
+        ).mappings().first()
+    assert old_row is None
+    assert kept_row is not None
 
 
 def test_sla_simulator_what_if(app_client: TestClient) -> None:
