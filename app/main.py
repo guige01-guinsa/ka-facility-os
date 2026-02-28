@@ -2711,10 +2711,10 @@ def _write_job_run(
     started_at: datetime,
     finished_at: datetime,
     detail: dict[str, Any] | None = None,
-) -> None:
+) -> int | None:
     try:
         with get_conn() as conn:
-            conn.execute(
+            result = conn.execute(
                 insert(job_runs).values(
                     job_name=job_name,
                     trigger=trigger,
@@ -2724,8 +2724,9 @@ def _write_job_run(
                     detail_json=_to_json_text(detail),
                 )
             )
+            return int(result.inserted_primary_key[0])
     except SQLAlchemyError:
-        return
+        return None
 
 
 def _row_to_job_run_model(row: dict[str, Any]) -> JobRunRead:
@@ -3726,6 +3727,66 @@ def run_alert_retry_job(
     )
 
 
+def run_ops_daily_check_job(
+    *,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    checks_snapshot = _build_ops_runbook_checks_snapshot(now=started_at)
+    posture_snapshot = _build_ops_security_posture_snapshot(now=started_at)
+
+    checks = checks_snapshot.get("checks", [])
+    warning_count = sum(1 for item in checks if str(item.get("status")) == "warning")
+    critical_count = sum(1 for item in checks if str(item.get("status")) == "critical")
+    overall_status = str(checks_snapshot.get("overall_status") or "ok")
+    if overall_status == "critical":
+        status = "critical"
+    elif overall_status == "warning":
+        status = "warning"
+    else:
+        status = "success"
+
+    finished_at = datetime.now(timezone.utc)
+    run_id = _write_job_run(
+        job_name="ops_daily_check",
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "overall_status": overall_status,
+            "check_count": len(checks),
+            "warning_count": warning_count,
+            "critical_count": critical_count,
+            "checks": checks,
+            "security_posture": {
+                "rate_limit": posture_snapshot.get("rate_limit"),
+                "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
+                "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
+                "token_policy": posture_snapshot.get("token_policy"),
+            },
+        },
+    )
+
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "trigger": trigger,
+        "status": status,
+        "overall_status": overall_status,
+        "check_count": len(checks),
+        "warning_count": warning_count,
+        "critical_count": critical_count,
+        "checks": checks,
+        "security_posture": {
+            "rate_limit": posture_snapshot.get("rate_limit"),
+            "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
+            "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
+            "token_policy": posture_snapshot.get("token_policy"),
+        },
+    }
+
+
 def simulate_sla_policy_change(
     *,
     policy: SlaPolicyUpdate,
@@ -4673,6 +4734,8 @@ def _service_info_payload() -> dict[str, str]:
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
         "ops_runbook_checks_api": "/api/ops/runbook/checks",
+        "ops_runbook_checks_run_api": "/api/ops/runbook/checks/run",
+        "ops_runbook_checks_latest_api": "/api/ops/runbook/checks/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -9386,12 +9449,13 @@ def get_dashboard_summary(
     )
 
 
-@app.get("/api/ops/runbook/checks")
-def get_ops_runbook_checks(
-    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+def _build_ops_runbook_checks_snapshot(
+    *,
+    now: datetime | None = None,
+    horizon_minutes: int = 90,
 ) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
-    horizon = now - timedelta(minutes=90)
+    generated_at = now or datetime.now(timezone.utc)
+    horizon = generated_at - timedelta(minutes=max(1, horizon_minutes))
     with get_conn() as conn:
         sla_recent = conn.execute(
             select(job_runs.c.id)
@@ -9405,7 +9469,7 @@ def get_ops_runbook_checks(
             .where(job_runs.c.finished_at >= horizon)
             .limit(1)
         ).first()
-        expiring_soon_cutoff = now + timedelta(days=3)
+        expiring_soon_cutoff = generated_at + timedelta(days=3)
         expiring_count = conn.execute(
             select(admin_tokens.c.id)
             .where(admin_tokens.c.is_active.is_(True))
@@ -9452,12 +9516,14 @@ def get_ops_runbook_checks(
             "message": rate_limit_snapshot["message"],
             "configured_store": rate_limit_snapshot["configured_store"],
             "active_backend": rate_limit_snapshot["active_backend"],
+            "redis_ping_ok": rate_limit_snapshot["redis_ping_ok"],
         },
         {
             "id": "audit_archive_signing",
             "status": signing_snapshot["status"],
             "message": signing_snapshot["message"],
             "algorithm": signing_snapshot["algorithm"],
+            "enabled": signing_snapshot["enabled"],
         },
     ]
     overall = "ok"
@@ -9465,56 +9531,19 @@ def get_ops_runbook_checks(
         overall = "critical"
     elif any(check["status"] == "warning" for check in checks):
         overall = "warning"
-
-    _write_audit_log(
-        principal=principal,
-        action="ops_runbook_checks_view",
-        resource_type="ops_runbook",
-        resource_id="checks",
-        detail={
-            "overall_status": overall,
-            "checks": [{"id": item["id"], "status": item["status"]} for item in checks],
-            "rate_limit": {
-                "configured_store": rate_limit_snapshot["configured_store"],
-                "active_backend": rate_limit_snapshot["active_backend"],
-                "redis_ping_ok": rate_limit_snapshot["redis_ping_ok"],
-            },
-            "audit_signing": {
-                "enabled": signing_snapshot["enabled"],
-                "algorithm": signing_snapshot["algorithm"],
-            },
-        },
-    )
     return {
-        "generated_at": now.isoformat(),
+        "generated_at": generated_at.isoformat(),
         "overall_status": overall,
         "checks": checks,
     }
 
 
-@app.get("/api/ops/security/posture")
-def get_ops_security_posture(
-    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
-) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
+def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
-    _write_audit_log(
-        principal=principal,
-        action="ops_security_posture_view",
-        resource_type="ops_security",
-        resource_id="posture",
-        detail={
-            "rate_limit_store": rate_limit_snapshot["configured_store"],
-            "rate_limit_backend": rate_limit_snapshot["active_backend"],
-            "rate_limit_status": rate_limit_snapshot["status"],
-            "audit_signing_enabled": signing_snapshot["enabled"],
-            "audit_signing_status": signing_snapshot["status"],
-            "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
-        },
-    )
     return {
-        "generated_at": now.isoformat(),
+        "generated_at": generated_at.isoformat(),
         "env": ENV_NAME,
         "rate_limit": rate_limit_snapshot,
         "audit_archive_signing": signing_snapshot,
@@ -9528,6 +9557,146 @@ def get_ops_security_posture(
             "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
         },
     }
+
+
+@app.get("/api/ops/runbook/checks")
+def get_ops_runbook_checks(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_ops_runbook_checks_snapshot()
+    checks = snapshot["checks"]
+    overall = str(snapshot["overall_status"])
+    rate_limit_check = next((item for item in checks if item["id"] == "rate_limit_backend"), {})
+    signing_check = next((item for item in checks if item["id"] == "audit_archive_signing"), {})
+
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_checks_view",
+        resource_type="ops_runbook",
+        resource_id="checks",
+        detail={
+            "overall_status": overall,
+            "checks": [{"id": item["id"], "status": item["status"]} for item in checks],
+            "rate_limit": {
+                "configured_store": rate_limit_check.get("configured_store"),
+                "active_backend": rate_limit_check.get("active_backend"),
+                "redis_ping_ok": rate_limit_check.get("redis_ping_ok"),
+            },
+            "audit_signing": {
+                "enabled": signing_check.get("enabled"),
+                "algorithm": signing_check.get("algorithm"),
+            },
+        },
+    )
+    return snapshot
+
+
+@app.post("/api/ops/runbook/checks/run")
+def run_ops_runbook_checks(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_daily_check_job(trigger="api")
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_run",
+        resource_type="ops_runbook",
+        resource_id=str(result.get("run_id") or "pending"),
+        detail={
+            "run_id": result.get("run_id"),
+            "status": result.get("status"),
+            "overall_status": result.get("overall_status"),
+            "check_count": result.get("check_count"),
+            "warning_count": result.get("warning_count"),
+            "critical_count": result.get("critical_count"),
+        },
+    )
+    return result
+
+
+@app.get("/api/ops/runbook/checks/latest")
+def get_ops_runbook_checks_latest(
+    include_checks: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "ops_daily_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No ops_daily_check run found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    checks = detail.get("checks", [])
+    if not isinstance(checks, list):
+        checks = []
+    try:
+        check_count = int(detail.get("check_count", len(checks)))
+    except (TypeError, ValueError):
+        check_count = len(checks)
+    try:
+        warning_count = int(detail.get("warning_count", sum(1 for item in checks if item.get("status") == "warning")))
+    except (TypeError, ValueError):
+        warning_count = sum(1 for item in checks if item.get("status") == "warning")
+    try:
+        critical_count = int(detail.get("critical_count", sum(1 for item in checks if item.get("status") == "critical")))
+    except (TypeError, ValueError):
+        critical_count = sum(1 for item in checks if item.get("status") == "critical")
+
+    response: dict[str, Any] = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        "overall_status": str(detail.get("overall_status") or model.status),
+        "check_count": check_count,
+        "warning_count": warning_count,
+        "critical_count": critical_count,
+        "security_posture": detail.get("security_posture", {}),
+    }
+    if include_checks:
+        response["checks"] = checks
+
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_latest_view",
+        resource_type="ops_runbook",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+            "include_checks": include_checks,
+        },
+    )
+    return response
+
+
+@app.get("/api/ops/security/posture")
+def get_ops_security_posture(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_ops_security_posture_snapshot()
+    rate_limit_snapshot = snapshot["rate_limit"]
+    signing_snapshot = snapshot["audit_archive_signing"]
+    _write_audit_log(
+        principal=principal,
+        action="ops_security_posture_view",
+        resource_type="ops_security",
+        resource_id="posture",
+        detail={
+            "rate_limit_store": rate_limit_snapshot["configured_store"],
+            "rate_limit_backend": rate_limit_snapshot["active_backend"],
+            "rate_limit_status": rate_limit_snapshot["status"],
+            "audit_signing_enabled": signing_snapshot["enabled"],
+            "audit_signing_status": signing_snapshot["status"],
+            "evidence_storage_backend": snapshot["evidence_storage_backend"],
+        },
+    )
+    return snapshot
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

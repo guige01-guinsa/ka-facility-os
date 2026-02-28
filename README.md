@@ -65,6 +65,8 @@ Open:
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks` (permission: `admins:manage`)
+  - `POST /api/ops/runbook/checks/run` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks/latest` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -171,11 +173,14 @@ python -m app.jobs.sla_escalation --limit 500
 python -m app.jobs.sla_escalation --dry-run
 python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30
 python -m app.jobs.monthly_audit_archive --write-file
+python -m app.jobs.ops_daily_check
 ```
 
-Render cron target command:
-- `python -m app.jobs.sla_escalation --limit 500`
-- schedule: `*/15 * * * *`
+Render cron target commands:
+- `python -m app.jobs.sla_escalation --limit 500` (`*/15 * * * *`)
+- `python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30` (`*/10 * * * *`)
+- `python -m app.jobs.monthly_audit_archive --write-file` (`5 0 1 * *`)
+- `python -m app.jobs.ops_daily_check` (`15 0 * * *`)
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
@@ -221,6 +226,8 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/runbook/checks`
+- `POST /api/ops/runbook/checks/run`
+- `GET /api/ops/runbook/checks/latest`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
@@ -362,6 +369,7 @@ Startup behavior:
 - Cron service `ka-facility-os-sla-escalation`
 - Cron service `ka-facility-os-alert-retry`
 - Cron service `ka-facility-os-audit-archive`
+- Cron service `ka-facility-os-ops-daily-check`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`

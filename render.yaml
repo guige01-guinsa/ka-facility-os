@@ -111,3 +111,25 @@ services:
         sync: false
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
+  - type: cron
+    name: ka-facility-os-ops-daily-check
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "15 0 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_daily_check
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: API_RATE_LIMIT_STORE
+        value: auto
+      - key: API_RATE_LIMIT_REDIS_URL
+        sync: false
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false

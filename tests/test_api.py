@@ -182,6 +182,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
     assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
+    assert service_info.json()["ops_runbook_checks_run_api"] == "/api/ops/runbook/checks/run"
+    assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
 
     console_html = app_client.get("/web/console")
@@ -1067,6 +1069,47 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["audit_archive_signing"]["enabled"] is True
     assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
     assert body["token_policy"]["max_ttl_days"] == 30
+
+
+def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
+    run = app_client.post(
+        "/api/ops/runbook/checks/run",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    body = run.json()
+    assert body["status"] in {"success", "warning", "critical"}
+    assert body["overall_status"] in {"ok", "warning", "critical"}
+    assert body["check_count"] >= 4
+    assert "security_posture" in body
+    if body["run_id"] is not None:
+        assert body["run_id"] > 0
+
+    latest = app_client.get(
+        "/api/ops/runbook/checks/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_daily_check"
+    assert latest_body["overall_status"] in {"ok", "warning", "critical"}
+    assert latest_body["check_count"] >= 4
+    assert isinstance(latest_body["checks"], list)
+    assert "security_posture" in latest_body
+
+    latest_without_checks = app_client.get(
+        "/api/ops/runbook/checks/latest?include_checks=false",
+        headers=_owner_headers(),
+    )
+    assert latest_without_checks.status_code == 200
+    assert "checks" not in latest_without_checks.json()
+
+    history = app_client.get(
+        "/api/ops/job-runs?job_name=ops_daily_check",
+        headers=_owner_headers(),
+    )
+    assert history.status_code == 200
+    assert len(history.json()) >= 1
 
 
 def test_work_order_workflow_transitions_and_events(app_client: TestClient) -> None:
