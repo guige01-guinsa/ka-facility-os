@@ -43,6 +43,28 @@ services:
         value: "true"
       - key: ALERT_RETENTION_ARCHIVE_PATH
         value: data/alert-archives
+      - key: ALERT_MTTR_SLO_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_WINDOW_DAYS
+        value: "30"
+      - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
+        value: "60"
+      - key: ALERT_MTTR_SLO_MIN_INCIDENTS
+        value: "3"
+      - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_RECOVER_STATE
+        value: quarantined
+      - key: ALERT_MTTR_SLO_RECOVER_MAX_TARGETS
+        value: "30"
+      - key: ALERT_MTTR_SLO_NOTIFY_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
+        value: mttr_slo_breach
+      - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
+        value: "180"
+      - key: ALERT_MTTR_SLO_TOP_CHANNELS
+        value: "10"
       - key: API_RATE_LIMIT_STORE
         value: auto
       - key: API_RATE_LIMIT_REDIS_URL
@@ -95,6 +117,28 @@ services:
         value: "30"
       - key: ALERT_GUARD_RECOVER_MAX_TARGETS
         value: "30"
+      - key: ALERT_MTTR_SLO_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_WINDOW_DAYS
+        value: "30"
+      - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
+        value: "60"
+      - key: ALERT_MTTR_SLO_MIN_INCIDENTS
+        value: "3"
+      - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_RECOVER_STATE
+        value: quarantined
+      - key: ALERT_MTTR_SLO_RECOVER_MAX_TARGETS
+        value: "30"
+      - key: ALERT_MTTR_SLO_NOTIFY_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
+        value: mttr_slo_breach
+      - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
+        value: "180"
+      - key: ALERT_MTTR_SLO_TOP_CHANNELS
+        value: "10"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -175,6 +219,28 @@ services:
         value: "30"
       - key: ALERT_GUARD_RECOVER_MAX_TARGETS
         value: "30"
+      - key: ALERT_MTTR_SLO_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_WINDOW_DAYS
+        value: "30"
+      - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
+        value: "60"
+      - key: ALERT_MTTR_SLO_MIN_INCIDENTS
+        value: "3"
+      - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_RECOVER_STATE
+        value: quarantined
+      - key: ALERT_MTTR_SLO_RECOVER_MAX_TARGETS
+        value: "30"
+      - key: ALERT_MTTR_SLO_NOTIFY_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
+        value: mttr_slo_breach
+      - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
+        value: "180"
+      - key: ALERT_MTTR_SLO_TOP_CHANNELS
+        value: "10"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -233,3 +299,57 @@ services:
         value: "30"
       - key: ALERT_GUARD_RECOVER_MAX_TARGETS
         value: "30"
+  - type: cron
+    name: ka-facility-os-alert-mttr-slo
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "10 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.alert_mttr_slo
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URLS
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
+      - key: ALERT_GUARD_RECOVER_MAX_TARGETS
+        value: "30"
+      - key: ALERT_MTTR_SLO_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_WINDOW_DAYS
+        value: "30"
+      - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
+        value: "60"
+      - key: ALERT_MTTR_SLO_MIN_INCIDENTS
+        value: "3"
+      - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_RECOVER_STATE
+        value: quarantined
+      - key: ALERT_MTTR_SLO_RECOVER_MAX_TARGETS
+        value: "30"
+      - key: ALERT_MTTR_SLO_NOTIFY_ENABLED
+        value: "true"
+      - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
+        value: mttr_slo_breach
+      - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
+        value: "180"
+      - key: ALERT_MTTR_SLO_TOP_CHANNELS
+        value: "10"

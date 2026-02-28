@@ -138,6 +138,17 @@ ALERT_RETENTION_DAYS = _env_int("ALERT_RETENTION_DAYS", 90, min_value=1)
 ALERT_RETENTION_MAX_DELETE = _env_int("ALERT_RETENTION_MAX_DELETE", 5000, min_value=1)
 ALERT_RETENTION_ARCHIVE_ENABLED = _env_bool("ALERT_RETENTION_ARCHIVE_ENABLED", True)
 ALERT_RETENTION_ARCHIVE_PATH = getenv("ALERT_RETENTION_ARCHIVE_PATH", "data/alert-archives").strip() or "data/alert-archives"
+ALERT_MTTR_SLO_ENABLED = _env_bool("ALERT_MTTR_SLO_ENABLED", True)
+ALERT_MTTR_SLO_WINDOW_DAYS = _env_int("ALERT_MTTR_SLO_WINDOW_DAYS", 30, min_value=1)
+ALERT_MTTR_SLO_THRESHOLD_MINUTES = _env_int("ALERT_MTTR_SLO_THRESHOLD_MINUTES", 60, min_value=1)
+ALERT_MTTR_SLO_MIN_INCIDENTS = _env_int("ALERT_MTTR_SLO_MIN_INCIDENTS", 3, min_value=1)
+ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED = _env_bool("ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED", True)
+ALERT_MTTR_SLO_RECOVER_STATE = getenv("ALERT_MTTR_SLO_RECOVER_STATE", "quarantined").strip().lower() or "quarantined"
+ALERT_MTTR_SLO_RECOVER_MAX_TARGETS = _env_int("ALERT_MTTR_SLO_RECOVER_MAX_TARGETS", 30, min_value=1)
+ALERT_MTTR_SLO_NOTIFY_ENABLED = _env_bool("ALERT_MTTR_SLO_NOTIFY_ENABLED", True)
+ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE = getenv("ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE", "mttr_slo_breach").strip() or "mttr_slo_breach"
+ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES = _env_int("ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES", 180, min_value=0)
+ALERT_MTTR_SLO_TOP_CHANNELS = _env_int("ALERT_MTTR_SLO_TOP_CHANNELS", 10, min_value=1)
 API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
 API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
@@ -242,6 +253,8 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "high": 8,
     "critical": 2,
 }
+ALERT_MTTR_SLO_POLICY_KEY = "alert_mttr_slo_default"
+ALERT_MTTR_SLO_RECOVER_STATE_SET = {"quarantined", "warning", "all"}
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -3059,6 +3072,144 @@ def _upsert_sla_policy(
     )
 
 
+def _normalize_mttr_slo_recover_state(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in ALERT_MTTR_SLO_RECOVER_STATE_SET:
+        return normalized
+    return "quarantined"
+
+
+def _default_mttr_slo_policy() -> dict[str, Any]:
+    return {
+        "enabled": ALERT_MTTR_SLO_ENABLED,
+        "window_days": max(1, ALERT_MTTR_SLO_WINDOW_DAYS),
+        "threshold_minutes": max(1, ALERT_MTTR_SLO_THRESHOLD_MINUTES),
+        "min_incidents": max(1, ALERT_MTTR_SLO_MIN_INCIDENTS),
+        "auto_recover_enabled": ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED,
+        "recover_state": _normalize_mttr_slo_recover_state(ALERT_MTTR_SLO_RECOVER_STATE),
+        "recover_max_targets": max(1, min(ALERT_MTTR_SLO_RECOVER_MAX_TARGETS, 500)),
+        "notify_enabled": ALERT_MTTR_SLO_NOTIFY_ENABLED,
+        "notify_event_type": ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE[:80],
+        "notify_cooldown_minutes": max(0, min(ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES, 10080)),
+        "top_channels": max(1, min(ALERT_MTTR_SLO_TOP_CHANNELS, 50)),
+    }
+
+
+def _normalize_mttr_slo_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_mttr_slo_policy()
+
+    def _to_int(raw: Any, fallback: int, *, min_value: int, max_value: int) -> int:
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            parsed = fallback
+        return max(min_value, min(parsed, max_value))
+
+    notify_event_type = str(source.get("notify_event_type", defaults["notify_event_type"]) or "").strip()
+    if not notify_event_type:
+        notify_event_type = str(defaults["notify_event_type"])
+
+    return {
+        "enabled": bool(source.get("enabled", defaults["enabled"])),
+        "window_days": _to_int(source.get("window_days"), int(defaults["window_days"]), min_value=1, max_value=90),
+        "threshold_minutes": _to_int(
+            source.get("threshold_minutes"),
+            int(defaults["threshold_minutes"]),
+            min_value=1,
+            max_value=10080,
+        ),
+        "min_incidents": _to_int(source.get("min_incidents"), int(defaults["min_incidents"]), min_value=1, max_value=100000),
+        "auto_recover_enabled": bool(source.get("auto_recover_enabled", defaults["auto_recover_enabled"])),
+        "recover_state": _normalize_mttr_slo_recover_state(str(source.get("recover_state", defaults["recover_state"]))),
+        "recover_max_targets": _to_int(
+            source.get("recover_max_targets"),
+            int(defaults["recover_max_targets"]),
+            min_value=1,
+            max_value=500,
+        ),
+        "notify_enabled": bool(source.get("notify_enabled", defaults["notify_enabled"])),
+        "notify_event_type": notify_event_type[:80],
+        "notify_cooldown_minutes": _to_int(
+            source.get("notify_cooldown_minutes"),
+            int(defaults["notify_cooldown_minutes"]),
+            min_value=0,
+            max_value=10080,
+        ),
+        "top_channels": _to_int(source.get("top_channels"), int(defaults["top_channels"]), min_value=1, max_value=50),
+    }
+
+
+def _parse_mttr_slo_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_mttr_slo_policy(loaded)
+
+
+def _ensure_mttr_slo_policy() -> tuple[dict[str, Any], datetime, str]:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == ALERT_MTTR_SLO_POLICY_KEY).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_mttr_slo_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=ALERT_MTTR_SLO_POLICY_KEY,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, ALERT_MTTR_SLO_POLICY_KEY
+
+    policy = _parse_mttr_slo_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, ALERT_MTTR_SLO_POLICY_KEY
+
+
+def _upsert_mttr_slo_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
+    current_policy, _, policy_key = _ensure_mttr_slo_policy()
+    merged = {**current_policy, **(payload if isinstance(payload, dict) else {})}
+    normalized = _normalize_mttr_slo_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key
+
+
+def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(max(1, min(max_rows, 500)))
+        ).mappings().all()
+    for row in rows:
+        raw = str(row.get("detail_json") or "{}")
+        try:
+            detail = json.loads(raw)
+        except json.JSONDecodeError:
+            detail = {}
+        if not isinstance(detail, dict):
+            continue
+        if bool(detail.get("breach")):
+            finished_at = _as_optional_datetime(row.get("finished_at"))
+            if finished_at is not None:
+                return finished_at
+    return None
+
+
 def _configured_alert_targets() -> list[str]:
     targets: list[str] = []
     merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
@@ -3552,6 +3703,201 @@ def run_alert_guard_recover_job(
         "failed_count": failed_count,
         "skipped_count": skipped_count,
         "results": results,
+    }
+
+
+def run_alert_mttr_slo_check_job(
+    *,
+    event_type: str | None = None,
+    force_notify: bool = False,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    policy, policy_updated_at, policy_key = _ensure_mttr_slo_policy()
+    window_days = int(policy.get("window_days") or 30)
+    threshold_minutes = float(policy.get("threshold_minutes") or 60)
+    min_incidents = int(policy.get("min_incidents") or 1)
+
+    snapshot = _build_alert_channel_mttr_snapshot(
+        event_type=event_type,
+        windows=[window_days],
+        now=started_at,
+    )
+    windows = snapshot.get("windows", [])
+    window: dict[str, Any] = windows[0] if isinstance(windows, list) and windows else {}
+    incident_count = int(window.get("incident_count") or 0)
+    recovered_incidents = int(window.get("recovered_incidents") or 0)
+    unresolved_incidents = int(window.get("unresolved_incidents") or 0)
+    mttr_minutes = window.get("mttr_minutes")
+    mttr_value = float(mttr_minutes) if mttr_minutes is not None else None
+    breach = (
+        bool(policy.get("enabled", True))
+        and incident_count >= max(1, min_incidents)
+        and mttr_value is not None
+        and mttr_value > threshold_minutes
+    )
+
+    channels = window.get("channels", [])
+    if not isinstance(channels, list):
+        channels = []
+    top_channels_limit = max(1, min(int(policy.get("top_channels") or 10), 50))
+    top_channels = [
+        {
+            "target": str(item.get("target") or ""),
+            "incident_count": int(item.get("incident_count") or 0),
+            "recovered_incidents": int(item.get("recovered_incidents") or 0),
+            "unresolved_incidents": int(item.get("unresolved_incidents") or 0),
+            "mttr_minutes": item.get("mttr_minutes"),
+            "last_incident_start": item.get("last_incident_start"),
+            "last_recovery_at": item.get("last_recovery_at"),
+        }
+        for item in channels
+        if isinstance(item, dict)
+    ][:top_channels_limit]
+
+    auto_recover_attempted = False
+    auto_recover_result: dict[str, Any] | None = None
+    if breach and bool(policy.get("auto_recover_enabled", True)):
+        auto_recover_attempted = True
+        recovered = run_alert_guard_recover_job(
+            event_type=event_type,
+            state_filter=str(policy.get("recover_state") or "quarantined"),
+            max_targets=int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+            dry_run=False,
+            trigger="mttr_slo_auto",
+        )
+        auto_recover_result = {
+            "run_id": recovered.get("run_id"),
+            "status": recovered.get("status"),
+            "state_filter": recovered.get("state_filter"),
+            "max_targets": recovered.get("max_targets"),
+            "processed_count": recovered.get("processed_count"),
+            "success_count": recovered.get("success_count"),
+            "failed_count": recovered.get("failed_count"),
+            "skipped_count": recovered.get("skipped_count"),
+        }
+
+    notify_attempted = False
+    notify_dispatched = False
+    notify_error: str | None = None
+    notify_channels: list[dict[str, Any]] = []
+    cooldown_active = False
+    cooldown_remaining_minutes = 0
+    last_breach_at = _latest_mttr_slo_breach_finished_at()
+    cooldown_minutes = int(policy.get("notify_cooldown_minutes") or 0)
+    if breach and bool(policy.get("notify_enabled", True)):
+        if not force_notify and cooldown_minutes > 0 and last_breach_at is not None:
+            next_allowed_at = last_breach_at + timedelta(minutes=cooldown_minutes)
+            if started_at < next_allowed_at:
+                cooldown_active = True
+                cooldown_remaining_minutes = max(
+                    1,
+                    int(math.ceil((next_allowed_at - started_at).total_seconds() / 60.0)),
+                )
+        if force_notify or not cooldown_active:
+            notify_attempted = True
+            notify_dispatched, notify_error, channel_results = _dispatch_alert_event(
+                event_type=str(policy.get("notify_event_type") or "mttr_slo_breach"),
+                payload={
+                    "event": "mttr_slo_breach",
+                    "checked_at": started_at.isoformat(),
+                    "event_type_scope": event_type,
+                    "policy": {
+                        "policy_key": policy_key,
+                        "enabled": bool(policy.get("enabled", True)),
+                        "window_days": window_days,
+                        "threshold_minutes": threshold_minutes,
+                        "min_incidents": min_incidents,
+                        "auto_recover_enabled": bool(policy.get("auto_recover_enabled", True)),
+                        "recover_state": str(policy.get("recover_state") or "quarantined"),
+                        "recover_max_targets": int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+                    },
+                    "window": {
+                        "days": window_days,
+                        "incident_count": incident_count,
+                        "recovered_incidents": recovered_incidents,
+                        "unresolved_incidents": unresolved_incidents,
+                        "mttr_minutes": mttr_value,
+                    },
+                    "top_channels": top_channels,
+                    "auto_recover_result": auto_recover_result,
+                },
+            )
+            notify_channels = [item.model_dump() for item in channel_results]
+
+    finished_at = datetime.now(timezone.utc)
+    status = "success"
+    if breach:
+        status = "warning"
+    if notify_attempted and notify_error is not None and notify_dispatched is False:
+        status = "warning"
+
+    run_id = _write_job_run(
+        job_name="alert_mttr_slo_check",
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "policy_key": policy_key,
+            "policy_updated_at": policy_updated_at.isoformat(),
+            "policy": policy,
+            "window": {
+                "days": window_days,
+                "incident_count": incident_count,
+                "recovered_incidents": recovered_incidents,
+                "unresolved_incidents": unresolved_incidents,
+                "mttr_minutes": mttr_value,
+            },
+            "breach": breach,
+            "top_channels": top_channels,
+            "actions": {
+                "auto_recover_attempted": auto_recover_attempted,
+                "auto_recover_result": auto_recover_result,
+                "notify_attempted": notify_attempted,
+                "notify_dispatched": notify_dispatched,
+                "notify_error": notify_error,
+                "notify_channels": notify_channels,
+                "force_notify": force_notify,
+                "cooldown_minutes": cooldown_minutes,
+                "cooldown_active": cooldown_active,
+                "cooldown_remaining_minutes": cooldown_remaining_minutes,
+                "last_breach_at": last_breach_at.isoformat() if last_breach_at is not None else None,
+            },
+        },
+    )
+
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": status,
+        "event_type": event_type,
+        "policy_key": policy_key,
+        "policy_updated_at": policy_updated_at.isoformat(),
+        "policy": policy,
+        "window": {
+            "days": window_days,
+            "incident_count": incident_count,
+            "recovered_incidents": recovered_incidents,
+            "unresolved_incidents": unresolved_incidents,
+            "mttr_minutes": mttr_value,
+        },
+        "breach": breach,
+        "top_channels": top_channels,
+        "actions": {
+            "auto_recover_attempted": auto_recover_attempted,
+            "auto_recover_result": auto_recover_result,
+            "notify_attempted": notify_attempted,
+            "notify_dispatched": notify_dispatched,
+            "notify_error": notify_error,
+            "notify_channels": notify_channels,
+            "force_notify": force_notify,
+            "cooldown_minutes": cooldown_minutes,
+            "cooldown_active": cooldown_active,
+            "cooldown_remaining_minutes": cooldown_remaining_minutes,
+            "last_breach_at": last_breach_at.isoformat() if last_breach_at is not None else None,
+        },
     }
 
 
@@ -4252,8 +4598,26 @@ def run_ops_daily_check_job(
     trigger: str = "manual",
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
+    mttr_slo_result = run_alert_mttr_slo_check_job(
+        trigger=f"{trigger}:ops_daily_check",
+    )
     checks_snapshot = _build_ops_runbook_checks_snapshot(now=started_at)
     posture_snapshot = _build_ops_security_posture_snapshot(now=started_at)
+    mttr_slo_summary = {
+        "run_id": mttr_slo_result.get("run_id"),
+        "status": mttr_slo_result.get("status"),
+        "breach": bool(mttr_slo_result.get("breach", False)),
+        "window": mttr_slo_result.get("window", {}),
+        "actions": {
+            "auto_recover_attempted": bool(
+                (mttr_slo_result.get("actions") or {}).get("auto_recover_attempted", False)
+            ),
+            "notify_attempted": bool((mttr_slo_result.get("actions") or {}).get("notify_attempted", False)),
+            "notify_dispatched": bool((mttr_slo_result.get("actions") or {}).get("notify_dispatched", False)),
+            "notify_error": (mttr_slo_result.get("actions") or {}).get("notify_error"),
+            "cooldown_active": bool((mttr_slo_result.get("actions") or {}).get("cooldown_active", False)),
+        },
+    }
 
     checks = checks_snapshot.get("checks", [])
     warning_count = sum(1 for item in checks if str(item.get("status")) == "warning")
@@ -4325,6 +4689,7 @@ def run_ops_daily_check_job(
                 "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
                 "token_policy": posture_snapshot.get("token_policy"),
             },
+            "mttr_slo_check": mttr_slo_summary,
         },
     )
 
@@ -4349,6 +4714,7 @@ def run_ops_daily_check_job(
             "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
             "token_policy": posture_snapshot.get("token_policy"),
         },
+        "mttr_slo_check": mttr_slo_summary,
     }
 
 
@@ -5326,6 +5692,9 @@ def _service_info_payload() -> dict[str, str]:
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
         "alert_channel_mttr_kpi_api": "/api/ops/alerts/kpi/mttr",
+        "alert_mttr_slo_policy_api": "/api/ops/alerts/mttr-slo/policy",
+        "alert_mttr_slo_run_api": "/api/ops/alerts/mttr-slo/check/run",
+        "alert_mttr_slo_latest_api": "/api/ops/alerts/mttr-slo/check/latest",
         "alert_channel_guard_api": "/api/ops/alerts/channels/guard",
         "alert_channel_guard_recover_api": "/api/ops/alerts/channels/guard/recover",
         "alert_channel_guard_recover_batch_api": "/api/ops/alerts/channels/guard/recover-batch",
@@ -8063,6 +8432,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a href="/api/ops/alerts/channels/guard">Guard API</a>
               <a href="/api/ops/alerts/channels/guard/recover-batch">Guard Recover Batch API</a>
               <a href="/api/ops/alerts/channels/guard/recover/latest">Guard Recover Latest API</a>
+              <a href="/api/ops/alerts/mttr-slo/policy">MTTR SLO Policy API</a>
+              <a href="/api/ops/alerts/mttr-slo/check/run">MTTR SLO Run API</a>
+              <a href="/api/ops/alerts/mttr-slo/check/latest">MTTR SLO Latest API</a>
               <a href="/api/ops/alerts/retention/policy">Retention Policy API</a>
               <a href="/api/ops/alerts/retention/latest">Retention Latest API</a>
             </div>
@@ -10394,6 +10766,18 @@ def _build_ops_runbook_checks_snapshot(
             .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=3)))
             .limit(1)
         ).first()
+        mttr_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=6)))
+            .limit(1)
+        ).first()
+        mttr_latest = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
         expiring_soon_cutoff = generated_at + timedelta(days=3)
         expiring_count = conn.execute(
             select(admin_tokens.c.id)
@@ -10406,6 +10790,26 @@ def _build_ops_runbook_checks_snapshot(
     signing_snapshot = _audit_signing_snapshot()
     guard_snapshot = _build_alert_channel_guard_snapshot(now=generated_at, lookback_days=30, max_targets=200)
     guard_summary = guard_snapshot.get("summary", {})
+    mttr_policy, _, _ = _ensure_mttr_slo_policy()
+    mttr_latest_detail: dict[str, Any] = {}
+    mttr_latest_finished_at: datetime | None = None
+    if mttr_latest is not None:
+        raw = str(mttr_latest.get("detail_json") or "{}")
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError:
+            loaded = {}
+        if isinstance(loaded, dict):
+            mttr_latest_detail = loaded
+        mttr_latest_finished_at = _as_optional_datetime(mttr_latest.get("finished_at"))
+    mttr_policy_from_latest = mttr_latest_detail.get("policy", {})
+    if isinstance(mttr_policy_from_latest, dict):
+        mttr_policy = _normalize_mttr_slo_policy(mttr_policy_from_latest)
+    mttr_window = mttr_latest_detail.get("window", {})
+    if not isinstance(mttr_window, dict):
+        mttr_window = {}
+    mttr_breach = bool(mttr_latest_detail.get("breach", False))
+
     quarantined_count = int(guard_summary.get("quarantined_count") or 0)
     guard_warning_count = int(guard_summary.get("warning_count") or 0)
     current_month_archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
@@ -10494,6 +10898,36 @@ def _build_ops_runbook_checks_snapshot(
                 )
             ),
         },
+        {
+            "id": "alert_mttr_slo_recent",
+            "status": "ok" if mttr_recent is not None else "warning",
+            "message": "MTTR SLO check observed within last 6 hours."
+            if mttr_recent is not None
+            else "No recent MTTR SLO check run in last 6 hours.",
+        },
+        {
+            "id": "alert_mttr_slo_breach",
+            "status": (
+                "ok"
+                if not bool(mttr_policy.get("enabled", True))
+                else ("warning" if mttr_breach else "ok")
+            ),
+            "message": (
+                "MTTR SLO policy disabled."
+                if not bool(mttr_policy.get("enabled", True))
+                else (
+                    "MTTR SLO breach detected in latest check."
+                    if mttr_breach
+                    else "MTTR SLO within threshold in latest check."
+                )
+            ),
+            "latest_checked_at": mttr_latest_finished_at.isoformat() if mttr_latest_finished_at is not None else None,
+            "threshold_minutes": int(mttr_policy.get("threshold_minutes") or 0),
+            "window_days": int(mttr_policy.get("window_days") or 0),
+            "min_incidents": int(mttr_policy.get("min_incidents") or 0),
+            "window_incident_count": int(mttr_window.get("incident_count") or 0),
+            "window_mttr_minutes": mttr_window.get("mttr_minutes"),
+        },
     ]
     overall = "ok"
     if any(check["status"] == "critical" for check in checks):
@@ -10512,6 +10946,7 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
     alert_targets = _configured_alert_targets()
+    mttr_policy, mttr_policy_updated_at, _ = _ensure_mttr_slo_policy()
     return {
         "generated_at": generated_at.isoformat(),
         "env": ENV_NAME,
@@ -10527,6 +10962,18 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
             "retention_days": max(1, ALERT_RETENTION_DAYS),
             "retention_max_delete": max(1, ALERT_RETENTION_MAX_DELETE),
             "retention_archive_enabled": ALERT_RETENTION_ARCHIVE_ENABLED,
+            "mttr_slo_enabled": bool(mttr_policy.get("enabled", True)),
+            "mttr_slo_window_days": int(mttr_policy.get("window_days") or 0),
+            "mttr_slo_threshold_minutes": int(mttr_policy.get("threshold_minutes") or 0),
+            "mttr_slo_min_incidents": int(mttr_policy.get("min_incidents") or 0),
+            "mttr_slo_auto_recover_enabled": bool(mttr_policy.get("auto_recover_enabled", True)),
+            "mttr_slo_recover_state": str(mttr_policy.get("recover_state") or "quarantined"),
+            "mttr_slo_recover_max_targets": int(mttr_policy.get("recover_max_targets") or 0),
+            "mttr_slo_notify_enabled": bool(mttr_policy.get("notify_enabled", True)),
+            "mttr_slo_notify_event_type": str(mttr_policy.get("notify_event_type") or "mttr_slo_breach"),
+            "mttr_slo_notify_cooldown_minutes": int(mttr_policy.get("notify_cooldown_minutes") or 0),
+            "mttr_slo_top_channels": int(mttr_policy.get("top_channels") or 0),
+            "mttr_slo_policy_updated_at": mttr_policy_updated_at.isoformat(),
         },
         "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
         "token_policy": {
@@ -10592,6 +11039,7 @@ def run_ops_runbook_checks(
             "alert_attempted": result.get("alert_attempted"),
             "alert_dispatched": result.get("alert_dispatched"),
             "alert_error": result.get("alert_error"),
+            "mttr_slo_check": result.get("mttr_slo_check"),
         },
     )
     return result
@@ -10646,6 +11094,7 @@ def get_ops_runbook_checks_latest(
         "alert_error": detail.get("alert_error"),
         "alert_channels": detail.get("alert_channels", []),
         "security_posture": detail.get("security_posture", {}),
+        "mttr_slo_check": detail.get("mttr_slo_check", {}),
     }
     if include_checks:
         response["checks"] = checks
@@ -10688,6 +11137,9 @@ def get_ops_security_posture(
             "alert_channel_guard_enabled": snapshot.get("alerting", {}).get("channel_guard_enabled"),
             "alert_channel_guard_fail_threshold": snapshot.get("alerting", {}).get("channel_guard_fail_threshold"),
             "alert_retention_days": snapshot.get("alerting", {}).get("retention_days"),
+            "alert_mttr_slo_enabled": snapshot.get("alerting", {}).get("mttr_slo_enabled"),
+            "alert_mttr_slo_window_days": snapshot.get("alerting", {}).get("mttr_slo_window_days"),
+            "alert_mttr_slo_threshold_minutes": snapshot.get("alerting", {}).get("mttr_slo_threshold_minutes"),
         },
     )
     return snapshot
@@ -11208,6 +11660,137 @@ def get_alert_channel_mttr_kpi(
         },
     )
     return snapshot
+
+
+@app.get("/api/ops/alerts/mttr-slo/policy")
+def get_alert_mttr_slo_policy(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    policy, updated_at, policy_key = _ensure_mttr_slo_policy()
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_mttr_slo_policy_view",
+        resource_type="alert_policy",
+        resource_id=policy_key,
+        detail={
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "window_days": int(policy.get("window_days") or 0),
+            "threshold_minutes": int(policy.get("threshold_minutes") or 0),
+            "min_incidents": int(policy.get("min_incidents") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/alerts/mttr-slo/policy")
+def set_alert_mttr_slo_policy(
+    payload: dict[str, Any],
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    policy, updated_at, policy_key = _upsert_mttr_slo_policy(payload)
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_mttr_slo_policy_update",
+        resource_type="alert_policy",
+        resource_id=policy_key,
+        detail={
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "window_days": int(policy.get("window_days") or 0),
+            "threshold_minutes": int(policy.get("threshold_minutes") or 0),
+            "min_incidents": int(policy.get("min_incidents") or 0),
+            "auto_recover_enabled": bool(policy.get("auto_recover_enabled", True)),
+            "recover_state": policy.get("recover_state"),
+            "recover_max_targets": int(policy.get("recover_max_targets") or 0),
+            "notify_enabled": bool(policy.get("notify_enabled", True)),
+            "notify_event_type": policy.get("notify_event_type"),
+            "notify_cooldown_minutes": int(policy.get("notify_cooldown_minutes") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.post("/api/ops/alerts/mttr-slo/check/run")
+def run_alert_mttr_slo_check(
+    event_type: Annotated[str | None, Query()] = None,
+    force_notify: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_alert_mttr_slo_check_job(
+        event_type=event_type,
+        force_notify=force_notify,
+        trigger="api",
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_mttr_slo_check_run",
+        resource_type="alert_delivery",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "success"),
+        detail={
+            "event_type": event_type,
+            "force_notify": force_notify,
+            "breach": bool(result.get("breach", False)),
+            "window": result.get("window", {}),
+            "actions": result.get("actions", {}),
+        },
+    )
+    return result
+
+
+@app.get("/api/ops/alerts/mttr-slo/check/latest")
+def get_alert_mttr_slo_check_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No alert_mttr_slo_check run found")
+
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    response = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        "event_type": detail.get("event_type"),
+        "policy_key": detail.get("policy_key"),
+        "policy_updated_at": detail.get("policy_updated_at"),
+        "policy": detail.get("policy", {}),
+        "window": detail.get("window", {}),
+        "breach": bool(detail.get("breach", False)),
+        "top_channels": detail.get("top_channels", []),
+        "actions": detail.get("actions", {}),
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_mttr_slo_check_latest_view",
+        resource_type="alert_delivery",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+            "breach": bool(response["breach"]),
+        },
+    )
+    return response
 
 
 @app.get("/api/ops/alerts/channels/guard")

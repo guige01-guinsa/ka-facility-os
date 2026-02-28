@@ -189,6 +189,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
     assert service_info.json()["alert_channel_mttr_kpi_api"] == "/api/ops/alerts/kpi/mttr"
+    assert service_info.json()["alert_mttr_slo_policy_api"] == "/api/ops/alerts/mttr-slo/policy"
+    assert service_info.json()["alert_mttr_slo_run_api"] == "/api/ops/alerts/mttr-slo/check/run"
+    assert service_info.json()["alert_mttr_slo_latest_api"] == "/api/ops/alerts/mttr-slo/check/latest"
     assert service_info.json()["alert_channel_guard_api"] == "/api/ops/alerts/channels/guard"
     assert service_info.json()["alert_channel_guard_recover_api"] == "/api/ops/alerts/channels/guard/recover"
     assert service_info.json()["alert_channel_guard_recover_batch_api"] == "/api/ops/alerts/channels/guard/recover-batch"
@@ -1069,6 +1072,8 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "alert_channel_guard" in ids
     assert "alert_retention_recent" in ids
     assert "alert_guard_recovery_recent" in ids
+    assert "alert_mttr_slo_recent" in ids
+    assert "alert_mttr_slo_breach" in ids
 
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -1093,6 +1098,17 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["alerting"]["retention_days"] == 90
     assert body["alerting"]["retention_max_delete"] == 5000
     assert body["alerting"]["retention_archive_enabled"] is True
+    assert body["alerting"]["mttr_slo_enabled"] is True
+    assert body["alerting"]["mttr_slo_window_days"] == 30
+    assert body["alerting"]["mttr_slo_threshold_minutes"] == 60
+    assert body["alerting"]["mttr_slo_min_incidents"] == 3
+    assert body["alerting"]["mttr_slo_auto_recover_enabled"] is True
+    assert body["alerting"]["mttr_slo_recover_state"] == "quarantined"
+    assert body["alerting"]["mttr_slo_recover_max_targets"] == 30
+    assert body["alerting"]["mttr_slo_notify_enabled"] is True
+    assert body["alerting"]["mttr_slo_notify_event_type"] == "mttr_slo_breach"
+    assert body["alerting"]["mttr_slo_notify_cooldown_minutes"] == 180
+    assert body["alerting"]["mttr_slo_top_channels"] == 10
     assert body["token_policy"]["max_ttl_days"] == 30
 
 
@@ -1111,6 +1127,7 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert "alert_attempted" in body
     assert "alert_dispatched" in body
     assert "alert_channels" in body
+    assert "mttr_slo_check" in body
     if body["run_id"] is not None:
         assert body["run_id"] > 0
 
@@ -1128,6 +1145,7 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert "alert_attempted" in latest_body
     assert "alert_dispatched" in latest_body
     assert isinstance(latest_body["alert_channels"], list)
+    assert "mttr_slo_check" in latest_body
 
     latest_without_checks = app_client.get(
         "/api/ops/runbook/checks/latest?include_checks=false",
@@ -2048,6 +2066,127 @@ def test_alert_channel_mttr_kpi_api(app_client: TestClient) -> None:
     assert filtered_windows[7]["incident_count"] == 2
     assert filtered_windows[30]["incident_count"] == 3
     assert filtered_windows[30]["unresolved_incidents"] == 1
+
+
+def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch) -> None:
+    import app.database as db_module
+    import app.main as main_module
+    from sqlalchemy import insert
+
+    now = datetime.now(timezone.utc)
+    seed_rows = [
+        {
+            "event_type": "sla_escalation",
+            "target": "https://mttr-a.example/hook",
+            "status": "failed",
+            "error": "seed-fail-1",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=2),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://mttr-a.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=2) + timedelta(hours=2),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://mttr-b.example/hook",
+            "status": "failed",
+            "error": "seed-fail-2",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=1),
+        },
+    ]
+    with db_module.get_conn() as conn:
+        for row in seed_rows:
+            conn.execute(
+                insert(db_module.alert_deliveries).values(
+                    **row,
+                    created_at=row["last_attempt_at"],
+                    updated_at=row["last_attempt_at"],
+                )
+            )
+
+    policy_set = app_client.put(
+        "/api/ops/alerts/mttr-slo/policy",
+        headers=_owner_headers(),
+        json={
+            "enabled": True,
+            "window_days": 30,
+            "threshold_minutes": 30,
+            "min_incidents": 1,
+            "auto_recover_enabled": True,
+            "recover_state": "all",
+            "recover_max_targets": 5,
+            "notify_enabled": True,
+            "notify_event_type": "mttr_slo_breach_test",
+            "notify_cooldown_minutes": 0,
+            "top_channels": 5,
+        },
+    )
+    assert policy_set.status_code == 200
+    assert policy_set.json()["policy"]["threshold_minutes"] == 30
+    assert policy_set.json()["policy"]["recover_state"] == "all"
+
+    monkeypatch.setattr(
+        main_module,
+        "run_alert_guard_recover_job",
+        lambda **kwargs: {
+            "run_id": 987,
+            "status": "success",
+            "state_filter": kwargs.get("state_filter"),
+            "max_targets": kwargs.get("max_targets"),
+            "processed_count": 1,
+            "success_count": 1,
+            "failed_count": 0,
+            "skipped_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        main_module,
+        "_dispatch_alert_event",
+        lambda **kwargs: (
+            True,
+            None,
+            [main_module.SlaAlertChannelResult(target="https://notify.example/hook", success=True, error=None)],
+        ),
+    )
+
+    run = app_client.post(
+        "/api/ops/alerts/mttr-slo/check/run",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["breach"] is True
+    assert run_body["window"]["mttr_minutes"] == 120.0
+    assert run_body["actions"]["auto_recover_attempted"] is True
+    assert run_body["actions"]["notify_attempted"] is True
+    assert run_body["actions"]["notify_dispatched"] is True
+
+    latest = app_client.get(
+        "/api/ops/alerts/mttr-slo/check/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "alert_mttr_slo_check"
+    assert latest_body["breach"] is True
+    assert latest_body["window"]["mttr_minutes"] == 120.0
+    assert latest_body["actions"]["auto_recover_attempted"] is True
+
+    policy_get = app_client.get(
+        "/api/ops/alerts/mttr-slo/policy",
+        headers=_owner_headers(),
+    )
+    assert policy_get.status_code == 200
+    assert policy_get.json()["policy"]["notify_event_type"] == "mttr_slo_breach_test"
 
 
 def test_alert_channel_guard_and_recover_api(app_client: TestClient, monkeypatch) -> None:

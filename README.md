@@ -73,6 +73,10 @@ Open:
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
   - `GET /api/ops/alerts/kpi/channels` (permission: `admins:manage`)
   - `GET /api/ops/alerts/kpi/mttr` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/mttr-slo/policy` (permission: `admins:manage`)
+  - `PUT /api/ops/alerts/mttr-slo/policy` (permission: `admins:manage`)
+  - `POST /api/ops/alerts/mttr-slo/check/run` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/mttr-slo/check/latest` (permission: `admins:manage`)
   - `GET /api/ops/alerts/channels/guard` (permission: `admins:manage`)
   - `POST /api/ops/alerts/channels/guard/recover?target=...` (permission: `admins:manage`)
   - `POST /api/ops/alerts/channels/guard/recover-batch` (permission: `admins:manage`)
@@ -185,6 +189,7 @@ python -m app.jobs.monthly_audit_archive --write-file
 python -m app.jobs.ops_daily_check
 python -m app.jobs.alert_retention --write-archive
 python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30
+python -m app.jobs.alert_mttr_slo
 ```
 
 Render cron target commands:
@@ -194,6 +199,7 @@ Render cron target commands:
 - `python -m app.jobs.ops_daily_check` (`15 0 * * *`)
 - `python -m app.jobs.alert_retention --write-archive` (`35 1 * * *`)
 - `python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30` (`25 * * * *`)
+- `python -m app.jobs.alert_mttr_slo` (`10 * * * *`)
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
@@ -204,6 +210,17 @@ Optional alert webhook env:
 - `ALERT_CHANNEL_GUARD_ENABLED` (default `true`)
 - `ALERT_CHANNEL_GUARD_FAIL_THRESHOLD` (default `3`)
 - `ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES` (default `30`)
+- `ALERT_MTTR_SLO_ENABLED` (default `true`)
+- `ALERT_MTTR_SLO_WINDOW_DAYS` (default `30`)
+- `ALERT_MTTR_SLO_THRESHOLD_MINUTES` (default `60`)
+- `ALERT_MTTR_SLO_MIN_INCIDENTS` (default `3`)
+- `ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED` (default `true`)
+- `ALERT_MTTR_SLO_RECOVER_STATE` (`quarantined|warning|all`, default `quarantined`)
+- `ALERT_MTTR_SLO_RECOVER_MAX_TARGETS` (default `30`)
+- `ALERT_MTTR_SLO_NOTIFY_ENABLED` (default `true`)
+- `ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE` (default `mttr_slo_breach`)
+- `ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES` (default `180`)
+- `ALERT_MTTR_SLO_TOP_CHANNELS` (default `10`)
 - `ALERT_GUARD_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_RETENTION_DAYS` (default `90`)
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
@@ -273,6 +290,10 @@ Job monitoring:
 - `GET /api/ops/alerts/deliveries?event_type=ops_daily_check`
 - `GET /api/ops/alerts/kpi/channels` (7d/30d channel success KPI)
 - `GET /api/ops/alerts/kpi/mttr` (7d/30d channel MTTR KPI)
+- `GET /api/ops/alerts/mttr-slo/policy`
+- `PUT /api/ops/alerts/mttr-slo/policy`
+- `POST /api/ops/alerts/mttr-slo/check/run`
+- `GET /api/ops/alerts/mttr-slo/check/latest`
 - `GET /api/ops/alerts/channels/guard` (channel quarantine/health snapshot)
 - `POST /api/ops/alerts/channels/guard/recover?target=https://...` (manual recovery probe)
 - `POST /api/ops/alerts/channels/guard/recover-batch?state=quarantined&max_targets=30`
