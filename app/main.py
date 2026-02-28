@@ -4826,6 +4826,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
+        "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "sla_simulator_api": "/api/ops/sla/simulate",
         "sla_policy_api": "/api/admin/policies/sla",
@@ -9909,6 +9910,134 @@ def get_ops_handover_brief_pdf(
     return response
 
 
+def _build_alert_channel_kpi_snapshot(
+    *,
+    event_type: str | None = None,
+    windows: list[int] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    normalized_windows = sorted({int(value) for value in (windows or [7, 30]) if int(value) > 0})
+    if not normalized_windows:
+        normalized_windows = [7, 30]
+
+    max_days = max(normalized_windows)
+    oldest_cutoff = generated_at - timedelta(days=max_days)
+    stmt = (
+        select(
+            alert_deliveries.c.target,
+            alert_deliveries.c.status,
+            alert_deliveries.c.last_attempt_at,
+        )
+        .where(alert_deliveries.c.last_attempt_at >= oldest_cutoff)
+        .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    parsed_rows: list[dict[str, Any]] = []
+    for row in rows:
+        attempted_at = _as_optional_datetime(row.get("last_attempt_at"))
+        if attempted_at is None:
+            continue
+        parsed_rows.append(
+            {
+                "target": str(row.get("target") or "unknown"),
+                "status": str(row.get("status") or "failed").lower(),
+                "attempted_at": attempted_at,
+            }
+        )
+
+    window_payloads: list[dict[str, Any]] = []
+    for days in normalized_windows:
+        cutoff = generated_at - timedelta(days=days)
+        channel_counts: dict[str, dict[str, Any]] = {}
+        total_deliveries = 0
+        success_count = 0
+        warning_count = 0
+        failed_count = 0
+
+        for row in parsed_rows:
+            attempted_at = row["attempted_at"]
+            if attempted_at < cutoff:
+                continue
+
+            total_deliveries += 1
+            status = row["status"]
+            if status == "success":
+                success_count += 1
+            elif status == "warning":
+                warning_count += 1
+            else:
+                failed_count += 1
+
+            target = row["target"]
+            bucket = channel_counts.get(target)
+            if bucket is None:
+                bucket = {
+                    "target": target,
+                    "total_deliveries": 0,
+                    "success_count": 0,
+                    "warning_count": 0,
+                    "failed_count": 0,
+                    "last_attempt_at": None,
+                }
+                channel_counts[target] = bucket
+            bucket["total_deliveries"] += 1
+            if status == "success":
+                bucket["success_count"] += 1
+            elif status == "warning":
+                bucket["warning_count"] += 1
+            else:
+                bucket["failed_count"] += 1
+            last_attempt_at = bucket.get("last_attempt_at")
+            if not isinstance(last_attempt_at, datetime) or attempted_at > last_attempt_at:
+                bucket["last_attempt_at"] = attempted_at
+
+        channels: list[dict[str, Any]] = []
+        for bucket in channel_counts.values():
+            channel_total = int(bucket["total_deliveries"])
+            channel_success = int(bucket["success_count"])
+            channel_rate = round((channel_success / channel_total * 100), 2) if channel_total > 0 else 0.0
+            last_attempt_at = bucket.get("last_attempt_at")
+            channels.append(
+                {
+                    "target": bucket["target"],
+                    "total_deliveries": channel_total,
+                    "success_count": channel_success,
+                    "warning_count": int(bucket["warning_count"]),
+                    "failed_count": int(bucket["failed_count"]),
+                    "success_rate_percent": channel_rate,
+                    "last_attempt_at": last_attempt_at.isoformat() if isinstance(last_attempt_at, datetime) else None,
+                }
+            )
+
+        channels.sort(key=lambda item: (-int(item["total_deliveries"]), str(item["target"])))
+        success_rate_percent = round((success_count / total_deliveries * 100), 2) if total_deliveries > 0 else 0.0
+        window_payloads.append(
+            {
+                "days": days,
+                "window_start": cutoff.isoformat(),
+                "window_end": generated_at.isoformat(),
+                "total_deliveries": total_deliveries,
+                "success_count": success_count,
+                "warning_count": warning_count,
+                "failed_count": failed_count,
+                "success_rate_percent": success_rate_percent,
+                "channels": channels,
+            }
+        )
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "event_type": event_type,
+        "windows": window_payloads,
+    }
+
+
 @app.get("/api/ops/alerts/deliveries", response_model=list[AlertDeliveryRead])
 def list_alert_deliveries(
     event_type: Annotated[str | None, Query()] = None,
@@ -9930,6 +10059,34 @@ def list_alert_deliveries(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_alert_delivery_model(row) for row in rows]
+
+
+@app.get("/api/ops/alerts/kpi/channels")
+def get_alert_channel_kpi(
+    event_type: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_alert_channel_kpi_snapshot(event_type=event_type, windows=[7, 30])
+    summaries = [
+        {
+            "days": int(item.get("days") or 0),
+            "total_deliveries": int(item.get("total_deliveries") or 0),
+            "success_rate_percent": float(item.get("success_rate_percent") or 0.0),
+        }
+        for item in snapshot.get("windows", [])
+        if isinstance(item, dict)
+    ]
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_kpi_view",
+        resource_type="alert_delivery",
+        resource_id=event_type or "all",
+        detail={
+            "event_type": event_type,
+            "windows": summaries,
+        },
+    )
+    return snapshot
 
 
 @app.post("/api/ops/sla/simulate", response_model=SlaWhatIfResponse)

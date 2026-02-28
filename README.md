@@ -71,6 +71,7 @@ Open:
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
   - `GET /api/ops/alerts/deliveries` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/kpi/channels` (permission: `admins:manage`)
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
   - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
@@ -250,6 +251,7 @@ Job monitoring:
 - `GET /api/public/post-mvp/risks`
 - `GET /api/ops/alerts/deliveries?status=failed`
 - `GET /api/ops/alerts/deliveries?event_type=ops_daily_check`
+- `GET /api/ops/alerts/kpi/channels` (7d/30d channel success KPI)
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)
 

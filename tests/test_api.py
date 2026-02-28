@@ -185,6 +185,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_runbook_checks_run_api"] == "/api/ops/runbook/checks/run"
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
+    assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -1800,6 +1801,113 @@ def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     assert body["id"] == delivery_id
     assert body["attempt_count"] == 2
     assert body["status"] in {"success", "warning", "failed"}
+
+
+def test_alert_channel_kpi_windows(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import insert
+
+    now = datetime.now(timezone.utc)
+    seed_rows = [
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=1),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "failed",
+            "error": "timeout",
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=2),
+        },
+        {
+            "event_type": "ops_daily_check",
+            "target": "https://chan-b.example/hook",
+            "status": "warning",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=8),
+        },
+        {
+            "event_type": "ops_daily_check",
+            "target": "https://chan-b.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=20),
+        },
+        {
+            "event_type": "sla_escalation",
+            "target": "https://chan-a.example/hook",
+            "status": "success",
+            "error": None,
+            "payload_json": "{}",
+            "attempt_count": 1,
+            "last_attempt_at": now - timedelta(days=31),
+        },
+    ]
+    with db_module.get_conn() as conn:
+        for row in seed_rows:
+            conn.execute(
+                insert(db_module.alert_deliveries).values(
+                    **row,
+                    created_at=row["last_attempt_at"],
+                    updated_at=row["last_attempt_at"],
+                )
+            )
+
+    kpi = app_client.get(
+        "/api/ops/alerts/kpi/channels",
+        headers=_owner_headers(),
+    )
+    assert kpi.status_code == 200
+    body = kpi.json()
+    assert body["event_type"] is None
+    windows = {int(item["days"]): item for item in body["windows"]}
+    assert set(windows.keys()) == {7, 30}
+
+    window_7 = windows[7]
+    assert window_7["total_deliveries"] == 2
+    assert window_7["success_count"] == 1
+    assert window_7["warning_count"] == 0
+    assert window_7["failed_count"] == 1
+    assert window_7["success_rate_percent"] == 50.0
+    channels_7 = {item["target"]: item for item in window_7["channels"]}
+    assert set(channels_7.keys()) == {"https://chan-a.example/hook"}
+    assert channels_7["https://chan-a.example/hook"]["total_deliveries"] == 2
+    assert channels_7["https://chan-a.example/hook"]["success_rate_percent"] == 50.0
+
+    window_30 = windows[30]
+    assert window_30["total_deliveries"] == 4
+    assert window_30["success_count"] == 2
+    assert window_30["warning_count"] == 1
+    assert window_30["failed_count"] == 1
+    assert window_30["success_rate_percent"] == 50.0
+    channels_30 = {item["target"]: item for item in window_30["channels"]}
+    assert set(channels_30.keys()) == {"https://chan-a.example/hook", "https://chan-b.example/hook"}
+    assert channels_30["https://chan-a.example/hook"]["total_deliveries"] == 2
+    assert channels_30["https://chan-b.example/hook"]["total_deliveries"] == 2
+
+    filtered = app_client.get(
+        "/api/ops/alerts/kpi/channels?event_type=ops_daily_check",
+        headers=_owner_headers(),
+    )
+    assert filtered.status_code == 200
+    filtered_body = filtered.json()
+    filtered_windows = {int(item["days"]): item for item in filtered_body["windows"]}
+    assert filtered_windows[7]["total_deliveries"] == 0
+    assert filtered_windows[30]["total_deliveries"] == 2
+    assert filtered_windows[30]["warning_count"] == 1
+    assert filtered_windows[30]["success_count"] == 1
 
 
 def test_sla_simulator_what_if(app_client: TestClient) -> None:
