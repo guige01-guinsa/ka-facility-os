@@ -60,6 +60,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     root_html = app_client.get("/", headers={"Accept": "text/html"})
     assert root_html.status_code == 200
     assert root_html.headers["content-type"].startswith("text/html")
+    assert root_html.headers.get("x-content-type-options") == "nosniff"
+    assert root_html.headers.get("x-frame-options") == "DENY"
+    assert "default-src 'self'" in root_html.headers.get("content-security-policy", "")
     assert "시설관리시스템 메인" in root_html.text
     assert "운영요약" in root_html.text
     assert "작업지시" in root_html.text
@@ -225,6 +228,8 @@ def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())
     assert me.status_code == 200
     assert me.json()["role"] == "owner"
+    assert me.headers.get("cache-control") == "no-store"
+    assert me.headers.get("pragma") == "no-cache"
 
     created = app_client.post(
         "/api/admin/users",
@@ -612,6 +617,14 @@ def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
     assert updated_body["status"] == "done"
     assert updated_body["completion_checked"] is True
     assert updated_body["completed_at"] is not None
+
+    blocked_upload = app_client.post(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
+        headers=manager_headers,
+        data={"note": "blocked content type"},
+        files={"file": ("poc.html", b"<script>alert(1)</script>", "text/html")},
+    )
+    assert blocked_upload.status_code == 415
 
     uploaded = app_client.post(
         f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",

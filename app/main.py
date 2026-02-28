@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import secrets
+import string
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -106,6 +107,40 @@ ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
 ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
+EVIDENCE_ALLOWED_CONTENT_TYPES = {
+    value.strip().lower()
+    for value in getenv(
+        "EVIDENCE_ALLOWED_CONTENT_TYPES",
+        ",".join(
+            [
+                "application/pdf",
+                "text/plain",
+                "text/csv",
+                "application/json",
+                "image/png",
+                "image/jpeg",
+                "image/webp",
+            ]
+        ),
+    ).split(",")
+    if value.strip()
+}
+SECURITY_HEADERS_BASE: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+HTML_CSP_POLICY = (
+    "default-src 'self'; "
+    "img-src 'self' data:; "
+    "style-src 'self' 'unsafe-inline'; "
+    "script-src 'self' 'unsafe-inline'; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
 
 ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "owner": {"*"},
@@ -1305,7 +1340,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.29.0",
+    version="0.30.0",
     lifespan=app_lifespan,
 )
 
@@ -1447,6 +1482,28 @@ async def browser_json_to_html_middleware(request: Request, call_next: Callable[
         raw_href = f"{request.url.path}?{request.url.query}&raw=1"
 
     return HTMLResponse(_build_browser_json_view_html(path_label, raw_href, response.status_code, payload), status_code=response.status_code)
+
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
+    response = await call_next(request)
+
+    for key, value in SECURITY_HEADERS_BASE.items():
+        response.headers.setdefault(key, value)
+
+    if ENV_NAME == "production" or request.url.scheme.lower() == "https":
+        response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
+
+    if request.headers.get("x-admin-token", "").strip():
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers.setdefault("Pragma", "no-cache")
+
+    content_type = response.headers.get("content-type", "").lower()
+    path = request.url.path
+    if content_type.startswith("text/html") and (path == "/" or path.startswith("/web/") or path.startswith("/api/")):
+        response.headers.setdefault("Content-Security-Policy", HTML_CSP_POLICY)
+
+    return response
 
 
 def _permission_text_to_list(value: Any) -> list[str]:
@@ -1664,6 +1721,32 @@ def _as_optional_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     return _as_datetime(value)
+
+
+def _safe_download_filename(raw_value: str, *, fallback: str = "download.bin", max_length: int = 120) -> str:
+    allowed = set(string.ascii_letters + string.digits + "._-")
+    candidate = (raw_value or "").replace("\x00", "").strip()
+    sanitized_chars: list[str] = []
+    for ch in candidate:
+        if ch in allowed:
+            sanitized_chars.append(ch)
+        elif ch in {" ", "\t"}:
+            sanitized_chars.append("_")
+    sanitized = "".join(sanitized_chars).strip("._")
+    if not sanitized:
+        sanitized = fallback
+    if max_length > 0 and len(sanitized) > max_length:
+        sanitized = sanitized[:max_length]
+    return sanitized or fallback
+
+
+def _is_allowed_evidence_content_type(content_type: str) -> bool:
+    normalized = content_type.strip().lower()
+    if not normalized:
+        return False
+    if "*" in EVIDENCE_ALLOWED_CONTENT_TYPES:
+        return True
+    return normalized in EVIDENCE_ALLOWED_CONTENT_TYPES
 
 
 def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
@@ -7810,11 +7893,18 @@ async def upload_w02_tracker_evidence(
     note: str = Form(default=""),
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
 ) -> W02EvidenceRead:
-    file_name = (file.filename or "").strip() or "evidence.bin"
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
     content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
-    content_type = content_type[:120]
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported evidence content type",
+        )
     file_bytes = await file.read(W02_EVIDENCE_MAX_BYTES + 1)
     await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
     if len(file_bytes) > W02_EVIDENCE_MAX_BYTES:
         raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W02_EVIDENCE_MAX_BYTES} bytes)")
 
@@ -7833,7 +7923,7 @@ async def upload_w02_tracker_evidence(
             insert(adoption_w02_evidence_files).values(
                 tracker_item_id=tracker_item_id,
                 site=site,
-                file_name=file_name[:255],
+                file_name=file_name,
                 content_type=content_type,
                 file_size=len(file_bytes),
                 file_bytes=file_bytes,
@@ -7911,7 +8001,7 @@ def download_w02_tracker_evidence(
     site = str(row["site"])
     _require_site_access(principal, site)
     content_type = str(row.get("content_type") or "application/octet-stream")
-    file_name = str(row.get("file_name") or "evidence.bin").replace("\"", "")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
     data = row.get("file_bytes") or b""
     if not isinstance(data, (bytes, bytearray)):
         data = bytes(data)
@@ -7926,7 +8016,10 @@ def download_w02_tracker_evidence(
     return Response(
         content=data,
         media_type=content_type,
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+        },
     )
 
 

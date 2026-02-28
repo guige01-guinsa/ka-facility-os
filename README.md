@@ -173,6 +173,13 @@ Optional alert webhook env:
 - `ALERT_WEBHOOK_URLS` (comma-separated, multi-channel broadcast)
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
+- `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
+
+Security hardening:
+- common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
+- HTML endpoints (`/`, `/web/*`, `/api/*` browser view) include CSP header
+- authenticated API responses include `Cache-Control: no-store`
+- W02 evidence upload blocks unsupported content types and empty files, max size 5MB
 
 Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
