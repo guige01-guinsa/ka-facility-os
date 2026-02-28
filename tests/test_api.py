@@ -49,6 +49,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert root_json.json()["service"] == "ka-facility-os"
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
+    assert "public_adoption_w02_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -65,6 +66,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "월간리포트" in root_html.text
     assert "사용자 정착 계획" in root_html.text
     assert "W01 Role Workflow Lock Matrix" in root_html.text
+    assert "W02 Scheduled SOP and Sandbox" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
     assert "요약 새로고침" in root_html.text
 
@@ -79,6 +81,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_portal_html"] == "/web/adoption"
     assert service_info.json()["facility_console_html"] == "/web/console"
     assert "public_post_mvp_release_ics_api" in service_info.json()
+    assert service_info.json()["public_adoption_w02_api"] == "/api/public/adoption-plan/w02"
+    assert service_info.json()["public_adoption_w02_checklist_csv_api"] == "/api/public/adoption-plan/w02/checklist.csv"
+    assert service_info.json()["public_adoption_w02_schedule_ics_api"] == "/api/public/adoption-plan/w02/schedule.ics"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -93,6 +98,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "KA Facility OS" in adoption_html.text
     assert "User Adoption Plan" in adoption_html.text
     assert "Promotion + Education + Fun Kit" in adoption_html.text
+    assert "W02 Scheduled SOP and Sandbox" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
     assert "요약 모드 (핵심 5줄): OFF" in adoption_html.text
@@ -122,6 +128,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["weekly_execution"]) == 12
     assert body["workflow_lock_matrix"]["states"] == ["DRAFT", "REVIEW", "APPROVED", "LOCKED"]
     assert len(body["workflow_lock_matrix"]["rows"]) == 4
+    assert body["w02_sop_sandbox"]["timeline"]["week"] == 2
+    assert len(body["w02_sop_sandbox"]["sop_runbooks"]) >= 5
+    assert len(body["w02_sop_sandbox"]["sandbox_scenarios"]) >= 3
+    assert len(body["w02_sop_sandbox"]["scheduled_events"]) >= 5
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -145,6 +155,27 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert schedule_ics.headers["content-type"].startswith("text/calendar")
     assert "BEGIN:VCALENDAR" in schedule_ics.text
     assert "SUMMARY:[W01] Kickoff - Role workflow lock" in schedule_ics.text
+
+    w02 = app_client.get("/api/public/adoption-plan/w02")
+    assert w02.status_code == 200
+    w02_body = w02.json()
+    assert w02_body["public"] is True
+    assert w02_body["timeline"]["focus"] == "SOP and sandbox"
+    assert len(w02_body["sop_runbooks"]) >= 5
+    assert len(w02_body["sandbox_scenarios"]) >= 3
+    assert len(w02_body["scheduled_events"]) >= 5
+
+    w02_csv = app_client.get("/api/public/adoption-plan/w02/checklist.csv")
+    assert w02_csv.status_code == 200
+    assert w02_csv.headers["content-type"].startswith("text/csv")
+    assert "section,id,name,owner,target_or_module,trigger_or_objective,checkpoints_or_pass_criteria,duration_min,definition_of_done_or_output" in w02_csv.text
+    assert "sop_runbook,SOP-INS-01" in w02_csv.text
+
+    w02_ics = app_client.get("/api/public/adoption-plan/w02/schedule.ics")
+    assert w02_ics.status_code == 200
+    assert w02_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w02_ics.text
+    assert "SUMMARY:[W02] Kickoff - SOP owner assignment" in w02_ics.text
 
     post_mvp = app_client.get("/api/public/post-mvp")
     assert post_mvp.status_code == 200

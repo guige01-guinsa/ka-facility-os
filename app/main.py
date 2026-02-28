@@ -594,6 +594,175 @@ ADOPTION_WORKFLOW_LOCK_MATRIX: dict[str, Any] = {
     ],
 }
 
+ADOPTION_W02_SOP_RUNBOOKS: list[dict[str, Any]] = [
+    {
+        "id": "SOP-INS-01",
+        "name": "Inspection one-page SOP",
+        "target_roles": ["Operator", "Manager"],
+        "owner": "Ops PM",
+        "trigger": "Before daily inspection shift",
+        "checkpoints": [
+            "Create inspection with required fields",
+            "Confirm risk flags and print view",
+            "Validate audit trail and site scope",
+        ],
+        "definition_of_done": "3 consecutive dry-runs without validation errors",
+    },
+    {
+        "id": "SOP-WO-01",
+        "name": "Work-order lifecycle SOP",
+        "target_roles": ["Operator", "Manager"],
+        "owner": "Ops Lead",
+        "trigger": "When work-order is created",
+        "checkpoints": [
+            "open -> acked -> completed transition",
+            "cancel/reopen exception path verified",
+            "event timeline includes actor/note",
+        ],
+        "definition_of_done": "All lifecycle paths verified in sandbox",
+    },
+    {
+        "id": "SOP-SLA-01",
+        "name": "SLA escalation and retry SOP",
+        "target_roles": ["Manager", "Owner"],
+        "owner": "QA Lead",
+        "trigger": "15-minute escalation cadence",
+        "checkpoints": [
+            "Escalation batch run result reviewed",
+            "Failed deliveries list triaged",
+            "Retry batch executed with audit evidence",
+        ],
+        "definition_of_done": "No unresolved failed alert older than 24h",
+    },
+    {
+        "id": "SOP-RPT-01",
+        "name": "Monthly report export SOP",
+        "target_roles": ["Auditor", "Owner"],
+        "owner": "Audit Lead",
+        "trigger": "Monthly close checklist",
+        "checkpoints": [
+            "Monthly summary reviewed",
+            "CSV and PDF exports generated",
+            "Export actions captured in audit logs",
+        ],
+        "definition_of_done": "Export package delivered within SLA",
+    },
+    {
+        "id": "SOP-RBAC-01",
+        "name": "RBAC token hygiene SOP",
+        "target_roles": ["Owner", "Admin"],
+        "owner": "Security Admin",
+        "trigger": "Weekly governance review",
+        "checkpoints": [
+            "Role and site scope verification",
+            "Unused token revoke check",
+            "workflow_locks admin override review",
+        ],
+        "definition_of_done": "High-risk permission drift resolved <= 48h",
+    },
+]
+
+ADOPTION_W02_SANDBOX_SCENARIOS: list[dict[str, Any]] = [
+    {
+        "id": "SX-INS-01",
+        "module": "Inspection",
+        "objective": "Create high-risk inspection and confirm risk detection path.",
+        "api_flow": [
+            "POST /api/inspections",
+            "GET /api/inspections",
+            "GET /inspections/{id}/print",
+        ],
+        "pass_criteria": [
+            "risk_level is warning or danger",
+            "risk_flags includes threshold breach",
+            "print endpoint renders without error",
+        ],
+        "duration_min": 20,
+    },
+    {
+        "id": "SX-WO-01",
+        "module": "Work-order + SLA",
+        "objective": "Validate work-order state transitions and SLA escalation.",
+        "api_flow": [
+            "POST /api/work-orders",
+            "PATCH /api/work-orders/{id}/ack",
+            "POST /api/work-orders/escalations/run",
+            "GET /api/work-orders/{id}/events",
+        ],
+        "pass_criteria": [
+            "acked transition succeeds",
+            "escalation result includes target id",
+            "timeline includes status_changed event",
+        ],
+        "duration_min": 30,
+    },
+    {
+        "id": "SX-RPT-01",
+        "module": "Reporting + Audit",
+        "objective": "Generate monthly report package and verify audit evidence.",
+        "api_flow": [
+            "GET /api/reports/monthly",
+            "GET /api/reports/monthly/csv",
+            "GET /api/reports/monthly/pdf",
+            "GET /api/admin/audit-logs",
+        ],
+        "pass_criteria": [
+            "monthly summary returns expected totals",
+            "csv/pdf downloads succeed",
+            "audit logs contain export actions",
+        ],
+        "duration_min": 25,
+    },
+]
+
+ADOPTION_W02_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W02-E01",
+        "date": "2026-03-09",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "title": "Kickoff - SOP owner assignment",
+        "owner": "Ops PM + QA",
+        "output": "SOP owner table v1",
+    },
+    {
+        "id": "W02-E02",
+        "date": "2026-03-10",
+        "start_time": "14:00",
+        "end_time": "15:00",
+        "title": "Inspection sandbox drill",
+        "owner": "Operator Champion",
+        "output": "SX-INS-01 pass report",
+    },
+    {
+        "id": "W02-E03",
+        "date": "2026-03-11",
+        "start_time": "14:00",
+        "end_time": "15:30",
+        "title": "Work-order/SLA sandbox drill",
+        "owner": "Ops Lead",
+        "output": "SX-WO-01 evidence pack",
+    },
+    {
+        "id": "W02-E04",
+        "date": "2026-03-12",
+        "start_time": "16:00",
+        "end_time": "17:00",
+        "title": "Reporting and audit sandbox drill",
+        "owner": "Audit Lead",
+        "output": "SX-RPT-01 export proof",
+    },
+    {
+        "id": "W02-E05",
+        "date": "2026-03-13",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W02 sign-off review",
+        "owner": "Owner + PM",
+        "output": "W02 go/no-go decision",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -1112,7 +1281,7 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.27.0",
+    version="0.28.0",
     lifespan=app_lifespan,
 )
 
@@ -3593,6 +3762,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_schedule_csv_api": "/api/public/adoption-plan/schedule.csv",
         "public_adoption_schedule_ics_api": "/api/public/adoption-plan/schedule.ics",
         "public_adoption_campaign_api": "/api/public/adoption-plan/campaign",
+        "public_adoption_w02_api": "/api/public/adoption-plan/w02",
+        "public_adoption_w02_checklist_csv_api": "/api/public/adoption-plan/w02/checklist.csv",
+        "public_adoption_w02_schedule_ics_api": "/api/public/adoption-plan/w02/schedule.ics",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -3631,6 +3803,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         },
         "weekly_execution": ADOPTION_WEEKLY_EXECUTION,
         "workflow_lock_matrix": ADOPTION_WORKFLOW_LOCK_MATRIX,
+        "w02_sop_sandbox": _adoption_w02_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -3647,10 +3820,152 @@ def _adoption_plan_payload() -> dict[str, Any]:
             "downloads": {
                 "schedule_csv": "/api/public/adoption-plan/schedule.csv",
                 "schedule_ics": "/api/public/adoption-plan/schedule.ics",
+                "w02_json": "/api/public/adoption-plan/w02",
+                "w02_checklist_csv": "/api/public/adoption-plan/w02/checklist.csv",
+                "w02_schedule_ics": "/api/public/adoption-plan/w02/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
     }
+
+
+def _adoption_w02_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 2),
+        None,
+    )
+    if week_item is None:
+        timeline = {"week": 2, "start_date": "", "end_date": "", "phase": "Preparation", "focus": "SOP and sandbox"}
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 2)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W02 Scheduled SOP and Sandbox Pack",
+        "public": True,
+        "timeline": timeline,
+        "sop_runbooks": ADOPTION_W02_SOP_RUNBOOKS,
+        "sandbox_scenarios": ADOPTION_W02_SANDBOX_SCENARIOS,
+        "scheduled_events": ADOPTION_W02_SCHEDULED_EVENTS,
+        "downloads": {
+            "json": "/api/public/adoption-plan/w02",
+            "checklist_csv": "/api/public/adoption-plan/w02/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w02/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w02_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "name",
+            "owner",
+            "target_or_module",
+            "trigger_or_objective",
+            "checkpoints_or_pass_criteria",
+            "duration_min",
+            "definition_of_done_or_output",
+        ]
+    )
+    for item in payload.get("sop_runbooks", []):
+        writer.writerow(
+            [
+                "sop_runbook",
+                item.get("id", ""),
+                item.get("name", ""),
+                item.get("owner", ""),
+                ", ".join(str(x) for x in item.get("target_roles", [])),
+                item.get("trigger", ""),
+                " | ".join(str(x) for x in item.get("checkpoints", [])),
+                "",
+                item.get("definition_of_done", ""),
+            ]
+        )
+    for item in payload.get("sandbox_scenarios", []):
+        writer.writerow(
+            [
+                "sandbox_scenario",
+                item.get("id", ""),
+                item.get("module", ""),
+                "",
+                item.get("module", ""),
+                item.get("objective", ""),
+                " | ".join(str(x) for x in item.get("pass_criteria", [])),
+                item.get("duration_min", ""),
+                " | ".join(str(x) for x in item.get("api_flow", [])),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                item.get("title", ""),
+                item.get("owner", ""),
+                item.get("date", ""),
+                f"{item.get('start_time', '')}-{item.get('end_time', '')}",
+                "",
+                "",
+                item.get("output", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w02_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w02-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W02] {str(item.get('title', 'SOP/Sandbox Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W02 SOP Sandbox//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
 
 
 def _build_adoption_plan_schedule_csv(plan: dict[str, Any]) -> str:
@@ -3874,6 +4189,7 @@ def _build_post_mvp_release_ics(plan: dict[str, Any]) -> str:
 def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, Any]) -> str:
     training = plan.get("training_outline", [])
     kpis = plan.get("kpi_dashboard_items", [])
+    w02_pack = plan.get("w02_sop_sandbox", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -3938,6 +4254,55 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
               <td>{html.escape(str(perms.get("REVIEW", "")))}</td>
               <td>{html.escape(str(perms.get("APPROVED", "")))}</td>
               <td>{html.escape(str(perms.get("LOCKED", "")))}</td>
+            </tr>
+            """
+        )
+
+    w02_sop_rows: list[str] = []
+    for item in w02_pack.get("sop_runbooks", []):
+        targets = ", ".join(str(x) for x in item.get("target_roles", []))
+        checkpoints = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("checkpoints", []))
+        w02_sop_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("name", "")))}</td>
+              <td>{html.escape(targets)}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("trigger", "")))}</td>
+              <td>{checkpoints}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+            </tr>
+            """
+        )
+
+    w02_sandbox_rows: list[str] = []
+    for item in w02_pack.get("sandbox_scenarios", []):
+        api_flow = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("api_flow", []))
+        pass_criteria = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("pass_criteria", []))
+        w02_sandbox_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("module", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{api_flow}</td>
+              <td>{pass_criteria}</td>
+              <td>{html.escape(str(item.get("duration_min", "")))}</td>
+            </tr>
+            """
+        )
+
+    w02_schedule_rows: list[str] = []
+    for item in w02_pack.get("scheduled_events", []):
+        w02_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
             </tr>
             """
         )
@@ -4218,6 +4583,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         f"시설관리 웹 모듈 {len(facility_modules)}개를 메인 허브에서 즉시 연결.",
         f"교육 모듈 {len(training)}개: 역할별 표준 학습경로와 실습 중심 운영.",
         f"KPI {len(kpis)}개 주간 추적, 다음 리뷰일 {plan.get('schedule_management', {}).get('next_review_date', '')}.",
+        f"W02 SOP {len(w02_pack.get('sop_runbooks', []))}개 + Sandbox {len(w02_pack.get('sandbox_scenarios', []))}개 + 일정 {len(w02_pack.get('scheduled_events', []))}건 공개.",
         "일정 파일(CSV/ICS) + 캠페인 킷 + Post-MVP 실행팩으로 즉시 실행 가능.",
     ]
     summary_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in summary_lines)
@@ -4583,6 +4949,9 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/campaign">Campaign API</a>
         <a href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
         <a href="/api/public/adoption-plan/schedule.ics">Calendar ICS</a>
+        <a href="/api/public/adoption-plan/w02">W02 JSON</a>
+        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
       </div>
@@ -4621,6 +4990,67 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       </div>
       <div class="links" style="margin-top: 10px;">
         <a href="/api/workflow-locks">Workflow Lock API</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W02 Scheduled SOP and Sandbox</h2>
+      <p class="sub">SOP 표준화와 샌드박스 실습을 주간 일정으로 고정해 즉시 실행 가능 상태로 만듭니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w02">W02 JSON</a>
+        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>SOP ID</th>
+              <th>Name</th>
+              <th>Target Roles</th>
+              <th>Owner</th>
+              <th>Trigger</th>
+              <th>Checkpoints</th>
+              <th>Definition of Done</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w02_sop_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Scenario ID</th>
+              <th>Module</th>
+              <th>Objective</th>
+              <th>API Flow</th>
+              <th>Pass Criteria</th>
+              <th>Duration(min)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w02_sandbox_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w02_schedule_rows)}
+          </tbody>
+        </table>
       </div>
     </section>
 
@@ -6052,6 +6482,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="adoptionWorkflowMatrix" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W02 Scheduled SOP and Sandbox</h3>
+            <div id="adoptionW02Top" class="cards"></div>
+            <div id="adoptionW02Sop" class="empty">데이터 없음</div>
+            <div id="adoptionW02Sandbox" class="empty">데이터 없음</div>
+            <div id="adoptionW02Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW02Json" href="/api/public/adoption-plan/w02">W02 JSON</a>
+              <a id="adoptW02ChecklistCsv" href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
+              <a id="adoptW02ScheduleIcs" href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+            </div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -6364,6 +6806,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
         const matrix = document.getElementById("adoptionWorkflowMatrix");
+        const w02Top = document.getElementById("adoptionW02Top");
+        const w02Sop = document.getElementById("adoptionW02Sop");
+        const w02Sandbox = document.getElementById("adoptionW02Sandbox");
+        const w02Schedule = document.getElementById("adoptionW02Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -6404,6 +6850,62 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w02 = data.w02_sop_sandbox || {{}};
+          const w02TopItems = [
+            ["Week", "W" + String(w02.timeline?.week || 2).padStart(2, "0")],
+            ["Focus", w02.timeline?.focus || "SOP and sandbox"],
+            ["SOP Count", (w02.sop_runbooks || []).length],
+            ["Sandbox Count", (w02.sandbox_scenarios || []).length],
+            ["Sessions", (w02.scheduled_events || []).length],
+            ["Metric", w02.timeline?.success_metric || ""]
+          ];
+          w02Top.innerHTML = w02TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w02Sop.innerHTML = renderTable(
+            w02.sop_runbooks || [],
+            [
+              {{ key: "id", label: "SOP ID" }},
+              {{ key: "name", label: "Name" }},
+              {{ key: "target_roles", label: "Target Roles", render: (v) => Array.isArray(v) ? v.join(", ") : "" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }}
+            ]
+          );
+          w02Sandbox.innerHTML = renderTable(
+            (w02.sandbox_scenarios || []).map((row) => ({{
+              id: row.id || "",
+              module: row.module || "",
+              objective: row.objective || "",
+              duration_min: row.duration_min ?? "",
+              pass_criteria: Array.isArray(row.pass_criteria) ? row.pass_criteria.join(" | ") : "",
+            }})),
+            [
+              {{ key: "id", label: "Scenario ID" }},
+              {{ key: "module", label: "Module" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "duration_min", label: "Duration(min)" }},
+              {{ key: "pass_criteria", label: "Pass Criteria" }}
+            ]
+          );
+          w02Schedule.innerHTML = renderTable(
+            (w02.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }}
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -6436,6 +6938,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           meta.textContent = "실패: " + err.message;
           top.innerHTML = "";
           matrix.innerHTML = renderEmpty(err.message);
+          w02Top.innerHTML = "";
+          w02Sop.innerHTML = renderEmpty(err.message);
+          w02Sandbox.innerHTML = renderEmpty(err.message);
+          w02Schedule.innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -6551,6 +7057,11 @@ def get_public_adoption_campaign() -> dict[str, Any]:
     }
 
 
+@app.get("/api/public/adoption-plan/w02")
+def get_public_adoption_w02() -> dict[str, Any]:
+    return _adoption_w02_payload()
+
+
 @app.get("/api/public/modules", response_model=None)
 def get_public_modules(request: Request) -> Any:
     payload = _facility_modules_payload()
@@ -6577,6 +7088,30 @@ def get_public_adoption_plan_schedule_ics() -> Response:
     plan = _adoption_plan_payload()
     ics_text = _build_adoption_plan_schedule_ics(plan)
     file_name = f"ka-facility-os-adoption-plan-{ADOPTION_PLAN_START.isoformat()}-{ADOPTION_PLAN_END.isoformat()}.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w02/checklist.csv")
+def get_public_adoption_w02_checklist_csv() -> Response:
+    payload = _adoption_w02_payload()
+    csv_text = _build_adoption_w02_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w02-sop-sandbox-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w02/schedule.ics")
+def get_public_adoption_w02_schedule_ics() -> Response:
+    payload = _adoption_w02_payload()
+    ics_text = _build_adoption_w02_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w02-sop-sandbox.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",

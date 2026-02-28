@@ -29,6 +29,9 @@ Open:
   - `GET /api/public/adoption-plan/campaign` (public promotion/education/fun kit)
   - `GET /api/public/adoption-plan/schedule.csv` (weekly execution schedule export)
   - `GET /api/public/adoption-plan/schedule.ics` (calendar import for schedule management)
+  - `GET /api/public/adoption-plan/w02` (W02 Scheduled SOP + sandbox execution pack)
+  - `GET /api/public/adoption-plan/w02/checklist.csv` (W02 SOP/sandbox checklist export)
+  - `GET /api/public/adoption-plan/w02/schedule.ics` (W02 calendar import)
   - `GET /api/public/post-mvp` (post-MVP roadmap/backlog/release/KPI/risk plan)
   - `GET /api/public/post-mvp/backlog.csv` (execution backlog export)
   - `GET /api/public/post-mvp/releases.ics` (release calendar import)
@@ -174,6 +177,9 @@ Job monitoring:
 - `GET /web/console`
 - `GET /api/public/adoption-plan/schedule.csv`
 - `GET /api/public/adoption-plan/schedule.ics`
+- `GET /api/public/adoption-plan/w02`
+- `GET /api/public/adoption-plan/w02/checklist.csv`
+- `GET /api/public/adoption-plan/w02/schedule.ics`
 - `GET /api/public/post-mvp`
 - `GET /api/public/post-mvp/backlog.csv`
 - `GET /api/public/post-mvp/releases.ics`
