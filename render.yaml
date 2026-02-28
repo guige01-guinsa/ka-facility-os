@@ -25,6 +25,8 @@ services:
         value: "5"
       - key: ALERT_WEBHOOK_RETRIES
         value: "3"
+      - key: OPS_DAILY_CHECK_ALERT_LEVEL
+        value: critical
       - key: API_RATE_LIMIT_STORE
         value: auto
       - key: API_RATE_LIMIT_REDIS_URL
@@ -131,5 +133,15 @@ services:
         value: auto
       - key: API_RATE_LIMIT_REDIS_URL
         sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URLS
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
+      - key: OPS_DAILY_CHECK_ALERT_LEVEL
+        value: critical
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false

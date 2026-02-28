@@ -187,6 +187,7 @@ Optional alert webhook env:
 - `ALERT_WEBHOOK_URLS` (comma-separated, multi-channel broadcast)
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
+- `OPS_DAILY_CHECK_ALERT_LEVEL` (`off|critical|warning|always`, default `critical`)
 - `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
 - `API_RATE_LIMIT_ENABLED` (default `1`)
 - `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
@@ -248,6 +249,7 @@ Job monitoring:
 - `GET /api/public/post-mvp/kpi-dashboard`
 - `GET /api/public/post-mvp/risks`
 - `GET /api/ops/alerts/deliveries?status=failed`
+- `GET /api/ops/alerts/deliveries?event_type=ops_daily_check`
 - `POST /api/ops/alerts/retries/run` (batch retry)
 - `POST /api/ops/sla/simulate` (what-if simulator)
 

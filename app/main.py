@@ -129,6 +129,7 @@ ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
 ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
+OPS_DAILY_CHECK_ALERT_LEVEL = getenv("OPS_DAILY_CHECK_ALERT_LEVEL", "critical").strip().lower() or "critical"
 API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
 API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
@@ -3070,6 +3071,19 @@ def _configured_alert_targets() -> list[str]:
     return deduped
 
 
+def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"off", "none", "disabled"}:
+        return "off"
+    if normalized in {"warning", "warn"}:
+        return "warning"
+    if normalized in {"critical", "crit"}:
+        return "critical"
+    if normalized in {"always", "all", "ok"}:
+        return "always"
+    return "critical"
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -3104,27 +3118,15 @@ def _post_json_with_retries(
     return False, err
 
 
-def _dispatch_sla_alert(
+def _dispatch_alert_event(
     *,
-    site: str | None,
-    checked_at: datetime,
-    escalated_count: int,
-    work_order_ids: list[int],
+    event_type: str,
+    payload: dict[str, Any],
 ) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
-    if escalated_count <= 0:
-        return False, None, []
-
     targets = _configured_alert_targets()
     if not targets:
         return False, None, []
 
-    payload = {
-        "event": "sla_escalation",
-        "site": site or "ALL",
-        "checked_at": checked_at.isoformat(),
-        "escalated_count": escalated_count,
-        "work_order_ids": work_order_ids,
-    }
     results: list[SlaAlertChannelResult] = []
     success_count = 0
     failed_count = 0
@@ -3137,8 +3139,8 @@ def _dispatch_sla_alert(
             timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
         )
         delivery_status = "success" if ok and err is None else ("warning" if ok else "failed")
-        delivery_id = _write_alert_delivery(
-            event_type="sla_escalation",
+        _write_alert_delivery(
+            event_type=event_type,
             target=target,
             status=delivery_status,
             error=err,
@@ -3155,6 +3157,26 @@ def _dispatch_sla_alert(
     if success_count > 0:
         return True, f"{failed_count}/{len(results)} alert channels failed", results
     return False, "all alert channels failed", results
+
+
+def _dispatch_sla_alert(
+    *,
+    site: str | None,
+    checked_at: datetime,
+    escalated_count: int,
+    work_order_ids: list[int],
+) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
+    if escalated_count <= 0:
+        return False, None, []
+
+    payload = {
+        "event": "sla_escalation",
+        "site": site or "ALL",
+        "checked_at": checked_at.isoformat(),
+        "escalated_count": escalated_count,
+        "work_order_ids": work_order_ids,
+    }
+    return _dispatch_alert_event(event_type="sla_escalation", payload=payload)
 
 
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
@@ -3739,12 +3761,47 @@ def run_ops_daily_check_job(
     warning_count = sum(1 for item in checks if str(item.get("status")) == "warning")
     critical_count = sum(1 for item in checks if str(item.get("status")) == "critical")
     overall_status = str(checks_snapshot.get("overall_status") or "ok")
+
+    alert_level = _normalize_ops_daily_check_alert_level(OPS_DAILY_CHECK_ALERT_LEVEL)
+    alert_attempted = False
+    alert_dispatched = False
+    alert_error: str | None = None
+    alert_channels: list[SlaAlertChannelResult] = []
+    should_alert = (
+        alert_level == "always"
+        or (alert_level == "warning" and overall_status in {"warning", "critical"})
+        or (alert_level == "critical" and overall_status == "critical")
+    )
+    if should_alert:
+        payload = {
+            "event": "ops_daily_check",
+            "checked_at": started_at.isoformat(),
+            "overall_status": overall_status,
+            "check_count": len(checks),
+            "warning_count": warning_count,
+            "critical_count": critical_count,
+            "checks": checks,
+            "security_posture": {
+                "rate_limit": posture_snapshot.get("rate_limit"),
+                "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
+                "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
+                "token_policy": posture_snapshot.get("token_policy"),
+            },
+        }
+        alert_attempted = True
+        alert_dispatched, alert_error, alert_channels = _dispatch_alert_event(
+            event_type="ops_daily_check",
+            payload=payload,
+        )
+
     if overall_status == "critical":
         status = "critical"
     elif overall_status == "warning":
         status = "warning"
     else:
         status = "success"
+    if alert_attempted and alert_error is not None and status == "success":
+        status = "warning"
 
     finished_at = datetime.now(timezone.utc)
     run_id = _write_job_run(
@@ -3759,6 +3816,11 @@ def run_ops_daily_check_job(
             "warning_count": warning_count,
             "critical_count": critical_count,
             "checks": checks,
+            "alert_level": alert_level,
+            "alert_attempted": alert_attempted,
+            "alert_dispatched": alert_dispatched,
+            "alert_error": alert_error,
+            "alert_channels": [channel.model_dump() for channel in alert_channels],
             "security_posture": {
                 "rate_limit": posture_snapshot.get("rate_limit"),
                 "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
@@ -3778,6 +3840,11 @@ def run_ops_daily_check_job(
         "warning_count": warning_count,
         "critical_count": critical_count,
         "checks": checks,
+        "alert_level": alert_level,
+        "alert_attempted": alert_attempted,
+        "alert_dispatched": alert_dispatched,
+        "alert_error": alert_error,
+        "alert_channels": [channel.model_dump() for channel in alert_channels],
         "security_posture": {
             "rate_limit": posture_snapshot.get("rate_limit"),
             "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
@@ -9542,11 +9609,16 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     generated_at = now or datetime.now(timezone.utc)
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
+    alert_targets = _configured_alert_targets()
     return {
         "generated_at": generated_at.isoformat(),
         "env": ENV_NAME,
         "rate_limit": rate_limit_snapshot,
         "audit_archive_signing": signing_snapshot,
+        "alerting": {
+            "webhook_target_count": len(alert_targets),
+            "ops_daily_check_alert_level": _normalize_ops_daily_check_alert_level(OPS_DAILY_CHECK_ALERT_LEVEL),
+        },
         "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
         "token_policy": {
             "require_expiry": ADMIN_TOKEN_REQUIRE_EXPIRY,
@@ -9608,6 +9680,9 @@ def run_ops_runbook_checks(
             "check_count": result.get("check_count"),
             "warning_count": result.get("warning_count"),
             "critical_count": result.get("critical_count"),
+            "alert_attempted": result.get("alert_attempted"),
+            "alert_dispatched": result.get("alert_dispatched"),
+            "alert_error": result.get("alert_error"),
         },
     )
     return result
@@ -9656,6 +9731,11 @@ def get_ops_runbook_checks_latest(
         "check_count": check_count,
         "warning_count": warning_count,
         "critical_count": critical_count,
+        "alert_level": detail.get("alert_level"),
+        "alert_attempted": bool(detail.get("alert_attempted", False)),
+        "alert_dispatched": bool(detail.get("alert_dispatched", False)),
+        "alert_error": detail.get("alert_error"),
+        "alert_channels": detail.get("alert_channels", []),
         "security_posture": detail.get("security_posture", {}),
     }
     if include_checks:
@@ -9694,6 +9774,8 @@ def get_ops_security_posture(
             "audit_signing_enabled": signing_snapshot["enabled"],
             "audit_signing_status": signing_snapshot["status"],
             "evidence_storage_backend": snapshot["evidence_storage_backend"],
+            "ops_daily_check_alert_level": snapshot.get("alerting", {}).get("ops_daily_check_alert_level"),
+            "alert_webhook_target_count": snapshot.get("alerting", {}).get("webhook_target_count"),
         },
     )
     return snapshot

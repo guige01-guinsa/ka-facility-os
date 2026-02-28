@@ -1068,6 +1068,8 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["rate_limit"]["status"] == "ok"
     assert body["audit_archive_signing"]["enabled"] is True
     assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
+    assert body["alerting"]["ops_daily_check_alert_level"] == "critical"
+    assert isinstance(body["alerting"]["webhook_target_count"], int)
     assert body["token_policy"]["max_ttl_days"] == 30
 
 
@@ -1082,6 +1084,10 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert body["overall_status"] in {"ok", "warning", "critical"}
     assert body["check_count"] >= 4
     assert "security_posture" in body
+    assert body["alert_level"] in {"off", "warning", "critical", "always"}
+    assert "alert_attempted" in body
+    assert "alert_dispatched" in body
+    assert "alert_channels" in body
     if body["run_id"] is not None:
         assert body["run_id"] > 0
 
@@ -1096,6 +1102,9 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert latest_body["check_count"] >= 4
     assert isinstance(latest_body["checks"], list)
     assert "security_posture" in latest_body
+    assert "alert_attempted" in latest_body
+    assert "alert_dispatched" in latest_body
+    assert isinstance(latest_body["alert_channels"], list)
 
     latest_without_checks = app_client.get(
         "/api/ops/runbook/checks/latest?include_checks=false",
@@ -1111,6 +1120,38 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert history.status_code == 200
     assert len(history.json()) >= 1
 
+
+def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:
+    import app.database as db_module
+    import app.main as main_module
+    from sqlalchemy import select
+
+    monkeypatch.setattr(main_module, "OPS_DAILY_CHECK_ALERT_LEVEL", "warning")
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_URL", "http://127.0.0.1:1/hook")
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_URLS", "")
+
+    run = app_client.post(
+        "/api/ops/runbook/checks/run",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    body = run.json()
+    assert body["alert_level"] == "warning"
+    assert body["overall_status"] in {"warning", "critical"}
+    assert body["alert_attempted"] is True
+    assert body["alert_dispatched"] is False
+    assert body["alert_error"] in {"all alert channels failed", "1/1 alert channels failed"}
+
+    with db_module.get_conn() as conn:
+        row = conn.execute(
+            select(db_module.alert_deliveries)
+            .where(db_module.alert_deliveries.c.event_type == "ops_daily_check")
+            .order_by(db_module.alert_deliveries.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    assert row is not None
+    assert str(row["event_type"]) == "ops_daily_check"
+    assert str(row["status"]) in {"failed", "warning", "success"}
 
 def test_work_order_workflow_transitions_and_events(app_client: TestClient) -> None:
     created = app_client.post(
