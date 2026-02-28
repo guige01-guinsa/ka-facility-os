@@ -31,6 +31,16 @@ if ($AdminToken -ne "") {
   if (-not $me.role) {
     throw "Auth check failed: role missing"
   }
+
+  $integrity = Invoke-JsonGet -Uri "$BaseUrl/api/admin/audit-integrity" -Headers $headers
+  if (-not $integrity.chain.chain_ok) {
+    throw "Audit integrity check failed: hash chain mismatch"
+  }
+
+  $runbook = Invoke-JsonGet -Uri "$BaseUrl/api/ops/runbook/checks" -Headers $headers
+  if ($runbook.overall_status -eq "critical") {
+    throw "Runbook check failed: overall_status=critical"
+  }
 }
 
 Write-Output "SMOKE_OK"

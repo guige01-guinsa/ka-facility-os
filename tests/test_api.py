@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 @pytest.fixture()
 def app_client(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
+    evidence_path = tmp_path / "evidence"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
@@ -20,9 +21,20 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "10000")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "10000")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_ADMIN", "10000")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_WRITE", "10000")
+    monkeypatch.setenv("API_RATE_LIMIT_STORE", "memory")
     monkeypatch.setenv("ADMIN_TOKEN_REQUIRE_EXPIRY", "1")
     monkeypatch.setenv("ADMIN_TOKEN_MAX_TTL_DAYS", "30")
     monkeypatch.setenv("ADMIN_TOKEN_ROTATE_AFTER_DAYS", "45")
+    monkeypatch.setenv("ADMIN_TOKEN_ROTATE_WARNING_DAYS", "7")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_IDLE_DAYS", "30")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_ACTIVE_PER_USER", "5")
+    monkeypatch.setenv("EVIDENCE_STORAGE_BACKEND", "fs")
+    monkeypatch.setenv("EVIDENCE_STORAGE_PATH", evidence_path.as_posix())
+    monkeypatch.setenv("EVIDENCE_SCAN_MODE", "basic")
+    monkeypatch.setenv("EVIDENCE_SCAN_BLOCK_SUSPICIOUS", "0")
+    monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_KEY", "ci-signing-key")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
 
@@ -39,6 +51,7 @@ def app_client(tmp_path, monkeypatch):
 @pytest.fixture()
 def strict_rate_limit_client(tmp_path, monkeypatch):
     db_path = tmp_path / "test_rate_limit.db"
+    evidence_path = tmp_path / "evidence_rate_limit"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
@@ -47,9 +60,20 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "3")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "3")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_ADMIN", "2")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_WRITE", "2")
+    monkeypatch.setenv("API_RATE_LIMIT_STORE", "memory")
     monkeypatch.setenv("ADMIN_TOKEN_REQUIRE_EXPIRY", "1")
     monkeypatch.setenv("ADMIN_TOKEN_MAX_TTL_DAYS", "30")
     monkeypatch.setenv("ADMIN_TOKEN_ROTATE_AFTER_DAYS", "45")
+    monkeypatch.setenv("ADMIN_TOKEN_ROTATE_WARNING_DAYS", "7")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_IDLE_DAYS", "30")
+    monkeypatch.setenv("ADMIN_TOKEN_MAX_ACTIVE_PER_USER", "5")
+    monkeypatch.setenv("EVIDENCE_STORAGE_BACKEND", "fs")
+    monkeypatch.setenv("EVIDENCE_STORAGE_PATH", evidence_path.as_posix())
+    monkeypatch.setenv("EVIDENCE_SCAN_MODE", "basic")
+    monkeypatch.setenv("EVIDENCE_SCAN_BLOCK_SUSPICIOUS", "0")
+    monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_KEY", "ci-signing-key")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
 
@@ -91,6 +115,19 @@ def test_api_rate_limit_enforced(strict_rate_limit_client: TestClient) -> None:
     assert fourth.headers.get("retry-after") is not None
     assert fourth.headers.get("x-ratelimit-limit") == "3"
     assert fourth.headers.get("x-ratelimit-remaining") == "0"
+
+
+def test_api_rate_limit_admin_policy_enforced(strict_rate_limit_client: TestClient) -> None:
+    headers = _owner_headers()
+    first = strict_rate_limit_client.get("/api/admin/users?raw=1", headers=headers)
+    second = strict_rate_limit_client.get("/api/admin/users?raw=1", headers=headers)
+    third = strict_rate_limit_client.get("/api/admin/users?raw=1", headers=headers)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert third.status_code == 429
+    assert third.headers.get("x-ratelimit-policy") == "auth-admin"
+    assert third.headers.get("x-ratelimit-limit") == "2"
 
 
 def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None:
@@ -140,6 +177,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w02_schedule_ics_api"] == "/api/public/adoption-plan/w02/schedule.ics"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
+    assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
+    assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
+    assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -322,6 +362,11 @@ def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import select, update
 
+    policy = app_client.get("/api/admin/token-policy", headers=_owner_headers())
+    assert policy.status_code == 200
+    assert policy.json()["max_ttl_days"] == 30
+    assert policy.json()["max_idle_days"] == 30
+
     created = app_client.post(
         "/api/admin/users",
         headers=_owner_headers(),
@@ -356,6 +401,8 @@ def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
 
     me = app_client.get("/api/auth/me", headers={"X-Admin-Token": token_plain})
     assert me.status_code == 200
+    assert me.json()["token_id"] == token_id
+    assert me.json()["token_must_rotate"] is False
 
     very_old = datetime.now(timezone.utc) - timedelta(days=60)
     with db_module.get_conn() as conn:
@@ -374,6 +421,48 @@ def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
         ).first()
     assert row is not None
     assert row[0] is False
+
+    issued2 = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "idle-token"},
+    )
+    assert issued2.status_code == 201
+    token2_id = issued2.json()["token_id"]
+    token2_plain = issued2.json()["token"]
+
+    stale_last_used = datetime.now(timezone.utc) - timedelta(days=40)
+    with db_module.get_conn() as conn:
+        conn.execute(
+            update(db_module.admin_tokens)
+            .where(db_module.admin_tokens.c.id == token2_id)
+            .values(last_used_at=stale_last_used)
+        )
+
+    idle_rejected = app_client.get("/api/auth/me", headers={"X-Admin-Token": token2_plain})
+    assert idle_rejected.status_code == 401
+
+    issued3 = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "rotate-me"},
+    )
+    assert issued3.status_code == 201
+    old_token_id = issued3.json()["token_id"]
+    old_token_plain = issued3.json()["token"]
+
+    rotated = app_client.post(
+        f"/api/admin/tokens/{old_token_id}/rotate",
+        headers=_owner_headers(),
+    )
+    assert rotated.status_code == 200
+    assert rotated.json()["token_id"] != old_token_id
+    assert rotated.json()["token"] != old_token_plain
+
+    old_auth = app_client.get("/api/auth/me", headers={"X-Admin-Token": old_token_plain})
+    assert old_auth.status_code == 401
+    new_auth = app_client.get("/api/auth/me", headers={"X-Admin-Token": rotated.json()["token"]})
+    assert new_auth.status_code == 200
 
 
 def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:
@@ -746,6 +835,9 @@ def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
     assert evidence["tracker_item_id"] == tracker_item_id
     assert evidence["file_name"] == "proof.txt"
     assert evidence["file_size"] == 12
+    assert evidence["storage_backend"] in {"fs", "db"}
+    assert len(evidence["sha256"]) == 64
+    assert evidence["malware_scan_status"] in {"clean", "skipped", "suspicious"}
 
     evidence_list = app_client.get(
         f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
@@ -761,6 +853,19 @@ def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
     assert downloaded.status_code == 200
     assert downloaded.headers["content-type"].startswith("text/plain")
     assert downloaded.content == b"w02 evidence"
+    assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    eicar_signature = (
+        b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$"
+        b"EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    )
+    blocked_malware = app_client.post(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
+        headers=manager_headers,
+        data={"note": "eicar"},
+        files={"file": ("eicar.txt", eicar_signature, "text/plain")},
+    )
+    assert blocked_malware.status_code == 422
 
     owner_seed_other_site = app_client.post(
         "/api/adoption/w02/tracker/bootstrap",
@@ -808,6 +913,86 @@ def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
     )
     assert logs.status_code == 200
     assert len(logs.json()) >= 1
+
+
+def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import select, update
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "audit_integrity_ci",
+            "display_name": "Audit Integrity CI",
+            "role": "manager",
+            "permissions": [],
+        },
+    )
+    assert created.status_code == 201
+
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    integrity = app_client.get(
+        f"/api/admin/audit-integrity?month={month}",
+        headers=_owner_headers(),
+    )
+    assert integrity.status_code == 200
+    body = integrity.json()
+    assert body["chain"]["chain_ok"] is True
+    assert body["signature_algorithm"] in {"hmac-sha256", "unsigned"}
+    assert len(body["archive_sha256"]) == 64
+
+    archive = app_client.get(
+        f"/api/admin/audit-archive/monthly?month={month}&include_entries=1",
+        headers=_owner_headers(),
+    )
+    assert archive.status_code == 200
+    archive_body = archive.json()
+    assert archive_body["month"] == month
+    assert archive_body["entry_count"] >= 1
+    assert isinstance(archive_body["entries"], list)
+
+    archive_csv = app_client.get(
+        f"/api/admin/audit-archive/monthly/csv?month={month}",
+        headers=_owner_headers(),
+    )
+    assert archive_csv.status_code == 200
+    assert archive_csv.headers["content-type"].startswith("text/csv")
+    assert len(archive_csv.headers.get("x-audit-archive-sha256", "")) == 64
+
+    with db_module.get_conn() as conn:
+        first_row = conn.execute(
+            select(db_module.admin_audit_logs.c.id).order_by(
+                db_module.admin_audit_logs.c.created_at.asc(),
+                db_module.admin_audit_logs.c.id.asc(),
+            ).limit(1)
+        ).first()
+        assert first_row is not None
+        conn.execute(
+            update(db_module.admin_audit_logs)
+            .where(db_module.admin_audit_logs.c.id == int(first_row[0]))
+            .values(detail_json='{"tampered":true}')
+        )
+
+    tampered_integrity = app_client.get(
+        f"/api/admin/audit-integrity?month={month}",
+        headers=_owner_headers(),
+    )
+    assert tampered_integrity.status_code == 200
+    assert tampered_integrity.json()["chain"]["chain_ok"] is False
+
+
+def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
+    checks = app_client.get(
+        "/api/ops/runbook/checks",
+        headers=_owner_headers(),
+    )
+    assert checks.status_code == 200
+    body = checks.json()
+    assert body["overall_status"] in {"ok", "warning", "critical"}
+    ids = {item["id"] for item in body["checks"]}
+    assert "audit_chain_integrity" in ids
+    assert "token_expiry_pressure" in ids
 
 
 def test_work_order_workflow_transitions_and_events(app_client: TestClient) -> None:

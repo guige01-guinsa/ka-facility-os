@@ -25,6 +25,26 @@ services:
         value: "5"
       - key: ALERT_WEBHOOK_RETRIES
         value: "3"
+      - key: API_RATE_LIMIT_STORE
+        value: auto
+      - key: API_RATE_LIMIT_REDIS_URL
+        sync: false
+      - key: ADMIN_TOKEN_MAX_IDLE_DAYS
+        value: "30"
+      - key: ADMIN_TOKEN_ROTATE_WARNING_DAYS
+        value: "7"
+      - key: ADMIN_TOKEN_MAX_ACTIVE_PER_USER
+        value: "5"
+      - key: EVIDENCE_STORAGE_BACKEND
+        value: fs
+      - key: EVIDENCE_STORAGE_PATH
+        value: data/evidence-objects
+      - key: EVIDENCE_SCAN_MODE
+        value: basic
+      - key: EVIDENCE_SCAN_BLOCK_SUSPICIOUS
+        value: "false"
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false
   - type: cron
     name: ka-facility-os-sla-escalation
     runtime: python
@@ -49,6 +69,8 @@ services:
         value: "5"
       - key: ALERT_WEBHOOK_RETRIES
         value: "3"
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false
   - type: cron
     name: ka-facility-os-alert-retry
     runtime: python
@@ -69,3 +91,23 @@ services:
         value: "5"
       - key: ALERT_WEBHOOK_RETRIES
         value: "3"
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false
+  - type: cron
+    name: ka-facility-os-audit-archive
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "5 0 1 * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.monthly_audit_archive --write-file
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false

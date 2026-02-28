@@ -15,6 +15,7 @@ from datetime import date
 from datetime import datetime, timezone
 from datetime import timedelta
 from os import getenv
+from pathlib import Path
 from threading import Lock
 from typing import Annotated, Any, Callable
 from urllib import error as url_error
@@ -24,6 +25,11 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Header, Query, 
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
+
+try:
+    from redis import Redis
+except Exception:  # pragma: no cover - optional dependency
+    Redis = None  # type: ignore[assignment]
 
 from app.database import (
     DATABASE_URL,
@@ -126,10 +132,20 @@ ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
 API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
 API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
+API_RATE_LIMIT_MAX_PUBLIC_HEAVY = _env_int("API_RATE_LIMIT_MAX_PUBLIC_HEAVY", 60, min_value=1)
 API_RATE_LIMIT_MAX_AUTH = _env_int("API_RATE_LIMIT_MAX_AUTH", 300, min_value=1)
+API_RATE_LIMIT_MAX_AUTH_ADMIN = _env_int("API_RATE_LIMIT_MAX_AUTH_ADMIN", 180, min_value=1)
+API_RATE_LIMIT_MAX_AUTH_WRITE = _env_int("API_RATE_LIMIT_MAX_AUTH_WRITE", 120, min_value=1)
+API_RATE_LIMIT_MAX_AUTH_UPLOAD = _env_int("API_RATE_LIMIT_MAX_AUTH_UPLOAD", 40, min_value=1)
+API_RATE_LIMIT_STORE = getenv("API_RATE_LIMIT_STORE", "auto").strip().lower()
+API_RATE_LIMIT_REDIS_URL = getenv("API_RATE_LIMIT_REDIS_URL", getenv("REDIS_URL", "")).strip()
+API_RATE_LIMIT_REDIS_KEY_PREFIX = getenv("API_RATE_LIMIT_REDIS_KEY_PREFIX", "kaos:ratelimit").strip() or "kaos:ratelimit"
 ADMIN_TOKEN_REQUIRE_EXPIRY = _env_bool("ADMIN_TOKEN_REQUIRE_EXPIRY", True)
 ADMIN_TOKEN_MAX_TTL_DAYS = _env_int("ADMIN_TOKEN_MAX_TTL_DAYS", 30, min_value=1)
 ADMIN_TOKEN_ROTATE_AFTER_DAYS = _env_int("ADMIN_TOKEN_ROTATE_AFTER_DAYS", 45, min_value=1)
+ADMIN_TOKEN_ROTATE_WARNING_DAYS = _env_int("ADMIN_TOKEN_ROTATE_WARNING_DAYS", 7, min_value=0)
+ADMIN_TOKEN_MAX_IDLE_DAYS = _env_int("ADMIN_TOKEN_MAX_IDLE_DAYS", 30, min_value=1)
+ADMIN_TOKEN_MAX_ACTIVE_PER_USER = _env_int("ADMIN_TOKEN_MAX_ACTIVE_PER_USER", 5, min_value=1)
 EVIDENCE_ALLOWED_CONTENT_TYPES = {
     value.strip().lower()
     for value in getenv(
@@ -148,6 +164,11 @@ EVIDENCE_ALLOWED_CONTENT_TYPES = {
     ).split(",")
     if value.strip()
 }
+EVIDENCE_STORAGE_BACKEND = getenv("EVIDENCE_STORAGE_BACKEND", "fs").strip().lower() or "fs"
+EVIDENCE_STORAGE_PATH = getenv("EVIDENCE_STORAGE_PATH", "data/evidence-objects").strip() or "data/evidence-objects"
+EVIDENCE_SCAN_MODE = getenv("EVIDENCE_SCAN_MODE", "basic").strip().lower() or "basic"
+EVIDENCE_SCAN_BLOCK_SUSPICIOUS = _env_bool("EVIDENCE_SCAN_BLOCK_SUSPICIOUS", False)
+AUDIT_ARCHIVE_SIGNING_KEY = getenv("AUDIT_ARCHIVE_SIGNING_KEY", "").strip()
 SECURITY_HEADERS_BASE: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -166,6 +187,7 @@ HTML_CSP_POLICY = (
 )
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
+_RATE_LIMIT_REDIS: Any = None
 
 ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "owner": {"*"},
@@ -1358,14 +1380,16 @@ POST_MVP_RISK_REGISTER: list[dict[str, str]] = [
 @asynccontextmanager
 async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     ensure_database()
+    _ensure_evidence_storage_ready()
     ensure_legacy_admin_token_seed()
+    _init_rate_limit_backend()
     yield
 
 
 app = FastAPI(
     title="KA Facility OS",
     description="Inspection MVP for apartment facility operations",
-    version="0.31.0",
+    version="0.32.0",
     lifespan=app_lifespan,
 )
 
@@ -1469,22 +1493,60 @@ def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: i
 """
 
 
-def _rate_limit_identity(request: Request) -> tuple[str, int]:
+def _init_rate_limit_backend() -> None:
+    global _RATE_LIMIT_REDIS
+    _RATE_LIMIT_REDIS = None
+    if API_RATE_LIMIT_STORE not in {"redis", "auto"}:
+        return
+    if not API_RATE_LIMIT_REDIS_URL:
+        return
+    if Redis is None:
+        return
+    try:
+        client = Redis.from_url(
+            API_RATE_LIMIT_REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        _RATE_LIMIT_REDIS = client
+    except Exception:
+        _RATE_LIMIT_REDIS = None
+
+
+def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
-        # Token hash prefix avoids storing raw secrets in memory keys.
-        return f"auth:{_hash_token(token)[:16]}", API_RATE_LIMIT_MAX_AUTH
+        # Token hash prefix avoids storing raw secrets in keys/metrics.
+        return f"auth:{_hash_token(token)[:16]}", True
     client_host = request.client.host if request.client is not None else "unknown"
-    return f"ip:{client_host}", API_RATE_LIMIT_MAX_PUBLIC
+    return f"ip:{client_host}", False
 
 
-def _check_api_rate_limit(identity: str, *, max_requests: int, window_sec: int) -> tuple[bool, int, int]:
+def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[str, int]:
+    path = request.url.path
+    method = request.method.upper()
+    if is_auth:
+        if method == "POST" and "/api/adoption/w02/tracker/items/" in path and path.endswith("/evidence"):
+            return "auth-upload", API_RATE_LIMIT_MAX_AUTH_UPLOAD
+        if path.startswith("/api/admin/"):
+            return "auth-admin", API_RATE_LIMIT_MAX_AUTH_ADMIN
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            return "auth-write", API_RATE_LIMIT_MAX_AUTH_WRITE
+        return "auth-read", API_RATE_LIMIT_MAX_AUTH
+    if path.endswith("/csv") or path.endswith("/pdf") or path.endswith("/ics"):
+        return "public-heavy", API_RATE_LIMIT_MAX_PUBLIC_HEAVY
+    return "public-read", API_RATE_LIMIT_MAX_PUBLIC
+
+
+def _check_api_rate_limit_memory(*, key: str, max_requests: int, window_sec: int) -> tuple[bool, int, int]:
     now = time.monotonic()
     with _RATE_LIMIT_LOCK:
-        bucket = _RATE_LIMIT_BUCKETS.get(identity)
+        bucket = _RATE_LIMIT_BUCKETS.get(key)
         if bucket is None:
             bucket = deque()
-            _RATE_LIMIT_BUCKETS[identity] = bucket
+            _RATE_LIMIT_BUCKETS[key] = bucket
 
         cutoff = now - float(window_sec)
         while bucket and bucket[0] <= cutoff:
@@ -1498,6 +1560,44 @@ def _check_api_rate_limit(identity: str, *, max_requests: int, window_sec: int) 
         remaining = max(0, max_requests - len(bucket))
         reset = max(1, int(math.ceil(float(window_sec) - (now - bucket[0]))))
         return True, remaining, reset
+
+
+def _check_api_rate_limit_redis(*, key_base: str, max_requests: int, window_sec: int) -> tuple[bool, int, int] | None:
+    if _RATE_LIMIT_REDIS is None:
+        return None
+    try:
+        window_idx = int(time.time() // window_sec)
+        redis_key = f"{key_base}:{window_idx}"
+        count = int(_RATE_LIMIT_REDIS.incr(redis_key))
+        ttl = int(_RATE_LIMIT_REDIS.ttl(redis_key))
+        if ttl <= 0:
+            _RATE_LIMIT_REDIS.expire(redis_key, window_sec + 1)
+            ttl = window_sec
+        allowed = count <= max_requests
+        remaining = max(0, max_requests - count)
+        reset = max(1, ttl)
+        return allowed, remaining, reset
+    except Exception:
+        return None
+
+
+def _check_api_rate_limit(*, key_base: str, max_requests: int, window_sec: int) -> tuple[bool, int, int, str]:
+    backend = "memory"
+    if API_RATE_LIMIT_STORE in {"redis", "auto"}:
+        redis_result = _check_api_rate_limit_redis(
+            key_base=key_base,
+            max_requests=max_requests,
+            window_sec=window_sec,
+        )
+        if redis_result is not None:
+            allowed, remaining, reset = redis_result
+            return allowed, remaining, reset, "redis"
+    allowed, remaining, reset = _check_api_rate_limit_memory(
+        key=key_base,
+        max_requests=max_requests,
+        window_sec=window_sec,
+    )
+    return allowed, remaining, reset, backend
 
 
 @app.middleware("http")
@@ -1549,9 +1649,11 @@ async def api_rate_limit_middleware(request: Request, call_next: Callable[[Reque
     ):
         return await call_next(request)
 
-    identity, limit = _rate_limit_identity(request)
-    allowed, remaining, reset_sec = _check_api_rate_limit(
-        identity,
+    identity, is_auth = _rate_limit_identity(request)
+    policy_name, limit = _rate_limit_policy_for_request(request, is_auth=is_auth)
+    key_base = f"{API_RATE_LIMIT_REDIS_KEY_PREFIX}:{policy_name}:{identity}"
+    allowed, remaining, reset_sec, backend = _check_api_rate_limit(
+        key_base=key_base,
         max_requests=limit,
         window_sec=API_RATE_LIMIT_WINDOW_SEC,
     )
@@ -1559,6 +1661,8 @@ async def api_rate_limit_middleware(request: Request, call_next: Callable[[Reque
         "X-RateLimit-Limit": str(limit),
         "X-RateLimit-Remaining": str(max(0, remaining)),
         "X-RateLimit-Reset": str(reset_sec),
+        "X-RateLimit-Policy": policy_name,
+        "X-RateLimit-Backend": backend,
     }
     if not allowed:
         headers["Retry-After"] = str(reset_sec)
@@ -1839,6 +1943,88 @@ def _is_allowed_evidence_content_type(content_type: str) -> bool:
     return normalized in EVIDENCE_ALLOWED_CONTENT_TYPES
 
 
+def _normalize_evidence_storage_backend(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"fs", "filesystem", "file"}:
+        return "fs"
+    return "db"
+
+
+def _evidence_storage_root() -> Path:
+    candidate = Path(EVIDENCE_STORAGE_PATH)
+    if candidate.is_absolute():
+        return candidate
+    project_root = Path(__file__).resolve().parent.parent
+    return project_root / candidate
+
+
+def _ensure_evidence_storage_ready() -> None:
+    backend = _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND)
+    if backend != "fs":
+        return
+    _evidence_storage_root().mkdir(parents=True, exist_ok=True)
+
+
+def _scan_evidence_bytes(*, file_bytes: bytes, content_type: str) -> tuple[str, str, str | None]:
+    if EVIDENCE_SCAN_MODE in {"off", "disabled", "none"}:
+        return "skipped", "none", None
+
+    # EICAR test string detection provides deterministic malware-scan smoke coverage.
+    eicar_signature = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+    if eicar_signature in file_bytes:
+        return "infected", "basic-signature", "eicar-signature-detected"
+
+    if content_type in {"text/html", "application/javascript", "text/javascript"}:
+        lowered = file_bytes[:4096].lower()
+        if b"<script" in lowered:
+            return "suspicious", "basic-pattern", "active-script-pattern-detected"
+
+    return "clean", "basic-signature", None
+
+
+def _write_evidence_blob(*, file_name: str, file_bytes: bytes, sha256_digest: str) -> tuple[str, str | None, bytes]:
+    backend = _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND)
+    if backend != "fs":
+        return "db", None, file_bytes
+
+    _ensure_evidence_storage_ready()
+    extension = ""
+    if "." in file_name:
+        extension = "." + file_name.rsplit(".", 1)[1][:16]
+    now = datetime.now(timezone.utc)
+    storage_key = (
+        f"{now.year:04d}/{now.month:02d}/{now.day:02d}/"
+        f"{sha256_digest[:20]}-{secrets.token_hex(8)}{extension}"
+    )
+    abs_path = _evidence_storage_root() / storage_key
+    abs_path.parent.mkdir(parents=True, exist_ok=True)
+    abs_path.write_bytes(file_bytes)
+    # Keep DB rows lightweight when file-system backend is enabled.
+    return "fs", storage_key, b""
+
+
+def _read_evidence_blob(*, row: dict[str, Any]) -> bytes | None:
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+    if storage_backend == "fs":
+        storage_key = str(row.get("storage_key") or "").strip()
+        if not storage_key:
+            return None
+        abs_path = _evidence_storage_root() / storage_key
+        if not abs_path.exists() or not abs_path.is_file():
+            return None
+        return abs_path.read_bytes()
+
+    raw = row.get("file_bytes") or b""
+    if isinstance(raw, bytes):
+        return raw
+    if isinstance(raw, bytearray):
+        return bytes(raw)
+    try:
+        return bytes(raw)
+    except Exception:
+        return None
+
+
 def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
     risk_flags_raw = row["risk_flags"] or ""
     risk_flags = [x for x in risk_flags_raw.split(",") if x]
@@ -1895,6 +2081,19 @@ def _month_window(month: str | None) -> tuple[datetime, datetime, str]:
     return start, end, normalized
 
 
+def _token_rotate_due_at(created_at: datetime) -> datetime | None:
+    if ADMIN_TOKEN_ROTATE_AFTER_DAYS <= 0:
+        return None
+    return created_at + timedelta(days=ADMIN_TOKEN_ROTATE_AFTER_DAYS)
+
+
+def _token_idle_due_at(*, created_at: datetime, last_used_at: datetime | None) -> datetime | None:
+    baseline = last_used_at or created_at
+    if ADMIN_TOKEN_MAX_IDLE_DAYS <= 0:
+        return None
+    return baseline + timedelta(days=ADMIN_TOKEN_MAX_IDLE_DAYS)
+
+
 def _load_principal_by_token(token: str) -> dict[str, Any] | None:
     now = datetime.now(timezone.utc)
     token_hash = _hash_token(token)
@@ -1904,7 +2103,9 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
             admin_tokens.c.id.label("token_id"),
             admin_tokens.c.user_id.label("user_id"),
             admin_tokens.c.expires_at.label("expires_at"),
+            admin_tokens.c.last_used_at.label("last_used_at"),
             admin_tokens.c.created_at.label("created_at"),
+            admin_tokens.c.label.label("token_label"),
             admin_tokens.c.site_scope.label("token_site_scope"),
             admin_users.c.username.label("username"),
             admin_users.c.display_name.label("display_name"),
@@ -1925,17 +2126,30 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
             if row is None:
                 return None
 
+            token_id = int(row["token_id"])
             expires_at = _as_optional_datetime(row["expires_at"])
             created_at = _as_datetime(row["created_at"])
+            last_used_at = _as_optional_datetime(row["last_used_at"])
+            rotate_due_at = _token_rotate_due_at(created_at)
+            idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
+
             if ADMIN_TOKEN_ROTATE_AFTER_DAYS > 0:
                 rotate_cutoff = now - timedelta(days=ADMIN_TOKEN_ROTATE_AFTER_DAYS)
                 if created_at <= rotate_cutoff:
                     conn.execute(
                         update(admin_tokens)
-                        .where(admin_tokens.c.id == row["token_id"])
+                        .where(admin_tokens.c.id == token_id)
                         .values(is_active=False, last_used_at=now)
                     )
                     return None
+
+            if idle_due_at is not None and idle_due_at <= now:
+                conn.execute(
+                    update(admin_tokens)
+                    .where(admin_tokens.c.id == token_id)
+                    .values(is_active=False, last_used_at=now)
+                )
+                return None
 
             effective_expires_at = expires_at
             if effective_expires_at is None and ADMIN_TOKEN_REQUIRE_EXPIRY:
@@ -1944,14 +2158,14 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
             if effective_expires_at is not None and effective_expires_at <= now:
                 conn.execute(
                     update(admin_tokens)
-                    .where(admin_tokens.c.id == row["token_id"])
+                    .where(admin_tokens.c.id == token_id)
                     .values(is_active=False, last_used_at=now)
                 )
                 return None
 
             conn.execute(
                 update(admin_tokens)
-                .where(admin_tokens.c.id == row["token_id"])
+                .where(admin_tokens.c.id == token_id)
                 .values(last_used_at=now)
             )
     except SQLAlchemyError:
@@ -1965,8 +2179,21 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
     if token_scope_raw is not None:
         token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
     effective_site_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+    rotate_due_at = _token_rotate_due_at(created_at)
+    warning_due_at = None
+    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
+        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
+    must_rotate = rotate_due_at is not None and warning_due_at is not None and now >= warning_due_at
+    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
     return {
         "user_id": int(row["user_id"]),
+        "token_id": int(row["token_id"]),
+        "token_label": str(row.get("token_label") or ""),
+        "token_created_at": created_at,
+        "token_expires_at": effective_expires_at,
+        "token_rotate_due_at": rotate_due_at,
+        "token_idle_due_at": idle_due_at,
+        "token_must_rotate": must_rotate,
         "username": str(row["username"]),
         "display_name": str(row["display_name"] or row["username"]),
         "role": str(row["role"]),
@@ -1979,6 +2206,13 @@ def _load_principal_by_token(token: str) -> dict[str, Any] | None:
 def _build_local_dev_principal() -> dict[str, Any]:
     return {
         "user_id": None,
+        "token_id": None,
+        "token_label": "local-dev",
+        "token_created_at": datetime.now(timezone.utc),
+        "token_expires_at": None,
+        "token_rotate_due_at": None,
+        "token_idle_due_at": None,
+        "token_must_rotate": False,
         "username": "local-dev",
         "display_name": "Local Dev Bypass",
         "role": "owner",
@@ -1999,6 +2233,13 @@ def get_current_admin(
         if ADMIN_TOKEN and hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
             return {
                 "user_id": None,
+                "token_id": None,
+                "token_label": "legacy-env-token",
+                "token_created_at": datetime.now(timezone.utc),
+                "token_expires_at": None,
+                "token_rotate_due_at": None,
+                "token_idle_due_at": None,
+                "token_must_rotate": False,
                 "username": "legacy-env-token",
                 "display_name": "Legacy Env Token",
                 "role": "owner",
@@ -2088,6 +2329,47 @@ def _to_json_text(value: dict[str, Any] | None) -> str:
     return json.dumps(data, ensure_ascii=False, default=str)
 
 
+def _compute_audit_entry_hash(
+    *,
+    prev_hash: str,
+    actor_user_id: int | None,
+    actor_username: str,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    status: str,
+    detail_json: str,
+    created_at: datetime,
+) -> str:
+    canonical = json.dumps(
+        {
+            "prev_hash": prev_hash,
+            "actor_user_id": actor_user_id,
+            "actor_username": actor_username,
+            "action": action,
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "status": status,
+            "detail_json": detail_json,
+            "created_at": created_at.isoformat(),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _sign_payload(payload_text: str) -> str | None:
+    if not AUDIT_ARCHIVE_SIGNING_KEY:
+        return None
+    return hmac.new(
+        AUDIT_ARCHIVE_SIGNING_KEY.encode("utf-8"),
+        payload_text.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+
 def _write_audit_log(
     *,
     principal: dict[str, Any] | None,
@@ -2103,9 +2385,27 @@ def _write_audit_log(
     if principal is not None:
         actor_user_id = principal.get("user_id")
         actor_username = str(principal.get("username") or "unknown")
+    detail_json = _to_json_text(detail)
 
     try:
         with get_conn() as conn:
+            prev_row = conn.execute(
+                select(admin_audit_logs.c.entry_hash)
+                .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
+                .limit(1)
+            ).mappings().first()
+            prev_hash = str(prev_row.get("entry_hash") or "") if prev_row is not None else ""
+            entry_hash = _compute_audit_entry_hash(
+                prev_hash=prev_hash,
+                actor_user_id=actor_user_id,
+                actor_username=actor_username,
+                action=action,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                status=status,
+                detail_json=detail_json,
+                created_at=now,
+            )
             conn.execute(
                 insert(admin_audit_logs).values(
                     actor_user_id=actor_user_id,
@@ -2114,7 +2414,9 @@ def _write_audit_log(
                     resource_type=resource_type,
                     resource_id=resource_id,
                     status=status,
-                    detail_json=_to_json_text(detail),
+                    prev_hash=prev_hash or None,
+                    entry_hash=entry_hash,
+                    detail_json=detail_json,
                     created_at=now,
                 )
             )
@@ -2141,6 +2443,100 @@ def _row_to_admin_audit_log_model(row: dict[str, Any]) -> AdminAuditLogRead:
         detail=detail if isinstance(detail, dict) else {"value": detail},
         created_at=_as_datetime(row["created_at"]),
     )
+
+
+def _verify_audit_chain(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    previous_hash = ""
+    issues: list[dict[str, Any]] = []
+    checked = 0
+    for row in rows:
+        checked += 1
+        detail_json = str(row.get("detail_json") or "{}")
+        created_at = _as_datetime(row["created_at"])
+        expected = _compute_audit_entry_hash(
+            prev_hash=previous_hash,
+            actor_user_id=row.get("actor_user_id"),
+            actor_username=str(row.get("actor_username") or ""),
+            action=str(row.get("action") or ""),
+            resource_type=str(row.get("resource_type") or ""),
+            resource_id=str(row.get("resource_id") or ""),
+            status=str(row.get("status") or ""),
+            detail_json=detail_json,
+            created_at=created_at,
+        )
+        stored_prev = str(row.get("prev_hash") or "")
+        stored_hash = str(row.get("entry_hash") or "")
+        if stored_prev != previous_hash:
+            issues.append({"id": int(row["id"]), "reason": "prev_hash_mismatch"})
+        if stored_hash != expected:
+            issues.append({"id": int(row["id"]), "reason": "entry_hash_mismatch"})
+        previous_hash = stored_hash or expected
+    return {
+        "checked_count": checked,
+        "issue_count": len(issues),
+        "issues": issues[:100],
+        "last_entry_hash": previous_hash or None,
+        "chain_ok": len(issues) == 0,
+    }
+
+
+def build_monthly_audit_archive(
+    *,
+    month: str | None,
+    max_entries: int = 10000,
+    include_entries: bool = True,
+) -> dict[str, Any]:
+    start, end, normalized = _month_window(month)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(admin_audit_logs)
+            .where(admin_audit_logs.c.created_at >= start)
+            .where(admin_audit_logs.c.created_at < end)
+            .order_by(admin_audit_logs.c.created_at.asc(), admin_audit_logs.c.id.asc())
+            .limit(max_entries)
+        ).mappings().all()
+
+    chain = _verify_audit_chain([dict(row) for row in rows])
+    archive_rows: list[dict[str, Any]] = []
+    if include_entries:
+        for row in rows:
+            detail_raw = str(row.get("detail_json") or "{}")
+            try:
+                detail_value = json.loads(detail_raw)
+            except json.JSONDecodeError:
+                detail_value = {"raw": detail_raw}
+            archive_rows.append(
+                {
+                    "id": int(row["id"]),
+                    "actor_user_id": row.get("actor_user_id"),
+                    "actor_username": str(row.get("actor_username") or ""),
+                    "action": str(row.get("action") or ""),
+                    "resource_type": str(row.get("resource_type") or ""),
+                    "resource_id": str(row.get("resource_id") or ""),
+                    "status": str(row.get("status") or ""),
+                    "detail": detail_value,
+                    "created_at": _as_datetime(row["created_at"]).isoformat(),
+                    "prev_hash": row.get("prev_hash"),
+                    "entry_hash": row.get("entry_hash"),
+                }
+            )
+
+    payload = {
+        "month": normalized,
+        "window_start": start.isoformat(),
+        "window_end": end.isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "entry_count": len(rows),
+        "max_entries": max_entries,
+        "chain": chain,
+        "entries": archive_rows if include_entries else [],
+    }
+    payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    signature = _sign_payload(payload_text)
+    payload["archive_sha256"] = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
+    payload["signature"] = signature
+    payload["signature_algorithm"] = "hmac-sha256" if signature is not None else "unsigned"
+    return payload
 
 
 def _write_job_run(
@@ -2620,6 +3016,15 @@ def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
     if token_scope_raw is not None:
         token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
     effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+    created_at = _as_datetime(row["created_at"])
+    expires_at = _as_optional_datetime(row["expires_at"])
+    last_used_at = _as_optional_datetime(row["last_used_at"])
+    rotate_due_at = _token_rotate_due_at(created_at)
+    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
+    warning_due_at = None
+    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
+        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
+    must_rotate = rotate_due_at is not None and warning_due_at is not None and datetime.now(timezone.utc) >= warning_due_at
     return AdminTokenRead(
         token_id=int(row["token_id"]),
         user_id=int(row["user_id"]),
@@ -2627,9 +3032,12 @@ def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
         label=str(row["label"] or ""),
         is_active=bool(row["is_active"]),
         site_scope=effective_scope,
-        expires_at=_as_optional_datetime(row["expires_at"]),
-        last_used_at=_as_optional_datetime(row["last_used_at"]),
-        created_at=_as_datetime(row["created_at"]),
+        expires_at=expires_at,
+        last_used_at=last_used_at,
+        created_at=created_at,
+        rotate_due_at=rotate_due_at,
+        idle_due_at=idle_due_at,
+        must_rotate=must_rotate,
     )
 
 
@@ -2774,6 +3182,11 @@ def _row_to_w02_evidence_model(row: dict[str, Any]) -> W02EvidenceRead:
         file_name=str(row["file_name"]),
         content_type=str(row.get("content_type") or "application/octet-stream"),
         file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
         note=str(row.get("note") or ""),
         uploaded_by=str(row.get("uploaded_by") or "system"),
         uploaded_at=_as_datetime(row["uploaded_at"]),
@@ -4085,10 +4498,16 @@ def _service_info_payload() -> dict[str, str]:
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
         "auth_me_api": "/api/auth/me",
         "admin_tokens_api": "/api/admin/tokens",
+        "admin_token_rotate_api": "/api/admin/tokens/{token_id}/rotate",
+        "admin_token_policy_api": "/api/admin/token-policy",
         "admin_audit_api": "/api/admin/audit-logs",
+        "admin_audit_integrity_api": "/api/admin/audit-integrity",
+        "admin_audit_archive_monthly_api": "/api/admin/audit-archive/monthly",
+        "admin_audit_archive_csv_api": "/api/admin/audit-archive/monthly/csv",
         "job_runs_api": "/api/ops/job-runs",
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
+        "ops_runbook_checks_api": "/api/ops/runbook/checks",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
         "handover_brief_pdf_api": "/api/ops/handover/brief/pdf",
@@ -8018,6 +8437,18 @@ async def upload_w02_tracker_evidence(
         raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
     if len(file_bytes) > W02_EVIDENCE_MAX_BYTES:
         raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W02_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
 
     actor_username = str(principal.get("username") or "unknown")
     now = datetime.now(timezone.utc)
@@ -8037,7 +8468,13 @@ async def upload_w02_tracker_evidence(
                 file_name=file_name,
                 content_type=content_type,
                 file_size=len(file_bytes),
-                file_bytes=file_bytes,
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
                 note=note.strip(),
                 uploaded_by=actor_username,
                 uploaded_at=now,
@@ -8071,6 +8508,10 @@ async def upload_w02_tracker_evidence(
             "site": model.site,
             "file_name": model.file_name,
             "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
         },
     )
     return model
@@ -8113,16 +8554,21 @@ def download_w02_tracker_evidence(
     _require_site_access(principal, site)
     content_type = str(row.get("content_type") or "application/octet-stream")
     file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
-    data = row.get("file_bytes") or b""
-    if not isinstance(data, (bytes, bytearray)):
-        data = bytes(data)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
 
     _write_audit_log(
         principal=principal,
         action="w02_tracker_evidence_download",
         resource_type="adoption_w02_evidence",
         resource_id=str(evidence_id),
-        detail={"site": site, "file_name": file_name},
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
     )
     return Response(
         content=data,
@@ -8130,6 +8576,7 @@ def download_w02_tracker_evidence(
         headers={
             "Content-Disposition": f'attachment; filename="{file_name}"',
             "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
         },
     )
 
@@ -8151,6 +8598,12 @@ def auth_me(
 ) -> AuthMeRead:
     return AuthMeRead(
         user_id=principal.get("user_id"),
+        token_id=principal.get("token_id"),
+        token_label=principal.get("token_label"),
+        token_expires_at=principal.get("token_expires_at"),
+        token_rotate_due_at=principal.get("token_rotate_due_at"),
+        token_idle_due_at=principal.get("token_idle_due_at"),
+        token_must_rotate=bool(principal.get("token_must_rotate", False)),
         username=principal["username"],
         display_name=principal["display_name"],
         role=principal["role"],
@@ -8265,6 +8718,33 @@ def set_admin_user_active(
     return model
 
 
+def _enforce_active_token_quota(
+    *,
+    conn: Any,
+    user_id: int,
+    now: datetime,
+    keep_token_ids: set[int] | None = None,
+) -> list[int]:
+    keep_ids = keep_token_ids or set()
+    rows = conn.execute(
+        select(admin_tokens.c.id, admin_tokens.c.created_at)
+        .where(admin_tokens.c.user_id == user_id)
+        .where(admin_tokens.c.is_active.is_(True))
+        .order_by(admin_tokens.c.created_at.asc(), admin_tokens.c.id.asc())
+    ).all()
+    active_ids = [int(row[0]) for row in rows if int(row[0]) not in keep_ids]
+    overflow = len(active_ids) - ADMIN_TOKEN_MAX_ACTIVE_PER_USER
+    if overflow <= 0:
+        return []
+    revoke_ids = active_ids[:overflow]
+    conn.execute(
+        update(admin_tokens)
+        .where(admin_tokens.c.id.in_(revoke_ids))
+        .values(is_active=False, last_used_at=now)
+    )
+    return revoke_ids
+
+
 @app.post("/api/admin/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
 def issue_admin_token(
     user_id: int,
@@ -8287,6 +8767,7 @@ def issue_admin_token(
         )
     token_scope_text: str | None = None
     effective_scope: list[str] = [SITE_SCOPE_ALL]
+    revoked_ids: list[int] = []
 
     with get_conn() as conn:
         user_row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
@@ -8317,6 +8798,12 @@ def issue_admin_token(
             )
         )
         token_id = int(result.inserted_primary_key[0])
+        revoked_ids = _enforce_active_token_quota(
+            conn=conn,
+            user_id=user_id,
+            now=now,
+            keep_token_ids={token_id},
+        )
 
     response = AdminTokenIssueResponse(
         token_id=token_id,
@@ -8339,6 +8826,135 @@ def issue_admin_token(
             "expires_at": expires_at,
         },
     )
+    if revoked_ids:
+        _write_audit_log(
+            principal=principal,
+            action="admin_token_auto_revoke_quota",
+            resource_type="admin_token",
+            resource_id=",".join(str(tid) for tid in revoked_ids),
+            detail={
+                "user_id": user_id,
+                "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+                "revoked_token_ids": revoked_ids,
+            },
+    )
+    return response
+
+
+@app.post("/api/admin/tokens/{token_id}/rotate", response_model=AdminTokenIssueResponse)
+def rotate_admin_token(
+    token_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminTokenIssueResponse:
+    now = datetime.now(timezone.utc)
+    token_plain = f"kaos_{secrets.token_urlsafe(24)}"
+    token_hash = _hash_token(token_plain)
+    max_allowed_expires_at = now + timedelta(days=ADMIN_TOKEN_MAX_TTL_DAYS)
+    revoked_ids: list[int] = []
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(
+                admin_tokens.c.id.label("token_id"),
+                admin_tokens.c.user_id.label("user_id"),
+                admin_tokens.c.label.label("label"),
+                admin_tokens.c.is_active.label("is_active"),
+                admin_tokens.c.site_scope.label("token_site_scope"),
+                admin_tokens.c.expires_at.label("expires_at"),
+                admin_users.c.site_scope.label("user_site_scope"),
+                admin_users.c.is_active.label("user_is_active"),
+            )
+            .where(admin_tokens.c.id == token_id)
+            .where(admin_users.c.id == admin_tokens.c.user_id)
+            .limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin token not found")
+        if not bool(row.get("is_active")):
+            raise HTTPException(status_code=409, detail="Admin token already inactive")
+        if not bool(row.get("user_is_active")):
+            raise HTTPException(status_code=409, detail="Inactive user cannot rotate token")
+
+        user_id = int(row["user_id"])
+        token_scope_raw = row.get("token_site_scope")
+        token_scope = None
+        if token_scope_raw is not None:
+            token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
+        user_scope = _site_scope_text_to_list(row.get("user_site_scope"), default_all=True)
+        effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+        if not effective_scope:
+            raise HTTPException(status_code=409, detail="Token site scope does not overlap user site scope")
+
+        old_expires_at = _as_optional_datetime(row.get("expires_at"))
+        if old_expires_at is not None:
+            expires_at = min(old_expires_at, max_allowed_expires_at)
+            if expires_at <= now:
+                expires_at = max_allowed_expires_at
+        elif ADMIN_TOKEN_REQUIRE_EXPIRY:
+            expires_at = max_allowed_expires_at
+        else:
+            expires_at = None
+
+        conn.execute(
+            update(admin_tokens)
+            .where(admin_tokens.c.id == token_id)
+            .values(is_active=False, last_used_at=now)
+        )
+        inserted = conn.execute(
+            insert(admin_tokens).values(
+                user_id=user_id,
+                label=str(row.get("label") or "rotated"),
+                token_hash=token_hash,
+                is_active=True,
+                site_scope=row.get("token_site_scope"),
+                expires_at=expires_at,
+                last_used_at=None,
+                created_at=now,
+            )
+        )
+        new_token_id = int(inserted.inserted_primary_key[0])
+        revoked_ids = _enforce_active_token_quota(
+            conn=conn,
+            user_id=user_id,
+            now=now,
+            keep_token_ids={new_token_id},
+        )
+
+    response = AdminTokenIssueResponse(
+        token_id=new_token_id,
+        user_id=user_id,
+        label=str(row.get("label") or "rotated"),
+        token=token_plain,
+        site_scope=effective_scope,
+        expires_at=expires_at,
+        created_at=now,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="admin_token_rotate",
+        resource_type="admin_token",
+        resource_id=str(token_id),
+        detail={
+            "old_token_id": token_id,
+            "new_token_id": new_token_id,
+            "user_id": user_id,
+            "label": response.label,
+            "site_scope": effective_scope,
+            "expires_at": expires_at,
+        },
+    )
+    if revoked_ids:
+        _write_audit_log(
+            principal=principal,
+            action="admin_token_auto_revoke_quota",
+            resource_type="admin_token",
+            resource_id=",".join(str(tid) for tid in revoked_ids),
+            detail={
+                "user_id": user_id,
+                "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+                "revoked_token_ids": revoked_ids,
+            },
+        )
     return response
 
 
@@ -8374,6 +8990,20 @@ def list_admin_tokens(
     return [_row_to_admin_token_model(row) for row in rows]
 
 
+@app.get("/api/admin/token-policy")
+def get_admin_token_policy(
+    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    return {
+        "require_expiry": ADMIN_TOKEN_REQUIRE_EXPIRY,
+        "max_ttl_days": ADMIN_TOKEN_MAX_TTL_DAYS,
+        "rotate_after_days": ADMIN_TOKEN_ROTATE_AFTER_DAYS,
+        "rotate_warning_days": ADMIN_TOKEN_ROTATE_WARNING_DAYS,
+        "max_idle_days": ADMIN_TOKEN_MAX_IDLE_DAYS,
+        "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+    }
+
+
 @app.get("/api/admin/audit-logs", response_model=list[AdminAuditLogRead])
 def list_admin_audit_logs(
     action: Annotated[str | None, Query()] = None,
@@ -8394,6 +9024,135 @@ def list_admin_audit_logs(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_admin_audit_log_model(row) for row in rows]
+
+
+def _build_audit_archive_csv(entries: list[dict[str, Any]]) -> str:
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(
+        [
+            "id",
+            "created_at",
+            "actor_username",
+            "action",
+            "resource_type",
+            "resource_id",
+            "status",
+            "prev_hash",
+            "entry_hash",
+        ]
+    )
+    for item in entries:
+        writer.writerow(
+            [
+                item.get("id"),
+                item.get("created_at"),
+                item.get("actor_username"),
+                item.get("action"),
+                item.get("resource_type"),
+                item.get("resource_id"),
+                item.get("status"),
+                item.get("prev_hash"),
+                item.get("entry_hash"),
+            ]
+        )
+    return output.getvalue()
+
+
+@app.get("/api/admin/audit-integrity")
+def get_admin_audit_integrity(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    archive = build_monthly_audit_archive(
+        month=month,
+        max_entries=max_entries,
+        include_entries=False,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="admin_audit_integrity_check",
+        resource_type="admin_audit_log",
+        resource_id=archive["month"],
+        detail={
+            "month": archive["month"],
+            "entry_count": archive["entry_count"],
+            "chain_ok": archive["chain"]["chain_ok"],
+            "issue_count": archive["chain"]["issue_count"],
+        },
+    )
+    return {
+        "month": archive["month"],
+        "generated_at": archive["generated_at"],
+        "entry_count": archive["entry_count"],
+        "chain": archive["chain"],
+        "archive_sha256": archive["archive_sha256"],
+        "signature": archive["signature"],
+        "signature_algorithm": archive["signature_algorithm"],
+    }
+
+
+@app.get("/api/admin/audit-archive/monthly")
+def get_admin_monthly_audit_archive(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
+    include_entries: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    archive = build_monthly_audit_archive(
+        month=month,
+        max_entries=max_entries,
+        include_entries=include_entries,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="admin_audit_archive_export_json",
+        resource_type="admin_audit_log",
+        resource_id=archive["month"],
+        detail={
+            "month": archive["month"],
+            "entry_count": archive["entry_count"],
+            "include_entries": include_entries,
+            "chain_ok": archive["chain"]["chain_ok"],
+        },
+    )
+    return archive
+
+
+@app.get("/api/admin/audit-archive/monthly/csv")
+def get_admin_monthly_audit_archive_csv(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    archive = build_monthly_audit_archive(
+        month=month,
+        max_entries=max_entries,
+        include_entries=True,
+    )
+    csv_text = _build_audit_archive_csv(archive["entries"])
+    file_name = f"audit-archive-{archive['month']}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="admin_audit_archive_export_csv",
+        resource_type="admin_audit_log",
+        resource_id=archive["month"],
+        detail={
+            "month": archive["month"],
+            "entry_count": archive["entry_count"],
+            "chain_ok": archive["chain"]["chain_ok"],
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Audit-Archive-Signature": archive["signature"] or "",
+            "X-Audit-Archive-SHA256": archive["archive_sha256"],
+        },
+    )
 
 
 @app.get("/api/ops/job-runs", response_model=list[JobRunRead])
@@ -8428,6 +9187,88 @@ def get_dashboard_summary(
         recent_job_limit=recent_job_limit,
         allowed_sites=allowed_sites,
     )
+
+
+@app.get("/api/ops/runbook/checks")
+def get_ops_runbook_checks(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    horizon = now - timedelta(minutes=90)
+    with get_conn() as conn:
+        sla_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == "sla_escalation")
+            .where(job_runs.c.finished_at >= horizon)
+            .limit(1)
+        ).first()
+        alert_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == "alert_retry")
+            .where(job_runs.c.finished_at >= horizon)
+            .limit(1)
+        ).first()
+        expiring_soon_cutoff = now + timedelta(days=3)
+        expiring_count = conn.execute(
+            select(admin_tokens.c.id)
+            .where(admin_tokens.c.is_active.is_(True))
+            .where(admin_tokens.c.expires_at.is_not(None))
+            .where(admin_tokens.c.expires_at <= expiring_soon_cutoff)
+        ).all()
+
+    current_month_archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
+    checks = [
+        {
+            "id": "sla_cron_recent",
+            "status": "ok" if sla_recent is not None else "warning",
+            "message": "SLA escalation job observed within last 90 minutes."
+            if sla_recent is not None
+            else "No recent SLA escalation job run in last 90 minutes.",
+        },
+        {
+            "id": "alert_retry_recent",
+            "status": "ok" if alert_recent is not None else "warning",
+            "message": "Alert retry job observed within last 90 minutes."
+            if alert_recent is not None
+            else "No recent alert retry job run in last 90 minutes.",
+        },
+        {
+            "id": "audit_chain_integrity",
+            "status": "ok" if current_month_archive["chain"]["chain_ok"] else "critical",
+            "message": "Audit chain verified."
+            if current_month_archive["chain"]["chain_ok"]
+            else "Audit chain mismatch detected.",
+            "issue_count": current_month_archive["chain"]["issue_count"],
+        },
+        {
+            "id": "token_expiry_pressure",
+            "status": "ok" if len(expiring_count) == 0 else "warning",
+            "message": "No active admin tokens expiring within 3 days."
+            if len(expiring_count) == 0
+            else f"{len(expiring_count)} active admin token(s) expire within 3 days.",
+        },
+    ]
+    overall = "ok"
+    if any(check["status"] == "critical" for check in checks):
+        overall = "critical"
+    elif any(check["status"] == "warning" for check in checks):
+        overall = "warning"
+
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_checks_view",
+        resource_type="ops_runbook",
+        resource_id="checks",
+        detail={
+            "overall_status": overall,
+            "checks": [{"id": item["id"], "status": item["status"]} for item in checks],
+        },
+    )
+    return {
+        "generated_at": now.isoformat(),
+        "overall_status": overall,
+        "checks": checks,
+    }
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

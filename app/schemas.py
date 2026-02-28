@@ -198,6 +198,11 @@ class W02EvidenceRead(BaseModel):
     file_name: str
     content_type: str
     file_size: int
+    storage_backend: str = "db"
+    sha256: str = ""
+    malware_scan_status: str = "unknown"
+    malware_scan_engine: Optional[str] = None
+    malware_scanned_at: Optional[datetime] = None
     note: str
     uploaded_by: str
     uploaded_at: datetime
@@ -342,6 +347,12 @@ class MonthlyReportRead(BaseModel):
 
 class AuthMeRead(BaseModel):
     user_id: Optional[int] = None
+    token_id: Optional[int] = None
+    token_label: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    token_rotate_due_at: Optional[datetime] = None
+    token_idle_due_at: Optional[datetime] = None
+    token_must_rotate: bool = False
     username: str
     display_name: str
     role: str
@@ -401,6 +412,9 @@ class AdminTokenRead(BaseModel):
     expires_at: Optional[datetime] = None
     last_used_at: Optional[datetime] = None
     created_at: datetime
+    rotate_due_at: Optional[datetime] = None
+    idle_due_at: Optional[datetime] = None
+    must_rotate: bool = False
 
 
 class AdminAuditLogRead(BaseModel):

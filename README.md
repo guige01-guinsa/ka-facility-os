@@ -44,8 +44,13 @@ Open:
   - `PATCH /api/admin/users/{user_id}/active` (permission: `admins:manage`)
   - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)
   - `GET /api/admin/tokens` (permission: `admins:manage`)
+  - `POST /api/admin/tokens/{token_id}/rotate` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/revoke` (permission: `admins:manage`)
+  - `GET /api/admin/token-policy` (permission: `admins:manage`)
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
+  - `GET /api/admin/audit-integrity?month=YYYY-MM` (permission: `admins:manage`)
+  - `GET /api/admin/audit-archive/monthly?month=YYYY-MM` (permission: `admins:manage`)
+  - `GET /api/admin/audit-archive/monthly/csv?month=YYYY-MM` (permission: `admins:manage`)
   - `GET /api/admin/policies/sla?site=...` (permission: `admins:manage`)
   - `PUT /api/admin/policies/sla?site=...` (permission: `admins:manage`)
   - `POST /api/admin/policies/sla/proposals` (permission: `admins:manage`)
@@ -58,6 +63,7 @@ Open:
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -162,6 +168,7 @@ Manual batch:
 python -m app.jobs.sla_escalation --limit 500
 python -m app.jobs.sla_escalation --dry-run
 python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30
+python -m app.jobs.monthly_audit_archive --write-file
 ```
 
 Render cron target command:
@@ -177,23 +184,41 @@ Optional alert webhook env:
 - `API_RATE_LIMIT_ENABLED` (default `1`)
 - `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
 - `API_RATE_LIMIT_MAX_PUBLIC` (default `120` requests/window per IP)
+- `API_RATE_LIMIT_MAX_PUBLIC_HEAVY` (default `60`; csv/pdf/ics endpoints)
 - `API_RATE_LIMIT_MAX_AUTH` (default `300` requests/window per admin token)
+- `API_RATE_LIMIT_MAX_AUTH_ADMIN` (default `180`; `/api/admin/*`)
+- `API_RATE_LIMIT_MAX_AUTH_WRITE` (default `120`; auth write methods)
+- `API_RATE_LIMIT_MAX_AUTH_UPLOAD` (default `40`; evidence upload)
+- `API_RATE_LIMIT_STORE` (`memory|redis|auto`, default `auto`)
+- `API_RATE_LIMIT_REDIS_URL` (Redis URL for shared global throttling)
 - `ADMIN_TOKEN_REQUIRE_EXPIRY` (default `1`)
 - `ADMIN_TOKEN_MAX_TTL_DAYS` (default `30`)
 - `ADMIN_TOKEN_ROTATE_AFTER_DAYS` (default `45`)
+- `ADMIN_TOKEN_ROTATE_WARNING_DAYS` (default `7`)
+- `ADMIN_TOKEN_MAX_IDLE_DAYS` (default `30`; auto-disable by inactivity)
+- `ADMIN_TOKEN_MAX_ACTIVE_PER_USER` (default `5`)
+- `EVIDENCE_STORAGE_BACKEND` (`fs|db`, default `fs`)
+- `EVIDENCE_STORAGE_PATH` (default `data/evidence-objects`)
+- `EVIDENCE_SCAN_MODE` (`basic|off`, default `basic`)
+- `EVIDENCE_SCAN_BLOCK_SUSPICIOUS` (default `0`)
+- `AUDIT_ARCHIVE_SIGNING_KEY` (HMAC key for signed monthly audit archive)
 
 Security hardening:
 - common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
 - HTML endpoints (`/`, `/web/*`, `/api/*` browser view) include CSP header
 - authenticated API responses include `Cache-Control: no-store`
 - W02 evidence upload blocks unsupported content types and empty files, max size 5MB
-- API rate limit returns `429` with `Retry-After` and `X-RateLimit-*` headers
-- admin token policy enforces bounded TTL and auto-invalidates tokens older than rotate window
+- API rate limit returns `429` with `Retry-After`, `X-RateLimit-*`, `X-RateLimit-Policy`, `X-RateLimit-Backend`
+- admin token policy enforces bounded TTL, inactivity disable, rotate warning metadata, and rotate API
+- W02 evidence supports file-system object storage mode (`fs`), SHA-256 integrity check, and basic malware signature scan
+- admin audit logs maintain hash-chain fields (`prev_hash`, `entry_hash`) for integrity validation
+- monthly audit archive endpoints provide signed JSON/CSV exports
 
 Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
+- `GET /api/ops/runbook/checks`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/pdf?window_hours=12&due_soon_hours=6&max_items=10`
@@ -256,6 +281,12 @@ Sensitive actions are stored in `admin_audit_logs`:
 - inspection/work-order writes
 - SLA escalation run
 - monthly report CSV/PDF exports
+- audit integrity checks and archive exports
+
+Integrity/Archive:
+- each audit row stores `prev_hash` + `entry_hash` (chain)
+- `GET /api/admin/audit-integrity` verifies current month chain
+- `GET /api/admin/audit-archive/monthly` returns signed monthly archive payload
 
 Example:
 
@@ -275,6 +306,12 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
   -BaseUrl "https://ops.ka-part.com" `
   -AdminToken "<owner-token>" `
   -RollbackOnFailure
+```
+
+- Backup/restore rehearsal helper:
+
+```powershell
+.\scripts\backup_restore_rehearsal.ps1
 ```
 
 ## PostgreSQL mode
@@ -305,6 +342,7 @@ Startup behavior:
 - Web service `ka-facility-os`
 - Cron service `ka-facility-os-sla-escalation`
 - Cron service `ka-facility-os-alert-retry`
+- Cron service `ka-facility-os-audit-archive`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`
