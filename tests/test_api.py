@@ -1100,15 +1100,15 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["alerting"]["retention_archive_enabled"] is True
     assert body["alerting"]["mttr_slo_enabled"] is True
     assert body["alerting"]["mttr_slo_window_days"] == 30
-    assert body["alerting"]["mttr_slo_threshold_minutes"] == 60
-    assert body["alerting"]["mttr_slo_min_incidents"] == 3
+    assert body["alerting"]["mttr_slo_threshold_minutes"] == 45
+    assert body["alerting"]["mttr_slo_min_incidents"] == 5
     assert body["alerting"]["mttr_slo_auto_recover_enabled"] is True
     assert body["alerting"]["mttr_slo_recover_state"] == "quarantined"
     assert body["alerting"]["mttr_slo_recover_max_targets"] == 30
     assert body["alerting"]["mttr_slo_notify_enabled"] is True
     assert body["alerting"]["mttr_slo_notify_event_type"] == "mttr_slo_breach"
-    assert body["alerting"]["mttr_slo_notify_cooldown_minutes"] == 180
-    assert body["alerting"]["mttr_slo_top_channels"] == 10
+    assert body["alerting"]["mttr_slo_notify_cooldown_minutes"] == 120
+    assert body["alerting"]["mttr_slo_top_channels"] == 15
     assert body["token_policy"]["max_ttl_days"] == 30
 
 

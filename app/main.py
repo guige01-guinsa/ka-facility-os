@@ -140,15 +140,15 @@ ALERT_RETENTION_ARCHIVE_ENABLED = _env_bool("ALERT_RETENTION_ARCHIVE_ENABLED", T
 ALERT_RETENTION_ARCHIVE_PATH = getenv("ALERT_RETENTION_ARCHIVE_PATH", "data/alert-archives").strip() or "data/alert-archives"
 ALERT_MTTR_SLO_ENABLED = _env_bool("ALERT_MTTR_SLO_ENABLED", True)
 ALERT_MTTR_SLO_WINDOW_DAYS = _env_int("ALERT_MTTR_SLO_WINDOW_DAYS", 30, min_value=1)
-ALERT_MTTR_SLO_THRESHOLD_MINUTES = _env_int("ALERT_MTTR_SLO_THRESHOLD_MINUTES", 60, min_value=1)
-ALERT_MTTR_SLO_MIN_INCIDENTS = _env_int("ALERT_MTTR_SLO_MIN_INCIDENTS", 3, min_value=1)
+ALERT_MTTR_SLO_THRESHOLD_MINUTES = _env_int("ALERT_MTTR_SLO_THRESHOLD_MINUTES", 45, min_value=1)
+ALERT_MTTR_SLO_MIN_INCIDENTS = _env_int("ALERT_MTTR_SLO_MIN_INCIDENTS", 5, min_value=1)
 ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED = _env_bool("ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED", True)
 ALERT_MTTR_SLO_RECOVER_STATE = getenv("ALERT_MTTR_SLO_RECOVER_STATE", "quarantined").strip().lower() or "quarantined"
 ALERT_MTTR_SLO_RECOVER_MAX_TARGETS = _env_int("ALERT_MTTR_SLO_RECOVER_MAX_TARGETS", 30, min_value=1)
 ALERT_MTTR_SLO_NOTIFY_ENABLED = _env_bool("ALERT_MTTR_SLO_NOTIFY_ENABLED", True)
 ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE = getenv("ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE", "mttr_slo_breach").strip() or "mttr_slo_breach"
-ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES = _env_int("ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES", 180, min_value=0)
-ALERT_MTTR_SLO_TOP_CHANNELS = _env_int("ALERT_MTTR_SLO_TOP_CHANNELS", 10, min_value=1)
+ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES = _env_int("ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES", 120, min_value=0)
+ALERT_MTTR_SLO_TOP_CHANNELS = _env_int("ALERT_MTTR_SLO_TOP_CHANNELS", 15, min_value=1)
 API_RATE_LIMIT_ENABLED = _env_bool("API_RATE_LIMIT_ENABLED", True)
 API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
@@ -3095,6 +3095,23 @@ def _default_mttr_slo_policy() -> dict[str, Any]:
     }
 
 
+def _legacy_mttr_slo_policy() -> dict[str, Any]:
+    # Legacy baseline before operational tuning (kept for safe one-time upgrade).
+    return {
+        "enabled": True,
+        "window_days": 30,
+        "threshold_minutes": 60,
+        "min_incidents": 3,
+        "auto_recover_enabled": True,
+        "recover_state": "quarantined",
+        "recover_max_targets": 30,
+        "notify_enabled": True,
+        "notify_event_type": "mttr_slo_breach",
+        "notify_cooldown_minutes": 180,
+        "top_channels": 10,
+    }
+
+
 def _normalize_mttr_slo_policy(value: Any) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {}
     defaults = _default_mttr_slo_policy()
@@ -3166,6 +3183,19 @@ def _ensure_mttr_slo_policy() -> tuple[dict[str, Any], datetime, str]:
             return policy, now, ALERT_MTTR_SLO_POLICY_KEY
 
     policy = _parse_mttr_slo_policy_json(row["policy_json"])
+    default_policy = _default_mttr_slo_policy()
+    if policy == _legacy_mttr_slo_policy() and policy != default_policy:
+        with get_conn() as conn:
+            conn.execute(
+                update(sla_policies)
+                .where(sla_policies.c.policy_key == ALERT_MTTR_SLO_POLICY_KEY)
+                .values(
+                    policy_json=_to_json_text(default_policy),
+                    updated_at=now,
+                )
+            )
+        return default_policy, now, ALERT_MTTR_SLO_POLICY_KEY
+
     updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
     return policy, updated_at, ALERT_MTTR_SLO_POLICY_KEY
 

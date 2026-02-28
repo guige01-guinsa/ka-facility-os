@@ -48,9 +48,9 @@ services:
       - key: ALERT_MTTR_SLO_WINDOW_DAYS
         value: "30"
       - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
-        value: "60"
+        value: "45"
       - key: ALERT_MTTR_SLO_MIN_INCIDENTS
-        value: "3"
+        value: "5"
       - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
         value: "true"
       - key: ALERT_MTTR_SLO_RECOVER_STATE
@@ -62,9 +62,9 @@ services:
       - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
         value: mttr_slo_breach
       - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
-        value: "180"
+        value: "120"
       - key: ALERT_MTTR_SLO_TOP_CHANNELS
-        value: "10"
+        value: "15"
       - key: API_RATE_LIMIT_STORE
         value: auto
       - key: API_RATE_LIMIT_REDIS_URL
@@ -122,9 +122,9 @@ services:
       - key: ALERT_MTTR_SLO_WINDOW_DAYS
         value: "30"
       - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
-        value: "60"
+        value: "45"
       - key: ALERT_MTTR_SLO_MIN_INCIDENTS
-        value: "3"
+        value: "5"
       - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
         value: "true"
       - key: ALERT_MTTR_SLO_RECOVER_STATE
@@ -136,9 +136,9 @@ services:
       - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
         value: mttr_slo_breach
       - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
-        value: "180"
+        value: "120"
       - key: ALERT_MTTR_SLO_TOP_CHANNELS
-        value: "10"
+        value: "15"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -224,9 +224,9 @@ services:
       - key: ALERT_MTTR_SLO_WINDOW_DAYS
         value: "30"
       - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
-        value: "60"
+        value: "45"
       - key: ALERT_MTTR_SLO_MIN_INCIDENTS
-        value: "3"
+        value: "5"
       - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
         value: "true"
       - key: ALERT_MTTR_SLO_RECOVER_STATE
@@ -238,9 +238,9 @@ services:
       - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
         value: mttr_slo_breach
       - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
-        value: "180"
+        value: "120"
       - key: ALERT_MTTR_SLO_TOP_CHANNELS
-        value: "10"
+        value: "15"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -336,9 +336,9 @@ services:
       - key: ALERT_MTTR_SLO_WINDOW_DAYS
         value: "30"
       - key: ALERT_MTTR_SLO_THRESHOLD_MINUTES
-        value: "60"
+        value: "45"
       - key: ALERT_MTTR_SLO_MIN_INCIDENTS
-        value: "3"
+        value: "5"
       - key: ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED
         value: "true"
       - key: ALERT_MTTR_SLO_RECOVER_STATE
@@ -350,6 +350,8 @@ services:
       - key: ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE
         value: mttr_slo_breach
       - key: ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES
-        value: "180"
+        value: "120"
       - key: ALERT_MTTR_SLO_TOP_CHANNELS
-        value: "10"
+        value: "15"
+
+
