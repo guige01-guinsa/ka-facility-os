@@ -964,6 +964,245 @@ W02_SAMPLE_EVIDENCE_ARTIFACTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W03_KICKOFF_AGENDA: list[dict[str, Any]] = [
+    {
+        "id": "KICKOFF-01",
+        "topic": "Why now: launch goals and target KPI",
+        "owner": "Product Lead",
+        "duration_min": 10,
+        "objective": "Align launch urgency and weekly target",
+        "expected_output": "Shared KPI board confirmed",
+    },
+    {
+        "id": "KICKOFF-02",
+        "topic": "Role mission map and first action",
+        "owner": "Ops PM",
+        "duration_min": 10,
+        "objective": "Clarify role-by-role first action",
+        "expected_output": "Role mission one-pager distributed",
+    },
+    {
+        "id": "KICKOFF-03",
+        "topic": "Live demo: inspection -> work-order -> report",
+        "owner": "Solution Engineer",
+        "duration_min": 15,
+        "objective": "Prove end-to-end happy path",
+        "expected_output": "Demo recording and quick guide",
+    },
+    {
+        "id": "KICKOFF-04",
+        "topic": "Support path: docs, handover brief, office hour",
+        "owner": "Training Lead",
+        "duration_min": 10,
+        "objective": "Reduce first-week blocker delay",
+        "expected_output": "Support channel and SLA announced",
+    },
+    {
+        "id": "KICKOFF-05",
+        "topic": "Q&A and commitment check",
+        "owner": "Owner + PM",
+        "duration_min": 15,
+        "objective": "Confirm go-live readiness by site",
+        "expected_output": "Site commitment checklist signed",
+    },
+]
+
+ADOPTION_W03_ROLE_WORKSHOPS: list[dict[str, Any]] = [
+    {
+        "id": "WS-OPR-01",
+        "role": "Operator",
+        "trainer": "Training Lead",
+        "duration_min": 20,
+        "objective": "점검 생성과 위험 플래그 해석을 1회 완주",
+        "checklist": [
+            "Create inspection with required fields",
+            "Review risk flags and print preview",
+            "Submit first work-order escalation note",
+        ],
+        "success_criteria": "First inspection cycle completed under 20 minutes",
+    },
+    {
+        "id": "WS-MGR-01",
+        "role": "Manager",
+        "trainer": "Ops Lead",
+        "duration_min": 20,
+        "objective": "작업지시 ACK/완료와 SLA 추적 루프 고정",
+        "checklist": [
+            "Acknowledge one incoming work-order",
+            "Complete work-order with resolution note",
+            "Review overdue/escalated dashboard counts",
+        ],
+        "success_criteria": "Manager handles full lifecycle without support",
+    },
+    {
+        "id": "WS-OWN-01",
+        "role": "Owner",
+        "trainer": "Product Manager",
+        "duration_min": 20,
+        "objective": "주간 운영 리뷰 루틴과 승인 포인트 확정",
+        "checklist": [
+            "Open dashboard summary with site filter",
+            "Review handover brief and top priority queue",
+            "Confirm weekly KPI review cadence",
+        ],
+        "success_criteria": "Weekly review checklist approved",
+    },
+    {
+        "id": "WS-AUD-01",
+        "role": "Auditor",
+        "trainer": "Audit Lead",
+        "duration_min": 20,
+        "objective": "월간 리포트 추출과 감사 로그 검증 완료",
+        "checklist": [
+            "Generate monthly summary report",
+            "Download CSV and PDF package",
+            "Verify export actions in audit log",
+        ],
+        "success_criteria": "Audit package reproducible within 15 minutes",
+    },
+]
+
+ADOPTION_W03_OFFICE_HOURS: list[dict[str, Any]] = [
+    {
+        "id": "OH-2026-03-16",
+        "date": "2026-03-16",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "host": "Training Lead",
+        "focus": "Launch day blocker triage",
+        "channel": "#ka-facility-help",
+    },
+    {
+        "id": "OH-2026-03-17",
+        "date": "2026-03-17",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "host": "Ops PM",
+        "focus": "Role workshop Q&A follow-up",
+        "channel": "#ka-facility-help",
+    },
+    {
+        "id": "OH-2026-03-18",
+        "date": "2026-03-18",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "host": "Ops Lead",
+        "focus": "Work-order/SLA issue triage",
+        "channel": "#ka-facility-help",
+    },
+    {
+        "id": "OH-2026-03-19",
+        "date": "2026-03-19",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "host": "Audit Lead",
+        "focus": "Reporting and audit export questions",
+        "channel": "#ka-facility-help",
+    },
+    {
+        "id": "OH-2026-03-20",
+        "date": "2026-03-20",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "host": "Product + Training Lead",
+        "focus": "Week-close retrospective and FAQ capture",
+        "channel": "#ka-facility-help",
+    },
+]
+
+ADOPTION_W03_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W03-E01",
+        "date": "2026-03-16",
+        "start_time": "09:00",
+        "end_time": "10:00",
+        "title": "Kickoff session (60m)",
+        "owner": "Product + Training Lead",
+        "output": "Kickoff recording + launch KPI board",
+    },
+    {
+        "id": "W03-E02",
+        "date": "2026-03-16",
+        "start_time": "10:30",
+        "end_time": "10:50",
+        "title": "Role workshop - Operator",
+        "owner": "Training Lead",
+        "output": "WS-OPR-01 completion checklist",
+    },
+    {
+        "id": "W03-E03",
+        "date": "2026-03-16",
+        "start_time": "11:00",
+        "end_time": "11:20",
+        "title": "Role workshop - Manager",
+        "owner": "Ops Lead",
+        "output": "WS-MGR-01 completion checklist",
+    },
+    {
+        "id": "W03-E04",
+        "date": "2026-03-16",
+        "start_time": "11:30",
+        "end_time": "11:50",
+        "title": "Role workshop - Owner",
+        "owner": "Product Manager",
+        "output": "WS-OWN-01 completion checklist",
+    },
+    {
+        "id": "W03-E05",
+        "date": "2026-03-16",
+        "start_time": "14:00",
+        "end_time": "14:20",
+        "title": "Role workshop - Auditor",
+        "owner": "Audit Lead",
+        "output": "WS-AUD-01 completion checklist",
+    },
+    {
+        "id": "W03-E06",
+        "date": "2026-03-16",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "title": "Daily office hour #1",
+        "owner": "Training Lead",
+        "output": "Day-1 blocker resolution log",
+    },
+    {
+        "id": "W03-E07",
+        "date": "2026-03-17",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "title": "Daily office hour #2",
+        "owner": "Ops PM",
+        "output": "Day-2 FAQ update",
+    },
+    {
+        "id": "W03-E08",
+        "date": "2026-03-18",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "title": "Daily office hour #3",
+        "owner": "Ops Lead",
+        "output": "SLA issue follow-up list",
+    },
+    {
+        "id": "W03-E09",
+        "date": "2026-03-19",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "title": "Daily office hour #4",
+        "owner": "Audit Lead",
+        "output": "Reporting Q&A digest",
+    },
+    {
+        "id": "W03-E10",
+        "date": "2026-03-20",
+        "start_time": "17:00",
+        "end_time": "17:15",
+        "title": "Daily office hour #5",
+        "owner": "Product + Training Lead",
+        "output": "W03 week-close note",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -5954,6 +6193,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w02_checklist_csv_api": "/api/public/adoption-plan/w02/checklist.csv",
         "public_adoption_w02_schedule_ics_api": "/api/public/adoption-plan/w02/schedule.ics",
         "public_adoption_w02_sample_files_api": "/api/public/adoption-plan/w02/sample-files",
+        "public_adoption_w03_api": "/api/public/adoption-plan/w03",
+        "public_adoption_w03_checklist_csv_api": "/api/public/adoption-plan/w03/checklist.csv",
+        "public_adoption_w03_schedule_ics_api": "/api/public/adoption-plan/w03/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -6011,6 +6253,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "weekly_execution": ADOPTION_WEEKLY_EXECUTION,
         "workflow_lock_matrix": ADOPTION_WORKFLOW_LOCK_MATRIX,
         "w02_sop_sandbox": _adoption_w02_payload(),
+        "w03_go_live_onboarding": _adoption_w03_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -6031,6 +6274,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w02_checklist_csv": "/api/public/adoption-plan/w02/checklist.csv",
                 "w02_schedule_ics": "/api/public/adoption-plan/w02/schedule.ics",
                 "w02_sample_files": "/api/public/adoption-plan/w02/sample-files",
+                "w03_json": "/api/public/adoption-plan/w03",
+                "w03_checklist_csv": "/api/public/adoption-plan/w03/checklist.csv",
+                "w03_schedule_ics": "/api/public/adoption-plan/w03/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -6069,6 +6315,160 @@ def _adoption_w02_payload() -> dict[str, Any]:
             "sample_files": "/api/public/adoption-plan/w02/sample-files",
         },
     }
+
+
+def _adoption_w03_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 3),
+        None,
+    )
+    if week_item is None:
+        timeline = {"week": 3, "start_date": "", "end_date": "", "phase": "Launch", "focus": "Go-live onboarding"}
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 3)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W03 Go-live Onboarding Pack",
+        "public": True,
+        "timeline": timeline,
+        "kickoff_agenda": ADOPTION_W03_KICKOFF_AGENDA,
+        "role_workshops": ADOPTION_W03_ROLE_WORKSHOPS,
+        "office_hours": ADOPTION_W03_OFFICE_HOURS,
+        "scheduled_events": ADOPTION_W03_SCHEDULED_EVENTS,
+        "downloads": {
+            "json": "/api/public/adoption-plan/w03",
+            "checklist_csv": "/api/public/adoption-plan/w03/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w03/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w03_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "name_or_role",
+            "owner_or_trainer",
+            "schedule",
+            "objective_or_focus",
+            "checklist_or_channel",
+            "duration_min",
+            "expected_output_or_success",
+        ]
+    )
+    for item in payload.get("kickoff_agenda", []):
+        writer.writerow(
+            [
+                "kickoff_agenda",
+                item.get("id", ""),
+                item.get("topic", ""),
+                item.get("owner", ""),
+                "",
+                item.get("objective", ""),
+                "",
+                item.get("duration_min", ""),
+                item.get("expected_output", ""),
+            ]
+        )
+    for item in payload.get("role_workshops", []):
+        writer.writerow(
+            [
+                "role_workshop",
+                item.get("id", ""),
+                item.get("role", ""),
+                item.get("trainer", ""),
+                "",
+                item.get("objective", ""),
+                " | ".join(str(x) for x in item.get("checklist", [])),
+                item.get("duration_min", ""),
+                item.get("success_criteria", ""),
+            ]
+        )
+    for item in payload.get("office_hours", []):
+        writer.writerow(
+            [
+                "office_hour",
+                item.get("id", ""),
+                "Daily office hour",
+                item.get("host", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+                item.get("focus", ""),
+                item.get("channel", ""),
+                "",
+                "",
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                item.get("title", ""),
+                item.get("owner", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+                "",
+                "",
+                "",
+                item.get("output", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w03_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w03-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W03] {str(item.get('title', 'Go-live Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W03 Go-live Onboarding//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
 
 
 def _w02_sample_files_payload() -> dict[str, Any]:
@@ -6436,6 +6836,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     training = plan.get("training_outline", [])
     kpis = plan.get("kpi_dashboard_items", [])
     w02_pack = plan.get("w02_sop_sandbox", {})
+    w03_pack = plan.get("w03_go_live_onboarding", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -6542,6 +6943,66 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w02_schedule_rows: list[str] = []
     for item in w02_pack.get("scheduled_events", []):
         w02_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w03_kickoff_rows: list[str] = []
+    for item in w03_pack.get("kickoff_agenda", []):
+        w03_kickoff_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("topic", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("duration_min", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{html.escape(str(item.get("expected_output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w03_workshop_rows: list[str] = []
+    for item in w03_pack.get("role_workshops", []):
+        checklist_html = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("checklist", []))
+        w03_workshop_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("role", "")))}</td>
+              <td>{html.escape(str(item.get("trainer", "")))}</td>
+              <td>{html.escape(str(item.get("duration_min", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{checklist_html}</td>
+              <td>{html.escape(str(item.get("success_criteria", "")))}</td>
+            </tr>
+            """
+        )
+
+    w03_office_rows: list[str] = []
+    for item in w03_pack.get("office_hours", []):
+        w03_office_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("host", "")))}</td>
+              <td>{html.escape(str(item.get("focus", "")))}</td>
+              <td>{html.escape(str(item.get("channel", "")))}</td>
+            </tr>
+            """
+        )
+
+    w03_schedule_rows: list[str] = []
+    for item in w03_pack.get("scheduled_events", []):
+        w03_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -6830,6 +7291,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         f"교육 모듈 {len(training)}개: 역할별 표준 학습경로와 실습 중심 운영.",
         f"KPI {len(kpis)}개 주간 추적, 다음 리뷰일 {plan.get('schedule_management', {}).get('next_review_date', '')}.",
         f"W02 SOP {len(w02_pack.get('sop_runbooks', []))}개 + Sandbox {len(w02_pack.get('sandbox_scenarios', []))}개 + 일정 {len(w02_pack.get('scheduled_events', []))}건 공개.",
+        f"W03 Kickoff {len(w03_pack.get('kickoff_agenda', []))}개 + Workshop {len(w03_pack.get('role_workshops', []))}개 + Office hour {len(w03_pack.get('office_hours', []))}개 구성.",
         "일정 파일(CSV/ICS) + 캠페인 킷 + Post-MVP 실행팩으로 즉시 실행 가능.",
     ]
     summary_lines_html = "".join(f"<li>{html.escape(line)}</li>" for line in summary_lines)
@@ -7199,6 +7661,9 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
+        <a href="/api/public/adoption-plan/w03">W03 JSON</a>
+        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
       </div>
@@ -7299,6 +7764,83 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w02_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W03 Go-live Onboarding</h2>
+      <p class="sub">런치 주차 온보딩(킥오프 + 역할 워크숍 + 일일 오피스아워) 실행 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w03">W03 JSON</a>
+        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Kickoff ID</th>
+              <th>Topic</th>
+              <th>Owner</th>
+              <th>Duration(min)</th>
+              <th>Objective</th>
+              <th>Expected Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w03_kickoff_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Workshop ID</th>
+              <th>Role</th>
+              <th>Trainer</th>
+              <th>Duration(min)</th>
+              <th>Objective</th>
+              <th>Checklist</th>
+              <th>Success Criteria</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w03_workshop_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Host</th>
+              <th>Focus</th>
+              <th>Channel</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w03_office_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w03_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -8838,6 +9380,19 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
           </div>
           <div class="box">
+            <h3>W03 Go-live Onboarding</h3>
+            <div id="adoptionW03Top" class="cards"></div>
+            <div id="adoptionW03Kickoff" class="empty">데이터 없음</div>
+            <div id="adoptionW03Workshops" class="empty">데이터 없음</div>
+            <div id="adoptionW03OfficeHours" class="empty">데이터 없음</div>
+            <div id="adoptionW03Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW03Json" href="/api/public/adoption-plan/w03">W03 JSON</a>
+              <a id="adoptW03ChecklistCsv" href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
+              <a id="adoptW03ScheduleIcs" href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+            </div>
+          </div>
+          <div class="box">
             <h3>W02 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w02TrackSite" placeholder="site (required, 예: HQ)" />
@@ -9742,6 +10297,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w02Sop = document.getElementById("adoptionW02Sop");
         const w02Sandbox = document.getElementById("adoptionW02Sandbox");
         const w02Schedule = document.getElementById("adoptionW02Schedule");
+        const w03Top = document.getElementById("adoptionW03Top");
+        const w03Kickoff = document.getElementById("adoptionW03Kickoff");
+        const w03Workshops = document.getElementById("adoptionW03Workshops");
+        const w03OfficeHours = document.getElementById("adoptionW03OfficeHours");
+        const w03Schedule = document.getElementById("adoptionW03Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -9838,6 +10398,93 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w03 = data.w03_go_live_onboarding || {{}};
+          const w03TopItems = [
+            ["Week", "W" + String(w03.timeline?.week || 3).padStart(2, "0")],
+            ["Focus", w03.timeline?.focus || "Go-live onboarding"],
+            ["Kickoff Agenda", (w03.kickoff_agenda || []).length],
+            ["Role Workshops", (w03.role_workshops || []).length],
+            ["Office Hours", (w03.office_hours || []).length],
+            ["Sessions", (w03.scheduled_events || []).length],
+          ];
+          w03Top.innerHTML = w03TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w03Kickoff.innerHTML = renderTable(
+            (w03.kickoff_agenda || []).map((row) => ({{
+              id: row.id || "",
+              topic: row.topic || "",
+              owner: row.owner || "",
+              duration_min: row.duration_min ?? "",
+              objective: row.objective || "",
+              expected_output: row.expected_output || "",
+            }})),
+            [
+              {{ key: "id", label: "Kickoff ID" }},
+              {{ key: "topic", label: "Topic" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "duration_min", label: "Duration(min)" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "expected_output", label: "Expected Output" }},
+            ]
+          );
+
+          w03Workshops.innerHTML = renderTable(
+            (w03.role_workshops || []).map((row) => ({{
+              id: row.id || "",
+              role: row.role || "",
+              trainer: row.trainer || "",
+              duration_min: row.duration_min ?? "",
+              objective: row.objective || "",
+              checklist: Array.isArray(row.checklist) ? row.checklist.join(" | ") : "",
+              success_criteria: row.success_criteria || "",
+            }})),
+            [
+              {{ key: "id", label: "Workshop ID" }},
+              {{ key: "role", label: "Role" }},
+              {{ key: "trainer", label: "Trainer" }},
+              {{ key: "duration_min", label: "Duration(min)" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "checklist", label: "Checklist" }},
+              {{ key: "success_criteria", label: "Success Criteria" }},
+            ]
+          );
+
+          w03OfficeHours.innerHTML = renderTable(
+            (w03.office_hours || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              host: row.host || "",
+              focus: row.focus || "",
+              channel: row.channel || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "host", label: "Host" }},
+              {{ key: "focus", label: "Focus" }},
+              {{ key: "channel", label: "Channel" }},
+            ]
+          );
+
+          w03Schedule.innerHTML = renderTable(
+            (w03.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -9892,6 +10539,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w02Sop.innerHTML = renderEmpty(err.message);
           w02Sandbox.innerHTML = renderEmpty(err.message);
           w02Schedule.innerHTML = renderEmpty(err.message);
+          w03Top.innerHTML = "";
+          w03Kickoff.innerHTML = renderEmpty(err.message);
+          w03Workshops.innerHTML = renderEmpty(err.message);
+          w03OfficeHours.innerHTML = renderEmpty(err.message);
+          w03Schedule.innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -10023,6 +10675,11 @@ def get_public_adoption_w02() -> dict[str, Any]:
     return _adoption_w02_payload()
 
 
+@app.get("/api/public/adoption-plan/w03")
+def get_public_adoption_w03() -> dict[str, Any]:
+    return _adoption_w03_payload()
+
+
 @app.get("/api/public/modules", response_model=None)
 def get_public_modules(request: Request) -> Any:
     payload = _facility_modules_payload()
@@ -10073,6 +10730,30 @@ def get_public_adoption_w02_schedule_ics() -> Response:
     payload = _adoption_w02_payload()
     ics_text = _build_adoption_w02_schedule_ics(payload)
     file_name = "ka-facility-os-adoption-w02-sop-sandbox.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w03/checklist.csv")
+def get_public_adoption_w03_checklist_csv() -> Response:
+    payload = _adoption_w03_payload()
+    csv_text = _build_adoption_w03_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w03-go-live-onboarding-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w03/schedule.ics")
+def get_public_adoption_w03_schedule_ics() -> Response:
+    payload = _adoption_w03_payload()
+    ics_text = _build_adoption_w03_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w03-go-live-onboarding.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
