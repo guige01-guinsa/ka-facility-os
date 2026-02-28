@@ -310,6 +310,12 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
   -RollbackOnFailure
 ```
 
+Direct smoke helper supports backend expectation and optional strict audit-chain gate:
+
+```powershell
+.\scripts\post_deploy_smoke.ps1 -BaseUrl "https://ops.ka-part.com" -AdminToken "<owner-token>" -ExpectRateLimitBackend "redis"
+```
+
 - Backup/restore rehearsal helper:
 
 ```powershell

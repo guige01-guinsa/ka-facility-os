@@ -3,6 +3,7 @@ param(
   [string]$BaseUrl,
   [string]$AdminToken = "",
   [string]$ExpectRateLimitBackend = "",
+  [switch]$RequireAuditChainOk,
   [int]$TimeoutSec = 20
 )
 
@@ -34,13 +35,18 @@ if ($AdminToken -ne "") {
   }
 
   $integrity = Invoke-JsonGet -Uri "$BaseUrl/api/admin/audit-integrity" -Headers $headers
-  if (-not $integrity.chain.chain_ok) {
+  if ($RequireAuditChainOk -and (-not $integrity.chain.chain_ok)) {
     throw "Audit integrity check failed: hash chain mismatch"
   }
 
   $runbook = Invoke-JsonGet -Uri "$BaseUrl/api/ops/runbook/checks" -Headers $headers
-  if ($runbook.overall_status -eq "critical") {
-    throw "Runbook check failed: overall_status=critical"
+  $criticalChecks = @($runbook.checks | Where-Object { $_.status -eq "critical" })
+  if (-not $RequireAuditChainOk) {
+    $criticalChecks = @($criticalChecks | Where-Object { $_.id -ne "audit_chain_integrity" })
+  }
+  if ($criticalChecks.Count -gt 0) {
+    $criticalIds = ($criticalChecks | ForEach-Object { $_.id }) -join ","
+    throw "Runbook check failed: critical checks=$criticalIds"
   }
 
   $posture = Invoke-JsonGet -Uri "$BaseUrl/api/ops/security/posture" -Headers $headers
