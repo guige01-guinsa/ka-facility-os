@@ -269,6 +269,24 @@ adoption_w02_evidence_files = Table(
     Column("uploaded_at", DateTime(timezone=True), nullable=False),
 )
 
+adoption_w02_site_runs = Table(
+    "adoption_w02_site_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False, unique=True),
+    Column("status", String(40), nullable=False, default="active"),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("force_used", Boolean, nullable=False, default=False),
+    Column("completed_by", String(80), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("last_checked_at", DateTime(timezone=True), nullable=False),
+    Column("readiness_json", Text, nullable=False, default="{}"),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

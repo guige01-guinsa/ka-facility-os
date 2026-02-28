@@ -34,6 +34,7 @@ except Exception:  # pragma: no cover - optional dependency
 from app.database import (
     DATABASE_URL,
     adoption_w02_evidence_files,
+    adoption_w02_site_runs,
     adoption_w02_tracker_items,
     alert_deliveries,
     admin_audit_logs,
@@ -85,11 +86,14 @@ from app.schemas import (
     SlaWhatIfRequest,
     SlaWhatIfResponse,
     W02EvidenceRead,
+    W02TrackerCompletionRead,
+    W02TrackerCompletionRequest,
     W02TrackerBootstrapRequest,
     W02TrackerBootstrapResponse,
     W02TrackerItemRead,
     W02TrackerItemUpdate,
     W02TrackerOverviewRead,
+    W02TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -285,6 +289,15 @@ W02_TRACKER_STATUS_SET = {
     W02_TRACKER_STATUS_DONE,
     W02_TRACKER_STATUS_BLOCKED,
 }
+W02_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W02_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W02_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W02_SITE_COMPLETION_STATUS_SET = {
+    W02_SITE_COMPLETION_STATUS_ACTIVE,
+    W02_SITE_COMPLETION_STATUS_COMPLETED,
+    W02_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W02_EVIDENCE_REQUIRED_ITEM_TYPES = {"sandbox_scenario"}
 W02_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
@@ -4335,6 +4348,178 @@ def _compute_w02_tracker_overview(site: str, rows: list[W02TrackerItemRead]) -> 
     )
 
 
+def _compute_w02_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W02TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W02TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1
+        for row in rows
+        if row.item_type in W02_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(sandbox_scenario) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W02TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w02_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W02_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W02_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w02_completion_model(
+    *,
+    site: str,
+    readiness: W02TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W02TrackerCompletionRead:
+    if row is None:
+        return W02TrackerCompletionRead(
+            site=site,
+            status=W02_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w02_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W02TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w02_tracker_items_for_site(site: str) -> list[W02TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w02_tracker_items)
+            .where(adoption_w02_tracker_items.c.site == site)
+            .order_by(
+                adoption_w02_tracker_items.c.item_type.asc(),
+                adoption_w02_tracker_items.c.item_key.asc(),
+                adoption_w02_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w02_tracker_item_model(row) for row in rows]
+
+
+def _reset_w02_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w02_site_runs.c.status)
+        .where(adoption_w02_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w02_site_completion_status(row.get("status"))
+    if status == W02_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w02_site_runs)
+        .where(adoption_w02_site_runs.c.site == site)
+        .values(
+            status=W02_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -5711,6 +5896,9 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
+        "adoption_w02_tracker_readiness_api": "/api/adoption/w02/tracker/readiness",
+        "adoption_w02_tracker_completion_api": "/api/adoption/w02/tracker/completion",
+        "adoption_w02_tracker_complete_api": "/api/adoption/w02/tracker/complete",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -8578,9 +8766,23 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w02Reserved3" value="max file 5MB" disabled />
               <button id="w02TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
+            <div class="filter-row">
+              <input id="w02CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w02CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w02Reserved4" value="readiness gate required" disabled />
+              <button id="w02ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w02CompleteBtn" class="btn" type="button">W02 완료 확정</button>
+            </div>
             <div id="w02TrackerMeta" class="meta">조회 전</div>
             <div id="w02TrackerSummary" class="cards"></div>
             <div id="w02TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W02 완료 판정 결과</h4>
+            <div id="w02ReadinessMeta" class="meta">조회 전</div>
+            <div id="w02ReadinessCards" class="cards"></div>
+            <div id="w02ReadinessBlockers" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
             <div id="w02EvidenceTable" class="empty">데이터 없음</div>
           </div>
@@ -9179,36 +9381,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const meta = document.getElementById("w02TrackerMeta");
         const summary = document.getElementById("w02TrackerSummary");
         const table = document.getElementById("w02TrackerTable");
+        const readinessMeta = document.getElementById("w02ReadinessMeta");
+        const readinessCards = document.getElementById("w02ReadinessCards");
+        const readinessBlockers = document.getElementById("w02ReadinessBlockers");
         const evidenceTable = document.getElementById("w02EvidenceTable");
         const site = (document.getElementById("w02TrackSite").value || "").trim();
         if (!site) {{
           meta.textContent = "site 값을 입력하세요.";
           summary.innerHTML = "";
           table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요.";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
           evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
           return;
         }}
         try {{
           meta.textContent = "조회 중... W02 tracker";
-          const [overview, items] = await Promise.all([
+          readinessMeta.textContent = "조회 중... W02 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
             fetchJson("/api/adoption/w02/tracker/overview?site=" + encodeURIComponent(site), true),
             fetchJson("/api/adoption/w02/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w02/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w02/tracker/completion?site=" + encodeURIComponent(site), true),
           ]);
           meta.textContent = "성공: W02 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
           const summaryItems = [
-            ["Total", overview.total_items || 0],
-            ["Pending", overview.pending_count || 0],
-            ["In Progress", overview.in_progress_count || 0],
-            ["Done", overview.done_count || 0],
-            ["Blocked", overview.blocked_count || 0],
-            ["Completion %", overview.completion_rate_percent || 0],
-            ["Evidence", overview.evidence_total_count || 0],
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
           ];
           summary.innerHTML = summaryItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
           table.innerHTML = renderTable(
-            items || [],
+            trackerItems || [],
             [
               {{ key: "id", label: "ID" }},
               {{ key: "item_type", label: "Type" }},
@@ -9239,8 +9479,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           meta.textContent = "실패: " + err.message;
           summary.innerHTML = "";
           table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
           evidenceTable.innerHTML = renderEmpty(err.message);
         }}
+      }}
+
+      async function runW02Readiness() {{
+        await runW02Tracker();
       }}
 
       async function runW02TrackerBootstrap() {{
@@ -9265,6 +9512,44 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           await runW02Tracker();
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW02Complete() {{
+        const meta = document.getElementById("w02ReadinessMeta");
+        const site = (document.getElementById("w02TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        const completionNote = (document.getElementById("w02CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w02CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중... W02 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w02/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW02Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW02Tracker().catch(() => null);
         }}
       }}
 
@@ -9484,10 +9769,16 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
             const w02TrackerTable = document.getElementById("w02TrackerTable");
+            const w02ReadinessMeta = document.getElementById("w02ReadinessMeta");
+            const w02ReadinessCards = document.getElementById("w02ReadinessCards");
+            const w02ReadinessBlockers = document.getElementById("w02ReadinessBlockers");
             const w02EvidenceTable = document.getElementById("w02EvidenceTable");
             w02TrackerMeta.textContent = "토큰 저장 후 실행 추적 API를 사용할 수 있습니다.";
             w02TrackerSummary.innerHTML = "";
             w02TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w02ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            w02ReadinessCards.innerHTML = "";
+            w02ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
             w02EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
           }}
         }} catch (err) {{
@@ -9553,6 +9844,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("w02TrackBootstrapBtn").addEventListener("click", runW02TrackerBootstrap);
       document.getElementById("w02TrackRefreshBtn").addEventListener("click", runW02Tracker);
+      document.getElementById("w02ReadinessBtn").addEventListener("click", runW02Readiness);
+      document.getElementById("w02CompleteBtn").addEventListener("click", runW02Complete);
       document.getElementById("w02TrackUpdateBtn").addEventListener("click", runW02TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
@@ -9781,6 +10074,15 @@ def bootstrap_w02_tracker_items(
             existing_keys.add(key)
             created_count += 1
 
+        if created_count > 0:
+            _reset_w02_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
         rows = conn.execute(
             select(adoption_w02_tracker_items)
             .where(adoption_w02_tracker_items.c.site == payload.site)
@@ -9863,6 +10165,123 @@ def get_w02_tracker_overview(
     return _compute_w02_tracker_overview(site, models)
 
 
+@app.get("/api/adoption/w02/tracker/readiness", response_model=W02TrackerReadinessRead)
+def get_w02_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> W02TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w02_tracker_items_for_site(site)
+    return _compute_w02_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w02/tracker/completion", response_model=W02TrackerCompletionRead)
+def get_w02_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
+) -> W02TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w02_tracker_items_for_site(site)
+    readiness = _compute_w02_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w02_site_runs).where(adoption_w02_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w02_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w02/tracker/complete", response_model=W02TrackerCompletionRead)
+def complete_w02_tracker(
+    payload: W02TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
+) -> W02TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w02_tracker_items_for_site(payload.site)
+    readiness = _compute_w02_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W02 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W02_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W02_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w02_site_runs).where(adoption_w02_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w02_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w02_site_runs)
+                .where(adoption_w02_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w02_site_runs).where(adoption_w02_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w02_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w02_tracker_complete",
+        resource_type="adoption_w02_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
 @app.patch("/api/adoption/w02/tracker/items/{tracker_item_id}", response_model=W02TrackerItemRead)
 def update_w02_tracker_item(
     tracker_item_id: int,
@@ -9937,6 +10356,13 @@ def update_w02_tracker_item(
                 updated_by=actor_username,
                 updated_at=now,
             )
+        )
+        _reset_w02_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
         )
         updated = conn.execute(
             select(adoption_w02_tracker_items).where(adoption_w02_tracker_items.c.id == tracker_item_id).limit(1)

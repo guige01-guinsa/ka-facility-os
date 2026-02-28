@@ -51,6 +51,7 @@ WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
 AdminRole = Literal["owner", "manager", "operator", "auditor"]
 WorkflowLockStatus = Literal["draft", "review", "approved", "locked"]
 W02TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
+W02CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -225,6 +226,41 @@ class W02TrackerOverviewRead(BaseModel):
     completion_rate_percent: int
     evidence_total_count: int
     assignee_breakdown: dict[str, int]
+
+
+class W02TrackerCompletionRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+    force: bool = False
+
+
+class W02TrackerReadinessRead(BaseModel):
+    site: str
+    checked_at: datetime
+    total_items: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    evidence_total_count: int
+    missing_assignee_count: int
+    missing_completion_checked_count: int
+    missing_required_evidence_count: int
+    readiness_score_percent: int
+    ready: bool
+    blockers: list[str]
+
+
+class W02TrackerCompletionRead(BaseModel):
+    site: str
+    status: W02CompletionStatus
+    completion_note: str
+    completed_by: Optional[str] = None
+    completed_at: Optional[datetime] = None
+    force_used: bool = False
+    last_checked_at: datetime
+    readiness: W02TrackerReadinessRead
 
 
 class SlaEscalationRunRequest(BaseModel):

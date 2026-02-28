@@ -159,6 +159,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "사용자 정착 계획" in root_html.text
     assert "W01 Role Workflow Lock Matrix" in root_html.text
     assert "W02 Scheduled SOP and Sandbox" in root_html.text
+    assert "완료 판정" in root_html.text
+    assert "W02 완료 확정" in root_html.text
     assert "알림 채널 KPI" in root_html.text
     assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
@@ -180,6 +182,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w02_schedule_ics_api"] == "/api/public/adoption-plan/w02/schedule.ics"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
+    assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
+    assert service_info.json()["adoption_w02_tracker_completion_api"] == "/api/adoption/w02/tracker/completion"
+    assert service_info.json()["adoption_w02_tracker_complete_api"] == "/api/adoption/w02/tracker/complete"
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
@@ -887,6 +892,144 @@ def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
         files={"file": ("eicar.txt", eicar_signature, "text/plain")},
     )
     assert blocked_malware.status_code == 422
+
+    readiness_before = app_client.get(
+        "/api/adoption/w02/tracker/readiness?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert readiness_before.status_code == 200
+    assert readiness_before.json()["ready"] is False
+    assert readiness_before.json()["pending_count"] >= 1
+
+    completion_before = app_client.get(
+        "/api/adoption/w02/tracker/completion?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert completion_before.status_code == 200
+    assert completion_before.json()["status"] == "active"
+    assert completion_before.json()["readiness"]["ready"] is False
+
+    complete_gate_fail = app_client.post(
+        "/api/adoption/w02/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W02 Site", "completion_note": "attempt normal close"},
+    )
+    assert complete_gate_fail.status_code == 409
+
+    complete_force_denied = app_client.post(
+        "/api/adoption/w02/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W02 Site", "completion_note": "attempt force close", "force": True},
+    )
+    assert complete_force_denied.status_code == 403
+
+    complete_force_owner = app_client.post(
+        "/api/adoption/w02/tracker/complete",
+        headers=_owner_headers(),
+        json={"site": "W02 Site", "completion_note": "owner force close", "force": True},
+    )
+    assert complete_force_owner.status_code == 200
+    assert complete_force_owner.json()["status"] == "completed_with_exceptions"
+    assert complete_force_owner.json()["force_used"] is True
+
+    completion_after_force = app_client.get(
+        "/api/adoption/w02/tracker/completion?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert completion_after_force.status_code == 200
+    assert completion_after_force.json()["status"] == "completed_with_exceptions"
+
+    reopen_after_update = app_client.patch(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}",
+        headers=manager_headers,
+        json={"status": "in_progress", "completion_checked": False, "completion_note": "re-opened"},
+    )
+    assert reopen_after_update.status_code == 200
+    completion_after_reopen = app_client.get(
+        "/api/adoption/w02/tracker/completion?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert completion_after_reopen.status_code == 200
+    assert completion_after_reopen.json()["status"] == "active"
+
+    listed_all = app_client.get(
+        "/api/adoption/w02/tracker/items?site=W02+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed_all.status_code == 200
+    all_items = listed_all.json()
+    sandbox_item_ids: list[int] = []
+    for item in all_items:
+        item_id = int(item["id"])
+        if item["item_type"] == "sandbox_scenario":
+            sandbox_item_ids.append(item_id)
+        done_update = app_client.patch(
+            f"/api/adoption/w02/tracker/items/{item_id}",
+            headers=manager_headers,
+            json={
+                "assignee": item.get("assignee") or "Ops QA",
+                "status": "done",
+                "completion_checked": True,
+                "completion_note": "W02 finalized",
+            },
+        )
+        assert done_update.status_code == 200
+
+    for sandbox_item_id in sandbox_item_ids:
+        sandbox_evidence_list = app_client.get(
+            f"/api/adoption/w02/tracker/items/{sandbox_item_id}/evidence",
+            headers=manager_headers,
+        )
+        assert sandbox_evidence_list.status_code == 200
+        if len(sandbox_evidence_list.json()) == 0:
+            sandbox_upload = app_client.post(
+                f"/api/adoption/w02/tracker/items/{sandbox_item_id}/evidence",
+                headers=manager_headers,
+                data={"note": "sandbox proof"},
+                files={
+                    "file": (
+                        f"sandbox-{sandbox_item_id}.txt",
+                        f"sandbox evidence {sandbox_item_id}".encode("utf-8"),
+                        "text/plain",
+                    )
+                },
+            )
+            assert sandbox_upload.status_code == 201
+
+    readiness_after = app_client.get(
+        "/api/adoption/w02/tracker/readiness?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert readiness_after.status_code == 200
+    readiness_after_body = readiness_after.json()
+    assert readiness_after_body["ready"] is True
+    assert readiness_after_body["pending_count"] == 0
+    assert readiness_after_body["in_progress_count"] == 0
+    assert readiness_after_body["blocked_count"] == 0
+    assert readiness_after_body["missing_assignee_count"] == 0
+    assert readiness_after_body["missing_completion_checked_count"] == 0
+    assert readiness_after_body["missing_required_evidence_count"] == 0
+    assert readiness_after_body["readiness_score_percent"] == 100
+
+    completed = app_client.post(
+        "/api/adoption/w02/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W02 Site", "completion_note": "W02 complete and signed"},
+    )
+    assert completed.status_code == 200
+    completed_body = completed.json()
+    assert completed_body["status"] == "completed"
+    assert completed_body["force_used"] is False
+    assert completed_body["readiness"]["ready"] is True
+    assert completed_body["completed_at"] is not None
+
+    completion_after = app_client.get(
+        "/api/adoption/w02/tracker/completion?site=W02+Site",
+        headers=manager_headers,
+    )
+    assert completion_after.status_code == 200
+    assert completion_after.json()["status"] == "completed"
+    assert completion_after.json()["readiness"]["ready"] is True
 
     owner_seed_other_site = app_client.post(
         "/api/adoption/w02/tracker/bootstrap",
