@@ -71,6 +71,7 @@ Open:
   - `POST /api/ops/alerts/deliveries/{id}/retry` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retries/run` (permission: `admins:manage`)
   - `POST /api/ops/sla/simulate` (permission: `admins:manage`)
+  - `GET /api/ops/security/posture` (permission: `admins:manage`)
 - Workflow locks (W01 role workflow lock)
   - `GET /api/workflow-locks` (`workflow_locks:read`)
   - `POST /api/workflow-locks` (`workflow_locks:write` or admin override)
@@ -219,6 +220,7 @@ Job monitoring:
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/runbook/checks`
+- `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/pdf?window_hours=12&due_soon_hours=6&max_items=10`
@@ -312,6 +314,15 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
 
 ```powershell
 .\scripts\backup_restore_rehearsal.ps1
+```
+
+- Redis allowlist update helper:
+
+```powershell
+.\scripts\set_redis_allowlist.ps1 `
+  -RedisId "red-xxxxxxxx" `
+  -Cidrs @("203.0.113.10/32","198.51.100.0/24") `
+  -DescriptionPrefix "ka-facility-os"
 ```
 
 ## PostgreSQL mode

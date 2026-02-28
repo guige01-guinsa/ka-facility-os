@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
   [string]$AdminToken = "",
+  [string]$ExpectRateLimitBackend = "",
   [int]$TimeoutSec = 20
 )
 
@@ -40,6 +41,16 @@ if ($AdminToken -ne "") {
   $runbook = Invoke-JsonGet -Uri "$BaseUrl/api/ops/runbook/checks" -Headers $headers
   if ($runbook.overall_status -eq "critical") {
     throw "Runbook check failed: overall_status=critical"
+  }
+
+  $posture = Invoke-JsonGet -Uri "$BaseUrl/api/ops/security/posture" -Headers $headers
+  if (-not $posture.rate_limit.active_backend) {
+    throw "Security posture check failed: missing rate_limit.active_backend"
+  }
+  if ($ExpectRateLimitBackend -ne "") {
+    if ($posture.rate_limit.active_backend -ne $ExpectRateLimitBackend) {
+      throw "Security posture check failed: expected rate limit backend '$ExpectRateLimitBackend' but got '$($posture.rate_limit.active_backend)'"
+    }
   }
 }
 

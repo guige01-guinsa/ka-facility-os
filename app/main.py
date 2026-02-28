@@ -1515,6 +1515,72 @@ def _init_rate_limit_backend() -> None:
         _RATE_LIMIT_REDIS = None
 
 
+def _rate_limit_backend_snapshot() -> dict[str, Any]:
+    redis_url_configured = bool(API_RATE_LIMIT_REDIS_URL.strip())
+    redis_client_ready = _RATE_LIMIT_REDIS is not None
+    redis_ping_ok = False
+    redis_error: str | None = None
+    if redis_client_ready:
+        try:
+            _RATE_LIMIT_REDIS.ping()
+            redis_ping_ok = True
+        except Exception as exc:  # pragma: no cover - network-dependent path
+            redis_error = str(exc)
+
+    active_backend = "redis" if redis_ping_ok else "memory"
+    if API_RATE_LIMIT_STORE == "redis":
+        status = "ok" if redis_ping_ok else "critical"
+        message = (
+            "Redis rate limit backend is active."
+            if redis_ping_ok
+            else "Redis is required but unavailable; rate limit fallback is active."
+        )
+    elif API_RATE_LIMIT_STORE == "auto":
+        status = "ok" if redis_ping_ok else "warning"
+        if redis_ping_ok:
+            message = "Auto mode currently uses Redis backend."
+        elif redis_url_configured:
+            message = "Auto mode is falling back to memory because Redis is unavailable."
+        else:
+            message = "Auto mode is using memory backend (Redis URL not configured)."
+    else:
+        status = "ok" if ENV_NAME != "production" else "warning"
+        message = (
+            "Memory rate limit backend is configured."
+            if ENV_NAME != "production"
+            else "Production is using memory rate limit backend."
+        )
+
+    return {
+        "status": status,
+        "message": message,
+        "configured_store": API_RATE_LIMIT_STORE,
+        "active_backend": active_backend,
+        "redis_url_configured": redis_url_configured,
+        "redis_client_ready": redis_client_ready,
+        "redis_ping_ok": redis_ping_ok,
+        "redis_error": redis_error,
+    }
+
+
+def _audit_signing_snapshot() -> dict[str, Any]:
+    enabled = bool(AUDIT_ARCHIVE_SIGNING_KEY.strip())
+    if enabled:
+        return {
+            "status": "ok",
+            "message": "Monthly audit archive signing is enabled.",
+            "enabled": True,
+            "algorithm": "hmac-sha256",
+        }
+    status = "warning" if ENV_NAME == "production" else "ok"
+    return {
+        "status": status,
+        "message": "Monthly audit archive signing key is not configured.",
+        "enabled": False,
+        "algorithm": "unsigned",
+    }
+
+
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
@@ -4508,6 +4574,7 @@ def _service_info_payload() -> dict[str, str]:
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
         "ops_runbook_checks_api": "/api/ops/runbook/checks",
+        "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
         "handover_brief_pdf_api": "/api/ops/handover/brief/pdf",
@@ -9216,6 +9283,8 @@ def get_ops_runbook_checks(
             .where(admin_tokens.c.expires_at <= expiring_soon_cutoff)
         ).all()
 
+    rate_limit_snapshot = _rate_limit_backend_snapshot()
+    signing_snapshot = _audit_signing_snapshot()
     current_month_archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
     checks = [
         {
@@ -9247,6 +9316,19 @@ def get_ops_runbook_checks(
             if len(expiring_count) == 0
             else f"{len(expiring_count)} active admin token(s) expire within 3 days.",
         },
+        {
+            "id": "rate_limit_backend",
+            "status": rate_limit_snapshot["status"],
+            "message": rate_limit_snapshot["message"],
+            "configured_store": rate_limit_snapshot["configured_store"],
+            "active_backend": rate_limit_snapshot["active_backend"],
+        },
+        {
+            "id": "audit_archive_signing",
+            "status": signing_snapshot["status"],
+            "message": signing_snapshot["message"],
+            "algorithm": signing_snapshot["algorithm"],
+        },
     ]
     overall = "ok"
     if any(check["status"] == "critical" for check in checks):
@@ -9262,12 +9344,59 @@ def get_ops_runbook_checks(
         detail={
             "overall_status": overall,
             "checks": [{"id": item["id"], "status": item["status"]} for item in checks],
+            "rate_limit": {
+                "configured_store": rate_limit_snapshot["configured_store"],
+                "active_backend": rate_limit_snapshot["active_backend"],
+                "redis_ping_ok": rate_limit_snapshot["redis_ping_ok"],
+            },
+            "audit_signing": {
+                "enabled": signing_snapshot["enabled"],
+                "algorithm": signing_snapshot["algorithm"],
+            },
         },
     )
     return {
         "generated_at": now.isoformat(),
         "overall_status": overall,
         "checks": checks,
+    }
+
+
+@app.get("/api/ops/security/posture")
+def get_ops_security_posture(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    rate_limit_snapshot = _rate_limit_backend_snapshot()
+    signing_snapshot = _audit_signing_snapshot()
+    _write_audit_log(
+        principal=principal,
+        action="ops_security_posture_view",
+        resource_type="ops_security",
+        resource_id="posture",
+        detail={
+            "rate_limit_store": rate_limit_snapshot["configured_store"],
+            "rate_limit_backend": rate_limit_snapshot["active_backend"],
+            "rate_limit_status": rate_limit_snapshot["status"],
+            "audit_signing_enabled": signing_snapshot["enabled"],
+            "audit_signing_status": signing_snapshot["status"],
+            "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
+        },
+    )
+    return {
+        "generated_at": now.isoformat(),
+        "env": ENV_NAME,
+        "rate_limit": rate_limit_snapshot,
+        "audit_archive_signing": signing_snapshot,
+        "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
+        "token_policy": {
+            "require_expiry": ADMIN_TOKEN_REQUIRE_EXPIRY,
+            "max_ttl_days": ADMIN_TOKEN_MAX_TTL_DAYS,
+            "rotate_after_days": ADMIN_TOKEN_ROTATE_AFTER_DAYS,
+            "rotate_warning_days": ADMIN_TOKEN_ROTATE_WARNING_DAYS,
+            "max_idle_days": ADMIN_TOKEN_MAX_IDLE_DAYS,
+            "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+        },
     }
 
 

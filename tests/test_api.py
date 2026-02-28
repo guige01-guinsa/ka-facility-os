@@ -115,6 +115,7 @@ def test_api_rate_limit_enforced(strict_rate_limit_client: TestClient) -> None:
     assert fourth.headers.get("retry-after") is not None
     assert fourth.headers.get("x-ratelimit-limit") == "3"
     assert fourth.headers.get("x-ratelimit-remaining") == "0"
+    assert fourth.headers.get("x-ratelimit-backend") == "memory"
 
 
 def test_api_rate_limit_admin_policy_enforced(strict_rate_limit_client: TestClient) -> None:
@@ -180,6 +181,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
     assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
+    assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -993,6 +995,24 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     ids = {item["id"] for item in body["checks"]}
     assert "audit_chain_integrity" in ids
     assert "token_expiry_pressure" in ids
+    assert "rate_limit_backend" in ids
+    assert "audit_archive_signing" in ids
+
+
+def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
+    posture = app_client.get(
+        "/api/ops/security/posture",
+        headers=_owner_headers(),
+    )
+    assert posture.status_code == 200
+    body = posture.json()
+    assert body["env"] == "test"
+    assert body["rate_limit"]["configured_store"] == "memory"
+    assert body["rate_limit"]["active_backend"] == "memory"
+    assert body["rate_limit"]["status"] == "ok"
+    assert body["audit_archive_signing"]["enabled"] is True
+    assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
+    assert body["token_policy"]["max_ttl_days"] == 30
 
 
 def test_work_order_workflow_transitions_and_events(app_client: TestClient) -> None:
