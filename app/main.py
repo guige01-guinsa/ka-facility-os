@@ -904,6 +904,66 @@ ADOPTION_W02_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+W02_SAMPLE_EVIDENCE_ARTIFACTS: list[dict[str, Any]] = [
+    {
+        "sample_id": "sx-ins-01",
+        "title": "Inspection Sandbox Evidence",
+        "description": "SX-INS-01 통과 증빙 예시 텍스트 파일",
+        "file_name": "w02-sample-sx-ins-01-proof.txt",
+        "content_type": "text/plain",
+        "tracker_item_type": "sandbox_scenario",
+        "tracker_item_key": "SX-INS-01",
+        "content": (
+            "W02 Sample Evidence\n"
+            "Scenario: SX-INS-01\n"
+            "Module: Inspection\n"
+            "Result: PASS\n"
+            "Checked Items:\n"
+            "- risk_level warning/danger 검증 완료\n"
+            "- risk_flags 임계치 검증 완료\n"
+            "- print view 렌더링 정상\n"
+        ),
+    },
+    {
+        "sample_id": "sx-wo-01",
+        "title": "Work-Order/SLA Sandbox Evidence",
+        "description": "SX-WO-01 통과 증빙 예시 텍스트 파일",
+        "file_name": "w02-sample-sx-wo-01-proof.txt",
+        "content_type": "text/plain",
+        "tracker_item_type": "sandbox_scenario",
+        "tracker_item_key": "SX-WO-01",
+        "content": (
+            "W02 Sample Evidence\n"
+            "Scenario: SX-WO-01\n"
+            "Module: Work-order + SLA\n"
+            "Result: PASS\n"
+            "Checked Items:\n"
+            "- open->acked->completed 전이 검증 완료\n"
+            "- escalation 배치 결과 타겟 포함 확인\n"
+            "- timeline status_changed 이벤트 확인\n"
+        ),
+    },
+    {
+        "sample_id": "sx-rpt-01",
+        "title": "Reporting/Audit Sandbox Evidence",
+        "description": "SX-RPT-01 통과 증빙 예시 텍스트 파일",
+        "file_name": "w02-sample-sx-rpt-01-proof.txt",
+        "content_type": "text/plain",
+        "tracker_item_type": "sandbox_scenario",
+        "tracker_item_key": "SX-RPT-01",
+        "content": (
+            "W02 Sample Evidence\n"
+            "Scenario: SX-RPT-01\n"
+            "Module: Reporting + Audit\n"
+            "Result: PASS\n"
+            "Checked Items:\n"
+            "- monthly summary 수치 확인\n"
+            "- csv/pdf 다운로드 확인\n"
+            "- export audit 로그 기록 확인\n"
+        ),
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -5893,6 +5953,7 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w02_api": "/api/public/adoption-plan/w02",
         "public_adoption_w02_checklist_csv_api": "/api/public/adoption-plan/w02/checklist.csv",
         "public_adoption_w02_schedule_ics_api": "/api/public/adoption-plan/w02/schedule.ics",
+        "public_adoption_w02_sample_files_api": "/api/public/adoption-plan/w02/sample-files",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -5969,6 +6030,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w02_json": "/api/public/adoption-plan/w02",
                 "w02_checklist_csv": "/api/public/adoption-plan/w02/checklist.csv",
                 "w02_schedule_ics": "/api/public/adoption-plan/w02/schedule.ics",
+                "w02_sample_files": "/api/public/adoption-plan/w02/sample-files",
             },
             "next_review_date": next_review_date,
         },
@@ -6004,8 +6066,46 @@ def _adoption_w02_payload() -> dict[str, Any]:
             "json": "/api/public/adoption-plan/w02",
             "checklist_csv": "/api/public/adoption-plan/w02/checklist.csv",
             "schedule_ics": "/api/public/adoption-plan/w02/schedule.ics",
+            "sample_files": "/api/public/adoption-plan/w02/sample-files",
         },
     }
+
+
+def _w02_sample_files_payload() -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
+        sample_id = str(row.get("sample_id") or "").strip().lower()
+        if not sample_id:
+            continue
+        items.append(
+            {
+                "sample_id": sample_id,
+                "title": str(row.get("title") or ""),
+                "description": str(row.get("description") or ""),
+                "file_name": str(row.get("file_name") or f"{sample_id}.txt"),
+                "content_type": str(row.get("content_type") or "text/plain"),
+                "tracker_item_type": str(row.get("tracker_item_type") or ""),
+                "tracker_item_key": str(row.get("tracker_item_key") or ""),
+                "download_url": f"/api/public/adoption-plan/w02/sample-files/{sample_id}",
+            }
+        )
+
+    return {
+        "title": "W02 Sample Evidence Files",
+        "public": True,
+        "count": len(items),
+        "items": items,
+    }
+
+
+def _find_w02_sample_file(sample_id: str) -> dict[str, Any] | None:
+    normalized = sample_id.strip().lower()
+    if not normalized:
+        return None
+    for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
+        if str(row.get("sample_id") or "").strip().lower() == normalized:
+            return row
+    return None
 
 
 def _build_adoption_w02_checklist_csv(payload: dict[str, Any]) -> str:
@@ -7098,6 +7198,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w02">W02 JSON</a>
         <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
       </div>
@@ -7146,6 +7247,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w02">W02 JSON</a>
         <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
         <a href="/api/adoption/w02/tracker/items">W02 Tracker Items API (Token)</a>
         <a href="/api/adoption/w02/tracker/overview?site=HQ">W02 Tracker Overview API (Token)</a>
       </div>
@@ -8732,6 +8834,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="adoptW02Json" href="/api/public/adoption-plan/w02">W02 JSON</a>
               <a id="adoptW02ChecklistCsv" href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
               <a id="adoptW02ScheduleIcs" href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
+              <a id="adoptW02SampleFiles" href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
             </div>
           </div>
           <div class="box">
@@ -9973,6 +10076,33 @@ def get_public_adoption_w02_schedule_ics() -> Response:
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w02/sample-files")
+def get_public_adoption_w02_sample_files() -> dict[str, Any]:
+    return _w02_sample_files_payload()
+
+
+@app.get("/api/public/adoption-plan/w02/sample-files/{sample_id}", response_model=None)
+def download_public_adoption_w02_sample_file(sample_id: str) -> Response:
+    artifact = _find_w02_sample_file(sample_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="W02 sample file not found")
+
+    file_name = _safe_download_filename(
+        str(artifact.get("file_name") or f"{sample_id}.txt"),
+        fallback="w02-sample.txt",
+        max_length=120,
+    )
+    content_type = str(artifact.get("content_type") or "text/plain").strip().lower() or "text/plain"
+    if content_type not in EVIDENCE_ALLOWED_CONTENT_TYPES:
+        content_type = "text/plain"
+    content_text = str(artifact.get("content") or "")
+    return Response(
+        content=content_text.encode("utf-8"),
+        media_type=f"{content_type}; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 

@@ -180,6 +180,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w02_api"] == "/api/public/adoption-plan/w02"
     assert service_info.json()["public_adoption_w02_checklist_csv_api"] == "/api/public/adoption-plan/w02/checklist.csv"
     assert service_info.json()["public_adoption_w02_schedule_ics_api"] == "/api/public/adoption-plan/w02/schedule.ics"
+    assert service_info.json()["public_adoption_w02_sample_files_api"] == "/api/public/adoption-plan/w02/sample-files"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -221,6 +222,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "User Adoption Plan" in adoption_html.text
     assert "Promotion + Education + Fun Kit" in adoption_html.text
     assert "W02 Scheduled SOP and Sandbox" in adoption_html.text
+    assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
     assert "요약 모드 (핵심 5줄): OFF" in adoption_html.text
@@ -298,6 +300,20 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w02_ics.headers["content-type"].startswith("text/calendar")
     assert "BEGIN:VCALENDAR" in w02_ics.text
     assert "SUMMARY:[W02] Kickoff - SOP owner assignment" in w02_ics.text
+
+    w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
+    assert w02_sample_files.status_code == 200
+    w02_sample_body = w02_sample_files.json()
+    assert w02_sample_body["public"] is True
+    assert w02_sample_body["count"] >= 3
+    assert len(w02_sample_body["items"]) >= 3
+    first_sample = w02_sample_body["items"][0]
+    assert first_sample["download_url"].startswith("/api/public/adoption-plan/w02/sample-files/")
+
+    sample_download = app_client.get(first_sample["download_url"])
+    assert sample_download.status_code == 200
+    assert sample_download.headers["content-type"].startswith("text/plain")
+    assert "W02 Sample Evidence" in sample_download.text
 
     post_mvp = app_client.get("/api/public/post-mvp")
     assert post_mvp.status_code == 200
