@@ -133,6 +133,7 @@ OPS_DAILY_CHECK_ALERT_LEVEL = getenv("OPS_DAILY_CHECK_ALERT_LEVEL", "critical").
 ALERT_CHANNEL_GUARD_ENABLED = _env_bool("ALERT_CHANNEL_GUARD_ENABLED", True)
 ALERT_CHANNEL_GUARD_FAIL_THRESHOLD = _env_int("ALERT_CHANNEL_GUARD_FAIL_THRESHOLD", 3, min_value=1)
 ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES = _env_int("ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES", 30, min_value=1)
+ALERT_GUARD_RECOVER_MAX_TARGETS = _env_int("ALERT_GUARD_RECOVER_MAX_TARGETS", 30, min_value=1)
 ALERT_RETENTION_DAYS = _env_int("ALERT_RETENTION_DAYS", 90, min_value=1)
 ALERT_RETENTION_MAX_DELETE = _env_int("ALERT_RETENTION_MAX_DELETE", 5000, min_value=1)
 ALERT_RETENTION_ARCHIVE_ENABLED = _env_bool("ALERT_RETENTION_ARCHIVE_ENABLED", True)
@@ -3403,6 +3404,157 @@ def run_alert_retention_job(
     }
 
 
+def run_alert_guard_recover_job(
+    *,
+    event_type: str | None = None,
+    state_filter: str = "quarantined",
+    max_targets: int | None = None,
+    dry_run: bool = False,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    normalized_state_filter = (state_filter or "quarantined").strip().lower()
+    if normalized_state_filter not in {"quarantined", "warning", "all"}:
+        normalized_state_filter = "quarantined"
+    resolved_max_targets = max(1, min(int(max_targets if max_targets is not None else ALERT_GUARD_RECOVER_MAX_TARGETS), 500))
+
+    snapshot = _build_alert_channel_guard_snapshot(
+        event_type=event_type,
+        lookback_days=30,
+        max_targets=max(200, resolved_max_targets * 5),
+        now=started_at,
+    )
+    channels = snapshot.get("channels", [])
+    if not isinstance(channels, list):
+        channels = []
+
+    def _matches(item: dict[str, Any]) -> bool:
+        state = str(item.get("state_computed") or "")
+        if normalized_state_filter == "all":
+            return state in {"quarantined", "warning"}
+        return state == normalized_state_filter
+
+    selected = [item for item in channels if isinstance(item, dict) and _matches(item)][:resolved_max_targets]
+
+    processed_count = 0
+    success_count = 0
+    warning_count = 0
+    failed_count = 0
+    skipped_count = 0
+    results: list[dict[str, Any]] = []
+
+    for item in selected:
+        target = str(item.get("target") or "").strip()
+        if not target:
+            continue
+        processed_count += 1
+        before_state = _compute_alert_channel_guard_state(
+            target,
+            event_type=event_type,
+            now=datetime.now(timezone.utc),
+        )
+        if dry_run:
+            skipped_count += 1
+            results.append(
+                {
+                    "target": target,
+                    "status": "skipped",
+                    "reason": "dry_run",
+                    "before_state": before_state.get("state"),
+                    "after_state": before_state.get("state"),
+                }
+            )
+            continue
+
+        probe_payload = {
+            "event": "alert_guard_recovery_batch_probe",
+            "target": target,
+            "event_type_scope": event_type,
+            "state_filter": normalized_state_filter,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        ok, err = _post_json_with_retries(
+            url=target,
+            payload=probe_payload,
+            retries=ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        probe_status = "success" if ok and err is None else ("warning" if ok else "failed")
+        if probe_status == "success":
+            success_count += 1
+        elif probe_status == "warning":
+            warning_count += 1
+        else:
+            failed_count += 1
+
+        delivery_id = _write_alert_delivery(
+            event_type=event_type or "alert_guard_recover",
+            target=target,
+            status=probe_status,
+            error=err,
+            payload={**probe_payload, "probe": True},
+        )
+        after_state = _compute_alert_channel_guard_state(
+            target,
+            event_type=event_type,
+            now=datetime.now(timezone.utc),
+        )
+        results.append(
+            {
+                "target": target,
+                "status": probe_status,
+                "error": err,
+                "delivery_id": delivery_id,
+                "before_state": before_state.get("state"),
+                "after_state": after_state.get("state"),
+                "before_consecutive_failures": before_state.get("consecutive_failures"),
+                "after_consecutive_failures": after_state.get("consecutive_failures"),
+            }
+        )
+
+    finished_at = datetime.now(timezone.utc)
+    job_status = "success"
+    if failed_count > 0:
+        job_status = "warning"
+    run_id = _write_job_run(
+        job_name="alert_guard_recover",
+        trigger=trigger,
+        status=job_status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "state_filter": normalized_state_filter,
+            "max_targets": resolved_max_targets,
+            "dry_run": dry_run,
+            "selected_target_count": len(selected),
+            "processed_count": processed_count,
+            "success_count": success_count,
+            "warning_count": warning_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "results": results[:200],
+        },
+    )
+
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": job_status,
+        "event_type": event_type,
+        "state_filter": normalized_state_filter,
+        "max_targets": resolved_max_targets,
+        "dry_run": dry_run,
+        "selected_target_count": len(selected),
+        "processed_count": processed_count,
+        "success_count": success_count,
+        "warning_count": warning_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "results": results,
+    }
+
+
 def _post_json_with_retries(
     *,
     url: str,
@@ -5175,6 +5327,8 @@ def _service_info_payload() -> dict[str, str]:
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
         "alert_channel_guard_api": "/api/ops/alerts/channels/guard",
         "alert_channel_guard_recover_api": "/api/ops/alerts/channels/guard/recover",
+        "alert_channel_guard_recover_batch_api": "/api/ops/alerts/channels/guard/recover-batch",
+        "alert_channel_guard_recover_latest_api": "/api/ops/alerts/channels/guard/recover/latest",
         "alert_retry_api": "/api/ops/alerts/retries/run",
         "alert_retention_policy_api": "/api/ops/alerts/retention/policy",
         "alert_retention_latest_api": "/api/ops/alerts/retention/latest",
@@ -10060,6 +10214,12 @@ def _build_ops_runbook_checks_snapshot(
             .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=36)))
             .limit(1)
         ).first()
+        guard_recover_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == "alert_guard_recover")
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=3)))
+            .limit(1)
+        ).first()
         expiring_soon_cutoff = generated_at + timedelta(days=3)
         expiring_count = conn.execute(
             select(admin_tokens.c.id)
@@ -10143,6 +10303,23 @@ def _build_ops_runbook_checks_snapshot(
             if retention_recent is not None
             else "No recent alert retention job run in last 36 hours.",
         },
+        {
+            "id": "alert_guard_recovery_recent",
+            "status": (
+                "ok"
+                if quarantined_count == 0 or guard_recover_recent is not None
+                else "warning"
+            ),
+            "message": (
+                "Guard recovery job observed within last 3 hours."
+                if quarantined_count > 0 and guard_recover_recent is not None
+                else (
+                    "No quarantined channels currently."
+                    if quarantined_count == 0
+                    else "Quarantined channels exist but no guard recovery job in last 3 hours."
+                )
+            ),
+        },
     ]
     overall = "ok"
     if any(check["status"] == "critical" for check in checks):
@@ -10172,6 +10349,7 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
             "channel_guard_enabled": ALERT_CHANNEL_GUARD_ENABLED,
             "channel_guard_fail_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
             "channel_guard_cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
+            "guard_recover_max_targets": max(1, ALERT_GUARD_RECOVER_MAX_TARGETS),
             "retention_days": max(1, ALERT_RETENTION_DAYS),
             "retention_max_delete": max(1, ALERT_RETENTION_MAX_DELETE),
             "retention_archive_enabled": ALERT_RETENTION_ARCHIVE_ENABLED,
@@ -10756,6 +10934,92 @@ def recover_alert_channel_guard(
             "3) /api/ops/alerts/channels/guard에서 state=healthy로 복귀했는지 확인합니다.",
         ],
     }
+
+
+@app.post("/api/ops/alerts/channels/guard/recover-batch")
+def recover_alert_channel_guard_batch(
+    event_type: Annotated[str | None, Query()] = None,
+    state: Annotated[str, Query(pattern=r"^(quarantined|warning|all)$")] = "quarantined",
+    max_targets: Annotated[int | None, Query(ge=1, le=500)] = None,
+    dry_run: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_alert_guard_recover_job(
+        event_type=event_type,
+        state_filter=state,
+        max_targets=max_targets,
+        dry_run=dry_run,
+        trigger="api",
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_guard_recover_batch",
+        resource_type="alert_delivery",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "success"),
+        detail={
+            "event_type": event_type,
+            "state_filter": state,
+            "max_targets": result.get("max_targets"),
+            "dry_run": dry_run,
+            "selected_target_count": result.get("selected_target_count"),
+            "processed_count": result.get("processed_count"),
+            "success_count": result.get("success_count"),
+            "warning_count": result.get("warning_count"),
+            "failed_count": result.get("failed_count"),
+            "skipped_count": result.get("skipped_count"),
+        },
+    )
+    return result
+
+
+@app.get("/api/ops/alerts/channels/guard/recover/latest")
+def get_alert_channel_guard_recover_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "alert_guard_recover")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No alert_guard_recover run found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    response = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        "event_type": detail.get("event_type"),
+        "state_filter": detail.get("state_filter"),
+        "max_targets": detail.get("max_targets"),
+        "dry_run": bool(detail.get("dry_run", False)),
+        "selected_target_count": int(detail.get("selected_target_count") or 0),
+        "processed_count": int(detail.get("processed_count") or 0),
+        "success_count": int(detail.get("success_count") or 0),
+        "warning_count": int(detail.get("warning_count") or 0),
+        "failed_count": int(detail.get("failed_count") or 0),
+        "skipped_count": int(detail.get("skipped_count") or 0),
+        "results": detail.get("results", []),
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_channel_guard_recover_latest_view",
+        resource_type="alert_delivery",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+            "processed_count": response["processed_count"],
+            "failed_count": response["failed_count"],
+        },
+    )
+    return response
 
 
 @app.get("/api/ops/alerts/retention/policy")

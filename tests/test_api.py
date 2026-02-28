@@ -189,6 +189,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
     assert service_info.json()["alert_channel_guard_api"] == "/api/ops/alerts/channels/guard"
     assert service_info.json()["alert_channel_guard_recover_api"] == "/api/ops/alerts/channels/guard/recover"
+    assert service_info.json()["alert_channel_guard_recover_batch_api"] == "/api/ops/alerts/channels/guard/recover-batch"
+    assert service_info.json()["alert_channel_guard_recover_latest_api"] == "/api/ops/alerts/channels/guard/recover/latest"
     assert service_info.json()["alert_retention_policy_api"] == "/api/ops/alerts/retention/policy"
     assert service_info.json()["alert_retention_latest_api"] == "/api/ops/alerts/retention/latest"
     assert service_info.json()["alert_retention_run_api"] == "/api/ops/alerts/retention/run"
@@ -1064,6 +1066,7 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "audit_archive_signing" in ids
     assert "alert_channel_guard" in ids
     assert "alert_retention_recent" in ids
+    assert "alert_guard_recovery_recent" in ids
 
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -1084,6 +1087,7 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["alerting"]["channel_guard_enabled"] is True
     assert body["alerting"]["channel_guard_fail_threshold"] == 3
     assert body["alerting"]["channel_guard_cooldown_minutes"] == 30
+    assert body["alerting"]["guard_recover_max_targets"] == 30
     assert body["alerting"]["retention_days"] == 90
     assert body["alerting"]["retention_max_delete"] == 5000
     assert body["alerting"]["retention_archive_enabled"] is True
@@ -1998,6 +2002,42 @@ def test_alert_channel_guard_and_recover_api(app_client: TestClient, monkeypatch
         ).mappings().first()
     assert latest is not None
     assert str(latest["status"]) == "success"
+
+    with db_module.get_conn() as conn:
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="sla_escalation",
+                target=target,
+                status="failed",
+                error="seed-3",
+                payload_json="{}",
+                attempt_count=3,
+                last_attempt_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    batch = app_client.post(
+        "/api/ops/alerts/channels/guard/recover-batch",
+        params={"event_type": "sla_escalation", "state": "all", "max_targets": 10, "dry_run": "true"},
+        headers=_owner_headers(),
+    )
+    assert batch.status_code == 200
+    batch_body = batch.json()
+    assert batch_body["state_filter"] == "all"
+    assert batch_body["dry_run"] is True
+    assert batch_body["processed_count"] >= 1
+    assert batch_body["skipped_count"] >= 1
+
+    latest_batch = app_client.get(
+        "/api/ops/alerts/channels/guard/recover/latest",
+        headers=_owner_headers(),
+    )
+    assert latest_batch.status_code == 200
+    latest_batch_body = latest_batch.json()
+    assert latest_batch_body["job_name"] == "alert_guard_recover"
+    assert latest_batch_body["state_filter"] in {"all", "quarantined", "warning"}
 
 
 def test_alert_retention_policy_run_and_latest(

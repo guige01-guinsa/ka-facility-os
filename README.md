@@ -74,6 +74,8 @@ Open:
   - `GET /api/ops/alerts/kpi/channels` (permission: `admins:manage`)
   - `GET /api/ops/alerts/channels/guard` (permission: `admins:manage`)
   - `POST /api/ops/alerts/channels/guard/recover?target=...` (permission: `admins:manage`)
+  - `POST /api/ops/alerts/channels/guard/recover-batch` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/channels/guard/recover/latest` (permission: `admins:manage`)
   - `GET /api/ops/alerts/retention/policy` (permission: `admins:manage`)
   - `GET /api/ops/alerts/retention/latest` (permission: `admins:manage`)
   - `POST /api/ops/alerts/retention/run` (permission: `admins:manage`)
@@ -181,6 +183,7 @@ python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-att
 python -m app.jobs.monthly_audit_archive --write-file
 python -m app.jobs.ops_daily_check
 python -m app.jobs.alert_retention --write-archive
+python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30
 ```
 
 Render cron target commands:
@@ -189,6 +192,7 @@ Render cron target commands:
 - `python -m app.jobs.monthly_audit_archive --write-file` (`5 0 1 * *`)
 - `python -m app.jobs.ops_daily_check` (`15 0 * * *`)
 - `python -m app.jobs.alert_retention --write-archive` (`35 1 * * *`)
+- `python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30` (`25 * * * *`)
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
@@ -199,6 +203,7 @@ Optional alert webhook env:
 - `ALERT_CHANNEL_GUARD_ENABLED` (default `true`)
 - `ALERT_CHANNEL_GUARD_FAIL_THRESHOLD` (default `3`)
 - `ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES` (default `30`)
+- `ALERT_GUARD_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_RETENTION_DAYS` (default `90`)
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
 - `ALERT_RETENTION_ARCHIVE_ENABLED` (default `true`)
@@ -268,6 +273,8 @@ Job monitoring:
 - `GET /api/ops/alerts/kpi/channels` (7d/30d channel success KPI)
 - `GET /api/ops/alerts/channels/guard` (channel quarantine/health snapshot)
 - `POST /api/ops/alerts/channels/guard/recover?target=https://...` (manual recovery probe)
+- `POST /api/ops/alerts/channels/guard/recover-batch?state=quarantined&max_targets=30`
+- `GET /api/ops/alerts/channels/guard/recover/latest`
 - `GET /api/ops/alerts/retention/policy`
 - `GET /api/ops/alerts/retention/latest`
 - `POST /api/ops/alerts/retention/run?dry_run=true`
@@ -394,6 +401,7 @@ Startup behavior:
 - Cron service `ka-facility-os-audit-archive`
 - Cron service `ka-facility-os-ops-daily-check`
 - Cron service `ka-facility-os-alert-retention`
+- Cron service `ka-facility-os-alert-guard-recover`
 
 For safe subdomain split setup (`ops.ka-part.com`), see:
 - `RENDER_SUBDOMAIN_SETUP.md`
