@@ -179,6 +179,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
+    assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
     assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
@@ -982,6 +983,22 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     )
     assert tampered_integrity.status_code == 200
     assert tampered_integrity.json()["chain"]["chain_ok"] is False
+
+    rebaseline = app_client.post(
+        f"/api/admin/audit-chain/rebaseline?from_month={month}&max_rows=50000",
+        headers=_owner_headers(),
+    )
+    assert rebaseline.status_code == 200
+    assert rebaseline.json()["from_month"] == month
+    assert rebaseline.json()["scanned_count"] >= 1
+    assert rebaseline.json()["updated_count"] >= 1
+
+    repaired_integrity = app_client.get(
+        f"/api/admin/audit-integrity?month={month}",
+        headers=_owner_headers(),
+    )
+    assert repaired_integrity.status_code == 200
+    assert repaired_integrity.json()["chain"]["chain_ok"] is True
 
 
 def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:

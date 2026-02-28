@@ -2605,6 +2605,96 @@ def build_monthly_audit_archive(
     return payload
 
 
+def rebaseline_admin_audit_chain(
+    *,
+    from_month: str | None = None,
+    max_rows: int = 50000,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    start_dt: datetime | None = None
+    normalized_month: str | None = None
+    if from_month is not None:
+        start_dt, _, normalized_month = _month_window(from_month)
+
+    with get_conn() as conn:
+        anchor_hash = ""
+        anchor_id: int | None = None
+        if start_dt is not None:
+            anchor = conn.execute(
+                select(
+                    admin_audit_logs.c.id,
+                    admin_audit_logs.c.entry_hash,
+                )
+                .where(admin_audit_logs.c.created_at < start_dt)
+                .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
+                .limit(1)
+            ).mappings().first()
+            if anchor is not None:
+                anchor_id = int(anchor["id"])
+                anchor_hash = str(anchor.get("entry_hash") or "")
+
+        stmt = select(admin_audit_logs).order_by(
+            admin_audit_logs.c.created_at.asc(),
+            admin_audit_logs.c.id.asc(),
+        )
+        if start_dt is not None:
+            stmt = stmt.where(admin_audit_logs.c.created_at >= start_dt)
+        rows = conn.execute(stmt.limit(max_rows)).mappings().all()
+
+        scanned_count = len(rows)
+        updated_count = 0
+        first_updated_id: int | None = None
+        last_updated_id: int | None = None
+        previous_hash = anchor_hash
+
+        for row in rows:
+            row_id = int(row["id"])
+            detail_json = str(row.get("detail_json") or "{}")
+            created_at = _as_datetime(row["created_at"])
+            expected_hash = _compute_audit_entry_hash(
+                prev_hash=previous_hash,
+                actor_user_id=row.get("actor_user_id"),
+                actor_username=str(row.get("actor_username") or ""),
+                action=str(row.get("action") or ""),
+                resource_type=str(row.get("resource_type") or ""),
+                resource_id=str(row.get("resource_id") or ""),
+                status=str(row.get("status") or ""),
+                detail_json=detail_json,
+                created_at=created_at,
+            )
+
+            stored_prev = str(row.get("prev_hash") or "")
+            stored_hash = str(row.get("entry_hash") or "")
+            changed = stored_prev != previous_hash or stored_hash != expected_hash
+            if changed:
+                updated_count += 1
+                if first_updated_id is None:
+                    first_updated_id = row_id
+                last_updated_id = row_id
+                if not dry_run:
+                    conn.execute(
+                        update(admin_audit_logs)
+                        .where(admin_audit_logs.c.id == row_id)
+                        .values(
+                            prev_hash=previous_hash or None,
+                            entry_hash=expected_hash,
+                        )
+                    )
+            previous_hash = expected_hash
+
+    return {
+        "from_month": normalized_month,
+        "max_rows": max_rows,
+        "dry_run": dry_run,
+        "anchor_id": anchor_id,
+        "scanned_count": scanned_count,
+        "updated_count": updated_count,
+        "first_updated_id": first_updated_id,
+        "last_updated_id": last_updated_id,
+        "last_entry_hash": previous_hash or None,
+    }
+
+
 def _write_job_run(
     *,
     job_name: str,
@@ -4568,6 +4658,7 @@ def _service_info_payload() -> dict[str, str]:
         "admin_token_policy_api": "/api/admin/token-policy",
         "admin_audit_api": "/api/admin/audit-logs",
         "admin_audit_integrity_api": "/api/admin/audit-integrity",
+        "admin_audit_rebaseline_api": "/api/admin/audit-chain/rebaseline",
         "admin_audit_archive_monthly_api": "/api/admin/audit-archive/monthly",
         "admin_audit_archive_csv_api": "/api/admin/audit-archive/monthly/csv",
         "job_runs_api": "/api/ops/job-runs",
@@ -9158,6 +9249,37 @@ def get_admin_audit_integrity(
         "signature": archive["signature"],
         "signature_algorithm": archive["signature_algorithm"],
     }
+
+
+@app.post("/api/admin/audit-chain/rebaseline")
+def post_admin_audit_chain_rebaseline(
+    from_month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    max_rows: Annotated[int, Query(ge=1, le=200000)] = 50000,
+    dry_run: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = rebaseline_admin_audit_chain(
+        from_month=from_month,
+        max_rows=max_rows,
+        dry_run=dry_run,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="admin_audit_chain_rebaseline",
+        resource_type="admin_audit_log",
+        resource_id=result["from_month"] or "all",
+        detail={
+            "from_month": result["from_month"],
+            "max_rows": result["max_rows"],
+            "dry_run": result["dry_run"],
+            "anchor_id": result["anchor_id"],
+            "scanned_count": result["scanned_count"],
+            "updated_count": result["updated_count"],
+            "first_updated_id": result["first_updated_id"],
+            "last_updated_id": result["last_updated_id"],
+        },
+    )
+    return result
 
 
 @app.get("/api/admin/audit-archive/monthly")

@@ -49,6 +49,7 @@ Open:
   - `GET /api/admin/token-policy` (permission: `admins:manage`)
   - `GET /api/admin/audit-logs` (permission: `admins:manage`)
   - `GET /api/admin/audit-integrity?month=YYYY-MM` (permission: `admins:manage`)
+  - `POST /api/admin/audit-chain/rebaseline?from_month=YYYY-MM` (permission: `admins:manage`)
   - `GET /api/admin/audit-archive/monthly?month=YYYY-MM` (permission: `admins:manage`)
   - `GET /api/admin/audit-archive/monthly/csv?month=YYYY-MM` (permission: `admins:manage`)
   - `GET /api/admin/policies/sla?site=...` (permission: `admins:manage`)
@@ -288,6 +289,7 @@ Sensitive actions are stored in `admin_audit_logs`:
 Integrity/Archive:
 - each audit row stores `prev_hash` + `entry_hash` (chain)
 - `GET /api/admin/audit-integrity` verifies current month chain
+- `POST /api/admin/audit-chain/rebaseline` repairs hash chain from target month (or full history)
 - `GET /api/admin/audit-archive/monthly` returns signed monthly archive payload
 
 Example:
