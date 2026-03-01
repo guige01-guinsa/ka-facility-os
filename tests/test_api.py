@@ -24,6 +24,7 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "10000")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "10000")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_HEAVY", "10000")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_ADMIN", "10000")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_WRITE", "10000")
     monkeypatch.setenv("API_RATE_LIMIT_STORE", "memory")
@@ -63,6 +64,7 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.setenv("API_RATE_LIMIT_WINDOW_SEC", "60")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_PUBLIC", "3")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH", "3")
+    monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_HEAVY", "2")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_ADMIN", "2")
     monkeypatch.setenv("API_RATE_LIMIT_MAX_AUTH_WRITE", "2")
     monkeypatch.setenv("API_RATE_LIMIT_STORE", "memory")
@@ -132,6 +134,42 @@ def test_api_rate_limit_admin_policy_enforced(strict_rate_limit_client: TestClie
     assert third.status_code == 429
     assert third.headers.get("x-ratelimit-policy") == "auth-admin"
     assert third.headers.get("x-ratelimit-limit") == "2"
+
+
+def test_api_rate_limit_auth_heavy_policy_enforced(strict_rate_limit_client: TestClient) -> None:
+    headers = _owner_headers()
+    first = strict_rate_limit_client.get(
+        "/api/adoption/w07/tracker/completion-package?site=HQ",
+        headers=headers,
+    )
+    second = strict_rate_limit_client.get(
+        "/api/adoption/w07/tracker/completion-package?site=HQ",
+        headers=headers,
+    )
+    third = strict_rate_limit_client.get(
+        "/api/adoption/w07/tracker/completion-package?site=HQ",
+        headers=headers,
+    )
+
+    assert first.status_code == 200
+    assert first.headers.get("content-type", "").startswith("application/zip")
+    assert second.status_code == 200
+    assert third.status_code == 429
+    assert third.headers.get("x-ratelimit-policy") == "auth-heavy"
+    assert third.headers.get("x-ratelimit-limit") == "2"
+
+
+def test_evidence_storage_path_traversal_blocked(app_client: TestClient) -> None:
+    import app.main as main_module
+
+    safe = main_module._resolve_evidence_storage_abs_path("2026/03/01/sample.txt")
+    assert safe is not None
+    assert safe.is_absolute()
+
+    assert main_module._resolve_evidence_storage_abs_path("../escape.txt") is None
+    assert main_module._resolve_evidence_storage_abs_path("..\\escape.txt") is None
+    assert main_module._resolve_evidence_storage_abs_path("/etc/passwd") is None
+    assert main_module._resolve_evidence_storage_abs_path("\\\\server\\share\\file.txt") is None
 
 
 def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None:

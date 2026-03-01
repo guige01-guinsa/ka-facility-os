@@ -259,6 +259,7 @@ Optional alert webhook env:
 - `API_RATE_LIMIT_MAX_PUBLIC` (default `120` requests/window per IP)
 - `API_RATE_LIMIT_MAX_PUBLIC_HEAVY` (default `60`; csv/pdf/ics endpoints)
 - `API_RATE_LIMIT_MAX_AUTH` (default `300` requests/window per admin token)
+- `API_RATE_LIMIT_MAX_AUTH_HEAVY` (default `40`; authenticated heavy download endpoints)
 - `API_RATE_LIMIT_MAX_AUTH_ADMIN` (default `180`; `/api/admin/*`)
 - `API_RATE_LIMIT_MAX_AUTH_WRITE` (default `120`; auth write methods)
 - `API_RATE_LIMIT_MAX_AUTH_UPLOAD` (default `40`; evidence upload)
@@ -274,6 +275,8 @@ Optional alert webhook env:
 - `EVIDENCE_STORAGE_PATH` (default `data/evidence-objects`)
 - `EVIDENCE_SCAN_MODE` (`basic|off`, default `basic`)
 - `EVIDENCE_SCAN_BLOCK_SUSPICIOUS` (default `0`)
+- `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES` (default `200`; max evidence files included in W07 completion package ZIP)
+- `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES` (default `52428800` = 50MB; max total evidence bytes included in W07 completion package ZIP)
 - `AUDIT_ARCHIVE_SIGNING_KEY` (HMAC key for signed monthly audit archive)
 
 Security hardening:
@@ -284,6 +287,8 @@ Security hardening:
 - API rate limit returns `429` with `Retry-After`, `X-RateLimit-*`, `X-RateLimit-Policy`, `X-RateLimit-Backend`
 - admin token policy enforces bounded TTL, inactivity disable, rotate warning metadata, and rotate API
 - W02 evidence supports file-system object storage mode (`fs`), SHA-256 integrity check, and basic malware signature scan
+- evidence object storage path traversal is blocked by root-bound storage key validation
+- web UI stores admin token in `sessionStorage` (legacy `localStorage` value is auto-migrated and removed)
 - admin audit logs maintain hash-chain fields (`prev_hash`, `entry_hash`) for integrity validation
 - monthly audit archive endpoints provide signed JSON/CSV exports
 

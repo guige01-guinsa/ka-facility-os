@@ -17,7 +17,7 @@ from datetime import date
 from datetime import datetime, timezone
 from datetime import timedelta
 from os import getenv
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Annotated, Any, Callable
 from urllib import error as url_error
@@ -196,6 +196,7 @@ API_RATE_LIMIT_WINDOW_SEC = _env_int("API_RATE_LIMIT_WINDOW_SEC", 60, min_value=
 API_RATE_LIMIT_MAX_PUBLIC = _env_int("API_RATE_LIMIT_MAX_PUBLIC", 120, min_value=1)
 API_RATE_LIMIT_MAX_PUBLIC_HEAVY = _env_int("API_RATE_LIMIT_MAX_PUBLIC_HEAVY", 60, min_value=1)
 API_RATE_LIMIT_MAX_AUTH = _env_int("API_RATE_LIMIT_MAX_AUTH", 300, min_value=1)
+API_RATE_LIMIT_MAX_AUTH_HEAVY = _env_int("API_RATE_LIMIT_MAX_AUTH_HEAVY", 40, min_value=1)
 API_RATE_LIMIT_MAX_AUTH_ADMIN = _env_int("API_RATE_LIMIT_MAX_AUTH_ADMIN", 180, min_value=1)
 API_RATE_LIMIT_MAX_AUTH_WRITE = _env_int("API_RATE_LIMIT_MAX_AUTH_WRITE", 120, min_value=1)
 API_RATE_LIMIT_MAX_AUTH_UPLOAD = _env_int("API_RATE_LIMIT_MAX_AUTH_UPLOAD", 40, min_value=1)
@@ -429,6 +430,16 @@ W07_SITE_COMPLETION_STATUS_SET = {
 }
 W07_EVIDENCE_REQUIRED_ITEM_TYPES = {"sla_checklist", "coaching_play"}
 W07_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
+    "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
+    200,
+    min_value=1,
+)
+W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES = _env_int(
+    "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES",
+    50 * 1024 * 1024,
+    min_value=1024 * 1024,
+)
 W07_WEEKLY_JOB_NAME = "adoption_w07_sla_quality_weekly"
 W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 
@@ -2596,6 +2607,12 @@ def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[
     path = request.url.path
     method = request.method.upper()
     if is_auth:
+        if method == "GET" and (
+            path.endswith("/completion-package")
+            or path.endswith("/archive.csv")
+            or path.endswith("/download")
+        ):
+            return "auth-heavy", API_RATE_LIMIT_MAX_AUTH_HEAVY
         if method == "POST" and (
             ("/api/adoption/w02/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w03/tracker/items/" in path and path.endswith("/evidence"))
@@ -3031,6 +3048,26 @@ def _evidence_storage_root() -> Path:
     return project_root / candidate
 
 
+def _resolve_evidence_storage_abs_path(storage_key: str) -> Path | None:
+    key = str(storage_key or "").strip().replace("\\", "/")
+    if not key:
+        return None
+    if key.startswith("/") or key.startswith("\\"):
+        return None
+    if "\x00" in key:
+        return None
+    if ".." in PurePosixPath(key).parts:
+        return None
+
+    root = _evidence_storage_root().resolve()
+    candidate = (root / key).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return None
+    return candidate
+
+
 def _ensure_evidence_storage_ready() -> None:
     backend = _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND)
     if backend != "fs":
@@ -3069,7 +3106,9 @@ def _write_evidence_blob(*, file_name: str, file_bytes: bytes, sha256_digest: st
         f"{now.year:04d}/{now.month:02d}/{now.day:02d}/"
         f"{sha256_digest[:20]}-{secrets.token_hex(8)}{extension}"
     )
-    abs_path = _evidence_storage_root() / storage_key
+    abs_path = _resolve_evidence_storage_abs_path(storage_key)
+    if abs_path is None:
+        raise RuntimeError("Invalid evidence storage key generated")
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_bytes(file_bytes)
     # Keep DB rows lightweight when file-system backend is enabled.
@@ -3082,7 +3121,9 @@ def _read_evidence_blob(*, row: dict[str, Any]) -> bytes | None:
         storage_key = str(row.get("storage_key") or "").strip()
         if not storage_key:
             return None
-        abs_path = _evidence_storage_root() / storage_key
+        abs_path = _resolve_evidence_storage_abs_path(storage_key)
+        if abs_path is None:
+            return None
         if not abs_path.exists() or not abs_path.is_file():
             return None
         return abs_path.read_bytes()
@@ -8094,6 +8135,7 @@ def _build_w07_evidence_index_csv(rows: list[dict[str, Any]]) -> str:
             "uploaded_at",
             "archive_path",
             "blob_included",
+            "include_reason",
         ]
     )
     for row in rows:
@@ -8111,6 +8153,7 @@ def _build_w07_evidence_index_csv(rows: list[dict[str, Any]]) -> str:
                 row.get("uploaded_at"),
                 row.get("archive_path"),
                 bool(row.get("blob_included", False)),
+                row.get("include_reason"),
             ]
         )
     return buffer.getvalue()
@@ -8134,7 +8177,9 @@ def _build_w07_completion_package_zip(
     item_by_id: dict[int, W07TrackerItemRead] = {int(row.id): row for row in rows}
     evidence_index_rows: list[dict[str, Any]] = []
     evidence_file_count = 0
+    evidence_bytes_included = 0
     evidence_missing_blob_count = 0
+    evidence_truncated = False
     weekly_payload: dict[str, Any] | None = None
     weekly_latest_payload: dict[str, Any] | None = None
     weekly_csv: str | None = None
@@ -8240,12 +8285,23 @@ def _build_w07_completion_package_zip(
                 )
                 archive_path = f"evidence/files/{safe_item_key}/{evidence_id}-{safe_file_name}"
                 blob = _read_evidence_blob(row=evidence)
-                blob_included = blob is not None
-                if blob_included:
-                    evidence_file_count += 1
-                    zf.writestr(archive_path, blob or b"")
-                else:
+                blob_included = False
+                include_reason = "missing_blob"
+                blob_size = len(blob) if blob is not None else 0
+                if blob is None:
                     evidence_missing_blob_count += 1
+                elif evidence_file_count >= W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES:
+                    include_reason = "skipped_max_files"
+                    evidence_truncated = True
+                elif (evidence_bytes_included + blob_size) > W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES:
+                    include_reason = "skipped_max_bytes"
+                    evidence_truncated = True
+                else:
+                    zf.writestr(archive_path, blob)
+                    evidence_file_count += 1
+                    evidence_bytes_included += blob_size
+                    blob_included = True
+                    include_reason = "included"
 
                 evidence_index_rows.append(
                     {
@@ -8265,6 +8321,7 @@ def _build_w07_completion_package_zip(
                         ),
                         "archive_path": archive_path,
                         "blob_included": blob_included,
+                        "include_reason": include_reason,
                     }
                 )
             zf.writestr("evidence/index.csv", _build_w07_evidence_index_csv(evidence_index_rows))
@@ -8288,7 +8345,11 @@ def _build_w07_completion_package_zip(
                 "include_weekly": bool(include_weekly),
                 "evidence_rows": len(evidence_index_rows),
                 "evidence_files_included": evidence_file_count,
+                "evidence_bytes_included": evidence_bytes_included,
                 "evidence_missing_blob": evidence_missing_blob_count,
+                "evidence_truncated": evidence_truncated,
+                "evidence_limit_files": W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES,
+                "evidence_limit_bytes": W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES,
                 "weekly_points": int((weekly_payload or {}).get("point_count") or 0),
             },
             "files": {
@@ -13308,7 +13369,15 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
       }
 
       function getToken() {
-        return window.localStorage.getItem(TOKEN_KEY) || '';
+        const sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || '';
+        if (sessionToken) return sessionToken;
+        const legacyLocalToken = window.localStorage.getItem(TOKEN_KEY) || '';
+        if (legacyLocalToken) {
+          // Migrate legacy persistent token to session-only storage.
+          window.sessionStorage.setItem(TOKEN_KEY, legacyLocalToken);
+          window.localStorage.removeItem(TOKEN_KEY);
+        }
+        return legacyLocalToken;
       }
 
       function updateTokenState() {
@@ -13453,11 +13522,13 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
           tokenState.textContent = '토큰 상태: 빈 값은 저장할 수 없습니다.';
           return;
         }
-        window.localStorage.setItem(TOKEN_KEY, token);
+        window.sessionStorage.setItem(TOKEN_KEY, token);
+        window.localStorage.removeItem(TOKEN_KEY);
         updateTokenState();
       });
 
       document.getElementById('clearTokenBtn').addEventListener('click', () => {
+        window.sessionStorage.removeItem(TOKEN_KEY);
         window.localStorage.removeItem(TOKEN_KEY);
         tokenInput.value = '';
         updateTokenState();
@@ -14619,7 +14690,17 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       let w07CompleteModalResolver = null;
 
       function getToken() {{
-        return window.localStorage.getItem(TOKEN_KEY) || "";
+        const sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || "";
+        if (sessionToken) {{
+          return sessionToken;
+        }}
+        const legacyLocalToken = window.localStorage.getItem(TOKEN_KEY) || "";
+        if (legacyLocalToken) {{
+          // Migrate legacy persistent token to session-only storage.
+          window.sessionStorage.setItem(TOKEN_KEY, legacyLocalToken);
+          window.localStorage.removeItem(TOKEN_KEY);
+        }}
+        return legacyLocalToken;
       }}
 
       function setAuthState(text) {{
@@ -18083,11 +18164,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           setAuthState("토큰 상태: 빈 값은 저장할 수 없습니다.");
           return;
         }}
-        window.localStorage.setItem(TOKEN_KEY, token);
+        window.sessionStorage.setItem(TOKEN_KEY, token);
+        window.localStorage.removeItem(TOKEN_KEY);
         authProfile = null;
         updateAuthStateFromToken();
       }});
       document.getElementById("clearTokenBtn").addEventListener("click", () => {{
+        window.sessionStorage.removeItem(TOKEN_KEY);
         window.localStorage.removeItem(TOKEN_KEY);
         tokenInput.value = "";
         authProfile = null;
