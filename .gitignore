@@ -14,3 +14,5 @@ _render_public_api.json
 _alembic_old_empty/
 data/adoption-w07-archives/
 data/ops-daily-check-archives/
+data/ops-quality-reports/
+data/dr-rehearsal/

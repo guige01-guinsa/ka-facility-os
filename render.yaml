@@ -27,6 +27,36 @@ services:
         value: "3"
       - key: OPS_DAILY_CHECK_ALERT_LEVEL
         value: critical
+      - key: OPS_DAILY_CHECK_ARCHIVE_ENABLED
+        value: "true"
+      - key: OPS_DAILY_CHECK_ARCHIVE_PATH
+        value: data/ops-daily-check-archives
+      - key: OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS
+        value: "60"
+      - key: OPS_QUALITY_REPORT_ARCHIVE_ENABLED
+        value: "true"
+      - key: OPS_QUALITY_REPORT_ARCHIVE_PATH
+        value: data/ops-quality-reports
+      - key: OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS
+        value: "180"
+      - key: OPS_QUALITY_WEEKLY_STREAK_TARGET
+        value: "4"
+      - key: DR_REHEARSAL_ENABLED
+        value: "true"
+      - key: DR_REHEARSAL_BACKUP_PATH
+        value: data/dr-rehearsal
+      - key: DR_REHEARSAL_RETENTION_DAYS
+        value: "120"
+      - key: PREFLIGHT_REQUIRED_ENV
+        value: DATABASE_URL
+      - key: PREFLIGHT_FAIL_ON_ERROR
+        value: "true"
+      - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
+        value: "14"
+      - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
+        value: "5.0"
+      - key: ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT
+        value: "1.0"
       - key: ALERT_CHANNEL_GUARD_ENABLED
         value: "true"
       - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
@@ -97,6 +127,98 @@ services:
         value: "true"
       - key: W07_WEEKLY_ARCHIVE_PATH
         value: data/adoption-w07-archives
+  - type: cron
+    name: ka-facility-os-ops-quality-weekly
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "40 23 * * 5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_quality_report --window weekly
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: OPS_QUALITY_REPORT_ARCHIVE_ENABLED
+        value: "true"
+      - key: OPS_QUALITY_REPORT_ARCHIVE_PATH
+        value: data/ops-quality-reports
+      - key: OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS
+        value: "180"
+      - key: OPS_QUALITY_WEEKLY_STREAK_TARGET
+        value: "4"
+      - key: PREFLIGHT_REQUIRED_ENV
+        value: DATABASE_URL
+      - key: PREFLIGHT_FAIL_ON_ERROR
+        value: "true"
+      - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
+        value: "14"
+      - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
+        value: "5.0"
+      - key: ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT
+        value: "1.0"
+  - type: cron
+    name: ka-facility-os-ops-quality-monthly
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "20 0 1 * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_quality_report --window monthly
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: OPS_QUALITY_REPORT_ARCHIVE_ENABLED
+        value: "true"
+      - key: OPS_QUALITY_REPORT_ARCHIVE_PATH
+        value: data/ops-quality-reports
+      - key: OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS
+        value: "180"
+      - key: PREFLIGHT_REQUIRED_ENV
+        value: DATABASE_URL
+      - key: PREFLIGHT_FAIL_ON_ERROR
+        value: "true"
+      - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
+        value: "14"
+      - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
+        value: "5.0"
+      - key: ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT
+        value: "1.0"
+  - type: cron
+    name: ka-facility-os-dr-rehearsal
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "50 1 * * 0"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.dr_rehearsal
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: DR_REHEARSAL_ENABLED
+        value: "true"
+      - key: DR_REHEARSAL_BACKUP_PATH
+        value: data/dr-rehearsal
+      - key: DR_REHEARSAL_RETENTION_DAYS
+        value: "120"
+      - key: PREFLIGHT_REQUIRED_ENV
+        value: DATABASE_URL
+      - key: PREFLIGHT_FAIL_ON_ERROR
+        value: "true"
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -225,6 +347,12 @@ services:
         value: "3"
       - key: OPS_DAILY_CHECK_ALERT_LEVEL
         value: critical
+      - key: OPS_DAILY_CHECK_ARCHIVE_ENABLED
+        value: "true"
+      - key: OPS_DAILY_CHECK_ARCHIVE_PATH
+        value: data/ops-daily-check-archives
+      - key: OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS
+        value: "60"
       - key: ALERT_CHANNEL_GUARD_ENABLED
         value: "true"
       - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD

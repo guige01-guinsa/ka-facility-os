@@ -23,9 +23,9 @@ from typing import Annotated, Any, Callable
 from urllib import error as url_error
 from urllib import request as url_request
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 try:
@@ -318,6 +318,33 @@ OPS_DAILY_CHECK_ARCHIVE_PATH = (
     or "data/ops-daily-check-archives"
 )
 OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS = _env_int("OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS", 60, min_value=1)
+OPS_QUALITY_REPORT_ARCHIVE_ENABLED = _env_bool("OPS_QUALITY_REPORT_ARCHIVE_ENABLED", True)
+OPS_QUALITY_REPORT_ARCHIVE_PATH = (
+    getenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", "data/ops-quality-reports").strip()
+    or "data/ops-quality-reports"
+)
+OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS = _env_int("OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS", 180, min_value=1)
+OPS_QUALITY_WEEKLY_STREAK_TARGET = _env_int("OPS_QUALITY_WEEKLY_STREAK_TARGET", 4, min_value=1)
+DR_REHEARSAL_ENABLED = _env_bool("DR_REHEARSAL_ENABLED", True)
+DR_REHEARSAL_BACKUP_PATH = getenv("DR_REHEARSAL_BACKUP_PATH", "data/dr-rehearsal").strip() or "data/dr-rehearsal"
+DR_REHEARSAL_RETENTION_DAYS = _env_int("DR_REHEARSAL_RETENTION_DAYS", 120, min_value=1)
+PREFLIGHT_REQUIRED_ENV = {
+    value.strip()
+    for value in getenv("PREFLIGHT_REQUIRED_ENV", "DATABASE_URL").split(",")
+    if value.strip()
+}
+PREFLIGHT_FAIL_ON_ERROR = _env_bool("PREFLIGHT_FAIL_ON_ERROR", ENV_NAME in {"prod", "production"})
+ALERT_NOISE_REVIEW_WINDOW_DAYS = _env_int("ALERT_NOISE_REVIEW_WINDOW_DAYS", 14, min_value=1)
+ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT = _env_float(
+    "ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT",
+    5.0,
+    min_value=0.1,
+)
+ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT = _env_float(
+    "ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT",
+    1.0,
+    min_value=0.1,
+)
 EVIDENCE_ALLOWED_CONTENT_TYPES = {
     value.strip().lower()
     for value in getenv(
@@ -393,6 +420,8 @@ _API_LATENCY_SAMPLES: dict[str, deque[float]] = {}
 _API_LATENCY_LAST_SEEN_AT: dict[str, str] = {}
 _API_LATENCY_TARGET_KEYS: set[str] = set()
 _API_LATENCY_PERSIST_WRITE_COUNT = 0
+_PREFLIGHT_LOCK = Lock()
+_PREFLIGHT_SNAPSHOT: dict[str, Any] = {}
 
 EVIDENCE_INTEGRITY_TABLES: list[tuple[str, Any]] = [
     ("w02", adoption_w02_evidence_files),
@@ -806,6 +835,9 @@ W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES = _env_int(
 )
 W07_WEEKLY_JOB_NAME = "adoption_w07_sla_quality_weekly"
 W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
+OPS_QUALITY_WEEKLY_JOB_NAME = "ops_quality_report_weekly"
+OPS_QUALITY_MONTHLY_JOB_NAME = "ops_quality_report_monthly"
+DR_REHEARSAL_JOB_NAME = "dr_rehearsal"
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 6, 12)
@@ -3960,6 +3992,9 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     _ensure_evidence_storage_ready()
     ensure_legacy_admin_token_seed()
     _init_rate_limit_backend()
+    preflight = _refresh_startup_preflight_snapshot()
+    if bool(preflight.get("has_error")) and PREFLIGHT_FAIL_ON_ERROR:
+        raise RuntimeError("Startup preflight failed with blocking errors.")
     yield
 
 
@@ -3969,6 +4004,10 @@ app = FastAPI(
     version="0.32.0",
     lifespan=app_lifespan,
 )
+ops_router = APIRouter(prefix="/api/ops", tags=["ops"])
+admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
+adoption_router = APIRouter(prefix="/api/adoption", tags=["adoption"])
+public_router = APIRouter(prefix="/api/public", tags=["public"])
 
 
 def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: int, payload: Any) -> str:
@@ -4762,6 +4801,16 @@ def _build_evidence_archive_integrity_batch(
 
 
 def _build_deploy_checklist_payload() -> dict[str, Any]:
+    rollback_guide_path = Path("docs/W15_MIGRATION_ROLLBACK.md")
+    rollback_guide_exists = rollback_guide_path.exists()
+    rollback_guide_sha256: str | None = None
+    if rollback_guide_exists:
+        try:
+            rollback_guide_sha256 = hashlib.sha256(rollback_guide_path.read_bytes()).hexdigest()
+        except OSError:
+            rollback_guide_exists = False
+            rollback_guide_sha256 = None
+
     return {
         "version": DEPLOY_CHECKLIST_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -4769,6 +4818,10 @@ def _build_deploy_checklist_payload() -> dict[str, Any]:
             "deploy_smoke_recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
             "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
             "rollback_on_failure_recommended": True,
+            "rollback_guide_required": True,
+            "rollback_guide_path": str(rollback_guide_path).replace("\\", "/"),
+            "rollback_guide_exists": rollback_guide_exists,
+            "rollback_guide_sha256": rollback_guide_sha256,
         },
         "steps": [
             {
@@ -4812,8 +4865,784 @@ def _build_deploy_checklist_payload() -> dict[str, Any]:
                 "id": "rollback_02_checklist",
                 "required": True,
                 "item": "Use docs/W15_MIGRATION_ROLLBACK.md for verification sequence.",
+                "path": str(rollback_guide_path).replace("\\", "/"),
+                "exists": rollback_guide_exists,
+                "sha256": rollback_guide_sha256,
             },
         ],
+    }
+
+
+def _week_start_utc(dt: datetime) -> datetime:
+    return datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc) - timedelta(days=dt.weekday())
+
+
+def _startup_path_writable(path_value: str) -> tuple[bool, str]:
+    try:
+        target = Path(path_value)
+        target.mkdir(parents=True, exist_ok=True)
+        probe = target / ".write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return True, f"Path is writable: {target}"
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        return False, f"Path not writable: {path_value} ({exc})"
+
+
+def _run_startup_preflight_snapshot() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    checks: list[dict[str, Any]] = []
+
+    for env_name in sorted(PREFLIGHT_REQUIRED_ENV):
+        value = getenv(env_name)
+        ok = value is not None and value.strip() != ""
+        checks.append(
+            {
+                "id": f"required_env_{env_name.lower()}",
+                "severity": "error",
+                "status": "ok" if ok else "error",
+                "message": f"{env_name} is configured." if ok else f"{env_name} is missing.",
+            }
+        )
+
+    redis_required = API_RATE_LIMIT_STORE == "redis"
+    redis_ok = (not redis_required) or bool(API_RATE_LIMIT_REDIS_URL)
+    checks.append(
+        {
+            "id": "rate_limit_redis_config",
+            "severity": "error" if redis_required else "warning",
+            "status": "ok" if redis_ok else "error",
+            "message": (
+                "API rate-limit redis config is valid."
+                if redis_ok
+                else "API_RATE_LIMIT_STORE=redis requires API_RATE_LIMIT_REDIS_URL."
+            ),
+        }
+    )
+
+    signing_required = ENV_NAME in {"prod", "production", "staging"}
+    signing_ok = bool(AUDIT_ARCHIVE_SIGNING_KEY)
+    checks.append(
+        {
+            "id": "audit_archive_signing_key",
+            "severity": "error" if signing_required else "warning",
+            "status": "ok" if signing_ok else ("error" if signing_required else "warning"),
+            "message": (
+                "Audit archive signing key is configured."
+                if signing_ok
+                else "AUDIT_ARCHIVE_SIGNING_KEY is not configured."
+            ),
+        }
+    )
+
+    rollback_guide = Path("docs/W15_MIGRATION_ROLLBACK.md")
+    checks.append(
+        {
+            "id": "rollback_guide_file",
+            "severity": "error",
+            "status": "ok" if rollback_guide.exists() else "error",
+            "message": (
+                "Rollback guide file is present."
+                if rollback_guide.exists()
+                else "Missing docs/W15_MIGRATION_ROLLBACK.md."
+            ),
+        }
+    )
+
+    alert_noise_policy_doc = Path("docs/W17_ALERT_NOISE_POLICY.md")
+    checks.append(
+        {
+            "id": "alert_noise_policy_doc",
+            "severity": "warning",
+            "status": "ok" if alert_noise_policy_doc.exists() else "warning",
+            "message": (
+                "Alert noise policy document is present."
+                if alert_noise_policy_doc.exists()
+                else "Alert noise policy document is missing (docs/W17_ALERT_NOISE_POLICY.md)."
+            ),
+        }
+    )
+
+    if OPS_DAILY_CHECK_ARCHIVE_ENABLED:
+        archive_ok, archive_message = _startup_path_writable(OPS_DAILY_CHECK_ARCHIVE_PATH)
+        checks.append(
+            {
+                "id": "ops_daily_archive_path",
+                "severity": "error",
+                "status": "ok" if archive_ok else "error",
+                "message": archive_message,
+            }
+        )
+
+    if OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
+        quality_ok, quality_message = _startup_path_writable(OPS_QUALITY_REPORT_ARCHIVE_PATH)
+        checks.append(
+            {
+                "id": "ops_quality_report_archive_path",
+                "severity": "error",
+                "status": "ok" if quality_ok else "error",
+                "message": quality_message,
+            }
+        )
+
+    if DR_REHEARSAL_ENABLED:
+        dr_ok, dr_message = _startup_path_writable(DR_REHEARSAL_BACKUP_PATH)
+        checks.append(
+            {
+                "id": "dr_rehearsal_backup_path",
+                "severity": "error",
+                "status": "ok" if dr_ok else "error",
+                "message": dr_message,
+            }
+        )
+
+    error_count = sum(1 for item in checks if item.get("status") == "error")
+    warning_count = sum(1 for item in checks if item.get("status") == "warning")
+    overall_status = "critical" if error_count > 0 else ("warning" if warning_count > 0 else "ok")
+    return {
+        "generated_at": now.isoformat(),
+        "env": ENV_NAME,
+        "fail_on_error": PREFLIGHT_FAIL_ON_ERROR,
+        "overall_status": overall_status,
+        "has_error": error_count > 0,
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "check_count": len(checks),
+        "checks": checks,
+    }
+
+
+def _refresh_startup_preflight_snapshot() -> dict[str, Any]:
+    snapshot = _run_startup_preflight_snapshot()
+    with _PREFLIGHT_LOCK:
+        _PREFLIGHT_SNAPSHOT.clear()
+        _PREFLIGHT_SNAPSHOT.update(snapshot)
+    return dict(snapshot)
+
+
+def _get_startup_preflight_snapshot(*, refresh: bool = False) -> dict[str, Any]:
+    if refresh:
+        return _refresh_startup_preflight_snapshot()
+    with _PREFLIGHT_LOCK:
+        if _PREFLIGHT_SNAPSHOT:
+            return dict(_PREFLIGHT_SNAPSHOT)
+    return _refresh_startup_preflight_snapshot()
+
+
+def _build_alert_noise_policy_snapshot() -> dict[str, Any]:
+    return {
+        "version": "v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "review_window_days": max(1, ALERT_NOISE_REVIEW_WINDOW_DAYS),
+        "false_positive_threshold_percent": round(max(0.0, ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT), 2),
+        "false_negative_threshold_percent": round(max(0.0, ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT), 2),
+        "policy_doc_path": "docs/W17_ALERT_NOISE_POLICY.md",
+        "evaluation": {
+            "false_positive_definition": "Dispatched alert without actionable incident confirmation.",
+            "false_negative_definition": "Incident confirmed without matching alert dispatch.",
+        },
+    }
+
+
+def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(1, min(int(days), 180))
+    start = now - timedelta(days=window_days)
+    sensitive_actions = {
+        "admin_token_issue",
+        "admin_token_rotate",
+        "admin_token_revoke",
+        "admin_user_create",
+        "admin_user_update",
+        "sla_policy_update",
+        "sla_policy_restore",
+        "admin_audit_chain_rebaseline",
+    }
+
+    with get_conn() as conn:
+        audit_rows = conn.execute(
+            select(
+                admin_audit_logs.c.actor_username,
+                admin_audit_logs.c.action,
+                admin_audit_logs.c.status,
+                admin_audit_logs.c.created_at,
+            ).where(admin_audit_logs.c.created_at >= start)
+        ).mappings().all()
+        token_rows = conn.execute(
+            select(
+                admin_tokens.c.id,
+                admin_tokens.c.user_id,
+                admin_tokens.c.expires_at,
+                admin_tokens.c.last_used_at,
+                admin_tokens.c.created_at,
+            ).where(admin_tokens.c.is_active.is_(True))
+        ).mappings().all()
+        user_count = int(conn.execute(select(func.count()).select_from(admin_users)).scalar_one_or_none() or 0)
+        active_user_count = int(
+            conn.execute(
+                select(func.count()).select_from(admin_users).where(admin_users.c.is_active.is_(True))
+            ).scalar_one_or_none()
+            or 0
+        )
+
+    total_actions = len(audit_rows)
+    failed_actions = 0
+    sensitive_count = 0
+    actor_counts: dict[str, int] = {}
+    off_hours_actions = 0
+
+    for row in audit_rows:
+        actor = str(row.get("actor_username") or "unknown")
+        actor_counts[actor] = actor_counts.get(actor, 0) + 1
+        action = str(row.get("action") or "")
+        status = str(row.get("status") or "success")
+        if status in {"warning", "failed", "error"}:
+            failed_actions += 1
+        if action in sensitive_actions:
+            sensitive_count += 1
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is not None and (created_at.hour < 6 or created_at.hour >= 22):
+            off_hours_actions += 1
+
+    expiring_7d = 0
+    stale_14d = 0
+    rotate_overdue = 0
+    for row in token_rows:
+        expires_at = _as_optional_datetime(row.get("expires_at"))
+        last_used = _as_optional_datetime(row.get("last_used_at"))
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if expires_at is not None and expires_at <= (now + timedelta(days=7)):
+            expiring_7d += 1
+        baseline = last_used or created_at
+        if baseline is not None and baseline <= (now - timedelta(days=14)):
+            stale_14d += 1
+        if created_at is not None and created_at <= (now - timedelta(days=max(1, ADMIN_TOKEN_ROTATE_AFTER_DAYS))):
+            rotate_overdue += 1
+
+    anomalies: list[dict[str, Any]] = []
+    if failed_actions >= max(10, window_days):
+        anomalies.append(
+            {
+                "id": "failed_actions_spike",
+                "status": "warning",
+                "metric": failed_actions,
+                "threshold": max(10, window_days),
+                "message": "Failed/warning admin actions are above threshold.",
+            }
+        )
+    if sensitive_count >= max(15, window_days * 2):
+        anomalies.append(
+            {
+                "id": "sensitive_action_volume",
+                "status": "warning",
+                "metric": sensitive_count,
+                "threshold": max(15, window_days * 2),
+                "message": "Sensitive admin action volume is elevated.",
+            }
+        )
+    if off_hours_actions >= max(5, window_days // 2):
+        anomalies.append(
+            {
+                "id": "off_hours_activity",
+                "status": "warning",
+                "metric": off_hours_actions,
+                "threshold": max(5, window_days // 2),
+                "message": "Off-hours admin action volume requires review.",
+            }
+        )
+    if expiring_7d > 0:
+        anomalies.append(
+            {
+                "id": "token_expiring_soon",
+                "status": "warning",
+                "metric": expiring_7d,
+                "threshold": 0,
+                "message": "Active admin tokens are expiring within 7 days.",
+            }
+        )
+    if stale_14d > 0:
+        anomalies.append(
+            {
+                "id": "stale_token_usage",
+                "status": "warning",
+                "metric": stale_14d,
+                "threshold": 0,
+                "message": "Some active tokens have not been used in 14+ days.",
+            }
+        )
+    if rotate_overdue > 0:
+        anomalies.append(
+            {
+                "id": "token_rotate_overdue",
+                "status": "warning",
+                "metric": rotate_overdue,
+                "threshold": 0,
+                "message": "Some active tokens exceeded rotate-after policy window.",
+            }
+        )
+
+    top_actors = [
+        {"actor": actor, "action_count": count}
+        for actor, count in sorted(actor_counts.items(), key=lambda item: item[1], reverse=True)[:10]
+    ]
+
+    overall_status = "warning" if anomalies else "ok"
+    return {
+        "generated_at": now.isoformat(),
+        "window_days": window_days,
+        "window_start": start.isoformat(),
+        "window_end": now.isoformat(),
+        "overall_status": overall_status,
+        "users": {
+            "total_users": user_count,
+            "active_users": active_user_count,
+        },
+        "tokens": {
+            "active_tokens": len(token_rows),
+            "expiring_7d": expiring_7d,
+            "stale_14d": stale_14d,
+            "rotate_overdue": rotate_overdue,
+        },
+        "actions": {
+            "total": total_actions,
+            "failed_or_warning": failed_actions,
+            "sensitive_total": sensitive_count,
+            "off_hours_total": off_hours_actions,
+            "unique_actors": len(actor_counts),
+        },
+        "anomalies": anomalies,
+        "top_actors": top_actors,
+    }
+
+
+def _build_ops_quality_job_summary(*, start: datetime, end: datetime) -> dict[str, Any]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.job_name, job_runs.c.status, job_runs.c.detail_json, job_runs.c.finished_at)
+            .where(job_runs.c.finished_at >= start)
+            .where(job_runs.c.finished_at < end)
+            .order_by(job_runs.c.finished_at.asc(), job_runs.c.id.asc())
+        ).mappings().all()
+        deliveries = conn.execute(
+            select(alert_deliveries.c.status)
+            .where(alert_deliveries.c.created_at >= start)
+            .where(alert_deliveries.c.created_at < end)
+        ).mappings().all()
+
+    by_job: dict[str, dict[str, int]] = {}
+    total_critical_findings = 0
+    for row in rows:
+        job_name = str(row.get("job_name") or "unknown")
+        status = str(row.get("status") or "success")
+        bucket = by_job.setdefault(
+            job_name,
+            {
+                "total": 0,
+                "success": 0,
+                "warning": 0,
+                "critical": 0,
+            },
+        )
+        bucket["total"] += 1
+        if status in {"success", "ok"}:
+            bucket["success"] += 1
+        elif status in {"warning"}:
+            bucket["warning"] += 1
+        else:
+            bucket["critical"] += 1
+
+        if job_name == "ops_daily_check":
+            detail = _parse_job_detail_json(row.get("detail_json"))
+            try:
+                total_critical_findings += int(detail.get("critical_count") or 0)
+            except (TypeError, ValueError):
+                pass
+
+    total_alert = len(deliveries)
+    alert_success = 0
+    for row in deliveries:
+        delivery_status = str(row.get("status") or "")
+        if delivery_status == "success":
+            alert_success += 1
+    alert_success_rate = round((alert_success / total_alert) * 100.0, 2) if total_alert > 0 else None
+
+    job_rows = [
+        {
+            "job_name": job_name,
+            "total": values["total"],
+            "success": values["success"],
+            "warning": values["warning"],
+            "critical": values["critical"],
+            "success_rate_percent": round((values["success"] / values["total"]) * 100.0, 2) if values["total"] > 0 else 0.0,
+        }
+        for job_name, values in sorted(by_job.items())
+    ]
+    return {
+        "job_count": len(job_rows),
+        "job_runs_total": len(rows),
+        "critical_findings_total": total_critical_findings,
+        "alert_delivery_total": total_alert,
+        "alert_delivery_success_rate_percent": alert_success_rate,
+        "jobs": job_rows,
+    }
+
+
+def _build_ops_quality_report_payload(*, window: str, start: datetime, end: datetime, label: str) -> dict[str, Any]:
+    summary = _build_ops_quality_job_summary(start=start, end=end)
+    preflight = _get_startup_preflight_snapshot(refresh=False)
+    admin_security = _build_admin_security_dashboard_snapshot(days=max(1, int((end - start).days)))
+    weekly_streak = _build_ops_quality_weekly_streak_snapshot()
+    alert_policy = _build_alert_noise_policy_snapshot()
+    recommendation_items: list[str] = []
+    if summary.get("critical_findings_total", 0) > 0:
+        recommendation_items.append("Reduce critical runbook findings before next release.")
+    if (summary.get("alert_delivery_success_rate_percent") or 0) < 95:
+        recommendation_items.append("Improve alert channel reliability to >=95% success rate.")
+    if admin_security.get("anomalies"):
+        recommendation_items.append("Review admin security anomalies and assign owners.")
+    if preflight.get("has_error"):
+        recommendation_items.append("Resolve startup preflight errors immediately.")
+    if not recommendation_items:
+        recommendation_items.append("Maintain current operational baseline and continue weekly checks.")
+
+    return {
+        "template_version": "ops-quality-v1",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "window": window,
+        "label": label,
+        "period": {
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+        },
+        "summary": summary,
+        "preflight": {
+            "overall_status": preflight.get("overall_status"),
+            "error_count": preflight.get("error_count"),
+            "warning_count": preflight.get("warning_count"),
+        },
+        "admin_security": {
+            "overall_status": admin_security.get("overall_status"),
+            "anomaly_count": len(admin_security.get("anomalies", [])),
+            "top_actors": admin_security.get("top_actors", [])[:3],
+        },
+        "weekly_streak": weekly_streak,
+        "alert_noise_policy": {
+            "review_window_days": alert_policy.get("review_window_days"),
+            "false_positive_threshold_percent": alert_policy.get("false_positive_threshold_percent"),
+            "false_negative_threshold_percent": alert_policy.get("false_negative_threshold_percent"),
+        },
+        "recommendations": recommendation_items,
+    }
+
+
+def _build_ops_quality_report_csv(payload: dict[str, Any]) -> str:
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    jobs = summary.get("jobs", []) if isinstance(summary.get("jobs"), list) else []
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["template_version", payload.get("template_version")])
+    writer.writerow(["generated_at", payload.get("generated_at")])
+    writer.writerow(["window", payload.get("window")])
+    writer.writerow(["label", payload.get("label")])
+    period = payload.get("period", {}) if isinstance(payload.get("period"), dict) else {}
+    writer.writerow(["period_start", period.get("start")])
+    writer.writerow(["period_end", period.get("end")])
+    writer.writerow(["job_runs_total", summary.get("job_runs_total")])
+    writer.writerow(["critical_findings_total", summary.get("critical_findings_total")])
+    writer.writerow(["alert_delivery_total", summary.get("alert_delivery_total")])
+    writer.writerow(["alert_delivery_success_rate_percent", summary.get("alert_delivery_success_rate_percent")])
+    writer.writerow([])
+    writer.writerow(["job_name", "total", "success", "warning", "critical", "success_rate_percent"])
+    for row in jobs:
+        if not isinstance(row, dict):
+            continue
+        writer.writerow(
+            [
+                row.get("job_name"),
+                row.get("total"),
+                row.get("success"),
+                row.get("warning"),
+                row.get("critical"),
+                row.get("success_rate_percent"),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _prune_ops_quality_report_archive_files(*, archive_dir: Path, now: datetime) -> int:
+    cutoff = now - timedelta(days=max(1, OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS))
+    deleted_count = 0
+    for pattern in ("ops-quality-report-*.json", "ops-quality-report-*.csv"):
+        for file_path in archive_dir.glob(pattern):
+            try:
+                modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            if modified_at >= cutoff:
+                continue
+            try:
+                file_path.unlink()
+                deleted_count += 1
+            except OSError:
+                continue
+    return deleted_count
+
+
+def _publish_ops_quality_report_artifacts(
+    *,
+    payload: dict[str, Any],
+    window: str,
+    finished_at: datetime,
+) -> dict[str, Any]:
+    archive = {
+        "enabled": OPS_QUALITY_REPORT_ARCHIVE_ENABLED,
+        "path": OPS_QUALITY_REPORT_ARCHIVE_PATH,
+        "retention_days": max(1, OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS),
+        "json_file": None,
+        "csv_file": None,
+        "pruned_files": 0,
+        "error": None,
+    }
+    if not OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
+        return archive
+    try:
+        archive_dir = Path(OPS_QUALITY_REPORT_ARCHIVE_PATH)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = finished_at.strftime("%Y%m%dT%H%M%SZ")
+        base_name = f"ops-quality-report-{window}-{stamp}"
+        json_file = archive_dir / f"{base_name}.json"
+        csv_file = archive_dir / f"{base_name}.csv"
+        json_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        csv_file.write_text(_build_ops_quality_report_csv(payload), encoding="utf-8")
+        archive["json_file"] = str(json_file)
+        archive["csv_file"] = str(csv_file)
+        archive["pruned_files"] = _prune_ops_quality_report_archive_files(archive_dir=archive_dir, now=finished_at)
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        archive["error"] = str(exc)
+    return archive
+
+
+def _build_ops_quality_weekly_streak_snapshot() -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_start = now - timedelta(days=70)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.status)
+            .where(job_runs.c.job_name == OPS_QUALITY_WEEKLY_JOB_NAME)
+            .where(job_runs.c.finished_at >= window_start)
+            .order_by(job_runs.c.finished_at.asc(), job_runs.c.id.asc())
+        ).mappings().all()
+
+    success_weeks: set[str] = set()
+    for row in rows:
+        if str(row.get("status") or "") not in {"success", "ok"}:
+            continue
+        finished_at = _as_optional_datetime(row.get("finished_at"))
+        if finished_at is None:
+            continue
+        week_start = _week_start_utc(finished_at)
+        success_weeks.add(week_start.date().isoformat())
+
+    streak = 0
+    probe = _week_start_utc(now)
+    for _ in range(max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET * 2)):
+        key = probe.date().isoformat()
+        if key in success_weeks:
+            streak += 1
+            probe = probe - timedelta(days=7)
+            continue
+        break
+
+    return {
+        "target_weeks": max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET),
+        "current_streak_weeks": streak,
+        "target_met": streak >= max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET),
+        "successful_weeks_in_window": len(success_weeks),
+    }
+
+
+def run_ops_quality_report_job(
+    *,
+    window: str = "weekly",
+    month: str | None = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    normalized_window = window.strip().lower()
+    if normalized_window not in {"weekly", "monthly"}:
+        raise HTTPException(status_code=400, detail="window must be weekly or monthly")
+
+    if normalized_window == "weekly":
+        end = now
+        start = end - timedelta(days=7)
+        label = f"week-{start.date().isoformat()}-{end.date().isoformat()}"
+        job_name = OPS_QUALITY_WEEKLY_JOB_NAME
+    else:
+        start, end, normalized_month = _month_window(month)
+        label = normalized_month
+        job_name = OPS_QUALITY_MONTHLY_JOB_NAME
+
+    payload = _build_ops_quality_report_payload(window=normalized_window, start=start, end=end, label=label)
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    critical_findings = int(summary.get("critical_findings_total") or 0)
+    status = "warning" if critical_findings > 0 else "success"
+    started_at = datetime.now(timezone.utc)
+    finished_at = datetime.now(timezone.utc)
+    archive = _publish_ops_quality_report_artifacts(payload=payload, window=normalized_window, finished_at=finished_at)
+    detail = {
+        "window": normalized_window,
+        "label": label,
+        "summary": summary,
+        "archive": archive,
+        "report": payload,
+    }
+    run_id = _write_job_run(
+        job_name=job_name,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+
+    streak = _build_ops_quality_weekly_streak_snapshot()
+    return {
+        "run_id": run_id,
+        "job_name": job_name,
+        "trigger": trigger,
+        "status": status,
+        "window": normalized_window,
+        "label": label,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "archive": archive,
+        "streak": streak,
+        "report": payload,
+    }
+
+
+def run_dr_rehearsal_job(
+    *,
+    trigger: str = "manual",
+    simulate_restore: bool = True,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    backup_path = Path(DR_REHEARSAL_BACKUP_PATH)
+    counts: dict[str, int] = {}
+    status = "success"
+    notes: list[str] = []
+    backup_file: str | None = None
+    restore_valid = False
+    pruned_files = 0
+
+    if not DR_REHEARSAL_ENABLED:
+        status = "warning"
+        notes.append("DR rehearsal is disabled by policy.")
+    else:
+        with get_conn() as conn:
+            table_map = {
+                "inspections": inspections,
+                "work_orders": work_orders,
+                "work_order_events": work_order_events,
+                "job_runs": job_runs,
+                "admin_audit_logs": admin_audit_logs,
+            }
+            for table_name, table in table_map.items():
+                total = conn.execute(select(func.count()).select_from(table)).scalar_one_or_none()
+                counts[table_name] = int(total or 0)
+
+        try:
+            backup_path.mkdir(parents=True, exist_ok=True)
+            stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+            backup_file_path = backup_path / f"dr-rehearsal-{stamp}.json"
+            payload = {
+                "generated_at": started_at.isoformat(),
+                "counts": counts,
+                "trigger": trigger,
+            }
+            backup_file_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            backup_file = str(backup_file_path)
+            if simulate_restore:
+                loaded = json.loads(backup_file_path.read_text(encoding="utf-8"))
+                restore_counts = loaded.get("counts", {}) if isinstance(loaded, dict) else {}
+                restore_valid = (
+                    isinstance(restore_counts, dict)
+                    and set(restore_counts.keys()) == set(counts.keys())
+                    and all(int(restore_counts.get(key, -1)) >= 0 for key in counts.keys())
+                )
+                if not restore_valid:
+                    status = "warning"
+                    notes.append("Restore simulation validation failed.")
+                else:
+                    notes.append("Restore simulation validation succeeded.")
+            cutoff = started_at - timedelta(days=max(1, DR_REHEARSAL_RETENTION_DAYS))
+            for file_path in backup_path.glob("dr-rehearsal-*.json"):
+                try:
+                    modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+                except OSError:
+                    continue
+                if modified_at >= cutoff:
+                    continue
+                try:
+                    file_path.unlink()
+                    pruned_files += 1
+                except OSError:
+                    continue
+        except Exception as exc:  # pragma: no cover - filesystem dependent
+            status = "critical"
+            notes.append(f"DR rehearsal backup write failed: {exc}")
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "enabled": DR_REHEARSAL_ENABLED,
+        "backup_path": DR_REHEARSAL_BACKUP_PATH,
+        "retention_days": max(1, DR_REHEARSAL_RETENTION_DAYS),
+        "counts": counts,
+        "backup_file": backup_file,
+        "restore_valid": restore_valid,
+        "simulate_restore": simulate_restore,
+        "pruned_files": pruned_files,
+        "notes": notes,
+    }
+    run_id = _write_job_run(
+        job_name=DR_REHEARSAL_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": DR_REHEARSAL_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _latest_dr_rehearsal_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
     }
 
 
@@ -20675,6 +21504,18 @@ def _service_info_payload() -> dict[str, str]:
         "ops_runbook_checks_latest_summary_csv_api": "/api/ops/runbook/checks/latest/summary.csv",
         "ops_runbook_checks_archive_json_api": "/api/ops/runbook/checks/archive.json",
         "ops_runbook_checks_archive_csv_api": "/api/ops/runbook/checks/archive.csv",
+        "ops_preflight_api": "/api/ops/preflight",
+        "ops_alert_noise_policy_api": "/api/ops/alerts/noise-policy",
+        "ops_admin_security_dashboard_api": "/api/ops/admin/security-dashboard",
+        "ops_quality_weekly_report_api": "/api/ops/reports/quality/weekly",
+        "ops_quality_weekly_report_csv_api": "/api/ops/reports/quality/weekly/csv",
+        "ops_quality_monthly_report_api": "/api/ops/reports/quality/monthly",
+        "ops_quality_monthly_report_csv_api": "/api/ops/reports/quality/monthly/csv",
+        "ops_quality_report_run_api": "/api/ops/reports/quality/run",
+        "ops_quality_weekly_streak_api": "/api/ops/reports/quality/weekly/streak",
+        "ops_dr_rehearsal_run_api": "/api/ops/dr/rehearsal/run",
+        "ops_dr_rehearsal_latest_api": "/api/ops/dr/rehearsal/latest",
+        "ops_dr_rehearsal_history_api": "/api/ops/dr/rehearsal/history",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -40472,6 +41313,18 @@ def _build_ops_runbook_checks_snapshot(
             .where(job_runs.c.finished_at >= (generated_at - timedelta(days=8)))
             .limit(1)
         ).first()
+        quality_weekly_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == OPS_QUALITY_WEEKLY_JOB_NAME)
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(days=8)))
+            .limit(1)
+        ).first()
+        dr_rehearsal_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(days=35)))
+            .limit(1)
+        ).first()
         mttr_latest = conn.execute(
             select(job_runs.c.finished_at, job_runs.c.detail_json)
             .where(job_runs.c.job_name == "alert_mttr_slo_check")
@@ -40481,6 +41334,12 @@ def _build_ops_runbook_checks_snapshot(
         w07_latest = conn.execute(
             select(job_runs.c.finished_at, job_runs.c.detail_json)
             .where(job_runs.c.job_name == W07_WEEKLY_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        dr_latest = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.status, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -40531,6 +41390,10 @@ def _build_ops_runbook_checks_snapshot(
     w07_latest_degraded = bool((w07_latest_detail.get("degradation") or {}).get("degraded", False))
     w07_alert_targets = _configured_alert_targets()
     w07_webhook_ready = len(w07_alert_targets) > 0
+    preflight_snapshot = _get_startup_preflight_snapshot(refresh=False)
+    weekly_streak_snapshot = _build_ops_quality_weekly_streak_snapshot()
+    rollback_guide_exists = Path("docs/W15_MIGRATION_ROLLBACK.md").exists()
+    alert_noise_policy_doc_exists = Path("docs/W17_ALERT_NOISE_POLICY.md").exists()
 
     quarantined_count = int(guard_summary.get("quarantined_count") or 0)
     guard_warning_count = int(guard_summary.get("warning_count") or 0)
@@ -40568,6 +41431,14 @@ def _build_ops_runbook_checks_snapshot(
         deploy_smoke_message = "Deploy smoke recorded without rollback-ready confirmation."
     else:
         deploy_smoke_message = "Deploy smoke checklist and rollback readiness are healthy."
+    dr_latest_finished_at: datetime | None = None
+    dr_latest_status = "missing"
+    dr_latest_restore_valid = False
+    if dr_latest is not None:
+        dr_latest_finished_at = _as_optional_datetime(dr_latest.get("finished_at"))
+        dr_latest_status = str(dr_latest.get("status") or "unknown")
+        dr_detail = _parse_job_detail_json(dr_latest.get("detail_json"))
+        dr_latest_restore_valid = bool(dr_detail.get("restore_valid", False))
 
     checks = [
         {
@@ -40583,6 +41454,37 @@ def _build_ops_runbook_checks_snapshot(
             "message": "Alert retry job observed within last 90 minutes."
             if alert_recent is not None
             else "No recent alert retry job run in last 90 minutes.",
+        },
+        {
+            "id": "startup_preflight",
+            "status": (
+                "critical"
+                if preflight_snapshot.get("has_error")
+                else ("warning" if int(preflight_snapshot.get("warning_count") or 0) > 0 else "ok")
+            ),
+            "message": (
+                "Startup preflight has blocking errors."
+                if preflight_snapshot.get("has_error")
+                else (
+                    "Startup preflight has warnings."
+                    if int(preflight_snapshot.get("warning_count") or 0) > 0
+                    else "Startup preflight is healthy."
+                )
+            ),
+            "error_count": int(preflight_snapshot.get("error_count") or 0),
+            "warning_count": int(preflight_snapshot.get("warning_count") or 0),
+            "generated_at": preflight_snapshot.get("generated_at"),
+        },
+        {
+            "id": "ops_quality_weekly_report_streak",
+            "status": "ok" if bool(weekly_streak_snapshot.get("target_met", False)) else "warning",
+            "message": (
+                "Ops quality weekly report streak target met."
+                if bool(weekly_streak_snapshot.get("target_met", False))
+                else "Ops quality weekly report streak target not met."
+            ),
+            "current_streak_weeks": int(weekly_streak_snapshot.get("current_streak_weeks") or 0),
+            "target_weeks": int(weekly_streak_snapshot.get("target_weeks") or 0),
         },
         {
             "id": "ops_daily_check_archive",
@@ -40658,6 +41560,16 @@ def _build_ops_runbook_checks_snapshot(
             "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
         },
         {
+            "id": "migration_rollback_guide",
+            "status": "ok" if rollback_guide_exists else "critical",
+            "message": (
+                "Migration rollback guide is available."
+                if rollback_guide_exists
+                else "Migration rollback guide file is missing."
+            ),
+            "path": "docs/W15_MIGRATION_ROLLBACK.md",
+        },
+        {
             "id": "token_expiry_pressure",
             "status": "ok" if len(expiring_count) == 0 else "warning",
             "message": "No active admin tokens expiring within 3 days."
@@ -40727,6 +41639,16 @@ def _build_ops_runbook_checks_snapshot(
             else "No recent MTTR SLO check run in last 6 hours.",
         },
         {
+            "id": "alert_noise_policy_documented",
+            "status": "ok" if alert_noise_policy_doc_exists else "warning",
+            "message": (
+                "Alert noise policy document is available."
+                if alert_noise_policy_doc_exists
+                else "Alert noise policy document is missing."
+            ),
+            "path": "docs/W17_ALERT_NOISE_POLICY.md",
+        },
+        {
             "id": "alert_mttr_slo_breach",
             "status": (
                 "ok"
@@ -40759,6 +41681,36 @@ def _build_ops_runbook_checks_snapshot(
             ),
             "latest_checked_at": w07_latest_finished_at.isoformat() if w07_latest_finished_at is not None else None,
             "latest_degraded": w07_latest_degraded,
+        },
+        {
+            "id": "dr_rehearsal_recent",
+            "status": (
+                "ok"
+                if (not DR_REHEARSAL_ENABLED) or dr_rehearsal_recent is not None
+                else "warning"
+            ),
+            "message": (
+                "DR rehearsal run observed within last 35 days."
+                if dr_rehearsal_recent is not None
+                else (
+                    "DR rehearsal is disabled by policy."
+                    if not DR_REHEARSAL_ENABLED
+                    else "No recent DR rehearsal run in last 35 days."
+                )
+            ),
+            "enabled": DR_REHEARSAL_ENABLED,
+            "latest_run_at": dr_latest_finished_at.isoformat() if dr_latest_finished_at is not None else None,
+            "latest_status": dr_latest_status,
+            "latest_restore_valid": dr_latest_restore_valid,
+        },
+        {
+            "id": "ops_quality_weekly_report_recent",
+            "status": "ok" if quality_weekly_recent is not None else "warning",
+            "message": (
+                "Ops quality weekly report job observed within last 8 days."
+                if quality_weekly_recent is not None
+                else "No recent ops quality weekly report job run in last 8 days."
+            ),
         },
         {
             "id": "w07_quality_alert_channel",
@@ -40825,6 +41777,9 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
         else {}
     )
     w07_latest_degraded = bool((w07_latest_detail.get("degradation") or {}).get("degraded", False))
+    preflight = _get_startup_preflight_snapshot(refresh=False)
+    weekly_streak = _build_ops_quality_weekly_streak_snapshot()
+    dr_latest_payload = _latest_dr_rehearsal_payload()
     return {
         "generated_at": generated_at.isoformat(),
         "env": ENV_NAME,
@@ -40852,6 +41807,31 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
             "sample_per_table": max(1, EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE),
             "max_issues": max(1, EVIDENCE_INTEGRITY_MAX_ISSUES),
             "modules": [name for name, _ in EVIDENCE_INTEGRITY_TABLES],
+        },
+        "preflight": {
+            "overall_status": preflight.get("overall_status"),
+            "has_error": bool(preflight.get("has_error", False)),
+            "error_count": int(preflight.get("error_count") or 0),
+            "warning_count": int(preflight.get("warning_count") or 0),
+            "fail_on_error": PREFLIGHT_FAIL_ON_ERROR,
+        },
+        "ops_quality_reports": {
+            "archive_enabled": OPS_QUALITY_REPORT_ARCHIVE_ENABLED,
+            "archive_path": OPS_QUALITY_REPORT_ARCHIVE_PATH,
+            "archive_retention_days": max(1, OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS),
+            "weekly_streak_target": max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET),
+            "weekly_streak_current": int(weekly_streak.get("current_streak_weeks") or 0),
+            "weekly_streak_met": bool(weekly_streak.get("target_met", False)),
+        },
+        "dr_rehearsal": {
+            "enabled": DR_REHEARSAL_ENABLED,
+            "backup_path": DR_REHEARSAL_BACKUP_PATH,
+            "retention_days": max(1, DR_REHEARSAL_RETENTION_DAYS),
+            "latest_run_at": dr_latest_payload.get("finished_at") if isinstance(dr_latest_payload, dict) else None,
+            "latest_status": dr_latest_payload.get("status") if isinstance(dr_latest_payload, dict) else None,
+            "latest_restore_valid": (
+                bool(dr_latest_payload.get("restore_valid", False)) if isinstance(dr_latest_payload, dict) else False
+            ),
         },
         "alerting": {
             "webhook_target_count": len(alert_targets),
@@ -41198,6 +42178,11 @@ def get_ops_security_posture(
             ),
             "deploy_smoke_latest_status": snapshot.get("deploy_smoke_policy", {}).get("latest_status"),
             "deploy_smoke_latest_run_at": snapshot.get("deploy_smoke_policy", {}).get("latest_run_at"),
+            "preflight_status": snapshot.get("preflight", {}).get("overall_status"),
+            "preflight_error_count": snapshot.get("preflight", {}).get("error_count"),
+            "dr_rehearsal_enabled": snapshot.get("dr_rehearsal", {}).get("enabled"),
+            "dr_rehearsal_latest_status": snapshot.get("dr_rehearsal", {}).get("latest_status"),
+            "ops_quality_weekly_streak_met": snapshot.get("ops_quality_reports", {}).get("weekly_streak_met"),
             "evidence_storage_backend": snapshot["evidence_storage_backend"],
             "ops_daily_check_alert_level": snapshot.get("alerting", {}).get("ops_daily_check_alert_level"),
             "alert_webhook_target_count": snapshot.get("alerting", {}).get("webhook_target_count"),
@@ -41215,6 +42200,289 @@ def get_ops_security_posture(
         },
     )
     return snapshot
+
+
+@ops_router.get("/preflight")
+def get_ops_preflight(
+    refresh: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _get_startup_preflight_snapshot(refresh=refresh)
+    _write_audit_log(
+        principal=principal,
+        action="ops_preflight_view",
+        resource_type="ops_preflight",
+        resource_id="startup",
+        detail={
+            "refresh": refresh,
+            "overall_status": snapshot.get("overall_status"),
+            "error_count": snapshot.get("error_count"),
+            "warning_count": snapshot.get("warning_count"),
+        },
+    )
+    return snapshot
+
+
+@ops_router.get("/alerts/noise-policy")
+def get_ops_alert_noise_policy(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _build_alert_noise_policy_snapshot()
+    _write_audit_log(
+        principal=principal,
+        action="ops_alert_noise_policy_view",
+        resource_type="ops_alerting",
+        resource_id="noise_policy",
+        detail={
+            "review_window_days": payload.get("review_window_days"),
+            "false_positive_threshold_percent": payload.get("false_positive_threshold_percent"),
+            "false_negative_threshold_percent": payload.get("false_negative_threshold_percent"),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/admin/security-dashboard")
+def get_ops_admin_security_dashboard(
+    days: Annotated[int, Query(ge=1, le=180)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_admin_security_dashboard_snapshot(days=days)
+    _write_audit_log(
+        principal=principal,
+        action="ops_admin_security_dashboard_view",
+        resource_type="ops_admin_security",
+        resource_id="dashboard",
+        detail={
+            "window_days": snapshot.get("window_days"),
+            "overall_status": snapshot.get("overall_status"),
+            "anomaly_count": len(snapshot.get("anomalies", [])),
+        },
+    )
+    return snapshot
+
+
+@ops_router.get("/reports/quality/weekly")
+def get_ops_quality_report_weekly(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=7)
+    payload = _build_ops_quality_report_payload(
+        window="weekly",
+        start=start,
+        end=end,
+        label=f"week-{start.date().isoformat()}-{end.date().isoformat()}",
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_weekly_view",
+        resource_type="ops_quality_report",
+        resource_id="weekly",
+        detail={
+            "window_start": payload.get("period", {}).get("start"),
+            "window_end": payload.get("period", {}).get("end"),
+            "critical_findings_total": payload.get("summary", {}).get("critical_findings_total"),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/reports/quality/weekly/csv")
+def get_ops_quality_report_weekly_csv(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(days=7)
+    payload = _build_ops_quality_report_payload(
+        window="weekly",
+        start=start,
+        end=end,
+        label=f"week-{start.date().isoformat()}-{end.date().isoformat()}",
+    )
+    csv_text = _build_ops_quality_report_csv(payload)
+    stamp = end.strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-quality-weekly-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_weekly_csv_export",
+        resource_type="ops_quality_report",
+        resource_id=file_name,
+        detail={"window": "weekly"},
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@ops_router.get("/reports/quality/monthly")
+def get_ops_quality_report_monthly(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    start, end, normalized_month = _month_window(month)
+    payload = _build_ops_quality_report_payload(
+        window="monthly",
+        start=start,
+        end=end,
+        label=normalized_month,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_monthly_view",
+        resource_type="ops_quality_report",
+        resource_id=normalized_month,
+        detail={"month": normalized_month},
+    )
+    return payload
+
+
+@ops_router.get("/reports/quality/monthly/csv")
+def get_ops_quality_report_monthly_csv(
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    start, end, normalized_month = _month_window(month)
+    payload = _build_ops_quality_report_payload(
+        window="monthly",
+        start=start,
+        end=end,
+        label=normalized_month,
+    )
+    csv_text = _build_ops_quality_report_csv(payload)
+    file_name = f"ops-quality-monthly-{normalized_month}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_monthly_csv_export",
+        resource_type="ops_quality_report",
+        resource_id=file_name,
+        detail={"month": normalized_month},
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@ops_router.post("/reports/quality/run")
+def run_ops_quality_report(
+    window: Annotated[str, Query(pattern="^(weekly|monthly)$")] = "weekly",
+    month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_quality_report_job(window=window, month=month, trigger="api")
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_run",
+        resource_type="ops_quality_report",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "success"),
+        detail={
+            "window": result.get("window"),
+            "label": result.get("label"),
+            "archive_file": (result.get("archive") or {}).get("json_file"),
+            "streak": result.get("streak"),
+        },
+    )
+    return result
+
+
+@ops_router.get("/reports/quality/weekly/streak")
+def get_ops_quality_report_weekly_streak(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_ops_quality_weekly_streak_snapshot()
+    _write_audit_log(
+        principal=principal,
+        action="ops_quality_report_weekly_streak_view",
+        resource_type="ops_quality_report",
+        resource_id="weekly_streak",
+        detail=snapshot,
+    )
+    return snapshot
+
+
+@ops_router.post("/dr/rehearsal/run")
+def run_ops_dr_rehearsal(
+    simulate_restore: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_dr_rehearsal_job(trigger="api", simulate_restore=simulate_restore)
+    _write_audit_log(
+        principal=principal,
+        action="ops_dr_rehearsal_run",
+        resource_type="ops_dr",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "success"),
+        detail={
+            "simulate_restore": simulate_restore,
+            "backup_file": result.get("backup_file"),
+            "restore_valid": result.get("restore_valid"),
+            "notes": result.get("notes"),
+        },
+    )
+    return result
+
+
+@ops_router.get("/dr/rehearsal/latest")
+def get_ops_dr_rehearsal_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_dr_rehearsal_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No dr_rehearsal run found")
+    _write_audit_log(
+        principal=principal,
+        action="ops_dr_rehearsal_latest_view",
+        resource_type="ops_dr",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        detail={"status": payload.get("status")},
+    )
+    return payload
+
+
+@ops_router.get("/dr/rehearsal/history")
+def get_ops_dr_rehearsal_history(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(limit)
+        ).mappings().all()
+    items = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        items.append(
+            {
+                "run_id": model.id,
+                "status": model.status,
+                "trigger": model.trigger,
+                "finished_at": model.finished_at.isoformat(),
+                "backup_file": detail.get("backup_file"),
+                "restore_valid": bool(detail.get("restore_valid", False)),
+                "pruned_files": int(detail.get("pruned_files") or 0),
+            }
+        )
+    _write_audit_log(
+        principal=principal,
+        action="ops_dr_rehearsal_history_view",
+        resource_type="ops_dr",
+        resource_id="history",
+        detail={"limit": limit, "count": len(items)},
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(items),
+        "items": items,
+    }
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)
@@ -44963,5 +46231,11 @@ def print_monthly_report(
 </body>
 </html>
 """
+
+
+app.include_router(ops_router)
+app.include_router(admin_router)
+app.include_router(adoption_router)
+app.include_router(public_router)
 
 

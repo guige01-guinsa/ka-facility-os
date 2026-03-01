@@ -85,6 +85,18 @@ Open:
   - `GET /api/ops/runbook/checks/latest/summary.csv` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks/archive.json` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks/archive.csv` (permission: `admins:manage`)
+  - `GET /api/ops/preflight` (permission: `admins:manage`)
+  - `GET /api/ops/alerts/noise-policy` (permission: `admins:manage`)
+  - `GET /api/ops/admin/security-dashboard` (permission: `admins:manage`)
+  - `GET /api/ops/reports/quality/weekly` (permission: `admins:manage`)
+  - `GET /api/ops/reports/quality/weekly/csv` (permission: `admins:manage`)
+  - `GET /api/ops/reports/quality/monthly` (permission: `admins:manage`)
+  - `GET /api/ops/reports/quality/monthly/csv` (permission: `admins:manage`)
+  - `POST /api/ops/reports/quality/run?window=weekly|monthly` (permission: `admins:manage`)
+  - `GET /api/ops/reports/quality/weekly/streak` (permission: `admins:manage`)
+  - `POST /api/ops/dr/rehearsal/run` (permission: `admins:manage`)
+  - `GET /api/ops/dr/rehearsal/latest` (permission: `admins:manage`)
+  - `GET /api/ops/dr/rehearsal/history` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -309,6 +321,18 @@ Optional alert webhook env:
 - `OPS_DAILY_CHECK_ARCHIVE_ENABLED` (default `true`)
 - `OPS_DAILY_CHECK_ARCHIVE_PATH` (default `data/ops-daily-check-archives`)
 - `OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS` (default `60`)
+- `OPS_QUALITY_REPORT_ARCHIVE_ENABLED` (default `true`)
+- `OPS_QUALITY_REPORT_ARCHIVE_PATH` (default `data/ops-quality-reports`)
+- `OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS` (default `180`)
+- `OPS_QUALITY_WEEKLY_STREAK_TARGET` (default `4`)
+- `DR_REHEARSAL_ENABLED` (default `true`)
+- `DR_REHEARSAL_BACKUP_PATH` (default `data/dr-rehearsal`)
+- `DR_REHEARSAL_RETENTION_DAYS` (default `120`)
+- `PREFLIGHT_REQUIRED_ENV` (comma-separated required env list; default `DATABASE_URL`)
+- `PREFLIGHT_FAIL_ON_ERROR` (default `false` except production-like env)
+- `ALERT_NOISE_REVIEW_WINDOW_DAYS` (default `14`)
+- `ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT` (default `5.0`)
+- `ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT` (default `1.0`)
 - `ALERT_GUARD_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_RETENTION_DAYS` (default `90`)
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
@@ -379,6 +403,18 @@ Job monitoring:
 - `GET /api/ops/runbook/checks/latest/summary.csv`
 - `GET /api/ops/runbook/checks/archive.json`
 - `GET /api/ops/runbook/checks/archive.csv`
+- `GET /api/ops/preflight`
+- `GET /api/ops/alerts/noise-policy`
+- `GET /api/ops/admin/security-dashboard`
+- `GET /api/ops/reports/quality/weekly`
+- `GET /api/ops/reports/quality/weekly/csv`
+- `GET /api/ops/reports/quality/monthly`
+- `GET /api/ops/reports/quality/monthly/csv`
+- `POST /api/ops/reports/quality/run?window=weekly|monthly`
+- `GET /api/ops/reports/quality/weekly/streak`
+- `POST /api/ops/dr/rehearsal/run`
+- `GET /api/ops/dr/rehearsal/latest`
+- `GET /api/ops/dr/rehearsal/history`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
@@ -520,11 +556,25 @@ Direct smoke helper supports backend expectation, optional strict audit-chain ga
   -RecordSmokeRun $true
 ```
 
+- Local/CI release gate helper:
+
+```powershell
+.\scripts\release_gate.ps1 `
+  -BaseUrl "https://ops.ka-part.com" `
+  -AdminToken "<owner-token>"
+```
+
 - Backup/restore rehearsal helper:
 
 ```powershell
 .\scripts\backup_restore_rehearsal.ps1
 ```
+
+- Cron/Batch jobs:
+  - `python -m app.jobs.ops_daily_check`
+  - `python -m app.jobs.ops_quality_report --window weekly`
+  - `python -m app.jobs.ops_quality_report --window monthly --month 2026-03`
+  - `python -m app.jobs.dr_rehearsal`
 
 - Redis allowlist update helper:
 

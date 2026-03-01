@@ -42,6 +42,9 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
+    monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+    monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
     import app.main as main_module
@@ -83,6 +86,9 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
+    monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+    monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
     import app.main as main_module
@@ -491,6 +497,18 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     )
     assert service_info.json()["ops_runbook_checks_archive_json_api"] == "/api/ops/runbook/checks/archive.json"
     assert service_info.json()["ops_runbook_checks_archive_csv_api"] == "/api/ops/runbook/checks/archive.csv"
+    assert service_info.json()["ops_preflight_api"] == "/api/ops/preflight"
+    assert service_info.json()["ops_alert_noise_policy_api"] == "/api/ops/alerts/noise-policy"
+    assert service_info.json()["ops_admin_security_dashboard_api"] == "/api/ops/admin/security-dashboard"
+    assert service_info.json()["ops_quality_weekly_report_api"] == "/api/ops/reports/quality/weekly"
+    assert service_info.json()["ops_quality_weekly_report_csv_api"] == "/api/ops/reports/quality/weekly/csv"
+    assert service_info.json()["ops_quality_monthly_report_api"] == "/api/ops/reports/quality/monthly"
+    assert service_info.json()["ops_quality_monthly_report_csv_api"] == "/api/ops/reports/quality/monthly/csv"
+    assert service_info.json()["ops_quality_report_run_api"] == "/api/ops/reports/quality/run"
+    assert service_info.json()["ops_quality_weekly_streak_api"] == "/api/ops/reports/quality/weekly/streak"
+    assert service_info.json()["ops_dr_rehearsal_run_api"] == "/api/ops/dr/rehearsal/run"
+    assert service_info.json()["ops_dr_rehearsal_latest_api"] == "/api/ops/dr/rehearsal/latest"
+    assert service_info.json()["ops_dr_rehearsal_history_api"] == "/api/ops/dr/rehearsal/history"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -4451,6 +4469,12 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "rate_limit_backend" in ids
     assert "audit_archive_signing" in ids
     assert "ops_daily_check_archive" in ids
+    assert "startup_preflight" in ids
+    assert "ops_quality_weekly_report_streak" in ids
+    assert "migration_rollback_guide" in ids
+    assert "alert_noise_policy_documented" in ids
+    assert "dr_rehearsal_recent" in ids
+    assert "ops_quality_weekly_report_recent" in ids
     assert "alert_channel_guard" in ids
     assert "alert_retention_recent" in ids
     assert "alert_guard_recovery_recent" in ids
@@ -4486,6 +4510,12 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["deploy_smoke_policy"]["recent_hours"] >= 1
     assert body["evidence_archive_integrity_policy"]["sample_per_table"] >= 1
     assert "w02" in body["evidence_archive_integrity_policy"]["modules"]
+    assert body["preflight"]["overall_status"] in {"ok", "warning", "critical"}
+    assert body["preflight"]["has_error"] is False
+    assert body["ops_quality_reports"]["archive_enabled"] is True
+    assert str(body["ops_quality_reports"]["archive_path"]).endswith("/ops_quality_reports")
+    assert body["dr_rehearsal"]["enabled"] is True
+    assert str(body["dr_rehearsal"]["backup_path"]).endswith("/dr_rehearsal")
     assert body["alerting"]["ops_daily_check_alert_level"] == "critical"
     assert body["alerting"]["ops_daily_check_archive_enabled"] is True
     assert str(body["alerting"]["ops_daily_check_archive_path"]).endswith("/ops_daily_check_archives")
@@ -4717,6 +4747,106 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     )
     assert history.status_code == 200
     assert len(history.json()) >= 1
+
+
+def test_ops_preflight_and_alert_noise_policy_endpoints(app_client: TestClient) -> None:
+    preflight = app_client.get("/api/ops/preflight", headers=_owner_headers())
+    assert preflight.status_code == 200
+    preflight_body = preflight.json()
+    assert preflight_body["overall_status"] in {"ok", "warning", "critical"}
+    assert preflight_body["has_error"] is False
+    assert preflight_body["check_count"] >= 1
+
+    preflight_refresh = app_client.get("/api/ops/preflight?refresh=true", headers=_owner_headers())
+    assert preflight_refresh.status_code == 200
+    assert preflight_refresh.json()["overall_status"] in {"ok", "warning", "critical"}
+
+    noise_policy = app_client.get("/api/ops/alerts/noise-policy", headers=_owner_headers())
+    assert noise_policy.status_code == 200
+    noise_policy_body = noise_policy.json()
+    assert noise_policy_body["review_window_days"] == 14
+    assert noise_policy_body["false_positive_threshold_percent"] == 5.0
+    assert noise_policy_body["false_negative_threshold_percent"] == 1.0
+
+
+def test_ops_admin_security_dashboard_endpoint(app_client: TestClient) -> None:
+    dashboard = app_client.get("/api/ops/admin/security-dashboard?days=30", headers=_owner_headers())
+    assert dashboard.status_code == 200
+    body = dashboard.json()
+    assert body["window_days"] == 30
+    assert body["overall_status"] in {"ok", "warning"}
+    assert body["users"]["total_users"] >= 1
+    assert body["tokens"]["active_tokens"] >= 1
+    assert body["actions"]["total"] >= 0
+    assert isinstance(body["top_actors"], list)
+
+
+def test_ops_quality_report_weekly_monthly_and_streak_endpoints(app_client: TestClient) -> None:
+    weekly = app_client.get("/api/ops/reports/quality/weekly", headers=_owner_headers())
+    assert weekly.status_code == 200
+    weekly_body = weekly.json()
+    assert weekly_body["template_version"] == "ops-quality-v1"
+    assert weekly_body["window"] == "weekly"
+    assert "summary" in weekly_body
+    assert "recommendations" in weekly_body
+
+    weekly_csv = app_client.get("/api/ops/reports/quality/weekly/csv", headers=_owner_headers())
+    assert weekly_csv.status_code == 200
+    assert weekly_csv.headers["content-type"].startswith("text/csv")
+    assert "template_version,ops-quality-v1" in weekly_csv.text
+
+    monthly = app_client.get("/api/ops/reports/quality/monthly?month=2026-03", headers=_owner_headers())
+    assert monthly.status_code == 200
+    monthly_body = monthly.json()
+    assert monthly_body["window"] == "monthly"
+    assert monthly_body["label"] == "2026-03"
+
+    monthly_csv = app_client.get("/api/ops/reports/quality/monthly/csv?month=2026-03", headers=_owner_headers())
+    assert monthly_csv.status_code == 200
+    assert monthly_csv.headers["content-type"].startswith("text/csv")
+
+    run_weekly = app_client.post("/api/ops/reports/quality/run?window=weekly", headers=_owner_headers())
+    assert run_weekly.status_code == 200
+    run_weekly_body = run_weekly.json()
+    assert run_weekly_body["job_name"] == "ops_quality_report_weekly"
+    assert run_weekly_body["archive"]["enabled"] is True
+
+    run_monthly = app_client.post(
+        "/api/ops/reports/quality/run?window=monthly&month=2026-03",
+        headers=_owner_headers(),
+    )
+    assert run_monthly.status_code == 200
+    run_monthly_body = run_monthly.json()
+    assert run_monthly_body["job_name"] == "ops_quality_report_monthly"
+    assert run_monthly_body["archive"]["enabled"] is True
+
+    streak = app_client.get("/api/ops/reports/quality/weekly/streak", headers=_owner_headers())
+    assert streak.status_code == 200
+    streak_body = streak.json()
+    assert streak_body["target_weeks"] >= 1
+    assert streak_body["current_streak_weeks"] >= 0
+
+
+def test_ops_dr_rehearsal_run_latest_history_endpoints(app_client: TestClient) -> None:
+    run = app_client.post("/api/ops/dr/rehearsal/run?simulate_restore=true", headers=_owner_headers())
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["job_name"] == "dr_rehearsal"
+    assert run_body["status"] in {"success", "warning", "critical"}
+    assert isinstance(run_body["counts"], dict)
+    assert "backup_file" in run_body
+
+    latest = app_client.get("/api/ops/dr/rehearsal/latest", headers=_owner_headers())
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "dr_rehearsal"
+    assert latest_body["run_id"] == run_body["run_id"]
+
+    history = app_client.get("/api/ops/dr/rehearsal/history?limit=5", headers=_owner_headers())
+    assert history.status_code == 200
+    history_body = history.json()
+    assert history_body["count"] >= 1
+    assert history_body["items"][0]["run_id"] == run_body["run_id"]
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

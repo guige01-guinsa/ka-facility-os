@@ -10,6 +10,10 @@
 - W17-3 착수 완료
   - `ops_daily_check` 결과 요약 자동 JSON/CSV 아카이브 발행
   - 최신 요약 및 이력 JSON/CSV API 추가
+- W17-4 + W18 준비 구현
+  - 운영 품질 리포트 주간/월간 템플릿 API + 배치 잡 추가
+  - startup preflight, DR rehearsal, 관리자 보안 대시보드 API 추가
+  - 배포 스모크에 롤백 가이드 존재/체크섬 검증 연결
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -19,6 +23,11 @@
   - `/api/ops/runbook/checks/latest/summary.csv`
   - `/api/ops/runbook/checks/archive.json`
   - `/api/ops/runbook/checks/archive.csv`
+  - `/api/ops/preflight`
+  - `/api/ops/reports/quality/weekly`
+  - `/api/ops/reports/quality/monthly`
+  - `/api/ops/reports/quality/run`
+  - `/api/ops/dr/rehearsal/run`
 
 ## 다음 목표
 - W15 이후 운영을 "기능 확대"보다 "운영비용 절감 + 안정성 + 거버넌스 자동화"로 전환

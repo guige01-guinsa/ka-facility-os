@@ -88,6 +88,15 @@ try {
 
   if ($AdminToken -ne "") {
     $headers = @{ "X-Admin-Token" = $AdminToken }
+    $deployChecklist = Invoke-JsonGet -Uri "$BaseUrl/api/ops/deploy/checklist" -Headers $headers
+    if (-not $deployChecklist.policy.rollback_guide_exists) {
+      throw "Deploy checklist validation failed: rollback guide file missing"
+    }
+    if (-not $deployChecklist.policy.rollback_guide_sha256) {
+      throw "Deploy checklist validation failed: rollback guide checksum missing"
+    }
+    Add-SmokeCheck -Id "rollback_guide" -Status "ok" -Message "Rollback guide presence/checksum validated"
+
     $me = Invoke-JsonGet -Uri "$BaseUrl/api/auth/me" -Headers $headers
     if (-not $me.role) {
       throw "Auth check failed: role missing"
