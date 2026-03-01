@@ -41,6 +41,13 @@ if ($BaseUrl -ne "") {
     if (-not $posture.env) {
       throw "security posture endpoint failed"
     }
+    $governance = Invoke-RestMethod -Method Get -Uri "$BaseUrl/api/ops/governance/gate" -Headers $headers -TimeoutSec 20
+    if (-not $governance.decision) {
+      throw "governance gate endpoint failed"
+    }
+    if ($governance.decision -ne "go") {
+      throw "governance gate decision is no_go"
+    }
   }
 }
 

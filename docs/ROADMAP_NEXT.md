@@ -18,6 +18,10 @@
   - 관리자 보안 대시보드에 리스크 점수/권한 이상징후/권고안/민감이벤트 피드 추가
   - 월간 감사 아카이브에 DR 리허설 결과 자동 첨부(`dr_rehearsal_attachment`) 연계
   - deploy smoke record에 롤백 가이드 경로/체크섬 바인딩 검증(detail) 추가
+- W19 착수 완료: Governance Release Gate Automation
+  - `GO/NO-GO` 자동 판정 API/배치(`ops_governance_gate`) 구현
+  - preflight/runbook/security risk/deploy binding/DR/streak 규칙 기반 판정 표준화
+  - 일일 거버넌스 게이트 Cron(`ka-facility-os-ops-governance-gate`) 블루프린트 추가
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -85,6 +89,22 @@
 - preflight 실패 시 명확한 차단/경고 동작
 - DR 리허설 결과를 월간 감사에 자동 첨부
 - 권한/토큰 이상징후 탐지 규칙 운영
+
+## W19: Release Governance Gate Automation (우선순위 4)
+목표:
+- 배포/운영 승인 판단을 정량 규칙으로 자동화
+- 일일 거버넌스 점검 결과를 이력으로 남겨 감사 추적성 강화
+
+주요 작업:
+1. `GET/POST /api/ops/governance/gate*` API 도입(스냅샷/실행/최신/이력)
+2. preflight + runbook critical + 보안 리스크 + DR/배포 바인딩 규칙 통합
+3. `ops_governance_gate` Cron 배치로 일일 자동 판정 기록
+4. 서비스 정보/문서/테스트/배포 설정 동기화
+
+완료 기준:
+- 최신 판정 기준으로 `GO/NO-GO`가 일관되게 계산됨
+- 최소 1회 수동 실행 + 이력 조회 가능
+- 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)
 - 제외:

@@ -396,6 +396,20 @@ DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE = _env_bool("DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE
 EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE = _env_int("EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE", 20, min_value=1)
 EVIDENCE_INTEGRITY_MAX_ISSUES = _env_int("EVIDENCE_INTEGRITY_MAX_ISSUES", 50, min_value=1)
 DEPLOY_CHECKLIST_VERSION = getenv("DEPLOY_CHECKLIST_VERSION", "2026.03.v1").strip() or "2026.03.v1"
+GOVERNANCE_GATE_ALLOW_WARNING = _env_bool("GOVERNANCE_GATE_ALLOW_WARNING", True)
+GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL = (
+    getenv("GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL", "high").strip().lower() or "high"
+)
+GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR = _env_bool("GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR", True)
+GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL = _env_bool("GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL", True)
+GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT = _env_bool("GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT", False)
+GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS = _env_int("GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS", 36, min_value=1)
+GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID = _env_bool("GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID", False)
+GOVERNANCE_GATE_DR_MAX_AGE_DAYS = _env_int("GOVERNANCE_GATE_DR_MAX_AGE_DAYS", 35, min_value=1)
+GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING = _env_bool("GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING", False)
+GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS = _env_int("GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS", 72, min_value=1)
+GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK = _env_bool("GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK", False)
+GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS = _env_int("GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS", 30, min_value=7)
 SECURITY_HEADERS_BASE: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -838,6 +852,7 @@ W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 OPS_QUALITY_WEEKLY_JOB_NAME = "ops_quality_report_weekly"
 OPS_QUALITY_MONTHLY_JOB_NAME = "ops_quality_report_monthly"
 DR_REHEARSAL_JOB_NAME = "dr_rehearsal"
+OPS_GOVERNANCE_GATE_JOB_NAME = "ops_governance_gate"
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 6, 12)
@@ -5765,6 +5780,333 @@ def _latest_dr_rehearsal_payload() -> dict[str, Any] | None:
         row = conn.execute(
             select(job_runs)
             .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _normalize_governance_risk_level(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw not in {"low", "medium", "high", "critical"}:
+        return "high"
+    return raw
+
+
+def _governance_risk_rank(value: str) -> int:
+    order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    return order.get(_normalize_governance_risk_level(value), 3)
+
+
+def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
+    checked_at = now or datetime.now(timezone.utc)
+    max_risk_level = _normalize_governance_risk_level(GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL)
+    preflight = _get_startup_preflight_snapshot(refresh=False)
+    runbook = _build_ops_runbook_checks_snapshot(now=checked_at)
+    security_dashboard = _build_admin_security_dashboard_snapshot(days=GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS)
+    weekly_streak = _build_ops_quality_weekly_streak_snapshot()
+    dr_latest = _latest_dr_rehearsal_payload()
+
+    with get_conn() as conn:
+        daily_latest_row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "ops_daily_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        deploy_latest_row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "deploy_smoke")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+
+    daily_latest_model = _row_to_job_run_model(daily_latest_row) if daily_latest_row is not None else None
+    deploy_latest_model = _row_to_job_run_model(deploy_latest_row) if deploy_latest_row is not None else None
+    deploy_latest_detail = (
+        deploy_latest_model.detail
+        if deploy_latest_model is not None and isinstance(deploy_latest_model.detail, dict)
+        else {}
+    )
+
+    required_rules = {
+        "preflight_no_error": GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR,
+        "runbook_no_critical": GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL,
+        "daily_check_recent": GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT,
+        "dr_restore_valid_recent": GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID,
+        "deploy_smoke_binding_recent": GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING,
+        "weekly_streak_target_met": GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK,
+        "security_risk_within_max": True,
+    }
+
+    rules: list[dict[str, Any]] = []
+
+    def _append_rule(*, rule_id: str, required: bool, passed: bool, message: str, detail: dict[str, Any]) -> None:
+        if passed:
+            status = "pass"
+        elif required:
+            status = "fail"
+        else:
+            status = "warning"
+        rules.append(
+            {
+                "id": rule_id,
+                "required": required,
+                "status": status,
+                "passed": passed,
+                "message": message,
+                "detail": detail,
+            }
+        )
+
+    preflight_ok = not bool(preflight.get("has_error", False))
+    _append_rule(
+        rule_id="preflight_no_error",
+        required=required_rules["preflight_no_error"],
+        passed=preflight_ok,
+        message=(
+            "Startup preflight has no blocking errors."
+            if preflight_ok
+            else "Startup preflight has blocking errors."
+        ),
+        detail={
+            "overall_status": preflight.get("overall_status"),
+            "error_count": int(preflight.get("error_count") or 0),
+            "warning_count": int(preflight.get("warning_count") or 0),
+        },
+    )
+
+    runbook_checks = runbook.get("checks", [])
+    runbook_critical_count = sum(1 for item in runbook_checks if str(item.get("status") or "") == "critical")
+    runbook_ok = runbook_critical_count == 0
+    _append_rule(
+        rule_id="runbook_no_critical",
+        required=required_rules["runbook_no_critical"],
+        passed=runbook_ok,
+        message=(
+            "Runbook checks have no critical items."
+            if runbook_ok
+            else f"Runbook checks include {runbook_critical_count} critical item(s)."
+        ),
+        detail={
+            "overall_status": runbook.get("overall_status"),
+            "critical_count": runbook_critical_count,
+            "check_count": len(runbook_checks),
+        },
+    )
+
+    security_risk_level = _normalize_governance_risk_level((security_dashboard.get("risk") or {}).get("level"))
+    security_risk_ok = _governance_risk_rank(security_risk_level) <= _governance_risk_rank(max_risk_level)
+    _append_rule(
+        rule_id="security_risk_within_max",
+        required=required_rules["security_risk_within_max"],
+        passed=security_risk_ok,
+        message=(
+            "Admin security risk level is within configured ceiling."
+            if security_risk_ok
+            else "Admin security risk level exceeds configured ceiling."
+        ),
+        detail={
+            "risk_level": security_risk_level,
+            "risk_score": int((security_dashboard.get("risk") or {}).get("score") or 0),
+            "max_risk_level": max_risk_level,
+            "window_days": int(security_dashboard.get("window_days") or GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
+        },
+    )
+
+    daily_cutoff = checked_at - timedelta(hours=max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS))
+    daily_latest_finished = (
+        daily_latest_model.finished_at
+        if daily_latest_model is not None
+        else None
+    )
+    daily_recent_ok = daily_latest_finished is not None and daily_latest_finished >= daily_cutoff
+    _append_rule(
+        rule_id="daily_check_recent",
+        required=required_rules["daily_check_recent"],
+        passed=daily_recent_ok,
+        message=(
+            "Ops daily check has a recent run."
+            if daily_recent_ok
+            else f"No ops daily check run in last {max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS)} hour(s)."
+        ),
+        detail={
+            "max_age_hours": max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
+            "latest_run_at": daily_latest_finished.isoformat() if daily_latest_finished is not None else None,
+            "latest_status": daily_latest_model.status if daily_latest_model is not None else None,
+        },
+    )
+
+    dr_cutoff = checked_at - timedelta(days=max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS))
+    dr_latest_finished = _as_optional_datetime(dr_latest.get("finished_at")) if isinstance(dr_latest, dict) else None
+    dr_recent_ok = dr_latest_finished is not None and dr_latest_finished >= dr_cutoff
+    dr_restore_valid = bool(dr_latest.get("restore_valid", False)) if isinstance(dr_latest, dict) else False
+    dr_rule_ok = dr_recent_ok and dr_restore_valid
+    if not DR_REHEARSAL_ENABLED:
+        dr_rule_ok = not required_rules["dr_restore_valid_recent"]
+    _append_rule(
+        rule_id="dr_restore_valid_recent",
+        required=required_rules["dr_restore_valid_recent"],
+        passed=dr_rule_ok,
+        message=(
+            "Recent DR rehearsal restore validation is successful."
+            if dr_rule_ok
+            else (
+                "DR rehearsal is disabled."
+                if not DR_REHEARSAL_ENABLED
+                else "Recent DR rehearsal with restore_valid=true is required."
+            )
+        ),
+        detail={
+            "enabled": DR_REHEARSAL_ENABLED,
+            "max_age_days": max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
+            "latest_run_at": dr_latest_finished.isoformat() if dr_latest_finished is not None else None,
+            "latest_status": dr_latest.get("status") if isinstance(dr_latest, dict) else None,
+            "latest_restore_valid": dr_restore_valid,
+        },
+    )
+
+    deploy_cutoff = checked_at - timedelta(hours=max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS))
+    deploy_latest_finished = deploy_latest_model.finished_at if deploy_latest_model is not None else None
+    deploy_recent_ok = deploy_latest_finished is not None and deploy_latest_finished >= deploy_cutoff
+    deploy_rollback_ready = bool(deploy_latest_detail.get("rollback_ready", False))
+    deploy_runbook_gate = bool(deploy_latest_detail.get("runbook_gate_passed", False))
+    deploy_reference_match = bool(deploy_latest_detail.get("rollback_reference_match", False))
+    deploy_sha_match_raw = deploy_latest_detail.get("rollback_reference_sha256_match")
+    deploy_sha_match = (deploy_sha_match_raw is True) if deploy_sha_match_raw is not None else False
+    deploy_binding_ok = (
+        deploy_recent_ok
+        and deploy_rollback_ready
+        and deploy_reference_match
+        and deploy_sha_match
+        and ((not DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE) or deploy_runbook_gate)
+    )
+    _append_rule(
+        rule_id="deploy_smoke_binding_recent",
+        required=required_rules["deploy_smoke_binding_recent"],
+        passed=deploy_binding_ok,
+        message=(
+            "Recent deploy smoke rollback binding is valid."
+            if deploy_binding_ok
+            else "Recent deploy smoke rollback binding validation is required."
+        ),
+        detail={
+            "max_age_hours": max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
+            "latest_run_at": deploy_latest_finished.isoformat() if deploy_latest_finished is not None else None,
+            "latest_status": deploy_latest_model.status if deploy_latest_model is not None else None,
+            "rollback_ready": deploy_rollback_ready,
+            "runbook_gate_passed": deploy_runbook_gate,
+            "rollback_reference_match": deploy_reference_match,
+            "rollback_reference_sha256_match": deploy_sha_match_raw,
+        },
+    )
+
+    streak_met = bool(weekly_streak.get("target_met", False))
+    _append_rule(
+        rule_id="weekly_streak_target_met",
+        required=required_rules["weekly_streak_target_met"],
+        passed=streak_met,
+        message=(
+            "Ops quality weekly streak target is met."
+            if streak_met
+            else "Ops quality weekly streak target is not met."
+        ),
+        detail={
+            "current_streak_weeks": int(weekly_streak.get("current_streak_weeks") or 0),
+            "target_weeks": int(weekly_streak.get("target_weeks") or 0),
+        },
+    )
+
+    failure_count = sum(1 for rule in rules if rule["status"] == "fail")
+    warning_count = sum(1 for rule in rules if rule["status"] == "warning")
+    decision = "go"
+    if failure_count > 0 or (not GOVERNANCE_GATE_ALLOW_WARNING and warning_count > 0):
+        decision = "no_go"
+    summary = {
+        "total_rules": len(rules),
+        "required_rules": sum(1 for rule in rules if bool(rule.get("required"))),
+        "passed_rules": sum(1 for rule in rules if rule["status"] == "pass"),
+        "failure_count": failure_count,
+        "warning_count": warning_count,
+    }
+    return {
+        "generated_at": checked_at.isoformat(),
+        "decision": decision,
+        "summary": summary,
+        "rules": rules,
+        "policy": {
+            "allow_warning": GOVERNANCE_GATE_ALLOW_WARNING,
+            "max_security_risk_level": max_risk_level,
+            "require_preflight_no_error": required_rules["preflight_no_error"],
+            "require_runbook_no_critical": required_rules["runbook_no_critical"],
+            "require_daily_check_recent": required_rules["daily_check_recent"],
+            "daily_check_max_age_hours": max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
+            "require_dr_restore_valid_recent": required_rules["dr_restore_valid_recent"],
+            "dr_max_age_days": max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
+            "require_deploy_smoke_binding_recent": required_rules["deploy_smoke_binding_recent"],
+            "deploy_smoke_max_age_hours": max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
+            "require_weekly_streak_target_met": required_rules["weekly_streak_target_met"],
+            "security_dashboard_days": max(7, GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
+        },
+    }
+
+
+def run_ops_governance_gate_job(*, trigger: str = "manual") -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    snapshot = _build_ops_governance_gate_snapshot(now=started_at)
+    summary = snapshot.get("summary", {}) if isinstance(snapshot.get("summary"), dict) else {}
+    failure_count = int(summary.get("failure_count") or 0)
+    warning_count = int(summary.get("warning_count") or 0)
+    decision = str(snapshot.get("decision") or "no_go")
+    if decision == "no_go":
+        status = "critical"
+    elif warning_count > 0:
+        status = "warning"
+    else:
+        status = "success"
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        **snapshot,
+        "decision": decision,
+        "failure_count": failure_count,
+        "warning_count": warning_count,
+    }
+    run_id = _write_job_run(
+        job_name=OPS_GOVERNANCE_GATE_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_GOVERNANCE_GATE_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **snapshot,
+    }
+
+
+def _latest_ops_governance_gate_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_GATE_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -21721,6 +22063,10 @@ def _service_info_payload() -> dict[str, str]:
         "ops_dr_rehearsal_run_api": "/api/ops/dr/rehearsal/run",
         "ops_dr_rehearsal_latest_api": "/api/ops/dr/rehearsal/latest",
         "ops_dr_rehearsal_history_api": "/api/ops/dr/rehearsal/history",
+        "ops_governance_gate_api": "/api/ops/governance/gate",
+        "ops_governance_gate_run_api": "/api/ops/governance/gate/run",
+        "ops_governance_gate_latest_api": "/api/ops/governance/gate/latest",
+        "ops_governance_gate_history_api": "/api/ops/governance/gate/history",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -42730,6 +43076,113 @@ def get_ops_dr_rehearsal_history(
         principal=principal,
         action="ops_dr_rehearsal_history_view",
         resource_type="ops_dr",
+        resource_id="history",
+        detail={"limit": limit, "count": len(items)},
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@ops_router.get("/governance/gate")
+def get_ops_governance_gate(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_ops_governance_gate_snapshot()
+    summary = snapshot.get("summary", {}) if isinstance(snapshot.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_view",
+        resource_type="ops_governance_gate",
+        resource_id="snapshot",
+        status="success" if str(snapshot.get("decision") or "no_go") == "go" else "warning",
+        detail={
+            "decision": snapshot.get("decision"),
+            "failure_count": int(summary.get("failure_count") or 0),
+            "warning_count": int(summary.get("warning_count") or 0),
+        },
+    )
+    return snapshot
+
+
+@ops_router.post("/governance/gate/run")
+def run_ops_governance_gate(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_governance_gate_job(trigger="api")
+    summary = result.get("summary", {}) if isinstance(result.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_run",
+        resource_type="ops_governance_gate",
+        resource_id=str(result.get("run_id") or "pending"),
+        status="success" if str(result.get("decision") or "no_go") == "go" else "warning",
+        detail={
+            "decision": result.get("decision"),
+            "status": result.get("status"),
+            "failure_count": int(summary.get("failure_count") or 0),
+            "warning_count": int(summary.get("warning_count") or 0),
+        },
+    )
+    return result
+
+
+@ops_router.get("/governance/gate/latest")
+def get_ops_governance_gate_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_ops_governance_gate_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No ops_governance_gate run found")
+    summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_latest_view",
+        resource_type="ops_governance_gate",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        detail={
+            "decision": payload.get("decision"),
+            "status": payload.get("status"),
+            "failure_count": int(summary.get("failure_count") or 0),
+            "warning_count": int(summary.get("warning_count") or 0),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/governance/gate/history")
+def get_ops_governance_gate_history(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_GATE_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(limit)
+        ).mappings().all()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        summary = detail.get("summary", {}) if isinstance(detail.get("summary"), dict) else {}
+        items.append(
+            {
+                "run_id": model.id,
+                "status": model.status,
+                "decision": detail.get("decision"),
+                "failure_count": int(summary.get("failure_count") or 0),
+                "warning_count": int(summary.get("warning_count") or 0),
+                "finished_at": model.finished_at.isoformat(),
+            }
+        )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_history_view",
+        resource_type="ops_governance_gate",
         resource_id="history",
         detail={"limit": limit, "count": len(items)},
     )

@@ -97,6 +97,10 @@ Open:
   - `POST /api/ops/dr/rehearsal/run` (permission: `admins:manage`)
   - `GET /api/ops/dr/rehearsal/latest` (permission: `admins:manage`)
   - `GET /api/ops/dr/rehearsal/history` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate` (permission: `admins:manage`)
+  - `POST /api/ops/governance/gate/run` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/latest` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/history` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -372,6 +376,18 @@ Optional alert webhook env:
 - `DEPLOY_SMOKE_RECENT_HOURS` (default `48`; runbook recent smoke window)
 - `DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE` (default `true`)
 - `DEPLOY_CHECKLIST_VERSION` (default `2026.03.v1`)
+- `GOVERNANCE_GATE_ALLOW_WARNING` (default `true`)
+- `GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL` (default `high`; `low|medium|high|critical`)
+- `GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR` (default `true`)
+- `GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL` (default `true`)
+- `GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT` (default `false`)
+- `GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS` (default `36`)
+- `GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID` (default `false`)
+- `GOVERNANCE_GATE_DR_MAX_AGE_DAYS` (default `35`)
+- `GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING` (default `false`)
+- `GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS` (default `72`)
+- `GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK` (default `false`)
+- `GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS` (default `30`)
 - `EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE` (default `20`)
 - `EVIDENCE_INTEGRITY_MAX_ISSUES` (default `50`)
 
@@ -415,6 +431,10 @@ Job monitoring:
 - `POST /api/ops/dr/rehearsal/run`
 - `GET /api/ops/dr/rehearsal/latest`
 - `GET /api/ops/dr/rehearsal/history`
+- `GET /api/ops/governance/gate`
+- `POST /api/ops/governance/gate/run`
+- `GET /api/ops/governance/gate/latest`
+- `GET /api/ops/governance/gate/history`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
@@ -576,6 +596,7 @@ Direct smoke helper supports backend expectation, optional strict audit-chain ga
   - `python -m app.jobs.ops_quality_report --window weekly`
   - `python -m app.jobs.ops_quality_report --window monthly --month 2026-03`
   - `python -m app.jobs.dr_rehearsal`
+  - `python -m app.jobs.ops_governance_gate`
 
 - Redis allowlist update helper:
 

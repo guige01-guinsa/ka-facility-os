@@ -509,6 +509,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_dr_rehearsal_run_api"] == "/api/ops/dr/rehearsal/run"
     assert service_info.json()["ops_dr_rehearsal_latest_api"] == "/api/ops/dr/rehearsal/latest"
     assert service_info.json()["ops_dr_rehearsal_history_api"] == "/api/ops/dr/rehearsal/history"
+    assert service_info.json()["ops_governance_gate_api"] == "/api/ops/governance/gate"
+    assert service_info.json()["ops_governance_gate_run_api"] == "/api/ops/governance/gate/run"
+    assert service_info.json()["ops_governance_gate_latest_api"] == "/api/ops/governance/gate/latest"
+    assert service_info.json()["ops_governance_gate_history_api"] == "/api/ops/governance/gate/history"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -4896,6 +4900,36 @@ def test_ops_dr_rehearsal_run_latest_history_endpoints(app_client: TestClient) -
     history_body = history.json()
     assert history_body["count"] >= 1
     assert history_body["items"][0]["run_id"] == run_body["run_id"]
+
+
+def test_ops_governance_gate_endpoints(app_client: TestClient) -> None:
+    snapshot = app_client.get("/api/ops/governance/gate", headers=_owner_headers())
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["decision"] in {"go", "no_go"}
+    assert isinstance(snapshot_body["rules"], list)
+    assert snapshot_body["summary"]["total_rules"] >= 5
+
+    run = app_client.post("/api/ops/governance/gate/run", headers=_owner_headers())
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["job_name"] == "ops_governance_gate"
+    assert run_body["run_id"] is not None
+    assert run_body["decision"] in {"go", "no_go"}
+    assert run_body["status"] in {"success", "warning", "critical"}
+
+    latest = app_client.get("/api/ops/governance/gate/latest", headers=_owner_headers())
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_governance_gate"
+    assert latest_body["run_id"] == run_body["run_id"]
+
+    history = app_client.get("/api/ops/governance/gate/history?limit=5", headers=_owner_headers())
+    assert history.status_code == 200
+    history_body = history.json()
+    assert history_body["count"] >= 1
+    assert history_body["items"][0]["run_id"] == run_body["run_id"]
+    assert history_body["items"][0]["decision"] in {"go", "no_go"}
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

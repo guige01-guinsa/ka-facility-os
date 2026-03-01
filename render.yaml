@@ -51,6 +51,30 @@ services:
         value: DATABASE_URL
       - key: PREFLIGHT_FAIL_ON_ERROR
         value: "true"
+      - key: GOVERNANCE_GATE_ALLOW_WARNING
+        value: "true"
+      - key: GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL
+        value: high
+      - key: GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR
+        value: "true"
+      - key: GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL
+        value: "true"
+      - key: GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT
+        value: "false"
+      - key: GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS
+        value: "36"
+      - key: GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID
+        value: "false"
+      - key: GOVERNANCE_GATE_DR_MAX_AGE_DAYS
+        value: "35"
+      - key: GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING
+        value: "false"
+      - key: GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS
+        value: "72"
+      - key: GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK
+        value: "false"
+      - key: GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS
+        value: "30"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -127,6 +151,50 @@ services:
         value: "true"
       - key: W07_WEEKLY_ARCHIVE_PATH
         value: data/adoption-w07-archives
+  - type: cron
+    name: ka-facility-os-ops-governance-gate
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "45 0 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_governance_gate
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: GOVERNANCE_GATE_ALLOW_WARNING
+        value: "true"
+      - key: GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL
+        value: high
+      - key: GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR
+        value: "true"
+      - key: GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL
+        value: "true"
+      - key: GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT
+        value: "false"
+      - key: GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS
+        value: "36"
+      - key: GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID
+        value: "false"
+      - key: GOVERNANCE_GATE_DR_MAX_AGE_DAYS
+        value: "35"
+      - key: GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING
+        value: "false"
+      - key: GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS
+        value: "72"
+      - key: GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK
+        value: "false"
+      - key: GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS
+        value: "30"
+      - key: PREFLIGHT_REQUIRED_ENV
+        value: DATABASE_URL
+      - key: PREFLIGHT_FAIL_ON_ERROR
+        value: "true"
   - type: cron
     name: ka-facility-os-ops-quality-weekly
     runtime: python
