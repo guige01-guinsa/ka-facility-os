@@ -325,7 +325,6 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w09:read",
         "adoption_w09:write",
         "adoption_w10:read",
-        "adoption_w11:read",
         "adoption_w10:write",
         "adoption_w11:read",
         "adoption_w11:write",
@@ -373,6 +372,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w08:read",
         "adoption_w09:read",
         "adoption_w10:read",
+        "adoption_w11:read",
     },
 }
 
@@ -28828,12 +28828,11 @@ async def upload_w11_tracker_evidence(
             )
         )
         evidence_id = int(result.inserted_primary_key[0])
-        next_count = int(tracker_row.get("evidence_count") or 0) + 1
         conn.execute(
             update(adoption_w11_tracker_items)
             .where(adoption_w11_tracker_items.c.id == tracker_item_id)
             .values(
-                evidence_count=next_count,
+                evidence_count=adoption_w11_tracker_items.c.evidence_count + 1,
                 updated_by=actor_username,
                 updated_at=now,
             )

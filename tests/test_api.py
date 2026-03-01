@@ -3599,6 +3599,58 @@ def test_w11_scale_readiness_and_tracker_flow(app_client: TestClient) -> None:
     assert forbidden_tracker.status_code == 403
 
 
+def test_w11_auditor_read_access_and_write_block(app_client: TestClient) -> None:
+    bootstrap = app_client.post(
+        "/api/adoption/w11/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "W11 Auditor Site"},
+    )
+    assert bootstrap.status_code == 200
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w11_auditor_ci",
+            "display_name": "W11 Auditor CI",
+            "role": "auditor",
+            "permissions": [],
+            "site_scope": ["W11 Auditor Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w11-auditor-token"},
+    )
+    assert issued.status_code == 201
+    auditor_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    overview = app_client.get(
+        "/api/adoption/w11/tracker/overview?site=W11+Auditor+Site",
+        headers=auditor_headers,
+    )
+    assert overview.status_code == 200
+    assert overview.json()["site"] == "W11 Auditor Site"
+
+    snapshot = app_client.get(
+        "/api/ops/adoption/w11/scale-readiness?site=W11+Auditor+Site&days=30",
+        headers=auditor_headers,
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["site"] == "W11 Auditor Site"
+
+    write_forbidden = app_client.post(
+        "/api/adoption/w11/tracker/bootstrap",
+        headers=auditor_headers,
+        json={"site": "W11 Auditor Site"},
+    )
+    assert write_forbidden.status_code == 403
+
+
 def test_w07_weekly_run_respects_cooldown(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert
