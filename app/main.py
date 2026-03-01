@@ -50,6 +50,9 @@ from app.database import (
     adoption_w09_evidence_files,
     adoption_w09_site_runs,
     adoption_w09_tracker_items,
+    adoption_w10_evidence_files,
+    adoption_w10_site_runs,
+    adoption_w10_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -144,6 +147,15 @@ from app.schemas import (
     W09TrackerItemUpdate,
     W09TrackerOverviewRead,
     W09TrackerReadinessRead,
+    W10EvidenceRead,
+    W10TrackerBootstrapRequest,
+    W10TrackerBootstrapResponse,
+    W10TrackerCompletionRead,
+    W10TrackerCompletionRequest,
+    W10TrackerItemRead,
+    W10TrackerItemUpdate,
+    W10TrackerOverviewRead,
+    W10TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -300,6 +312,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w08:write",
         "adoption_w09:read",
         "adoption_w09:write",
+        "adoption_w10:read",
+        "adoption_w10:write",
     },
     "operator": {
         "inspections:read",
@@ -324,6 +338,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w08:write",
         "adoption_w09:read",
         "adoption_w09:write",
+        "adoption_w10:read",
+        "adoption_w10:write",
     },
     "auditor": {
         "inspections:read",
@@ -339,6 +355,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w07:read",
         "adoption_w08:read",
         "adoption_w09:read",
+        "adoption_w10:read",
     },
 }
 
@@ -357,6 +374,11 @@ W09_KPI_POLICY_KEY_SITE_PREFIX = "adoption_w09_kpi_policy:site:"
 W09_KPI_STATUS_GREEN = "green"
 W09_KPI_STATUS_YELLOW = "yellow"
 W09_KPI_STATUS_RED = "red"
+W10_SUPPORT_POLICY_KEY_DEFAULT = "adoption_w10_support_policy:default"
+W10_SUPPORT_POLICY_KEY_SITE_PREFIX = "adoption_w10_support_policy:site:"
+W10_SUPPORT_STATUS_GREEN = "green"
+W10_SUPPORT_STATUS_YELLOW = "yellow"
+W10_SUPPORT_STATUS_RED = "red"
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -477,6 +499,26 @@ W09_SITE_COMPLETION_STATUS_SET = {
 }
 W09_EVIDENCE_REQUIRED_ITEM_TYPES = {"kpi_threshold", "kpi_escalation"}
 W09_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W10_TRACKER_STATUS_PENDING = "pending"
+W10_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W10_TRACKER_STATUS_DONE = "done"
+W10_TRACKER_STATUS_BLOCKED = "blocked"
+W10_TRACKER_STATUS_SET = {
+    W10_TRACKER_STATUS_PENDING,
+    W10_TRACKER_STATUS_IN_PROGRESS,
+    W10_TRACKER_STATUS_DONE,
+    W10_TRACKER_STATUS_BLOCKED,
+}
+W10_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W10_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W10_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W10_SITE_COMPLETION_STATUS_SET = {
+    W10_SITE_COMPLETION_STATUS_ACTIVE,
+    W10_SITE_COMPLETION_STATUS_COMPLETED,
+    W10_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W10_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
+W10_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -2223,6 +2265,132 @@ ADOPTION_W09_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W10_SELF_SERVE_GUIDES: list[dict[str, Any]] = [
+    {
+        "id": "W10-SS-01",
+        "title": "Repeated Ticket Triage Guide",
+        "problem_cluster": "동일 제목 반복 작업지시",
+        "owner_role": "CS Lead",
+        "target": "반복 티켓 20% 감축",
+        "source_api": "/api/ops/adoption/w10/self-serve",
+    },
+    {
+        "id": "W10-SS-02",
+        "title": "First Response Self-Check",
+        "problem_cluster": "초기 분류 지연",
+        "owner_role": "Ops QA",
+        "target": "첫 응답 15분 이내",
+        "source_api": "/api/work-orders",
+    },
+    {
+        "id": "W10-SS-03",
+        "title": "SLA Breach Quick Fix Card",
+        "problem_cluster": "SLA 초과 처리",
+        "owner_role": "Ops Lead",
+        "target": "SLA 위반율 10%p 개선",
+        "source_api": "/api/ops/adoption/w07/sla-quality",
+    },
+    {
+        "id": "W10-SS-04",
+        "title": "Data Quality Recovery Checklist",
+        "problem_cluster": "누락/불일치 데이터",
+        "owner_role": "Audit Lead",
+        "target": "DQ 이슈율 <= 5%",
+        "source_api": "/api/ops/adoption/w08/report-discipline",
+    },
+    {
+        "id": "W10-SS-05",
+        "title": "Role-based Escalation Decision Tree",
+        "problem_cluster": "에스컬레이션 경로 혼선",
+        "owner_role": "Site Champion",
+        "target": "경로 오분류 0건",
+        "source_api": "/api/ops/adoption/w09/kpi-operation",
+    },
+]
+
+ADOPTION_W10_TROUBLESHOOTING_RUNBOOK: list[dict[str, Any]] = [
+    {
+        "id": "W10-RB-01",
+        "module": "Inspection",
+        "symptom": "점검 생성 실패/필수값 누락",
+        "owner_role": "Operator Champion",
+        "definition_of_done": "재현, 원인, 복구, 예방항목 기록",
+        "api_ref": "/api/inspections",
+    },
+    {
+        "id": "W10-RB-02",
+        "module": "Work-order",
+        "symptom": "상태 전환 오류/처리 지연",
+        "owner_role": "Ops Lead",
+        "definition_of_done": "전환 규칙 확인 및 재발 방지",
+        "api_ref": "/api/work-orders",
+    },
+    {
+        "id": "W10-RB-03",
+        "module": "Report",
+        "symptom": "월간 출력 누락/지연",
+        "owner_role": "Auditor",
+        "definition_of_done": "CSV/PDF 출력 증빙과 감사로그 확인",
+        "api_ref": "/api/reports/monthly/csv",
+    },
+    {
+        "id": "W10-RB-04",
+        "module": "Alert",
+        "symptom": "알림 실패/재시도 누락",
+        "owner_role": "SRE",
+        "definition_of_done": "실패 원인 분류 및 guard/recover 기록",
+        "api_ref": "/api/ops/alerts/deliveries",
+    },
+]
+
+ADOPTION_W10_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W10-E01",
+        "date": "2026-05-04",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W10 kickoff - self-serve baseline",
+        "owner": "CS Lead + Ops PM",
+        "output": "반복 이슈 Top list + 오너 지정",
+    },
+    {
+        "id": "W10-E02",
+        "date": "2026-05-05",
+        "start_time": "14:00",
+        "end_time": "14:30",
+        "title": "Guide publishing sprint",
+        "owner": "Operator Champion",
+        "output": "Self-serve guide 1차 게시",
+    },
+    {
+        "id": "W10-E03",
+        "date": "2026-05-06",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Runbook walkthrough drill",
+        "owner": "Ops Lead",
+        "output": "모듈별 트러블슈팅 시연 기록",
+    },
+    {
+        "id": "W10-E04",
+        "date": "2026-05-07",
+        "start_time": "15:00",
+        "end_time": "15:30",
+        "title": "Office-hour dependency review",
+        "owner": "CS Lead",
+        "output": "의존도 감소 액션 등록",
+    },
+    {
+        "id": "W10-E05",
+        "date": "2026-05-08",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W10 close review",
+        "owner": "Head of Ops + CS Lead",
+        "output": "Self-serve 운영 전환 승인",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -2320,6 +2488,19 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "W09 KPI Ops", "href": "/api/ops/adoption/w09/kpi-operation"},
             {"label": "W09 KPI Policy", "href": "/api/ops/adoption/w09/kpi-policy"},
             {"label": "W09 Tracker", "href": "/api/adoption/w09/tracker/items"},
+        ],
+    },
+    {
+        "id": "self-serve-support",
+        "name": "Self-serve Support",
+        "name_ko": "셀프서브 지원",
+        "description": "W10 기준 반복 이슈를 가이드/런북으로 전환하고 실행추적으로 정착시킵니다.",
+        "kpi_hint": "Support repeat rate down >= 20%",
+        "links": [
+            {"label": "W10 Pack", "href": "/api/public/adoption-plan/w10"},
+            {"label": "W10 Self-serve", "href": "/api/ops/adoption/w10/self-serve"},
+            {"label": "W10 Support Policy", "href": "/api/ops/adoption/w10/support-policy"},
+            {"label": "W10 Tracker", "href": "/api/adoption/w10/tracker/items"},
         ],
     },
     {
@@ -4806,6 +4987,403 @@ def _evaluate_w09_kpi_status(
     return W09_KPI_STATUS_RED
 
 
+def _w10_support_policy_key(site: str | None) -> tuple[str, str | None]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return W10_SUPPORT_POLICY_KEY_DEFAULT, None
+    return f"{W10_SUPPORT_POLICY_KEY_SITE_PREFIX}{normalized_site}", normalized_site
+
+
+def _default_w10_support_policy() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "repeat_rate_green_threshold": 20.0,
+        "repeat_rate_yellow_threshold": 30.0,
+        "guide_publish_green_threshold": 80.0,
+        "guide_publish_yellow_threshold": 60.0,
+        "runbook_completion_green_threshold": 80.0,
+        "runbook_completion_yellow_threshold": 60.0,
+        "readiness_target": 75.0,
+    }
+
+
+def _normalize_w10_support_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w10_support_policy()
+
+    def _float_value(key: str, fallback: float, min_value: float, max_value: float) -> float:
+        try:
+            raw = float(source.get(key, fallback))
+        except (TypeError, ValueError):
+            raw = fallback
+        return round(max(min_value, min(raw, max_value)), 2)
+
+    repeat_green = _float_value(
+        "repeat_rate_green_threshold",
+        float(defaults["repeat_rate_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    repeat_yellow = _float_value(
+        "repeat_rate_yellow_threshold",
+        float(defaults["repeat_rate_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if repeat_yellow < repeat_green:
+        repeat_yellow = repeat_green
+
+    guide_green = _float_value(
+        "guide_publish_green_threshold",
+        float(defaults["guide_publish_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    guide_yellow = _float_value(
+        "guide_publish_yellow_threshold",
+        float(defaults["guide_publish_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if guide_yellow > guide_green:
+        guide_yellow = guide_green
+
+    runbook_green = _float_value(
+        "runbook_completion_green_threshold",
+        float(defaults["runbook_completion_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    runbook_yellow = _float_value(
+        "runbook_completion_yellow_threshold",
+        float(defaults["runbook_completion_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if runbook_yellow > runbook_green:
+        runbook_yellow = runbook_green
+
+    readiness_target = _float_value(
+        "readiness_target",
+        float(defaults["readiness_target"]),
+        0.0,
+        100.0,
+    )
+
+    return {
+        "enabled": bool(source.get("enabled", defaults.get("enabled", True))),
+        "repeat_rate_green_threshold": repeat_green,
+        "repeat_rate_yellow_threshold": repeat_yellow,
+        "guide_publish_green_threshold": guide_green,
+        "guide_publish_yellow_threshold": guide_yellow,
+        "runbook_completion_green_threshold": runbook_green,
+        "runbook_completion_yellow_threshold": runbook_yellow,
+        "readiness_target": readiness_target,
+    }
+
+
+def _parse_w10_support_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w10_support_policy(loaded)
+
+
+def _ensure_w10_support_policy(site: str | None) -> tuple[dict[str, Any], datetime, str, str | None]:
+    policy_key, normalized_site = _w10_support_policy_key(site)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w10_support_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=policy_key,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, policy_key, normalized_site
+    policy = _parse_w10_support_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, policy_key, normalized_site
+
+
+def _upsert_w10_support_policy(site: str | None, payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str, str | None]:
+    current_policy, _, policy_key, normalized_site = _ensure_w10_support_policy(site)
+    incoming = payload if isinstance(payload, dict) else {}
+    merged: dict[str, Any] = {**current_policy}
+    for key in [
+        "enabled",
+        "repeat_rate_green_threshold",
+        "repeat_rate_yellow_threshold",
+        "guide_publish_green_threshold",
+        "guide_publish_yellow_threshold",
+        "runbook_completion_green_threshold",
+        "runbook_completion_yellow_threshold",
+        "readiness_target",
+    ]:
+        if key in incoming:
+            merged[key] = incoming[key]
+    normalized = _normalize_w10_support_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key, normalized_site
+
+
+def _build_w10_self_serve_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    window_start = now - timedelta(days=window_days)
+    policy, policy_updated_at, policy_key, policy_site = _ensure_w10_support_policy(site)
+
+    effective_site = policy_site if policy_site is not None else _normalize_site_name(site)
+    effective_allowed_sites = allowed_sites if effective_site is None else None
+
+    stmt = select(work_orders).where(work_orders.c.created_at >= window_start)
+    if effective_site is not None:
+        stmt = stmt.where(work_orders.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        if not effective_allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": None,
+                "window_days": window_days,
+                "policy": {
+                    "policy_key": policy_key,
+                    "updated_at": policy_updated_at.isoformat(),
+                    "enabled": bool(policy.get("enabled", True)),
+                },
+                "metrics": {
+                    "work_orders_count": 0,
+                    "unique_titles": 0,
+                    "repeated_work_orders_count": 0,
+                    "repeat_rate_percent": 0.0,
+                    "guide_total_count": len(ADOPTION_W10_SELF_SERVE_GUIDES),
+                    "guide_done_count": 0,
+                    "guide_publish_rate_percent": 0.0,
+                    "runbook_total_count": len(ADOPTION_W10_TROUBLESHOOTING_RUNBOOK),
+                    "runbook_done_count": 0,
+                    "runbook_completion_rate_percent": 0.0,
+                    "self_serve_readiness_score": 0.0,
+                    "overall_status": W10_SUPPORT_STATUS_RED,
+                    "target_met": False,
+                },
+                "kpis": [],
+                "top_repeat_titles": [],
+                "guide_coverage": ADOPTION_W10_SELF_SERVE_GUIDES,
+                "runbook_modules": ADOPTION_W10_TROUBLESHOOTING_RUNBOOK,
+                "recommendations": ["접근 가능한 site 범위가 비어 있습니다. site_scope를 확인하세요."],
+            }
+        stmt = stmt.where(work_orders.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        wo_rows = conn.execute(stmt).mappings().all()
+
+    title_counts: dict[str, int] = {}
+    title_label: dict[str, str] = {}
+    for row in wo_rows:
+        title_raw = str(row.get("title") or "").strip()
+        normalized = title_raw.lower() if title_raw else "(untitled)"
+        title_counts[normalized] = title_counts.get(normalized, 0) + 1
+        if normalized not in title_label:
+            title_label[normalized] = title_raw or "(untitled)"
+
+    total_work_orders = len(wo_rows)
+    repeated_orders_count = sum(count for count in title_counts.values() if count >= 2)
+    unique_titles = len(title_counts)
+    repeat_rate_percent = round((repeated_orders_count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0
+    top_repeat_titles = sorted(
+        [
+            {
+                "title": title_label.get(key, key),
+                "count": count,
+                "share_percent": round((count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0,
+            }
+            for key, count in title_counts.items()
+            if count >= 2
+        ],
+        key=lambda item: int(item.get("count") or 0),
+        reverse=True,
+    )[:10]
+
+    tracker_stmt = select(adoption_w10_tracker_items)
+    if effective_site is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w10_tracker_items.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w10_tracker_items.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        tracker_rows = conn.execute(tracker_stmt).mappings().all()
+
+    guide_total_count = max(
+        len(ADOPTION_W10_SELF_SERVE_GUIDES),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "self_serve_guide"),
+    )
+    runbook_total_count = max(
+        len(ADOPTION_W10_TROUBLESHOOTING_RUNBOOK),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "troubleshooting_runbook"),
+    )
+    guide_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "self_serve_guide" and str(row.get("status") or "") == W10_TRACKER_STATUS_DONE
+    )
+    runbook_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "troubleshooting_runbook" and str(row.get("status") or "") == W10_TRACKER_STATUS_DONE
+    )
+    guide_publish_rate_percent = round((guide_done_count / guide_total_count) * 100.0, 2) if guide_total_count > 0 else 0.0
+    runbook_completion_rate_percent = (
+        round((runbook_done_count / runbook_total_count) * 100.0, 2) if runbook_total_count > 0 else 0.0
+    )
+
+    repeat_status = _evaluate_w09_kpi_status(
+        actual=repeat_rate_percent,
+        direction="lower_better",
+        green_threshold=float(policy.get("repeat_rate_green_threshold") or 20.0),
+        yellow_threshold=float(policy.get("repeat_rate_yellow_threshold") or 30.0),
+    )
+    guide_status = _evaluate_w09_kpi_status(
+        actual=guide_publish_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("guide_publish_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("guide_publish_yellow_threshold") or 60.0),
+    )
+    runbook_status = _evaluate_w09_kpi_status(
+        actual=runbook_completion_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("runbook_completion_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("runbook_completion_yellow_threshold") or 60.0),
+    )
+
+    status_points = {
+        W09_KPI_STATUS_RED: 0.0,
+        W09_KPI_STATUS_YELLOW: 50.0,
+        W09_KPI_STATUS_GREEN: 100.0,
+    }
+    self_serve_readiness_score = round(
+        (status_points.get(repeat_status, 0.0) + status_points.get(guide_status, 0.0) + status_points.get(runbook_status, 0.0))
+        / 3.0,
+        2,
+    )
+
+    status_set = {repeat_status, guide_status, runbook_status}
+    overall_status = W10_SUPPORT_STATUS_GREEN
+    if W09_KPI_STATUS_RED in status_set:
+        overall_status = W10_SUPPORT_STATUS_RED
+    elif W09_KPI_STATUS_YELLOW in status_set:
+        overall_status = W10_SUPPORT_STATUS_YELLOW
+
+    readiness_target = float(policy.get("readiness_target") or 75.0)
+    target_met = self_serve_readiness_score >= readiness_target and overall_status != W10_SUPPORT_STATUS_RED
+
+    kpis = [
+        {
+            "kpi_key": "repeat_ticket_rate_percent",
+            "kpi_name": "Repeat ticket rate",
+            "direction": "lower_better",
+            "actual_value": repeat_rate_percent,
+            "green_threshold": float(policy.get("repeat_rate_green_threshold") or 20.0),
+            "yellow_threshold": float(policy.get("repeat_rate_yellow_threshold") or 30.0),
+            "status": repeat_status,
+            "target": f"<= {policy.get('repeat_rate_green_threshold', 20.0)}%",
+        },
+        {
+            "kpi_key": "guide_publish_rate_percent",
+            "kpi_name": "Self-serve guide publish rate",
+            "direction": "higher_better",
+            "actual_value": guide_publish_rate_percent,
+            "green_threshold": float(policy.get("guide_publish_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("guide_publish_yellow_threshold") or 60.0),
+            "status": guide_status,
+            "target": f">= {policy.get('guide_publish_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "runbook_completion_rate_percent",
+            "kpi_name": "Runbook completion rate",
+            "direction": "higher_better",
+            "actual_value": runbook_completion_rate_percent,
+            "green_threshold": float(policy.get("runbook_completion_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("runbook_completion_yellow_threshold") or 60.0),
+            "status": runbook_status,
+            "target": f">= {policy.get('runbook_completion_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "self_serve_readiness_score",
+            "kpi_name": "Self-serve readiness score",
+            "direction": "higher_better",
+            "actual_value": self_serve_readiness_score,
+            "green_threshold": readiness_target,
+            "yellow_threshold": max(0.0, readiness_target - 15.0),
+            "status": _evaluate_w09_kpi_status(
+                actual=self_serve_readiness_score,
+                direction="higher_better",
+                green_threshold=readiness_target,
+                yellow_threshold=max(0.0, readiness_target - 15.0),
+            ),
+            "target": f">= {readiness_target}",
+        },
+    ]
+
+    recommendations: list[str] = []
+    if repeat_status == W09_KPI_STATUS_RED:
+        recommendations.append("반복 티켓 비율이 높습니다. Top 반복 제목 3개를 FAQ/가이드로 우선 전환하세요.")
+    if guide_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Self-serve guide 게시율이 낮습니다. 담당자와 마감일을 지정해 게시를 완료하세요.")
+    if runbook_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Runbook 완료율이 낮습니다. 모듈별 실습 드릴과 증빙 업로드를 마감하세요.")
+    if not recommendations:
+        recommendations.append("W10 Self-serve 지원 전환 상태가 안정적입니다. 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": effective_site,
+        "window_days": window_days,
+        "policy": {
+            "policy_key": policy_key,
+            "updated_at": policy_updated_at.isoformat(),
+            "enabled": bool(policy.get("enabled", True)),
+            "readiness_target": readiness_target,
+        },
+        "metrics": {
+            "work_orders_count": total_work_orders,
+            "unique_titles": unique_titles,
+            "repeated_work_orders_count": repeated_orders_count,
+            "repeat_rate_percent": repeat_rate_percent,
+            "guide_total_count": guide_total_count,
+            "guide_done_count": guide_done_count,
+            "guide_publish_rate_percent": guide_publish_rate_percent,
+            "runbook_total_count": runbook_total_count,
+            "runbook_done_count": runbook_done_count,
+            "runbook_completion_rate_percent": runbook_completion_rate_percent,
+            "self_serve_readiness_score": self_serve_readiness_score,
+            "overall_status": overall_status,
+            "target_met": target_met,
+        },
+        "kpis": kpis,
+        "top_repeat_titles": top_repeat_titles,
+        "guide_coverage": ADOPTION_W10_SELF_SERVE_GUIDES,
+        "runbook_modules": ADOPTION_W10_TROUBLESHOOTING_RUNBOOK,
+        "recommendations": recommendations,
+    }
+
+
 def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
     with get_conn() as conn:
         rows = conn.execute(
@@ -7248,6 +7826,299 @@ def _reset_w09_completion_if_closed(
         .where(adoption_w09_site_runs.c.site == site)
         .values(
             status=W09_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w10_tracker_item_model(row: dict[str, Any]) -> W10TrackerItemRead:
+    return W10TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W10_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w10_evidence_model(row: dict[str, Any]) -> W10EvidenceRead:
+    return W10EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w10_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w10_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W10_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W10_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W10_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w10_tracker_overview(site: str, rows: list[W10TrackerItemRead]) -> W10TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W10TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w10_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W10TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W10TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W10_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W10TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w10_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W10_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W10_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w10_completion_model(
+    *,
+    site: str,
+    readiness: W10TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W10TrackerCompletionRead:
+    if row is None:
+        return W10TrackerCompletionRead(
+            site=site,
+            status=W10_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w10_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W10TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w10_tracker_items_for_site(site: str) -> list[W10TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w10_tracker_items)
+            .where(adoption_w10_tracker_items.c.site == site)
+            .order_by(
+                adoption_w10_tracker_items.c.item_type.asc(),
+                adoption_w10_tracker_items.c.item_key.asc(),
+                adoption_w10_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w10_tracker_item_model(row) for row in rows]
+
+
+def _reset_w10_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w10_site_runs.c.status)
+        .where(adoption_w10_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w10_site_completion_status(row.get("status"))
+    if status == W10_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w10_site_runs)
+        .where(adoption_w10_site_runs.c.site == site)
+        .values(
+            status=W10_SITE_COMPLETION_STATUS_ACTIVE,
             completion_note="",
             force_used=False,
             completed_by=None,
@@ -11310,6 +12181,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w09_api": "/api/public/adoption-plan/w09",
         "public_adoption_w09_checklist_csv_api": "/api/public/adoption-plan/w09/checklist.csv",
         "public_adoption_w09_schedule_ics_api": "/api/public/adoption-plan/w09/schedule.ics",
+        "public_adoption_w10_api": "/api/public/adoption-plan/w10",
+        "public_adoption_w10_checklist_csv_api": "/api/public/adoption-plan/w10/checklist.csv",
+        "public_adoption_w10_schedule_ics_api": "/api/public/adoption-plan/w10/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -11343,6 +12217,12 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w09_tracker_readiness_api": "/api/adoption/w09/tracker/readiness",
         "adoption_w09_tracker_completion_api": "/api/adoption/w09/tracker/completion",
         "adoption_w09_tracker_complete_api": "/api/adoption/w09/tracker/complete",
+        "adoption_w10_tracker_items_api": "/api/adoption/w10/tracker/items",
+        "adoption_w10_tracker_overview_api": "/api/adoption/w10/tracker/overview",
+        "adoption_w10_tracker_bootstrap_api": "/api/adoption/w10/tracker/bootstrap",
+        "adoption_w10_tracker_readiness_api": "/api/adoption/w10/tracker/readiness",
+        "adoption_w10_tracker_completion_api": "/api/adoption/w10/tracker/completion",
+        "adoption_w10_tracker_complete_api": "/api/adoption/w10/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
@@ -11355,6 +12235,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w08_site_benchmark_api": "/api/ops/adoption/w08/site-benchmark",
         "adoption_w09_kpi_operation_api": "/api/ops/adoption/w09/kpi-operation",
         "adoption_w09_kpi_policy_api": "/api/ops/adoption/w09/kpi-policy",
+        "adoption_w10_self_serve_api": "/api/ops/adoption/w10/self-serve",
+        "adoption_w10_support_policy_api": "/api/ops/adoption/w10/support-policy",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -11413,6 +12295,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w07_sla_quality": _adoption_w07_payload(),
         "w08_report_discipline": _adoption_w08_payload(),
         "w09_kpi_operation": _adoption_w09_payload(),
+        "w10_self_serve_support": _adoption_w10_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -11459,6 +12342,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w09_json": "/api/public/adoption-plan/w09",
                 "w09_checklist_csv": "/api/public/adoption-plan/w09/checklist.csv",
                 "w09_schedule_ics": "/api/public/adoption-plan/w09/schedule.ics",
+                "w10_json": "/api/public/adoption-plan/w10",
+                "w10_checklist_csv": "/api/public/adoption-plan/w10/checklist.csv",
+                "w10_schedule_ics": "/api/public/adoption-plan/w10/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -12494,6 +13380,151 @@ def _build_adoption_w09_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w10_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 10),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 10,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Autonomy",
+            "focus": "Self-serve support",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 10)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W10 Self-serve Support Pack",
+        "public": True,
+        "timeline": timeline,
+        "self_serve_guides": ADOPTION_W10_SELF_SERVE_GUIDES,
+        "troubleshooting_runbook": ADOPTION_W10_TROUBLESHOOTING_RUNBOOK,
+        "scheduled_events": ADOPTION_W10_SCHEDULED_EVENTS,
+        "self_serve_api": "/api/ops/adoption/w10/self-serve",
+        "support_policy_api": "/api/ops/adoption/w10/support-policy",
+        "tracker_items_api": "/api/adoption/w10/tracker/items",
+        "tracker_overview_api": "/api/adoption/w10/tracker/overview",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w10",
+            "checklist_csv": "/api/public/adoption-plan/w10/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w10/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w10_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "key_or_module",
+            "name_or_symptom",
+            "owner_role",
+            "objective_or_target",
+            "definition_or_output",
+            "api_or_time",
+        ]
+    )
+    for item in payload.get("self_serve_guides", []):
+        writer.writerow(
+            [
+                "self_serve_guide",
+                item.get("id", ""),
+                item.get("problem_cluster", ""),
+                item.get("title", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                "",
+                item.get("source_api", ""),
+            ]
+        )
+    for item in payload.get("troubleshooting_runbook", []):
+        writer.writerow(
+            [
+                "troubleshooting_runbook",
+                item.get("id", ""),
+                item.get("module", ""),
+                item.get("symptom", ""),
+                item.get("owner_role", ""),
+                "",
+                item.get("definition_of_done", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                "",
+                item.get("output", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w10_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w10-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W10] {str(item.get('title', 'Self-serve Support Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W10 Self-serve Support//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -12866,6 +13897,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w07_pack = plan.get("w07_sla_quality", {})
     w08_pack = plan.get("w08_report_discipline", {})
     w09_pack = plan.get("w09_kpi_operation", {})
+    w10_pack = plan.get("w10_self_serve_support", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -13290,6 +14322,50 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w09_schedule_rows: list[str] = []
     for item in w09_pack.get("scheduled_events", []):
         w09_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w10_guide_rows: list[str] = []
+    for item in w10_pack.get("self_serve_guides", []):
+        w10_guide_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("problem_cluster", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("source_api", "")))}</td>
+            </tr>
+            """
+        )
+
+    w10_runbook_rows: list[str] = []
+    for item in w10_pack.get("troubleshooting_runbook", []):
+        w10_runbook_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("module", "")))}</td>
+              <td>{html.escape(str(item.get("symptom", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w10_schedule_rows: list[str] = []
+    for item in w10_pack.get("scheduled_events", []):
+        w10_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -14529,6 +15605,70 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w09_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W10 Self-serve Support</h2>
+      <p class="sub">반복 지원 이슈를 가이드/런북으로 전환하여 현장 자율 해결 비율을 높이고 지원 의존도를 줄입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w10">W10 JSON</a>
+        <a href="/api/public/adoption-plan/w10/checklist.csv">W10 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w10/schedule.ics">W10 Schedule ICS</a>
+        <a href="/api/ops/adoption/w10/self-serve">W10 Self-serve API (Token)</a>
+        <a href="/api/ops/adoption/w10/support-policy">W10 Support Policy API (Token)</a>
+        <a href="/api/adoption/w10/tracker/items">W10 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w10/tracker/overview?site=HQ">W10 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Guide ID</th>
+              <th>Title</th>
+              <th>Problem Cluster</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Source API</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w10_guide_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Runbook ID</th>
+              <th>Module</th>
+              <th>Symptom</th>
+              <th>Owner Role</th>
+              <th>Definition of Done</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w10_runbook_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w10_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -16604,6 +17744,95 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w09EvidenceTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W10 Self-serve Support</h3>
+            <div id="adoptionW10Top" class="cards"></div>
+            <div id="adoptionW10Guides" class="empty">데이터 없음</div>
+            <div id="adoptionW10Runbook" class="empty">데이터 없음</div>
+            <div id="adoptionW10Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW10Json" href="/api/public/adoption-plan/w10">W10 JSON</a>
+              <a id="adoptW10ChecklistCsv" href="/api/public/adoption-plan/w10/checklist.csv">W10 Checklist CSV</a>
+              <a id="adoptW10ScheduleIcs" href="/api/public/adoption-plan/w10/schedule.ics">W10 Schedule ICS</a>
+              <a id="adoptW10SelfServeApi" href="/api/ops/adoption/w10/self-serve">W10 Self-serve API (Token)</a>
+              <a id="adoptW10SupportPolicyApi" href="/api/ops/adoption/w10/support-policy">W10 Support Policy API (Token)</a>
+              <a id="adoptW10TrackerItemsApi" href="/api/adoption/w10/tracker/items">W10 Tracker Items API (Token)</a>
+              <a id="adoptW10TrackerOverviewApi" href="/api/adoption/w10/tracker/overview?site=HQ">W10 Tracker Overview API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W10 Self-serve Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w10KpiSite" placeholder="site (optional, 비우면 전체)" />
+              <input id="w10KpiDays" value="30" placeholder="window days (14-120)" />
+              <input id="w10KpiReserved1" value="token required" disabled />
+              <input id="w10KpiReserved2" value="site scope enforced" disabled />
+              <button id="w10KpiRefreshBtn" class="btn run" type="button">W10 지표 새로고침</button>
+            </div>
+            <div id="w10KpiMeta" class="meta">조회 전</div>
+            <div id="w10KpiSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Support KPI Status</h4>
+            <div id="w10KpiTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Top Repeat Titles</h4>
+            <div id="w10EscalationTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w10KpiRecommendations" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Policy Snapshot</h4>
+            <div id="w10PolicyMeta" class="meta">조회 전</div>
+            <div id="w10PolicyTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W10 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w10TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w10TrackItemId" placeholder="tracker_item_id" />
+              <input id="w10TrackAssignee" placeholder="assignee" />
+              <select id="w10TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w10TrackBootstrapBtn" class="btn run" type="button">W10 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w10TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w10TrackNote" placeholder="completion note (optional)" />
+              <input id="w10EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w10EvidenceFile" type="file" />
+              <button id="w10TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w10EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w10Reserved1" value="token required for write actions" disabled />
+              <input id="w10Reserved2" value="site scope enforced" disabled />
+              <input id="w10Reserved3" value="max file 5MB" disabled />
+              <button id="w10TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w10CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w10CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w10Reserved4" value="readiness gate required" disabled />
+              <button id="w10ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w10CompleteBtn" class="btn" type="button">W10 완료 확정</button>
+            </div>
+            <div id="w10TrackerMeta" class="meta">조회 전</div>
+            <div id="w10TrackerSummary" class="cards"></div>
+            <div id="w10TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W10 완료 판정 결과</h4>
+            <div id="w10ReadinessMeta" class="meta">조회 전</div>
+            <div id="w10ReadinessCards" class="cards"></div>
+            <div id="w10ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w10EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
@@ -17238,11 +18467,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (!Array.isArray(rows) || rows.length === 0) {{
           return renderEmpty("증빙 파일이 없습니다.");
         }}
-        const phase = trackerPhase === "w09"
+        const phase = trackerPhase === "w10"
+          ? "w10"
+          : (trackerPhase === "w09"
           ? "w09"
           : (trackerPhase === "w07"
             ? "w07"
-            : (trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02")));
+            : (trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02"))));
         const body = rows.map((row) => {{
           const downloadHref = "/api/adoption/" + phase + "/tracker/evidence/" + encodeURIComponent(String(row.id || "")) + "/download";
           return (
@@ -17314,7 +18545,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       function parseContentDispositionFilename(value) {{
         const raw = String(value || "");
         if (!raw) return "";
-        const utfMatch = raw.match(/filename\*=UTF-8''([^;]+)/i);
+        const utfMatch = raw.match(/filename\\*=UTF-8''([^;]+)/i);
         if (utfMatch && utfMatch[1]) {{
           try {{
             return decodeURIComponent(utfMatch[1]);
@@ -19402,6 +20633,388 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW10KpiOperation() {{
+        const meta = document.getElementById("w10KpiMeta");
+        const summary = document.getElementById("w10KpiSummary");
+        const kpiTable = document.getElementById("w10KpiTable");
+        const escalationTable = document.getElementById("w10EscalationTable");
+        const recommendations = document.getElementById("w10KpiRecommendations");
+        const policyMeta = document.getElementById("w10PolicyMeta");
+        const policyTable = document.getElementById("w10PolicyTable");
+        const site = (document.getElementById("w10KpiSite").value || "").trim();
+        const daysRaw = (document.getElementById("w10KpiDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w10/self-serve" + (params.toString() ? ("?" + params.toString()) : "");
+        const policyPath = site
+          ? "/api/ops/adoption/w10/support-policy?site=" + encodeURIComponent(site)
+          : "";
+        try {{
+          meta.textContent = "조회 중.. " + path;
+          if (policyPath) {{
+            policyMeta.textContent = "조회 중.. " + policyPath;
+          }} else {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }}
+          const [data, policyPayload] = await Promise.all([
+            fetchJson(path, true),
+            policyPath
+              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
+              : Promise.resolve({{ __skipped: true }}),
+          ]);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | overall=" + String(metrics.overall_status || "-")
+            + " | repeat_rate=" + String(metrics.repeat_rate_percent ?? 0) + "%"
+            + " | readiness=" + String(metrics.self_serve_readiness_score ?? 0);
+          const summaryItems = [
+            ["WO Count", metrics.work_orders_count ?? 0],
+            ["Unique Titles", metrics.unique_titles ?? 0],
+            ["Repeat WOs", metrics.repeated_work_orders_count ?? 0],
+            ["Repeat Rate %", metrics.repeat_rate_percent ?? 0],
+            ["Guide Publish %", metrics.guide_publish_rate_percent ?? 0],
+            ["Runbook Completion %", metrics.runbook_completion_rate_percent ?? 0],
+            ["Readiness Score", metrics.self_serve_readiness_score ?? 0],
+            ["Overall Status", metrics.overall_status || "-"],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          kpiTable.innerHTML = renderTable(
+            data.kpis || [],
+            [
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "actual_value", label: "Actual" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "green_threshold", label: "Green" }},
+              {{ key: "yellow_threshold", label: "Yellow" }},
+              {{ key: "status", label: "Status" }},
+            ]
+          );
+          escalationTable.innerHTML = renderTable(
+            data.top_repeat_titles || [],
+            [
+              {{ key: "title", label: "Title" }},
+              {{ key: "count", label: "Count" }},
+              {{ key: "share_percent", label: "Share %" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
+            const policy = policyPayload.policy || {{}};
+            policyMeta.textContent =
+              "성공: key=" + String(policyPayload.policy_key || "-")
+              + " | site=" + String(policyPayload.site || "default")
+              + " | updated_at=" + String(policyPayload.updated_at || "-");
+            policyTable.innerHTML = renderTable(
+              [policy],
+              [
+                {{ key: "repeat_rate_green_threshold", label: "Repeat Green <= %" }},
+                {{ key: "repeat_rate_yellow_threshold", label: "Repeat Yellow <= %" }},
+                {{ key: "guide_publish_green_threshold", label: "Guide Green >= %" }},
+                {{ key: "guide_publish_yellow_threshold", label: "Guide Yellow >= %" }},
+                {{ key: "runbook_completion_green_threshold", label: "Runbook Green >= %" }},
+                {{ key: "runbook_completion_yellow_threshold", label: "Runbook Yellow >= %" }},
+                {{ key: "readiness_target", label: "Readiness Target" }},
+                {{ key: "enabled", label: "Enabled" }},
+              ]
+            );
+          }} else if (policyPayload && policyPayload.__error) {{
+            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
+            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          kpiTable.innerHTML = renderEmpty(err.message);
+          escalationTable.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+          if (!site) {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }} else {{
+            policyMeta.textContent = "실패: " + err.message;
+            policyTable.innerHTML = renderEmpty(err.message);
+          }}
+        }}
+      }}
+
+      async function runW10Tracker() {{
+        const meta = document.getElementById("w10TrackerMeta");
+        const summary = document.getElementById("w10TrackerSummary");
+        const table = document.getElementById("w10TrackerTable");
+        const readinessMeta = document.getElementById("w10ReadinessMeta");
+        const readinessCards = document.getElementById("w10ReadinessCards");
+        const readinessBlockers = document.getElementById("w10ReadinessBlockers");
+        const evidenceTable = document.getElementById("w10EvidenceTable");
+        const site = (document.getElementById("w10TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중.. W10 tracker";
+          readinessMeta.textContent = "조회 중.. W10 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w10/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w10/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w10/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w10/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W10 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w10EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w10TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w10/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w10");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW10Readiness() {{
+        await runW10Tracker();
+      }}
+
+      async function runW10TrackerBootstrap() {{
+        const meta = document.getElementById("w10TrackerMeta");
+        const site = (document.getElementById("w10TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중.. W10 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w10/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW10Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW10Complete() {{
+        const meta = document.getElementById("w10ReadinessMeta");
+        const site = (document.getElementById("w10TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        const completionNote = (document.getElementById("w10CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w10CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중.. W10 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w10/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW10Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW10Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW10TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w10TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w10TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w10TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w10TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w10TrackCompleted").checked;
+        const note = (document.getElementById("w10TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w10EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중.. tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w10/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w10EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w10/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w10EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW10Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runW07Tracker() {{
         const meta = document.getElementById("w07TrackerMeta");
         const summary = document.getElementById("w07TrackerSummary");
@@ -20092,6 +21705,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w09Thresholds = document.getElementById("adoptionW09Thresholds");
         const w09Escalation = document.getElementById("adoptionW09Escalation");
         const w09Schedule = document.getElementById("adoptionW09Schedule");
+        const w10Top = document.getElementById("adoptionW10Top");
+        const w10Guides = document.getElementById("adoptionW10Guides");
+        const w10Runbook = document.getElementById("adoptionW10Runbook");
+        const w10Schedule = document.getElementById("adoptionW10Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -20693,6 +22310,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w10 = data.w10_self_serve_support || {{}};
+          const w10TopItems = [
+            ["Week", "W" + String(w10.timeline?.week || 10).padStart(2, "0")],
+            ["Focus", w10.timeline?.focus || "Self-serve support"],
+            ["Guides", (w10.self_serve_guides || []).length],
+            ["Runbook", (w10.troubleshooting_runbook || []).length],
+            ["Sessions", (w10.scheduled_events || []).length],
+            ["Metric", w10.timeline?.success_metric || "Support repeat rate down >= 20%"],
+          ];
+          w10Top.innerHTML = w10TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w10Guides.innerHTML = renderTable(
+            (w10.self_serve_guides || []).map((row) => ({{
+              id: row.id || "",
+              title: row.title || "",
+              problem_cluster: row.problem_cluster || "",
+              owner_role: row.owner_role || "",
+              target: row.target || "",
+              source_api: row.source_api || "",
+            }})),
+            [
+              {{ key: "id", label: "Guide ID" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "problem_cluster", label: "Problem Cluster" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "source_api", label: "Source API" }},
+            ]
+          );
+
+          w10Runbook.innerHTML = renderTable(
+            (w10.troubleshooting_runbook || []).map((row) => ({{
+              id: row.id || "",
+              module: row.module || "",
+              symptom: row.symptom || "",
+              owner_role: row.owner_role || "",
+              definition_of_done: row.definition_of_done || "",
+              api_ref: row.api_ref || "",
+            }})),
+            [
+              {{ key: "id", label: "Runbook ID" }},
+              {{ key: "module", label: "Module" }},
+              {{ key: "symptom", label: "Symptom" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "api_ref", label: "API Ref" }},
+            ]
+          );
+
+          w10Schedule.innerHTML = renderTable(
+            (w10.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -20732,6 +22417,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW08ReportDiscipline().catch(() => null);
             runW09KpiOperation().catch(() => null);
             runW09Tracker().catch(() => null);
+            runW10KpiOperation().catch(() => null);
+            runW10Tracker().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -20858,6 +22545,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w09ReadinessBlockers.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
             w09EvidenceTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
 
+            const w10KpiMeta = document.getElementById("w10KpiMeta");
+            const w10KpiSummary = document.getElementById("w10KpiSummary");
+            const w10KpiTable = document.getElementById("w10KpiTable");
+            const w10EscalationTable = document.getElementById("w10EscalationTable");
+            const w10KpiRecommendations = document.getElementById("w10KpiRecommendations");
+            const w10PolicyMeta = document.getElementById("w10PolicyMeta");
+            const w10PolicyTable = document.getElementById("w10PolicyTable");
+            const w10TrackerMeta = document.getElementById("w10TrackerMeta");
+            const w10TrackerSummary = document.getElementById("w10TrackerSummary");
+            const w10TrackerTable = document.getElementById("w10TrackerTable");
+            const w10ReadinessMeta = document.getElementById("w10ReadinessMeta");
+            const w10ReadinessCards = document.getElementById("w10ReadinessCards");
+            const w10ReadinessBlockers = document.getElementById("w10ReadinessBlockers");
+            const w10EvidenceTable = document.getElementById("w10EvidenceTable");
+            w10KpiMeta.textContent = "토큰 저장 후 W10 self-serve API를 사용할 수 있습니다.";
+            w10KpiSummary.innerHTML = "";
+            w10KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w10EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w10KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+            w10PolicyMeta.textContent = "토큰 저장 후 W10 support policy API를 사용할 수 있습니다.";
+            w10PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w10TrackerMeta.textContent = "토큰 저장 후 W10 tracker API를 사용할 수 있습니다.";
+            w10TrackerSummary.innerHTML = "";
+            w10TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w10ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            w10ReadinessCards.innerHTML = "";
+            w10ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
+            w10EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
             w07ActiveItemId = null;
@@ -20906,6 +22622,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w08Checklist.innerHTML = renderEmpty(err.message);
           w08Quality.innerHTML = renderEmpty(err.message);
           w08Schedule.innerHTML = renderEmpty(err.message);
+          w10Top.innerHTML = "";
+          w10Guides.innerHTML = renderEmpty(err.message);
+          w10Runbook.innerHTML = renderEmpty(err.message);
+          w10Schedule.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
@@ -20943,6 +22663,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w09ReadinessCards").innerHTML = "";
           document.getElementById("w09ReadinessBlockers").innerHTML = renderEmpty(err.message);
           document.getElementById("w09EvidenceTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10KpiMeta").textContent = "실패: " + err.message;
+          document.getElementById("w10KpiSummary").innerHTML = "";
+          document.getElementById("w10KpiTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10EscalationTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10KpiRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10PolicyMeta").textContent = "실패: " + err.message;
+          document.getElementById("w10PolicyTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10TrackerMeta").textContent = "실패: " + err.message;
+          document.getElementById("w10TrackerSummary").innerHTML = "";
+          document.getElementById("w10TrackerTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10ReadinessMeta").textContent = "실패: " + err.message;
+          document.getElementById("w10ReadinessCards").innerHTML = "";
+          document.getElementById("w10ReadinessBlockers").innerHTML = renderEmpty(err.message);
+          document.getElementById("w10EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -21149,6 +22883,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w09ReadinessBtn").addEventListener("click", runW09Readiness);
       document.getElementById("w09CompleteBtn").addEventListener("click", runW09Complete);
       document.getElementById("w09TrackUpdateBtn").addEventListener("click", runW09TrackerUpdateAndUpload);
+      document.getElementById("w10KpiRefreshBtn").addEventListener("click", runW10KpiOperation);
+      document.getElementById("w10TrackBootstrapBtn").addEventListener("click", runW10TrackerBootstrap);
+      document.getElementById("w10TrackRefreshBtn").addEventListener("click", runW10Tracker);
+      document.getElementById("w10ReadinessBtn").addEventListener("click", runW10Readiness);
+      document.getElementById("w10CompleteBtn").addEventListener("click", runW10Complete);
+      document.getElementById("w10TrackUpdateBtn").addEventListener("click", runW10TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -21195,6 +22935,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w09TrackSite").value) {{
         document.getElementById("w09TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w10KpiSite").value) {{
+        document.getElementById("w10KpiSite").value = "HQ";
+      }}
+      if (!document.getElementById("w10TrackSite").value) {{
+        document.getElementById("w10TrackSite").value = "HQ";
       }}
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
@@ -21290,6 +23036,11 @@ def get_public_adoption_w08() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w09")
 def get_public_adoption_w09() -> dict[str, Any]:
     return _adoption_w09_payload()
+
+
+@app.get("/api/public/adoption-plan/w10")
+def get_public_adoption_w10() -> dict[str, Any]:
+    return _adoption_w10_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -21560,6 +23311,30 @@ def get_public_adoption_w09_schedule_ics() -> Response:
     payload = _adoption_w09_payload()
     ics_text = _build_adoption_w09_schedule_ics(payload)
     file_name = "ka-facility-os-adoption-w09-kpi-operation.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w10/checklist.csv")
+def get_public_adoption_w10_checklist_csv() -> Response:
+    payload = _adoption_w10_payload()
+    csv_text = _build_adoption_w10_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w10-self-serve-support-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w10/schedule.ics")
+def get_public_adoption_w10_schedule_ics() -> Response:
+    payload = _adoption_w10_payload()
+    ics_text = _build_adoption_w10_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w10-self-serve-support.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
@@ -24331,6 +26106,534 @@ def download_w09_tracker_evidence(
     )
 
 
+
+
+@app.post("/api/adoption/w10/tracker/bootstrap", response_model=W10TrackerBootstrapResponse)
+def bootstrap_w10_tracker_items(
+    payload: W10TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
+) -> W10TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w10_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w10_tracker_items.c.item_type,
+                adoption_w10_tracker_items.c.item_key,
+            ).where(adoption_w10_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w10_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W10_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w10_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w10_tracker_items)
+            .where(adoption_w10_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w10_tracker_items.c.item_type.asc(),
+                adoption_w10_tracker_items.c.item_key.asc(),
+                adoption_w10_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w10_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w10_tracker_bootstrap",
+        resource_type="adoption_w10_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W10TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w10/tracker/items", response_model=list[W10TrackerItemRead])
+def list_w10_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> list[W10TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W10_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W10 tracker status")
+
+    stmt = select(adoption_w10_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w10_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w10_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w10_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w10_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w10_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w10_tracker_items.c.updated_at.desc(),
+        adoption_w10_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w10_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w10/tracker/overview", response_model=W10TrackerOverviewRead)
+def get_w10_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> W10TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w10_tracker_items).where(adoption_w10_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w10_tracker_item_model(row) for row in rows]
+    return _compute_w10_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w10/tracker/readiness", response_model=W10TrackerReadinessRead)
+def get_w10_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> W10TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w10_tracker_items_for_site(site)
+    return _compute_w10_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w10/tracker/completion", response_model=W10TrackerCompletionRead)
+def get_w10_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> W10TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w10_tracker_items_for_site(site)
+    readiness = _compute_w10_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w10_site_runs).where(adoption_w10_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w10_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w10/tracker/complete", response_model=W10TrackerCompletionRead)
+def complete_w10_tracker(
+    payload: W10TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
+) -> W10TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w10_tracker_items_for_site(payload.site)
+    readiness = _compute_w10_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W10 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W10_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W10_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w10_site_runs).where(adoption_w10_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w10_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w10_site_runs)
+                .where(adoption_w10_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w10_site_runs).where(adoption_w10_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w10_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w10_tracker_complete",
+        resource_type="adoption_w10_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w10/tracker/items/{tracker_item_id}", response_model=W10TrackerItemRead)
+def update_w10_tracker_item(
+    tracker_item_id: int,
+    payload: W10TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
+) -> W10TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w10_tracker_items).where(adoption_w10_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W10 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W10_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W10_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W10_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W10_TRACKER_STATUS_DONE:
+            next_status = W10_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W10_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W10 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w10_tracker_items)
+            .where(adoption_w10_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w10_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w10_tracker_items).where(adoption_w10_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W10 tracker item")
+    model = _row_to_w10_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w10_tracker_item_update",
+        resource_type="adoption_w10_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w10/tracker/items/{tracker_item_id}/evidence", response_model=W10EvidenceRead, status_code=201)
+async def upload_w10_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
+) -> W10EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+    file_bytes = await file.read(W10_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W10_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W10_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w10_tracker_items).where(adoption_w10_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W10 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w10_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w10_tracker_items)
+            .where(adoption_w10_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w10_completion_if_closed(
+            conn=conn,
+            site=site,
+            actor_username=actor_username,
+            checked_at=now,
+            reason="evidence_uploaded",
+        )
+        evidence_row = conn.execute(
+            select(adoption_w10_evidence_files).where(adoption_w10_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w10_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w10_tracker_evidence_upload",
+        resource_type="adoption_w10_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w10/tracker/items/{tracker_item_id}/evidence", response_model=list[W10EvidenceRead])
+def list_w10_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> list[W10EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w10_tracker_items).where(adoption_w10_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W10 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w10_evidence_files)
+            .where(adoption_w10_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w10_evidence_files.c.uploaded_at.desc(), adoption_w10_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w10_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w10/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w10_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w10_evidence_files).where(adoption_w10_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W10 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w10_tracker_evidence_download",
+        resource_type="adoption_w10_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -25705,6 +28008,95 @@ def set_ops_adoption_w09_kpi_policy(
             "escalation_rule_count": len(
                 policy.get("escalation_map", []) if isinstance(policy.get("escalation_map"), list) else []
             ),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.get("/api/ops/adoption/w10/self-serve")
+def get_ops_adoption_w10_self_serve(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w10_self_serve_snapshot(site=normalized_site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w10_self_serve_view",
+        resource_type="adoption_w10_self_serve",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "overall_status": metrics.get("overall_status"),
+            "repeat_rate_percent": metrics.get("repeat_rate_percent"),
+            "readiness_score": metrics.get("self_serve_readiness_score"),
+            "target_met": metrics.get("target_met"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w10/support-policy")
+def get_ops_adoption_w10_support_policy(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    policy, updated_at, policy_key, policy_site = _ensure_w10_support_policy(normalized_site)
+    _write_audit_log(
+        principal=principal,
+        action="w10_support_policy_view",
+        resource_type="adoption_w10_support_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/adoption/w10/support-policy")
+def set_ops_adoption_w10_support_policy(
+    payload: dict[str, Any],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+        if not _has_permission(principal, "admins:manage"):
+            raise HTTPException(status_code=403, detail="Global W10 policy update requires admins:manage")
+    policy, updated_at, policy_key, policy_site = _upsert_w10_support_policy(normalized_site, payload)
+    _write_audit_log(
+        principal=principal,
+        action="w10_support_policy_update",
+        resource_type="adoption_w10_support_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
         },
     )
     return {
@@ -28599,5 +30991,7 @@ def print_monthly_report(
 </body>
 </html>
 """
+
+
 
 

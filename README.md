@@ -39,6 +39,9 @@ Open:
   - `GET /api/public/adoption-plan/w09` (W09 KPI operation execution pack)
   - `GET /api/public/adoption-plan/w09/checklist.csv` (W09 KPI checklist export)
   - `GET /api/public/adoption-plan/w09/schedule.ics` (W09 calendar import)
+  - `GET /api/public/adoption-plan/w10` (W10 self-serve support execution pack)
+  - `GET /api/public/adoption-plan/w10/checklist.csv` (W10 self-serve support checklist export)
+  - `GET /api/public/adoption-plan/w10/schedule.ics` (W10 calendar import)
   - `GET /api/public/post-mvp` (post-MVP roadmap/backlog/release/KPI/risk plan)
   - `GET /api/public/post-mvp/backlog.csv` (execution backlog export)
   - `GET /api/public/post-mvp/releases.ics` (release calendar import)
@@ -148,6 +151,20 @@ Open:
   - `POST /api/adoption/w09/tracker/items/{id}/evidence` (`adoption_w09:write`, multipart upload, max 5MB)
   - `GET /api/adoption/w09/tracker/items/{id}/evidence` (`adoption_w09:read`)
   - `GET /api/adoption/w09/tracker/evidence/{id}/download` (`adoption_w09:read`)
+- W10 self-serve support + execution tracker
+  - `GET /api/ops/adoption/w10/self-serve` (`adoption_w10:read`)
+  - `GET /api/ops/adoption/w10/support-policy` (`adoption_w10:read`)
+  - `PUT /api/ops/adoption/w10/support-policy` (`adoption_w10:write`; global update requires `admins:manage`)
+  - `POST /api/adoption/w10/tracker/bootstrap` (`adoption_w10:write`)
+  - `GET /api/adoption/w10/tracker/items` (`adoption_w10:read`)
+  - `GET /api/adoption/w10/tracker/overview?site=...` (`adoption_w10:read`)
+  - `GET /api/adoption/w10/tracker/readiness?site=...` (`adoption_w10:read`)
+  - `GET /api/adoption/w10/tracker/completion?site=...` (`adoption_w10:read`)
+  - `POST /api/adoption/w10/tracker/complete` (`adoption_w10:write`)
+  - `PATCH /api/adoption/w10/tracker/items/{id}` (`adoption_w10:write`)
+  - `POST /api/adoption/w10/tracker/items/{id}/evidence` (`adoption_w10:write`, multipart upload, max 5MB)
+  - `GET /api/adoption/w10/tracker/items/{id}/evidence` (`adoption_w10:read`)
+  - `GET /api/adoption/w10/tracker/evidence/{id}/download` (`adoption_w10:read`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -195,6 +212,9 @@ Open:
     - `manager/operator`: read + write
     - `auditor`: read
   - W09 KPI operation/tracker:
+    - `manager/operator`: read + write
+    - `auditor`: read
+  - W10 self-serve support/tracker:
     - `manager/operator`: read + write
     - `auditor`: read
 - Legacy bootstrap:
@@ -283,7 +303,7 @@ Optional alert webhook env:
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
 - `ALERT_RETENTION_ARCHIVE_ENABLED` (default `true`)
 - `ALERT_RETENTION_ARCHIVE_PATH` (default `data/alert-archives`)
-- `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02/W07/W09 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
+- `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02/W03/W04/W07/W09/W10 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
 - `API_RATE_LIMIT_ENABLED` (default `1`)
 - `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
 - `API_RATE_LIMIT_MAX_PUBLIC` (default `120` requests/window per IP)
@@ -313,7 +333,7 @@ Security hardening:
 - common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
 - HTML endpoints (`/`, `/web/*`, `/api/*` browser view) include CSP header
 - authenticated API responses include `Cache-Control: no-store`
-- W02 evidence upload blocks unsupported content types and empty files, max size 5MB
+- W02/W03/W04/W07/W09/W10 evidence upload blocks unsupported content types and empty files, max size 5MB
 - API rate limit returns `429` with `Retry-After`, `X-RateLimit-*`, `X-RateLimit-Policy`, `X-RateLimit-Backend`
 - admin token policy enforces bounded TTL, inactivity disable, rotate warning metadata, and rotate API
 - W02 evidence supports file-system object storage mode (`fs`), SHA-256 integrity check, and basic malware signature scan
@@ -350,12 +370,19 @@ Job monitoring:
 - `GET /api/public/adoption-plan/w09`
 - `GET /api/public/adoption-plan/w09/checklist.csv`
 - `GET /api/public/adoption-plan/w09/schedule.ics`
+- `GET /api/public/adoption-plan/w10`
+- `GET /api/public/adoption-plan/w10/checklist.csv`
+- `GET /api/public/adoption-plan/w10/schedule.ics`
 - `GET /api/ops/adoption/w08/report-discipline`
 - `GET /api/ops/adoption/w08/site-benchmark`
 - `GET /api/ops/adoption/w09/kpi-operation`
 - `GET /api/ops/adoption/w09/kpi-policy`
 - `GET /api/adoption/w09/tracker/items`
 - `GET /api/adoption/w09/tracker/overview?site=...`
+- `GET /api/ops/adoption/w10/self-serve`
+- `GET /api/ops/adoption/w10/support-policy`
+- `GET /api/adoption/w10/tracker/items`
+- `GET /api/adoption/w10/tracker/overview?site=...`
 - `GET /api/public/post-mvp`
 - `GET /api/public/post-mvp/backlog.csv`
 - `GET /api/public/post-mvp/releases.ics`

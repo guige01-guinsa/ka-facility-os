@@ -60,6 +60,8 @@ W07TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
 W07CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
 W09TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
 W09CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
+W10TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
+W10CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -673,6 +675,107 @@ class W09TrackerCompletionRead(BaseModel):
     force_used: bool = False
     last_checked_at: datetime
     readiness: W09TrackerReadinessRead
+
+
+class W10TrackerBootstrapRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+
+
+class W10TrackerItemUpdate(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=120)
+    status: Optional[W10TrackerStatus] = None
+    completion_checked: Optional[bool] = None
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+
+
+class W10TrackerItemRead(BaseModel):
+    id: int
+    site: str
+    item_type: str
+    item_key: str
+    item_name: str
+    assignee: Optional[str] = None
+    status: W10TrackerStatus
+    completion_checked: bool
+    completion_note: str
+    due_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    evidence_count: int
+    created_by: str
+    updated_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class W10EvidenceRead(BaseModel):
+    id: int
+    tracker_item_id: int
+    site: str
+    file_name: str
+    content_type: str
+    file_size: int
+    storage_backend: str = "db"
+    sha256: str = ""
+    malware_scan_status: str = "unknown"
+    malware_scan_engine: Optional[str] = None
+    malware_scanned_at: Optional[datetime] = None
+    note: str
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class W10TrackerBootstrapResponse(BaseModel):
+    site: str
+    created_count: int
+    total_count: int
+    items: list[W10TrackerItemRead]
+
+
+class W10TrackerOverviewRead(BaseModel):
+    site: str
+    total_items: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    evidence_total_count: int
+    assignee_breakdown: dict[str, int]
+
+
+class W10TrackerCompletionRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+    force: bool = False
+
+
+class W10TrackerReadinessRead(BaseModel):
+    site: str
+    checked_at: datetime
+    total_items: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    evidence_total_count: int
+    missing_assignee_count: int
+    missing_completion_checked_count: int
+    missing_required_evidence_count: int
+    readiness_score_percent: int
+    ready: bool
+    blockers: list[str]
+
+
+class W10TrackerCompletionRead(BaseModel):
+    site: str
+    status: W10CompletionStatus
+    completion_note: str
+    completed_by: Optional[str] = None
+    completed_at: Optional[datetime] = None
+    force_used: bool = False
+    last_checked_at: datetime
+    readiness: W10TrackerReadinessRead
 
 
 class SlaEscalationRunRequest(BaseModel):
