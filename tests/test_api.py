@@ -4574,6 +4574,30 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert deploy_check["latest_run_at"] is not None
 
 
+def test_api_latency_samples_persisted_beyond_memory_cache(app_client: TestClient) -> None:
+    import app.main as main_module
+
+    for _ in range(6):
+        ping = app_client.get("/health")
+        assert ping.status_code == 200
+
+    with main_module._API_LATENCY_LOCK:
+        main_module._API_LATENCY_SAMPLES.clear()
+        main_module._API_LATENCY_LAST_SEEN_AT.clear()
+
+    latency = app_client.get(
+        "/api/ops/performance/api-latency",
+        headers=_owner_headers(),
+    )
+    assert latency.status_code == 200
+    body = latency.json()
+    assert body["persist_enabled"] is True
+    assert body["persist_retention_days"] >= 1
+    endpoint = next(item for item in body["endpoints"] if item["endpoint"] == "GET /health")
+    assert endpoint["sample_count"] >= 6
+    assert endpoint["sample_source"] == "database"
+
+
 def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     run = app_client.post(
         "/api/ops/runbook/checks/run",

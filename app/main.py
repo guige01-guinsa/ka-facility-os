@@ -68,6 +68,7 @@ from app.database import (
     adoption_w15_evidence_files,
     adoption_w15_site_runs,
     adoption_w15_tracker_items,
+    api_latency_samples,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -339,6 +340,9 @@ API_LATENCY_MONITOR_WINDOW = _env_int("API_LATENCY_MONITOR_WINDOW", 300, min_val
 API_LATENCY_MIN_SAMPLES = _env_int("API_LATENCY_MIN_SAMPLES", 8, min_value=1)
 API_LATENCY_P95_WARNING_MS = _env_float("API_LATENCY_P95_WARNING_MS", 450.0, min_value=1.0)
 API_LATENCY_P95_CRITICAL_MS = _env_float("API_LATENCY_P95_CRITICAL_MS", 900.0, min_value=1.0)
+API_LATENCY_PERSIST_ENABLED = _env_bool("API_LATENCY_PERSIST_ENABLED", True)
+API_LATENCY_PERSIST_RETENTION_DAYS = _env_int("API_LATENCY_PERSIST_RETENTION_DAYS", 30, min_value=1)
+API_LATENCY_PERSIST_PRUNE_INTERVAL = _env_int("API_LATENCY_PERSIST_PRUNE_INTERVAL", 200, min_value=1)
 API_LATENCY_TARGETS_RAW = (
     getenv(
         "API_LATENCY_TARGETS",
@@ -374,6 +378,7 @@ _API_LATENCY_LOCK = Lock()
 _API_LATENCY_SAMPLES: dict[str, deque[float]] = {}
 _API_LATENCY_LAST_SEEN_AT: dict[str, str] = {}
 _API_LATENCY_TARGET_KEYS: set[str] = set()
+_API_LATENCY_PERSIST_WRITE_COUNT = 0
 
 EVIDENCE_INTEGRITY_TABLES: list[tuple[str, Any]] = [
     ("w02", adoption_w02_evidence_files),
@@ -4210,7 +4215,8 @@ def _record_api_latency_sample(*, method: str, path: str, duration_ms: float) ->
         return
     bounded_duration = max(0.0, float(duration_ms))
     max_samples = max(20, API_LATENCY_MONITOR_WINDOW)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    sampled_at = datetime.now(timezone.utc)
+    now_iso = sampled_at.isoformat()
     with _API_LATENCY_LOCK:
         bucket = _API_LATENCY_SAMPLES.get(key)
         if bucket is None:
@@ -4221,21 +4227,95 @@ def _record_api_latency_sample(*, method: str, path: str, duration_ms: float) ->
             _API_LATENCY_SAMPLES[key] = bucket
         bucket.append(bounded_duration)
         _API_LATENCY_LAST_SEEN_AT[key] = now_iso
+    _persist_api_latency_sample(
+        endpoint_key=key,
+        method=method.upper(),
+        path=path,
+        duration_ms=bounded_duration,
+        sampled_at=sampled_at,
+    )
+
+
+def _persist_api_latency_sample(
+    *,
+    endpoint_key: str,
+    method: str,
+    path: str,
+    duration_ms: float,
+    sampled_at: datetime,
+) -> None:
+    if not API_LATENCY_PERSIST_ENABLED:
+        return
+    global _API_LATENCY_PERSIST_WRITE_COUNT
+    try:
+        with get_conn() as conn:
+            conn.execute(
+                insert(api_latency_samples).values(
+                    endpoint_key=endpoint_key,
+                    method=method[:10],
+                    path=path[:240],
+                    duration_ms=max(0.0, float(duration_ms)),
+                    sampled_at=sampled_at,
+                )
+            )
+            _API_LATENCY_PERSIST_WRITE_COUNT += 1
+            if _API_LATENCY_PERSIST_WRITE_COUNT % API_LATENCY_PERSIST_PRUNE_INTERVAL == 0:
+                cutoff = sampled_at - timedelta(days=API_LATENCY_PERSIST_RETENTION_DAYS)
+                conn.execute(delete(api_latency_samples).where(api_latency_samples.c.sampled_at < cutoff))
+    except SQLAlchemyError:
+        # Keep request path resilient even if latency persistence is temporarily unavailable.
+        return
+
+
+def _load_persisted_api_latency_samples(
+    *,
+    endpoint_key: str,
+    limit: int,
+) -> tuple[list[float], str | None]:
+    if not API_LATENCY_PERSIST_ENABLED:
+        return [], None
+    try:
+        with get_conn() as conn:
+            rows = conn.execute(
+                select(
+                    api_latency_samples.c.duration_ms,
+                    api_latency_samples.c.sampled_at,
+                )
+                .where(api_latency_samples.c.endpoint_key == endpoint_key)
+                .order_by(api_latency_samples.c.sampled_at.desc(), api_latency_samples.c.id.desc())
+                .limit(max(1, int(limit)))
+            ).mappings().all()
+    except SQLAlchemyError:
+        return [], None
+    if not rows:
+        return [], None
+    samples = [max(0.0, float(row.get("duration_ms") or 0.0)) for row in rows]
+    sampled_at = rows[0].get("sampled_at")
+    last_seen_at = _as_datetime(sampled_at).isoformat() if sampled_at is not None else None
+    return samples, last_seen_at
 
 
 def _build_api_latency_snapshot() -> dict[str, Any]:
     warning_ms = max(1.0, float(API_LATENCY_P95_WARNING_MS))
     critical_ms = max(warning_ms, float(API_LATENCY_P95_CRITICAL_MS))
     min_samples = max(1, int(API_LATENCY_MIN_SAMPLES))
+    window_size = max(20, API_LATENCY_MONITOR_WINDOW)
     endpoints: list[dict[str, Any]] = []
 
     with _API_LATENCY_LOCK:
+        memory_samples = {key: list(values) for key, values in _API_LATENCY_SAMPLES.items()}
+        memory_last_seen = dict(_API_LATENCY_LAST_SEEN_AT)
         for target in API_LATENCY_TARGETS:
             key = target["key"]
-            samples = list(_API_LATENCY_SAMPLES.get(key, deque()))
+            persisted_samples, persisted_last_seen_at = _load_persisted_api_latency_samples(
+                endpoint_key=key,
+                limit=window_size,
+            )
+            sample_source = "database" if persisted_samples else "memory"
+            samples = persisted_samples if persisted_samples else list(memory_samples.get(key, []))
             sample_count = len(samples)
             p95_ms = _percentile_value(samples, 95.0)
-            last_seen_at = _API_LATENCY_LAST_SEEN_AT.get(key)
+            last_seen_at = persisted_last_seen_at or memory_last_seen.get(key)
 
             status = "ok"
             message = "P95 latency is within threshold."
@@ -4262,6 +4342,7 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                     "status": status,
                     "message": message,
                     "last_seen_at": last_seen_at,
+                    "sample_source": sample_source,
                 }
             )
 
@@ -4292,7 +4373,9 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
         "warning_threshold_ms": round(warning_ms, 2),
         "critical_threshold_ms": round(critical_ms, 2),
         "min_samples": min_samples,
-        "window_size": max(20, API_LATENCY_MONITOR_WINDOW),
+        "window_size": window_size,
+        "persist_enabled": API_LATENCY_PERSIST_ENABLED,
+        "persist_retention_days": API_LATENCY_PERSIST_RETENTION_DAYS,
         "target_count": len(API_LATENCY_TARGETS),
         "critical_count": critical_count,
         "warning_count": warning_count,

@@ -186,6 +186,17 @@ alert_deliveries = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+api_latency_samples = Table(
+    "api_latency_samples",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("endpoint_key", String(220), nullable=False),
+    Column("method", String(10), nullable=False),
+    Column("path", String(240), nullable=False),
+    Column("duration_ms", Float, nullable=False),
+    Column("sampled_at", DateTime(timezone=True), nullable=False),
+)
+
 sla_policy_proposals = Table(
     "sla_policy_proposals",
     metadata,
