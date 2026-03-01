@@ -26062,9 +26062,72 @@ def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
 """
 
 
+def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) -> str:
+    code = phase_code.lower()
+    label = phase_label.upper()
+    return f"""
+          <div class="box">
+            <h3>{label} 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="{code}TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="{code}TrackItemId" placeholder="tracker_item_id" />
+              <input id="{code}TrackAssignee" placeholder="assignee" />
+              <select id="{code}TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="{code}TrackBootstrapBtn" class="btn run" type="button">{label} 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="{code}TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="{code}TrackNote" placeholder="completion note (optional)" />
+              <input id="{code}EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="{code}EvidenceFile" type="file" />
+              <button id="{code}TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="{code}EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="{code}Reserved1" value="token required for write actions" disabled />
+              <input id="{code}Reserved2" value="site scope enforced" disabled />
+              <input id="{code}Reserved3" value="max file 5MB" disabled />
+              <button id="{code}TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="{code}CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="{code}CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="{code}Reserved4" value="readiness gate required" disabled />
+              <button id="{code}ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="{code}CompleteBtn" class="btn" type="button">{label} 완료 확정</button>
+            </div>
+            <div id="{code}TrackerMeta" class="meta">조회 전</div>
+            <div id="{code}TrackerSummary" class="cards"></div>
+            <div id="{code}TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">{label} 완료 판정 결과</h4>
+            <div id="{code}ReadinessMeta" class="meta">조회 전</div>
+            <div id="{code}ReadinessCards" class="cards"></div>
+            <div id="{code}ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="{code}EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+"""
+
+
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
     allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
+    w09_tracker_box_html = _build_shared_tracker_execution_box_html("w09", "W09")
+    w10_tracker_box_html = _build_shared_tracker_execution_box_html("w10", "W10")
+    w11_tracker_box_html = _build_shared_tracker_execution_box_html("w11", "W11")
+    w15_tracker_box_html = _build_shared_tracker_execution_box_html("w15", "W15")
     return f"""
 <!doctype html>
 <html lang="ko">
@@ -26956,58 +27019,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w09PolicyMeta" class="meta">조회 전</div>
             <div id="w09PolicyTable" class="empty">데이터 없음</div>
           </div>
-          <div class="box">
-            <h3>W09 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w09TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w09TrackItemId" placeholder="tracker_item_id" />
-              <input id="w09TrackAssignee" placeholder="assignee" />
-              <select id="w09TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w09TrackBootstrapBtn" class="btn run" type="button">W09 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w09TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w09TrackNote" placeholder="completion note (optional)" />
-              <input id="w09EvidenceNote" placeholder="evidence note (optional)" />
-              <input id="w09EvidenceFile" type="file" />
-              <button id="w09TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w09EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w09Reserved1" value="token required for write actions" disabled />
-              <input id="w09Reserved2" value="site scope enforced" disabled />
-              <input id="w09Reserved3" value="max file 5MB" disabled />
-              <button id="w09TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w09CompletionNote" placeholder="completion note (optional)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w09CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w09Reserved4" value="readiness gate required" disabled />
-              <button id="w09ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w09CompleteBtn" class="btn" type="button">W09 완료 확정</button>
-            </div>
-            <div id="w09TrackerMeta" class="meta">조회 전</div>
-            <div id="w09TrackerSummary" class="cards"></div>
-            <div id="w09TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W09 완료 판정 결과</h4>
-            <div id="w09ReadinessMeta" class="meta">조회 전</div>
-            <div id="w09ReadinessCards" class="cards"></div>
-            <div id="w09ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w09EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w09_tracker_box_html}
           <div class="box">
             <h3>W10 Self-serve Support</h3>
             <div id="adoptionW10Top" class="cards"></div>
@@ -27045,58 +27057,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w10PolicyMeta" class="meta">조회 전</div>
             <div id="w10PolicyTable" class="empty">데이터 없음</div>
           </div>
-          <div class="box">
-            <h3>W10 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w10TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w10TrackItemId" placeholder="tracker_item_id" />
-              <input id="w10TrackAssignee" placeholder="assignee" />
-              <select id="w10TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w10TrackBootstrapBtn" class="btn run" type="button">W10 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w10TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w10TrackNote" placeholder="completion note (optional)" />
-              <input id="w10EvidenceNote" placeholder="evidence note (optional)" />
-              <input id="w10EvidenceFile" type="file" />
-              <button id="w10TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w10EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w10Reserved1" value="token required for write actions" disabled />
-              <input id="w10Reserved2" value="site scope enforced" disabled />
-              <input id="w10Reserved3" value="max file 5MB" disabled />
-              <button id="w10TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w10CompletionNote" placeholder="completion note (optional)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w10CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w10Reserved4" value="readiness gate required" disabled />
-              <button id="w10ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w10CompleteBtn" class="btn" type="button">W10 완료 확정</button>
-            </div>
-            <div id="w10TrackerMeta" class="meta">조회 전</div>
-            <div id="w10TrackerSummary" class="cards"></div>
-            <div id="w10TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W10 완료 판정 결과</h4>
-            <div id="w10ReadinessMeta" class="meta">조회 전</div>
-            <div id="w10ReadinessCards" class="cards"></div>
-            <div id="w10ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w10EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w10_tracker_box_html}
           <div class="box">
             <h3>W11 Scale Readiness</h3>
             <div id="adoptionW11Top" class="cards"></div>
@@ -27134,58 +27095,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w11PolicyMeta" class="meta">조회 전</div>
             <div id="w11PolicyTable" class="empty">데이터 없음</div>
           </div>
-          <div class="box">
-            <h3>W11 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w11TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w11TrackItemId" placeholder="tracker_item_id" />
-              <input id="w11TrackAssignee" placeholder="assignee" />
-              <select id="w11TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w11TrackBootstrapBtn" class="btn run" type="button">W11 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w11TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w11TrackNote" placeholder="completion note (optional)" />
-              <input id="w11EvidenceNote" placeholder="evidence note (optional)" />
-              <input id="w11EvidenceFile" type="file" />
-              <button id="w11TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w11EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w11Reserved1" value="token required for write actions" disabled />
-              <input id="w11Reserved2" value="site scope enforced" disabled />
-              <input id="w11Reserved3" value="max file 5MB" disabled />
-              <button id="w11TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w11CompletionNote" placeholder="completion note (optional)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w11CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w11Reserved4" value="readiness gate required" disabled />
-              <button id="w11ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w11CompleteBtn" class="btn" type="button">W11 완료 확정</button>
-            </div>
-            <div id="w11TrackerMeta" class="meta">조회 전</div>
-            <div id="w11TrackerSummary" class="cards"></div>
-            <div id="w11TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W11 완료 판정 결과</h4>
-            <div id="w11ReadinessMeta" class="meta">조회 전</div>
-            <div id="w11ReadinessCards" class="cards"></div>
-            <div id="w11ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w11EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w11_tracker_box_html}
           <div class="box">
             <h3>W15 Operations Efficiency</h3>
             <div id="adoptionW15Top" class="cards"></div>
@@ -27223,58 +27133,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w15PolicyMeta" class="meta">조회 전</div>
             <div id="w15PolicyTable" class="empty">데이터 없음</div>
           </div>
-          <div class="box">
-            <h3>W15 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w15TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w15TrackItemId" placeholder="tracker_item_id" />
-              <input id="w15TrackAssignee" placeholder="assignee" />
-              <select id="w15TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w15TrackBootstrapBtn" class="btn run" type="button">W15 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w15TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w15TrackNote" placeholder="completion note (optional)" />
-              <input id="w15EvidenceNote" placeholder="evidence note (optional)" />
-              <input id="w15EvidenceFile" type="file" />
-              <button id="w15TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w15EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w15Reserved1" value="token required for write actions" disabled />
-              <input id="w15Reserved2" value="site scope enforced" disabled />
-              <input id="w15Reserved3" value="max file 5MB" disabled />
-              <button id="w15TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w15CompletionNote" placeholder="completion note (optional)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w15CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w15Reserved4" value="readiness gate required" disabled />
-              <button id="w15ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w15CompleteBtn" class="btn" type="button">W15 완료 확정</button>
-            </div>
-            <div id="w15TrackerMeta" class="meta">조회 전</div>
-            <div id="w15TrackerSummary" class="cards"></div>
-            <div id="w15TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W15 완료 판정 결과</h4>
-            <div id="w15ReadinessMeta" class="meta">조회 전</div>
-            <div id="w15ReadinessCards" class="cards"></div>
-            <div id="w15ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w15EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w15_tracker_box_html}
           <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
@@ -29822,36 +29681,127 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
-      async function runW09Tracker() {{
-        const meta = document.getElementById("w09TrackerMeta");
-        const summary = document.getElementById("w09TrackerSummary");
-        const table = document.getElementById("w09TrackerTable");
-        const readinessMeta = document.getElementById("w09ReadinessMeta");
-        const readinessCards = document.getElementById("w09ReadinessCards");
-        const readinessBlockers = document.getElementById("w09ReadinessBlockers");
-        const evidenceTable = document.getElementById("w09EvidenceTable");
-        const site = (document.getElementById("w09TrackSite").value || "").trim();
+      function buildSharedTrackerConfig(phaseCode, phaseLabel) {{
+        return {{
+          phaseCode: phaseCode,
+          phaseLabel: phaseLabel,
+          apiBase: "/api/adoption/" + phaseCode + "/tracker",
+          evidenceNamespace: phaseCode,
+          ids: {{
+            site: phaseCode + "TrackSite",
+            trackerItemId: phaseCode + "TrackItemId",
+            assignee: phaseCode + "TrackAssignee",
+            status: phaseCode + "TrackStatus",
+            completionChecked: phaseCode + "TrackCompleted",
+            trackerNote: phaseCode + "TrackNote",
+            evidenceFile: phaseCode + "EvidenceFile",
+            evidenceNote: phaseCode + "EvidenceNote",
+            evidenceListItemId: phaseCode + "EvidenceListItemId",
+            completionNote: phaseCode + "CompletionNote",
+            completionForce: phaseCode + "CompletionForce",
+            trackerMeta: phaseCode + "TrackerMeta",
+            trackerSummary: phaseCode + "TrackerSummary",
+            trackerTable: phaseCode + "TrackerTable",
+            readinessMeta: phaseCode + "ReadinessMeta",
+            readinessCards: phaseCode + "ReadinessCards",
+            readinessBlockers: phaseCode + "ReadinessBlockers",
+            evidenceTable: phaseCode + "EvidenceTable",
+          }},
+        }};
+      }}
+
+      const SHARED_TRACKER_CONFIGS = {{
+        w09: buildSharedTrackerConfig("w09", "W09"),
+        w10: buildSharedTrackerConfig("w10", "W10"),
+        w11: buildSharedTrackerConfig("w11", "W11"),
+        w15: buildSharedTrackerConfig("w15", "W15"),
+      }};
+
+      const SHARED_TRACKER_ITEM_COLUMNS = [
+        {{ key: "id", label: "ID" }},
+        {{ key: "item_type", label: "Type" }},
+        {{ key: "item_key", label: "Key" }},
+        {{ key: "item_name", label: "Name" }},
+        {{ key: "assignee", label: "Assignee" }},
+        {{ key: "status", label: "Status" }},
+        {{ key: "completion_checked", label: "Checked" }},
+        {{ key: "evidence_count", label: "Evidence" }},
+        {{ key: "updated_at", label: "Updated At" }},
+      ];
+
+      function getSharedTrackerConfig(phaseCode) {{
+        const config = SHARED_TRACKER_CONFIGS[phaseCode];
+        if (!config) {{
+          throw new Error("Unknown shared tracker phase: " + String(phaseCode));
+        }}
+        return config;
+      }}
+
+      function getSharedTrackerElements(config) {{
+        return {{
+          meta: document.getElementById(config.ids.trackerMeta),
+          summary: document.getElementById(config.ids.trackerSummary),
+          table: document.getElementById(config.ids.trackerTable),
+          readinessMeta: document.getElementById(config.ids.readinessMeta),
+          readinessCards: document.getElementById(config.ids.readinessCards),
+          readinessBlockers: document.getElementById(config.ids.readinessBlockers),
+          evidenceTable: document.getElementById(config.ids.evidenceTable),
+        }};
+      }}
+
+      function setSharedTrackerAuthRequired(config) {{
+        const el = getSharedTrackerElements(config);
+        el.meta.textContent = "토큰 저장 후 " + config.phaseLabel + " tracker API를 사용할 수 있습니다.";
+        el.summary.innerHTML = "";
+        el.table.innerHTML = renderEmpty("인증 토큰 필요");
+        el.readinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+        el.readinessCards.innerHTML = "";
+        el.readinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
+        el.evidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+      }}
+
+      function setSharedTrackerError(config, message) {{
+        const el = getSharedTrackerElements(config);
+        el.meta.textContent = "실패: " + message;
+        el.summary.innerHTML = "";
+        el.table.innerHTML = renderEmpty(message);
+        el.readinessMeta.textContent = "실패: " + message;
+        el.readinessCards.innerHTML = "";
+        el.readinessBlockers.innerHTML = renderEmpty(message);
+        el.evidenceTable.innerHTML = renderEmpty(message);
+      }}
+
+      function setSharedTrackerSiteDefault(config, siteValue = "HQ") {{
+        const node = document.getElementById(config.ids.site);
+        if (node && !node.value) {{
+          node.value = siteValue;
+        }}
+      }}
+
+      async function runSharedTracker(config) {{
+        const el = getSharedTrackerElements(config);
+        const site = (document.getElementById(config.ids.site).value || "").trim();
         if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          readinessMeta.textContent = "site 값을 입력하세요";
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          el.meta.textContent = "site 값을 입력하세요";
+          el.summary.innerHTML = "";
+          el.table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          el.readinessMeta.textContent = "site 값을 입력하세요";
+          el.readinessCards.innerHTML = "";
+          el.readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          el.evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
           return;
         }}
         try {{
-          meta.textContent = "조회 중.. W09 tracker";
-          readinessMeta.textContent = "조회 중.. W09 readiness";
+          el.meta.textContent = "조회 중.. " + config.phaseLabel + " tracker";
+          el.readinessMeta.textContent = "조회 중.. " + config.phaseLabel + " readiness";
           const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
-            fetchJson("/api/adoption/w09/tracker/overview?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w09/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
-            fetchJson("/api/adoption/w09/tracker/readiness?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w09/tracker/completion?site=" + encodeURIComponent(site), true),
+            fetchJson(config.apiBase + "/overview?site=" + encodeURIComponent(site), true),
+            fetchJson(config.apiBase + "/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson(config.apiBase + "/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson(config.apiBase + "/completion?site=" + encodeURIComponent(site), true),
           ]);
-          meta.textContent = "성공: W09 tracker (" + site + ")";
-          readinessMeta.textContent =
+          el.meta.textContent = "성공: " + config.phaseLabel + " tracker (" + site + ")";
+          el.readinessMeta.textContent =
             "상태: " + String(completion.status || "active")
             + " | ready=" + (readiness.ready ? "YES" : "NO")
             + " | 마지막 판정=" + String(readiness.checked_at || "-");
@@ -29864,7 +29814,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ["Completion %", trackerOverview.completion_rate_percent || 0],
             ["Evidence", trackerOverview.evidence_total_count || 0],
           ];
-          summary.innerHTML = summaryItems.map((x) => (
+          el.summary.innerHTML = summaryItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
           const readinessItems = [
@@ -29877,12 +29827,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ["Completed At", completion.completed_at || "-"],
             ["Completed By", completion.completed_by || "-"],
           ];
-          readinessCards.innerHTML = readinessItems.map((x) => (
+          el.readinessCards.innerHTML = readinessItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
           const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
           if (blockers.length > 0) {{
-            readinessBlockers.innerHTML = (
+            el.readinessBlockers.innerHTML = (
               '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
               + blockers.map((item, idx) => (
                 "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
@@ -29890,62 +29840,39 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               + "</tbody></table></div>"
             );
           }} else {{
-            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+            el.readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
           }}
-          table.innerHTML = renderTable(
-            trackerItems || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "item_type", label: "Type" }},
-              {{ key: "item_key", label: "Key" }},
-              {{ key: "item_name", label: "Name" }},
-              {{ key: "assignee", label: "Assignee" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "completion_checked", label: "Checked" }},
-              {{ key: "evidence_count", label: "Evidence" }},
-              {{ key: "updated_at", label: "Updated At" }},
-            ]
-          );
+          el.table.innerHTML = renderTable(trackerItems || [], SHARED_TRACKER_ITEM_COLUMNS);
 
-          let evidenceItemId = (document.getElementById("w09EvidenceListItemId").value || "").trim();
+          let evidenceItemId = (document.getElementById(config.ids.evidenceListItemId).value || "").trim();
           if (!evidenceItemId) {{
-            evidenceItemId = (document.getElementById("w09TrackItemId").value || "").trim();
+            evidenceItemId = (document.getElementById(config.ids.trackerItemId).value || "").trim();
           }}
           if (evidenceItemId) {{
             const evidences = await fetchJson(
-              "/api/adoption/w09/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              config.apiBase + "/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
               true
             );
-            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w09");
+            el.evidenceTable.innerHTML = renderEvidenceTable(evidences || [], config.evidenceNamespace);
           }} else {{
-            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+            el.evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
           }}
         }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty(err.message);
-          readinessMeta.textContent = "실패: " + err.message;
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty(err.message);
-          evidenceTable.innerHTML = renderEmpty(err.message);
+          setSharedTrackerError(config, err.message);
         }}
       }}
 
-      async function runW09Readiness() {{
-        await runW09Tracker();
-      }}
-
-      async function runW09TrackerBootstrap() {{
-        const meta = document.getElementById("w09TrackerMeta");
-        const site = (document.getElementById("w09TrackSite").value || "").trim();
+      async function runSharedTrackerBootstrap(config) {{
+        const meta = document.getElementById(config.ids.trackerMeta);
+        const site = (document.getElementById(config.ids.site).value || "").trim();
         if (!site) {{
           meta.textContent = "site 값을 입력하세요";
           return;
         }}
         try {{
-          meta.textContent = "생성 중.. W09 tracker bootstrap";
+          meta.textContent = "생성 중.. " + config.phaseLabel + " tracker bootstrap";
           const data = await fetchJson(
-            "/api/adoption/w09/tracker/bootstrap",
+            config.apiBase + "/bootstrap",
             true,
             {{
               method: "POST",
@@ -29954,21 +29881,21 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             }}
           );
           meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
-          await runW09Tracker();
+          await runSharedTracker(config);
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
         }}
       }}
 
-      async function runW09Complete() {{
-        const meta = document.getElementById("w09ReadinessMeta");
-        const site = (document.getElementById("w09TrackSite").value || "").trim();
+      async function runSharedTrackerComplete(config) {{
+        const meta = document.getElementById(config.ids.readinessMeta);
+        const site = (document.getElementById(config.ids.site).value || "").trim();
         if (!site) {{
           meta.textContent = "site 값을 입력하세요";
           return;
         }}
-        const completionNote = (document.getElementById("w09CompletionNote").value || "").trim();
-        const force = !!document.getElementById("w09CompletionForce").checked;
+        const completionNote = (document.getElementById(config.ids.completionNote).value || "").trim();
+        const force = !!document.getElementById(config.ids.completionForce).checked;
         const payload = {{
           site: site,
           force: force,
@@ -29977,9 +29904,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           payload.completion_note = completionNote;
         }}
         try {{
-          meta.textContent = "실행 중.. W09 완료 확정";
+          meta.textContent = "실행 중.. " + config.phaseLabel + " 완료 확정";
           const result = await fetchJson(
-            "/api/adoption/w09/tracker/complete",
+            config.apiBase + "/complete",
             true,
             {{
               method: "POST",
@@ -29991,26 +29918,26 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             "성공: status=" + String(result.status || "-")
             + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
             + " | completed_at=" + String(result.completed_at || "-");
-          await runW09Tracker();
+          await runSharedTracker(config);
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
-          await runW09Tracker().catch(() => null);
+          await runSharedTracker(config).catch(() => null);
         }}
       }}
 
-      async function runW09TrackerUpdateAndUpload() {{
-        const meta = document.getElementById("w09TrackerMeta");
-        const trackerItemIdRaw = (document.getElementById("w09TrackItemId").value || "").trim();
+      async function runSharedTrackerUpdateAndUpload(config) {{
+        const meta = document.getElementById(config.ids.trackerMeta);
+        const trackerItemIdRaw = (document.getElementById(config.ids.trackerItemId).value || "").trim();
         const trackerItemId = Number(trackerItemIdRaw);
         if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
           meta.textContent = "유효한 tracker_item_id를 입력하세요.";
           return;
         }}
 
-        const assignee = (document.getElementById("w09TrackAssignee").value || "").trim();
-        const status = (document.getElementById("w09TrackStatus").value || "").trim();
-        const completionChecked = !!document.getElementById("w09TrackCompleted").checked;
-        const note = (document.getElementById("w09TrackNote").value || "").trim();
+        const assignee = (document.getElementById(config.ids.assignee).value || "").trim();
+        const status = (document.getElementById(config.ids.status).value || "").trim();
+        const completionChecked = !!document.getElementById(config.ids.completionChecked).checked;
+        const note = (document.getElementById(config.ids.trackerNote).value || "").trim();
         const payload = {{}};
         if (assignee) payload.assignee = assignee;
         if (status) payload.status = status;
@@ -30020,7 +29947,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           payload.completion_checked = false;
         }}
         if (note) payload.completion_note = note;
-        const fileInput = document.getElementById("w09EvidenceFile");
+        const fileInput = document.getElementById(config.ids.evidenceFile);
         const file = fileInput && fileInput.files ? fileInput.files[0] : null;
         const hasTrackerUpdate = Object.keys(payload).length > 0;
         if (!hasTrackerUpdate && !file) {{
@@ -30032,7 +29959,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           meta.textContent = "저장 중.. tracker update";
           if (hasTrackerUpdate) {{
             await fetchJson(
-              "/api/adoption/w09/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              config.apiBase + "/items/" + encodeURIComponent(trackerItemIdRaw),
               true,
               {{
                 method: "PATCH",
@@ -30045,14 +29972,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           if (file) {{
             const formData = new FormData();
             formData.append("file", file);
-            const evidenceNote = (document.getElementById("w09EvidenceNote").value || "").trim();
+            const evidenceNote = (document.getElementById(config.ids.evidenceNote).value || "").trim();
             formData.append("note", evidenceNote);
             const token = getToken();
             if (!token) {{
               throw new Error("인증 토큰이 없습니다.");
             }}
             const uploadResp = await fetch(
-              "/api/adoption/w09/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              config.apiBase + "/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
               {{
                 method: "POST",
                 headers: {{
@@ -30066,14 +29993,34 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             if (!uploadResp.ok) {{
               throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
             }}
-            document.getElementById("w09EvidenceFile").value = "";
+            fileInput.value = "";
           }}
 
           meta.textContent = "성공: tracker 저장 완료";
-          await runW09Tracker();
+          await runSharedTracker(config);
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
         }}
+      }}
+
+      async function runW09Tracker() {{
+        await runSharedTracker(getSharedTrackerConfig("w09"));
+      }}
+
+      async function runW09Readiness() {{
+        await runW09Tracker();
+      }}
+
+      async function runW09TrackerBootstrap() {{
+        await runSharedTrackerBootstrap(getSharedTrackerConfig("w09"));
+      }}
+
+      async function runW09Complete() {{
+        await runSharedTrackerComplete(getSharedTrackerConfig("w09"));
+      }}
+
+      async function runW09TrackerUpdateAndUpload() {{
+        await runSharedTrackerUpdateAndUpload(getSharedTrackerConfig("w09"));
       }}
 
       async function runW10KpiOperation() {{
@@ -30205,112 +30152,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW10Tracker() {{
-        const meta = document.getElementById("w10TrackerMeta");
-        const summary = document.getElementById("w10TrackerSummary");
-        const table = document.getElementById("w10TrackerTable");
-        const readinessMeta = document.getElementById("w10ReadinessMeta");
-        const readinessCards = document.getElementById("w10ReadinessCards");
-        const readinessBlockers = document.getElementById("w10ReadinessBlockers");
-        const evidenceTable = document.getElementById("w10EvidenceTable");
-        const site = (document.getElementById("w10TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          readinessMeta.textContent = "site 값을 입력하세요";
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          return;
-        }}
-        try {{
-          meta.textContent = "조회 중.. W10 tracker";
-          readinessMeta.textContent = "조회 중.. W10 readiness";
-          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
-            fetchJson("/api/adoption/w10/tracker/overview?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w10/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
-            fetchJson("/api/adoption/w10/tracker/readiness?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w10/tracker/completion?site=" + encodeURIComponent(site), true),
-          ]);
-          meta.textContent = "성공: W10 tracker (" + site + ")";
-          readinessMeta.textContent =
-            "상태: " + String(completion.status || "active")
-            + " | ready=" + (readiness.ready ? "YES" : "NO")
-            + " | 마지막 판정=" + String(readiness.checked_at || "-");
-          const summaryItems = [
-            ["Total", trackerOverview.total_items || 0],
-            ["Pending", trackerOverview.pending_count || 0],
-            ["In Progress", trackerOverview.in_progress_count || 0],
-            ["Done", trackerOverview.done_count || 0],
-            ["Blocked", trackerOverview.blocked_count || 0],
-            ["Completion %", trackerOverview.completion_rate_percent || 0],
-            ["Evidence", trackerOverview.evidence_total_count || 0],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const readinessItems = [
-            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
-            ["Readiness %", readiness.readiness_score_percent || 0],
-            ["Missing Assignee", readiness.missing_assignee_count || 0],
-            ["Missing Checked", readiness.missing_completion_checked_count || 0],
-            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
-            ["Completion Status", completion.status || "active"],
-            ["Completed At", completion.completed_at || "-"],
-            ["Completed By", completion.completed_by || "-"],
-          ];
-          readinessCards.innerHTML = readinessItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
-          if (blockers.length > 0) {{
-            readinessBlockers.innerHTML = (
-              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
-              + blockers.map((item, idx) => (
-                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
-              )).join("")
-              + "</tbody></table></div>"
-            );
-          }} else {{
-            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
-          }}
-          table.innerHTML = renderTable(
-            trackerItems || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "item_type", label: "Type" }},
-              {{ key: "item_key", label: "Key" }},
-              {{ key: "item_name", label: "Name" }},
-              {{ key: "assignee", label: "Assignee" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "completion_checked", label: "Checked" }},
-              {{ key: "evidence_count", label: "Evidence" }},
-              {{ key: "updated_at", label: "Updated At" }},
-            ]
-          );
-
-          let evidenceItemId = (document.getElementById("w10EvidenceListItemId").value || "").trim();
-          if (!evidenceItemId) {{
-            evidenceItemId = (document.getElementById("w10TrackItemId").value || "").trim();
-          }}
-          if (evidenceItemId) {{
-            const evidences = await fetchJson(
-              "/api/adoption/w10/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
-              true
-            );
-            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w10");
-          }} else {{
-            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
-          }}
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty(err.message);
-          readinessMeta.textContent = "실패: " + err.message;
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty(err.message);
-          evidenceTable.innerHTML = renderEmpty(err.message);
-        }}
+        await runSharedTracker(getSharedTrackerConfig("w10"));
       }}
 
       async function runW10Readiness() {{
@@ -30318,144 +30160,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW10TrackerBootstrap() {{
-        const meta = document.getElementById("w10TrackerMeta");
-        const site = (document.getElementById("w10TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        try {{
-          meta.textContent = "생성 중.. W10 tracker bootstrap";
-          const data = await fetchJson(
-            "/api/adoption/w10/tracker/bootstrap",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify({{ site }}),
-            }}
-          );
-          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
-          await runW10Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerBootstrap(getSharedTrackerConfig("w10"));
       }}
 
       async function runW10Complete() {{
-        const meta = document.getElementById("w10ReadinessMeta");
-        const site = (document.getElementById("w10TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        const completionNote = (document.getElementById("w10CompletionNote").value || "").trim();
-        const force = !!document.getElementById("w10CompletionForce").checked;
-        const payload = {{
-          site: site,
-          force: force,
-        }};
-        if (completionNote) {{
-          payload.completion_note = completionNote;
-        }}
-        try {{
-          meta.textContent = "실행 중.. W10 완료 확정";
-          const result = await fetchJson(
-            "/api/adoption/w10/tracker/complete",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(payload),
-            }}
-          );
-          meta.textContent =
-            "성공: status=" + String(result.status || "-")
-            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
-            + " | completed_at=" + String(result.completed_at || "-");
-          await runW10Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          await runW10Tracker().catch(() => null);
-        }}
+        await runSharedTrackerComplete(getSharedTrackerConfig("w10"));
       }}
 
       async function runW10TrackerUpdateAndUpload() {{
-        const meta = document.getElementById("w10TrackerMeta");
-        const trackerItemIdRaw = (document.getElementById("w10TrackItemId").value || "").trim();
-        const trackerItemId = Number(trackerItemIdRaw);
-        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
-          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
-          return;
-        }}
-
-        const assignee = (document.getElementById("w10TrackAssignee").value || "").trim();
-        const status = (document.getElementById("w10TrackStatus").value || "").trim();
-        const completionChecked = !!document.getElementById("w10TrackCompleted").checked;
-        const note = (document.getElementById("w10TrackNote").value || "").trim();
-        const payload = {{}};
-        if (assignee) payload.assignee = assignee;
-        if (status) payload.status = status;
-        if (completionChecked) {{
-          payload.completion_checked = true;
-        }} else if (status && status !== "done") {{
-          payload.completion_checked = false;
-        }}
-        if (note) payload.completion_note = note;
-        const fileInput = document.getElementById("w10EvidenceFile");
-        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
-        const hasTrackerUpdate = Object.keys(payload).length > 0;
-        if (!hasTrackerUpdate && !file) {{
-          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
-          return;
-        }}
-
-        try {{
-          meta.textContent = "저장 중.. tracker update";
-          if (hasTrackerUpdate) {{
-            await fetchJson(
-              "/api/adoption/w10/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
-              true,
-              {{
-                method: "PATCH",
-                headers: {{ "Content-Type": "application/json" }},
-                body: JSON.stringify(payload),
-              }}
-            );
-          }}
-
-          if (file) {{
-            const formData = new FormData();
-            formData.append("file", file);
-            const evidenceNote = (document.getElementById("w10EvidenceNote").value || "").trim();
-            formData.append("note", evidenceNote);
-            const token = getToken();
-            if (!token) {{
-              throw new Error("인증 토큰이 없습니다.");
-            }}
-            const uploadResp = await fetch(
-              "/api/adoption/w10/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
-              {{
-                method: "POST",
-                headers: {{
-                  "X-Admin-Token": token,
-                  "Accept": "application/json",
-                }},
-                body: formData,
-              }}
-            );
-            const uploadText = await uploadResp.text();
-            if (!uploadResp.ok) {{
-              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
-            }}
-            document.getElementById("w10EvidenceFile").value = "";
-          }}
-
-          meta.textContent = "성공: tracker 저장 완료";
-          await runW10Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerUpdateAndUpload(getSharedTrackerConfig("w10"));
       }}
 
       async function runW11KpiOperation() {{
@@ -30587,112 +30300,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW11Tracker() {{
-        const meta = document.getElementById("w11TrackerMeta");
-        const summary = document.getElementById("w11TrackerSummary");
-        const table = document.getElementById("w11TrackerTable");
-        const readinessMeta = document.getElementById("w11ReadinessMeta");
-        const readinessCards = document.getElementById("w11ReadinessCards");
-        const readinessBlockers = document.getElementById("w11ReadinessBlockers");
-        const evidenceTable = document.getElementById("w11EvidenceTable");
-        const site = (document.getElementById("w11TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          readinessMeta.textContent = "site 값을 입력하세요";
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          return;
-        }}
-        try {{
-          meta.textContent = "조회 중.. W11 tracker";
-          readinessMeta.textContent = "조회 중.. W11 readiness";
-          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
-            fetchJson("/api/adoption/w11/tracker/overview?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w11/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
-            fetchJson("/api/adoption/w11/tracker/readiness?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w11/tracker/completion?site=" + encodeURIComponent(site), true),
-          ]);
-          meta.textContent = "성공: W11 tracker (" + site + ")";
-          readinessMeta.textContent =
-            "상태: " + String(completion.status || "active")
-            + " | ready=" + (readiness.ready ? "YES" : "NO")
-            + " | 마지막 판정=" + String(readiness.checked_at || "-");
-          const summaryItems = [
-            ["Total", trackerOverview.total_items || 0],
-            ["Pending", trackerOverview.pending_count || 0],
-            ["In Progress", trackerOverview.in_progress_count || 0],
-            ["Done", trackerOverview.done_count || 0],
-            ["Blocked", trackerOverview.blocked_count || 0],
-            ["Completion %", trackerOverview.completion_rate_percent || 0],
-            ["Evidence", trackerOverview.evidence_total_count || 0],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const readinessItems = [
-            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
-            ["Readiness %", readiness.readiness_score_percent || 0],
-            ["Missing Assignee", readiness.missing_assignee_count || 0],
-            ["Missing Checked", readiness.missing_completion_checked_count || 0],
-            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
-            ["Completion Status", completion.status || "active"],
-            ["Completed At", completion.completed_at || "-"],
-            ["Completed By", completion.completed_by || "-"],
-          ];
-          readinessCards.innerHTML = readinessItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
-          if (blockers.length > 0) {{
-            readinessBlockers.innerHTML = (
-              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
-              + blockers.map((item, idx) => (
-                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
-              )).join("")
-              + "</tbody></table></div>"
-            );
-          }} else {{
-            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
-          }}
-          table.innerHTML = renderTable(
-            trackerItems || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "item_type", label: "Type" }},
-              {{ key: "item_key", label: "Key" }},
-              {{ key: "item_name", label: "Name" }},
-              {{ key: "assignee", label: "Assignee" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "completion_checked", label: "Checked" }},
-              {{ key: "evidence_count", label: "Evidence" }},
-              {{ key: "updated_at", label: "Updated At" }},
-            ]
-          );
-
-          let evidenceItemId = (document.getElementById("w11EvidenceListItemId").value || "").trim();
-          if (!evidenceItemId) {{
-            evidenceItemId = (document.getElementById("w11TrackItemId").value || "").trim();
-          }}
-          if (evidenceItemId) {{
-            const evidences = await fetchJson(
-              "/api/adoption/w11/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
-              true
-            );
-            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w11");
-          }} else {{
-            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
-          }}
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty(err.message);
-          readinessMeta.textContent = "실패: " + err.message;
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty(err.message);
-          evidenceTable.innerHTML = renderEmpty(err.message);
-        }}
+        await runSharedTracker(getSharedTrackerConfig("w11"));
       }}
 
       async function runW11Readiness() {{
@@ -30700,144 +30308,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW11TrackerBootstrap() {{
-        const meta = document.getElementById("w11TrackerMeta");
-        const site = (document.getElementById("w11TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        try {{
-          meta.textContent = "생성 중.. W11 tracker bootstrap";
-          const data = await fetchJson(
-            "/api/adoption/w11/tracker/bootstrap",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify({{ site }}),
-            }}
-          );
-          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
-          await runW11Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerBootstrap(getSharedTrackerConfig("w11"));
       }}
 
       async function runW11Complete() {{
-        const meta = document.getElementById("w11ReadinessMeta");
-        const site = (document.getElementById("w11TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        const completionNote = (document.getElementById("w11CompletionNote").value || "").trim();
-        const force = !!document.getElementById("w11CompletionForce").checked;
-        const payload = {{
-          site: site,
-          force: force,
-        }};
-        if (completionNote) {{
-          payload.completion_note = completionNote;
-        }}
-        try {{
-          meta.textContent = "실행 중.. W11 완료 확정";
-          const result = await fetchJson(
-            "/api/adoption/w11/tracker/complete",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(payload),
-            }}
-          );
-          meta.textContent =
-            "성공: status=" + String(result.status || "-")
-            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
-            + " | completed_at=" + String(result.completed_at || "-");
-          await runW11Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          await runW11Tracker().catch(() => null);
-        }}
+        await runSharedTrackerComplete(getSharedTrackerConfig("w11"));
       }}
 
       async function runW11TrackerUpdateAndUpload() {{
-        const meta = document.getElementById("w11TrackerMeta");
-        const trackerItemIdRaw = (document.getElementById("w11TrackItemId").value || "").trim();
-        const trackerItemId = Number(trackerItemIdRaw);
-        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
-          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
-          return;
-        }}
-
-        const assignee = (document.getElementById("w11TrackAssignee").value || "").trim();
-        const status = (document.getElementById("w11TrackStatus").value || "").trim();
-        const completionChecked = !!document.getElementById("w11TrackCompleted").checked;
-        const note = (document.getElementById("w11TrackNote").value || "").trim();
-        const payload = {{}};
-        if (assignee) payload.assignee = assignee;
-        if (status) payload.status = status;
-        if (completionChecked) {{
-          payload.completion_checked = true;
-        }} else if (status && status !== "done") {{
-          payload.completion_checked = false;
-        }}
-        if (note) payload.completion_note = note;
-        const fileInput = document.getElementById("w11EvidenceFile");
-        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
-        const hasTrackerUpdate = Object.keys(payload).length > 0;
-        if (!hasTrackerUpdate && !file) {{
-          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
-          return;
-        }}
-
-        try {{
-          meta.textContent = "저장 중.. tracker update";
-          if (hasTrackerUpdate) {{
-            await fetchJson(
-              "/api/adoption/w11/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
-              true,
-              {{
-                method: "PATCH",
-                headers: {{ "Content-Type": "application/json" }},
-                body: JSON.stringify(payload),
-              }}
-            );
-          }}
-
-          if (file) {{
-            const formData = new FormData();
-            formData.append("file", file);
-            const evidenceNote = (document.getElementById("w11EvidenceNote").value || "").trim();
-            formData.append("note", evidenceNote);
-            const token = getToken();
-            if (!token) {{
-              throw new Error("인증 토큰이 없습니다.");
-            }}
-            const uploadResp = await fetch(
-              "/api/adoption/w11/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
-              {{
-                method: "POST",
-                headers: {{
-                  "X-Admin-Token": token,
-                  "Accept": "application/json",
-                }},
-                body: formData,
-              }}
-            );
-            const uploadText = await uploadResp.text();
-            if (!uploadResp.ok) {{
-              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
-            }}
-            document.getElementById("w11EvidenceFile").value = "";
-          }}
-
-          meta.textContent = "성공: tracker 저장 완료";
-          await runW11Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerUpdateAndUpload(getSharedTrackerConfig("w11"));
       }}
 
       async function runW15KpiOperation() {{
@@ -30969,112 +30448,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW15Tracker() {{
-        const meta = document.getElementById("w15TrackerMeta");
-        const summary = document.getElementById("w15TrackerSummary");
-        const table = document.getElementById("w15TrackerTable");
-        const readinessMeta = document.getElementById("w15ReadinessMeta");
-        const readinessCards = document.getElementById("w15ReadinessCards");
-        const readinessBlockers = document.getElementById("w15ReadinessBlockers");
-        const evidenceTable = document.getElementById("w15EvidenceTable");
-        const site = (document.getElementById("w15TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          readinessMeta.textContent = "site 값을 입력하세요";
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
-          return;
-        }}
-        try {{
-          meta.textContent = "조회 중.. W15 tracker";
-          readinessMeta.textContent = "조회 중.. W15 readiness";
-          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
-            fetchJson("/api/adoption/w15/tracker/overview?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w15/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
-            fetchJson("/api/adoption/w15/tracker/readiness?site=" + encodeURIComponent(site), true),
-            fetchJson("/api/adoption/w15/tracker/completion?site=" + encodeURIComponent(site), true),
-          ]);
-          meta.textContent = "성공: W15 tracker (" + site + ")";
-          readinessMeta.textContent =
-            "상태: " + String(completion.status || "active")
-            + " | ready=" + (readiness.ready ? "YES" : "NO")
-            + " | 마지막 판정=" + String(readiness.checked_at || "-");
-          const summaryItems = [
-            ["Total", trackerOverview.total_items || 0],
-            ["Pending", trackerOverview.pending_count || 0],
-            ["In Progress", trackerOverview.in_progress_count || 0],
-            ["Done", trackerOverview.done_count || 0],
-            ["Blocked", trackerOverview.blocked_count || 0],
-            ["Completion %", trackerOverview.completion_rate_percent || 0],
-            ["Evidence", trackerOverview.evidence_total_count || 0],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const readinessItems = [
-            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
-            ["Readiness %", readiness.readiness_score_percent || 0],
-            ["Missing Assignee", readiness.missing_assignee_count || 0],
-            ["Missing Checked", readiness.missing_completion_checked_count || 0],
-            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
-            ["Completion Status", completion.status || "active"],
-            ["Completed At", completion.completed_at || "-"],
-            ["Completed By", completion.completed_by || "-"],
-          ];
-          readinessCards.innerHTML = readinessItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
-          if (blockers.length > 0) {{
-            readinessBlockers.innerHTML = (
-              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
-              + blockers.map((item, idx) => (
-                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
-              )).join("")
-              + "</tbody></table></div>"
-            );
-          }} else {{
-            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
-          }}
-          table.innerHTML = renderTable(
-            trackerItems || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "item_type", label: "Type" }},
-              {{ key: "item_key", label: "Key" }},
-              {{ key: "item_name", label: "Name" }},
-              {{ key: "assignee", label: "Assignee" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "completion_checked", label: "Checked" }},
-              {{ key: "evidence_count", label: "Evidence" }},
-              {{ key: "updated_at", label: "Updated At" }},
-            ]
-          );
-
-          let evidenceItemId = (document.getElementById("w15EvidenceListItemId").value || "").trim();
-          if (!evidenceItemId) {{
-            evidenceItemId = (document.getElementById("w15TrackItemId").value || "").trim();
-          }}
-          if (evidenceItemId) {{
-            const evidences = await fetchJson(
-              "/api/adoption/w15/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
-              true
-            );
-            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w15");
-          }} else {{
-            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
-          }}
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          table.innerHTML = renderEmpty(err.message);
-          readinessMeta.textContent = "실패: " + err.message;
-          readinessCards.innerHTML = "";
-          readinessBlockers.innerHTML = renderEmpty(err.message);
-          evidenceTable.innerHTML = renderEmpty(err.message);
-        }}
+        await runSharedTracker(getSharedTrackerConfig("w15"));
       }}
 
       async function runW15Readiness() {{
@@ -31082,144 +30456,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW15TrackerBootstrap() {{
-        const meta = document.getElementById("w15TrackerMeta");
-        const site = (document.getElementById("w15TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        try {{
-          meta.textContent = "생성 중.. W15 tracker bootstrap";
-          const data = await fetchJson(
-            "/api/adoption/w15/tracker/bootstrap",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify({{ site }}),
-            }}
-          );
-          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
-          await runW15Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerBootstrap(getSharedTrackerConfig("w15"));
       }}
 
       async function runW15Complete() {{
-        const meta = document.getElementById("w15ReadinessMeta");
-        const site = (document.getElementById("w15TrackSite").value || "").trim();
-        if (!site) {{
-          meta.textContent = "site 값을 입력하세요";
-          return;
-        }}
-        const completionNote = (document.getElementById("w15CompletionNote").value || "").trim();
-        const force = !!document.getElementById("w15CompletionForce").checked;
-        const payload = {{
-          site: site,
-          force: force,
-        }};
-        if (completionNote) {{
-          payload.completion_note = completionNote;
-        }}
-        try {{
-          meta.textContent = "실행 중.. W15 완료 확정";
-          const result = await fetchJson(
-            "/api/adoption/w15/tracker/complete",
-            true,
-            {{
-              method: "POST",
-              headers: {{ "Content-Type": "application/json" }},
-              body: JSON.stringify(payload),
-            }}
-          );
-          meta.textContent =
-            "성공: status=" + String(result.status || "-")
-            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
-            + " | completed_at=" + String(result.completed_at || "-");
-          await runW15Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          await runW15Tracker().catch(() => null);
-        }}
+        await runSharedTrackerComplete(getSharedTrackerConfig("w15"));
       }}
 
       async function runW15TrackerUpdateAndUpload() {{
-        const meta = document.getElementById("w15TrackerMeta");
-        const trackerItemIdRaw = (document.getElementById("w15TrackItemId").value || "").trim();
-        const trackerItemId = Number(trackerItemIdRaw);
-        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
-          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
-          return;
-        }}
-
-        const assignee = (document.getElementById("w15TrackAssignee").value || "").trim();
-        const status = (document.getElementById("w15TrackStatus").value || "").trim();
-        const completionChecked = !!document.getElementById("w15TrackCompleted").checked;
-        const note = (document.getElementById("w15TrackNote").value || "").trim();
-        const payload = {{}};
-        if (assignee) payload.assignee = assignee;
-        if (status) payload.status = status;
-        if (completionChecked) {{
-          payload.completion_checked = true;
-        }} else if (status && status !== "done") {{
-          payload.completion_checked = false;
-        }}
-        if (note) payload.completion_note = note;
-        const fileInput = document.getElementById("w15EvidenceFile");
-        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
-        const hasTrackerUpdate = Object.keys(payload).length > 0;
-        if (!hasTrackerUpdate && !file) {{
-          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
-          return;
-        }}
-
-        try {{
-          meta.textContent = "저장 중.. tracker update";
-          if (hasTrackerUpdate) {{
-            await fetchJson(
-              "/api/adoption/w15/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
-              true,
-              {{
-                method: "PATCH",
-                headers: {{ "Content-Type": "application/json" }},
-                body: JSON.stringify(payload),
-              }}
-            );
-          }}
-
-          if (file) {{
-            const formData = new FormData();
-            formData.append("file", file);
-            const evidenceNote = (document.getElementById("w15EvidenceNote").value || "").trim();
-            formData.append("note", evidenceNote);
-            const token = getToken();
-            if (!token) {{
-              throw new Error("인증 토큰이 없습니다.");
-            }}
-            const uploadResp = await fetch(
-              "/api/adoption/w15/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
-              {{
-                method: "POST",
-                headers: {{
-                  "X-Admin-Token": token,
-                  "Accept": "application/json",
-                }},
-                body: formData,
-              }}
-            );
-            const uploadText = await uploadResp.text();
-            if (!uploadResp.ok) {{
-              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
-            }}
-            document.getElementById("w15EvidenceFile").value = "";
-          }}
-
-          meta.textContent = "성공: tracker 저장 완료";
-          await runW15Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-        }}
+        await runSharedTrackerUpdateAndUpload(getSharedTrackerConfig("w15"));
       }}
 
       async function runW07Tracker() {{
@@ -32871,121 +32116,26 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w08DisciplineBenchmark.innerHTML = renderEmpty("인증 토큰 필요");
             w08DisciplineRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
 
-            const w09KpiMeta = document.getElementById("w09KpiMeta");
-            const w09KpiSummary = document.getElementById("w09KpiSummary");
-            const w09KpiTable = document.getElementById("w09KpiTable");
-            const w09EscalationTable = document.getElementById("w09EscalationTable");
-            const w09KpiRecommendations = document.getElementById("w09KpiRecommendations");
-            const w09PolicyMeta = document.getElementById("w09PolicyMeta");
-            const w09PolicyTable = document.getElementById("w09PolicyTable");
-            const w09TrackerMeta = document.getElementById("w09TrackerMeta");
-            const w09TrackerSummary = document.getElementById("w09TrackerSummary");
-            const w09TrackerTable = document.getElementById("w09TrackerTable");
-            const w09ReadinessMeta = document.getElementById("w09ReadinessMeta");
-            const w09ReadinessCards = document.getElementById("w09ReadinessCards");
-            const w09ReadinessBlockers = document.getElementById("w09ReadinessBlockers");
-            const w09EvidenceTable = document.getElementById("w09EvidenceTable");
-            w09KpiMeta.textContent = "?좏겙 ?????W09 KPI operation API瑜??ъ슜?????덉뒿?덈떎.";
-            w09KpiSummary.innerHTML = "";
-            w09KpiTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09EscalationTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09KpiRecommendations.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09PolicyMeta.textContent = "?좏겙 ?????W09 policy API瑜??ъ슜?????덉뒿?덈떎.";
-            w09PolicyTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09TrackerMeta.textContent = "?좏겙 ?????W09 tracker API瑜??ъ슜?????덉뒿?덈떎.";
-            w09TrackerSummary.innerHTML = "";
-            w09TrackerTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09ReadinessMeta.textContent = "?좏겙 ??????꾨즺 ?먯젙 API瑜??ъ슜?????덉뒿?덈떎.";
-            w09ReadinessCards.innerHTML = "";
-            w09ReadinessBlockers.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-            w09EvidenceTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
-
-            const w10KpiMeta = document.getElementById("w10KpiMeta");
-            const w10KpiSummary = document.getElementById("w10KpiSummary");
-            const w10KpiTable = document.getElementById("w10KpiTable");
-            const w10EscalationTable = document.getElementById("w10EscalationTable");
-            const w10KpiRecommendations = document.getElementById("w10KpiRecommendations");
-            const w10PolicyMeta = document.getElementById("w10PolicyMeta");
-            const w10PolicyTable = document.getElementById("w10PolicyTable");
-            const w10TrackerMeta = document.getElementById("w10TrackerMeta");
-            const w10TrackerSummary = document.getElementById("w10TrackerSummary");
-            const w10TrackerTable = document.getElementById("w10TrackerTable");
-            const w10ReadinessMeta = document.getElementById("w10ReadinessMeta");
-            const w10ReadinessCards = document.getElementById("w10ReadinessCards");
-            const w10ReadinessBlockers = document.getElementById("w10ReadinessBlockers");
-            const w10EvidenceTable = document.getElementById("w10EvidenceTable");
-            w10KpiMeta.textContent = "토큰 저장 후 W10 self-serve API를 사용할 수 있습니다.";
-            w10KpiSummary.innerHTML = "";
-            w10KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w10EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w10KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
-            w10PolicyMeta.textContent = "토큰 저장 후 W10 support policy API를 사용할 수 있습니다.";
-            w10PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w10TrackerMeta.textContent = "토큰 저장 후 W10 tracker API를 사용할 수 있습니다.";
-            w10TrackerSummary.innerHTML = "";
-            w10TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w10ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
-            w10ReadinessCards.innerHTML = "";
-            w10ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
-            w10EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
-
-            const w11KpiMeta = document.getElementById("w11KpiMeta");
-            const w11KpiSummary = document.getElementById("w11KpiSummary");
-            const w11KpiTable = document.getElementById("w11KpiTable");
-            const w11EscalationTable = document.getElementById("w11EscalationTable");
-            const w11KpiRecommendations = document.getElementById("w11KpiRecommendations");
-            const w11PolicyMeta = document.getElementById("w11PolicyMeta");
-            const w11PolicyTable = document.getElementById("w11PolicyTable");
-            const w11TrackerMeta = document.getElementById("w11TrackerMeta");
-            const w11TrackerSummary = document.getElementById("w11TrackerSummary");
-            const w11TrackerTable = document.getElementById("w11TrackerTable");
-            const w11ReadinessMeta = document.getElementById("w11ReadinessMeta");
-            const w11ReadinessCards = document.getElementById("w11ReadinessCards");
-            const w11ReadinessBlockers = document.getElementById("w11ReadinessBlockers");
-            const w11EvidenceTable = document.getElementById("w11EvidenceTable");
-            w11KpiMeta.textContent = "토큰 저장 후 W11 scale-readiness API를 사용할 수 있습니다.";
-            w11KpiSummary.innerHTML = "";
-            w11KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w11EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w11KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
-            w11PolicyMeta.textContent = "토큰 저장 후 W11 readiness policy API를 사용할 수 있습니다.";
-            w11PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w11TrackerMeta.textContent = "토큰 저장 후 W11 tracker API를 사용할 수 있습니다.";
-            w11TrackerSummary.innerHTML = "";
-            w11TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w11ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
-            w11ReadinessCards.innerHTML = "";
-            w11ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
-            w11EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
-
-            const w15KpiMeta = document.getElementById("w15KpiMeta");
-            const w15KpiSummary = document.getElementById("w15KpiSummary");
-            const w15KpiTable = document.getElementById("w15KpiTable");
-            const w15EscalationTable = document.getElementById("w15EscalationTable");
-            const w15KpiRecommendations = document.getElementById("w15KpiRecommendations");
-            const w15PolicyMeta = document.getElementById("w15PolicyMeta");
-            const w15PolicyTable = document.getElementById("w15PolicyTable");
-            const w15TrackerMeta = document.getElementById("w15TrackerMeta");
-            const w15TrackerSummary = document.getElementById("w15TrackerSummary");
-            const w15TrackerTable = document.getElementById("w15TrackerTable");
-            const w15ReadinessMeta = document.getElementById("w15ReadinessMeta");
-            const w15ReadinessCards = document.getElementById("w15ReadinessCards");
-            const w15ReadinessBlockers = document.getElementById("w15ReadinessBlockers");
-            const w15EvidenceTable = document.getElementById("w15EvidenceTable");
-            w15KpiMeta.textContent = "토큰 저장 후 W15 ops-efficiency API를 사용할 수 있습니다.";
-            w15KpiSummary.innerHTML = "";
-            w15KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w15EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w15KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
-            w15PolicyMeta.textContent = "토큰 저장 후 W15 efficiency policy API를 사용할 수 있습니다.";
-            w15PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w15TrackerMeta.textContent = "토큰 저장 후 W15 tracker API를 사용할 수 있습니다.";
-            w15TrackerSummary.innerHTML = "";
-            w15TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
-            w15ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
-            w15ReadinessCards.innerHTML = "";
-            w15ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
-            w15EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+            const sharedKpiAuthConfigs = [
+              {{ phaseCode: "w09", kpiApiLabel: "W09 KPI operation", policyApiLabel: "W09 policy" }},
+              {{ phaseCode: "w10", kpiApiLabel: "W10 self-serve", policyApiLabel: "W10 support policy" }},
+              {{ phaseCode: "w11", kpiApiLabel: "W11 scale-readiness", policyApiLabel: "W11 readiness policy" }},
+              {{ phaseCode: "w15", kpiApiLabel: "W15 ops-efficiency", policyApiLabel: "W15 efficiency policy" }},
+            ];
+            sharedKpiAuthConfigs.forEach((item) => {{
+              document.getElementById(item.phaseCode + "KpiMeta").textContent =
+                "토큰 저장 후 " + item.kpiApiLabel + " API를 사용할 수 있습니다.";
+              document.getElementById(item.phaseCode + "KpiSummary").innerHTML = "";
+              document.getElementById(item.phaseCode + "KpiTable").innerHTML = renderEmpty("인증 토큰 필요");
+              document.getElementById(item.phaseCode + "EscalationTable").innerHTML = renderEmpty("인증 토큰 필요");
+              document.getElementById(item.phaseCode + "KpiRecommendations").innerHTML = renderEmpty("인증 토큰 필요");
+              document.getElementById(item.phaseCode + "PolicyMeta").textContent =
+                "토큰 저장 후 " + item.policyApiLabel + " API를 사용할 수 있습니다.";
+              document.getElementById(item.phaseCode + "PolicyTable").innerHTML = renderEmpty("인증 토큰 필요");
+            }});
+            ["w09", "w10", "w11", "w15"].forEach((phaseCode) => {{
+              setSharedTrackerAuthRequired(getSharedTrackerConfig(phaseCode));
+            }});
 
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
@@ -33077,13 +32227,6 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w09KpiRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w09PolicyMeta").textContent = "실패: " + err.message;
           document.getElementById("w09PolicyTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w09TrackerMeta").textContent = "실패: " + err.message;
-          document.getElementById("w09TrackerSummary").innerHTML = "";
-          document.getElementById("w09TrackerTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w09ReadinessMeta").textContent = "실패: " + err.message;
-          document.getElementById("w09ReadinessCards").innerHTML = "";
-          document.getElementById("w09ReadinessBlockers").innerHTML = renderEmpty(err.message);
-          document.getElementById("w09EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w10KpiMeta").textContent = "실패: " + err.message;
           document.getElementById("w10KpiSummary").innerHTML = "";
           document.getElementById("w10KpiTable").innerHTML = renderEmpty(err.message);
@@ -33091,13 +32234,6 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w10KpiRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w10PolicyMeta").textContent = "실패: " + err.message;
           document.getElementById("w10PolicyTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w10TrackerMeta").textContent = "실패: " + err.message;
-          document.getElementById("w10TrackerSummary").innerHTML = "";
-          document.getElementById("w10TrackerTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w10ReadinessMeta").textContent = "실패: " + err.message;
-          document.getElementById("w10ReadinessCards").innerHTML = "";
-          document.getElementById("w10ReadinessBlockers").innerHTML = renderEmpty(err.message);
-          document.getElementById("w10EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w11KpiMeta").textContent = "실패: " + err.message;
           document.getElementById("w11KpiSummary").innerHTML = "";
           document.getElementById("w11KpiTable").innerHTML = renderEmpty(err.message);
@@ -33105,13 +32241,6 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w11KpiRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w11PolicyMeta").textContent = "실패: " + err.message;
           document.getElementById("w11PolicyTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w11TrackerMeta").textContent = "실패: " + err.message;
-          document.getElementById("w11TrackerSummary").innerHTML = "";
-          document.getElementById("w11TrackerTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w11ReadinessMeta").textContent = "실패: " + err.message;
-          document.getElementById("w11ReadinessCards").innerHTML = "";
-          document.getElementById("w11ReadinessBlockers").innerHTML = renderEmpty(err.message);
-          document.getElementById("w11EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w15KpiMeta").textContent = "실패: " + err.message;
           document.getElementById("w15KpiSummary").innerHTML = "";
           document.getElementById("w15KpiTable").innerHTML = renderEmpty(err.message);
@@ -33119,13 +32248,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w15KpiRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w15PolicyMeta").textContent = "실패: " + err.message;
           document.getElementById("w15PolicyTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w15TrackerMeta").textContent = "실패: " + err.message;
-          document.getElementById("w15TrackerSummary").innerHTML = "";
-          document.getElementById("w15TrackerTable").innerHTML = renderEmpty(err.message);
-          document.getElementById("w15ReadinessMeta").textContent = "실패: " + err.message;
-          document.getElementById("w15ReadinessCards").innerHTML = "";
-          document.getElementById("w15ReadinessBlockers").innerHTML = renderEmpty(err.message);
-          document.getElementById("w15EvidenceTable").innerHTML = renderEmpty(err.message);
+          ["w09", "w10", "w11", "w15"].forEach((phaseCode) => {{
+            setSharedTrackerError(getSharedTrackerConfig(phaseCode), err.message);
+          }});
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -33326,30 +32451,54 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
       document.getElementById("w07WeeklyTrendsBtn").addEventListener("click", runW07WeeklyTrends);
       document.getElementById("w08DisciplineRefreshBtn").addEventListener("click", runW08ReportDiscipline);
-      document.getElementById("w09KpiRefreshBtn").addEventListener("click", runW09KpiOperation);
-      document.getElementById("w09TrackBootstrapBtn").addEventListener("click", runW09TrackerBootstrap);
-      document.getElementById("w09TrackRefreshBtn").addEventListener("click", runW09Tracker);
-      document.getElementById("w09ReadinessBtn").addEventListener("click", runW09Readiness);
-      document.getElementById("w09CompleteBtn").addEventListener("click", runW09Complete);
-      document.getElementById("w09TrackUpdateBtn").addEventListener("click", runW09TrackerUpdateAndUpload);
-      document.getElementById("w10KpiRefreshBtn").addEventListener("click", runW10KpiOperation);
-      document.getElementById("w10TrackBootstrapBtn").addEventListener("click", runW10TrackerBootstrap);
-      document.getElementById("w10TrackRefreshBtn").addEventListener("click", runW10Tracker);
-      document.getElementById("w10ReadinessBtn").addEventListener("click", runW10Readiness);
-      document.getElementById("w10CompleteBtn").addEventListener("click", runW10Complete);
-      document.getElementById("w10TrackUpdateBtn").addEventListener("click", runW10TrackerUpdateAndUpload);
-      document.getElementById("w11KpiRefreshBtn").addEventListener("click", runW11KpiOperation);
-      document.getElementById("w11TrackBootstrapBtn").addEventListener("click", runW11TrackerBootstrap);
-      document.getElementById("w11TrackRefreshBtn").addEventListener("click", runW11Tracker);
-      document.getElementById("w11ReadinessBtn").addEventListener("click", runW11Readiness);
-      document.getElementById("w11CompleteBtn").addEventListener("click", runW11Complete);
-      document.getElementById("w11TrackUpdateBtn").addEventListener("click", runW11TrackerUpdateAndUpload);
-      document.getElementById("w15KpiRefreshBtn").addEventListener("click", runW15KpiOperation);
-      document.getElementById("w15TrackBootstrapBtn").addEventListener("click", runW15TrackerBootstrap);
-      document.getElementById("w15TrackRefreshBtn").addEventListener("click", runW15Tracker);
-      document.getElementById("w15ReadinessBtn").addEventListener("click", runW15Readiness);
-      document.getElementById("w15CompleteBtn").addEventListener("click", runW15Complete);
-      document.getElementById("w15TrackUpdateBtn").addEventListener("click", runW15TrackerUpdateAndUpload);
+      const sharedKpiRefreshHandlers = {{
+        w09: runW09KpiOperation,
+        w10: runW10KpiOperation,
+        w11: runW11KpiOperation,
+        w15: runW15KpiOperation,
+      }};
+      Object.keys(sharedKpiRefreshHandlers).forEach((phaseCode) => {{
+        document.getElementById(phaseCode + "KpiRefreshBtn")
+          .addEventListener("click", sharedKpiRefreshHandlers[phaseCode]);
+      }});
+      const sharedTrackerHandlers = {{
+        w09: {{
+          bootstrap: runW09TrackerBootstrap,
+          refresh: runW09Tracker,
+          readiness: runW09Readiness,
+          complete: runW09Complete,
+          update: runW09TrackerUpdateAndUpload,
+        }},
+        w10: {{
+          bootstrap: runW10TrackerBootstrap,
+          refresh: runW10Tracker,
+          readiness: runW10Readiness,
+          complete: runW10Complete,
+          update: runW10TrackerUpdateAndUpload,
+        }},
+        w11: {{
+          bootstrap: runW11TrackerBootstrap,
+          refresh: runW11Tracker,
+          readiness: runW11Readiness,
+          complete: runW11Complete,
+          update: runW11TrackerUpdateAndUpload,
+        }},
+        w15: {{
+          bootstrap: runW15TrackerBootstrap,
+          refresh: runW15Tracker,
+          readiness: runW15Readiness,
+          complete: runW15Complete,
+          update: runW15TrackerUpdateAndUpload,
+        }},
+      }};
+      Object.keys(sharedTrackerHandlers).forEach((phaseCode) => {{
+        const handlers = sharedTrackerHandlers[phaseCode];
+        document.getElementById(phaseCode + "TrackBootstrapBtn").addEventListener("click", handlers.bootstrap);
+        document.getElementById(phaseCode + "TrackRefreshBtn").addEventListener("click", handlers.refresh);
+        document.getElementById(phaseCode + "ReadinessBtn").addEventListener("click", handlers.readiness);
+        document.getElementById(phaseCode + "CompleteBtn").addEventListener("click", handlers.complete);
+        document.getElementById(phaseCode + "TrackUpdateBtn").addEventListener("click", handlers.update);
+      }});
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -33391,30 +32540,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       if (!document.getElementById("w08DisciplineSite").value) {{
         document.getElementById("w08DisciplineSite").value = "HQ";
       }}
-      if (!document.getElementById("w09KpiSite").value) {{
-        document.getElementById("w09KpiSite").value = "HQ";
-      }}
-      if (!document.getElementById("w09TrackSite").value) {{
-        document.getElementById("w09TrackSite").value = "HQ";
-      }}
-      if (!document.getElementById("w10KpiSite").value) {{
-        document.getElementById("w10KpiSite").value = "HQ";
-      }}
-      if (!document.getElementById("w10TrackSite").value) {{
-        document.getElementById("w10TrackSite").value = "HQ";
-      }}
-      if (!document.getElementById("w11KpiSite").value) {{
-        document.getElementById("w11KpiSite").value = "HQ";
-      }}
-      if (!document.getElementById("w11TrackSite").value) {{
-        document.getElementById("w11TrackSite").value = "HQ";
-      }}
-      if (!document.getElementById("w15KpiSite").value) {{
-        document.getElementById("w15KpiSite").value = "HQ";
-      }}
-      if (!document.getElementById("w15TrackSite").value) {{
-        document.getElementById("w15TrackSite").value = "HQ";
-      }}
+      ["w09KpiSite", "w10KpiSite", "w11KpiSite", "w15KpiSite"].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node && !node.value) {{
+          node.value = "HQ";
+        }}
+      }});
+      ["w09", "w10", "w11", "w15"].forEach((phaseCode) => {{
+        setSharedTrackerSiteDefault(getSharedTrackerConfig(phaseCode), "HQ");
+      }});
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
       activate("{selected_tab}", false);
@@ -41471,6 +40605,43 @@ def get_ops_adoption_w09_kpi_operation(
     return snapshot
 
 
+ADOPTION_POLICY_RESPONSE_SCHEMA = "adoption_policy_response"
+ADOPTION_POLICY_RESPONSE_VERSION = "v1"
+
+
+def _build_adoption_policy_response(
+    *,
+    phase: str,
+    policy_kind: str,
+    endpoint: str,
+    policy: dict[str, Any],
+    updated_at: datetime,
+    policy_key: str,
+    policy_site: str | None,
+) -> dict[str, Any]:
+    scope_type = "site" if policy_site else "global"
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+        "version": ADOPTION_POLICY_RESPONSE_VERSION,
+        "scope": {
+            "type": scope_type,
+            "site": policy_site,
+            "policy_key": policy_key,
+        },
+        "meta": {
+            "schema": ADOPTION_POLICY_RESPONSE_SCHEMA,
+            "schema_version": ADOPTION_POLICY_RESPONSE_VERSION,
+            "phase": phase,
+            "policy_kind": policy_kind,
+            "endpoint": endpoint,
+            "scope_type": scope_type,
+        },
+    }
+
+
 @app.get("/api/ops/adoption/w09/kpi-policy")
 def get_ops_adoption_w09_kpi_policy(
     site: Annotated[str | None, Query()] = None,
@@ -41496,12 +40667,15 @@ def get_ops_adoption_w09_kpi_policy(
             ),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w09",
+        policy_kind="kpi-policy",
+        endpoint="/api/ops/adoption/w09/kpi-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w09/kpi-policy")
@@ -41532,12 +40706,15 @@ def set_ops_adoption_w09_kpi_policy(
             ),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w09",
+        policy_kind="kpi-policy",
+        endpoint="/api/ops/adoption/w09/kpi-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.get("/api/ops/adoption/w10/self-serve")
@@ -41589,12 +40766,15 @@ def get_ops_adoption_w10_support_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w10",
+        policy_kind="support-policy",
+        endpoint="/api/ops/adoption/w10/support-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w10/support-policy")
@@ -41621,12 +40801,15 @@ def set_ops_adoption_w10_support_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w10",
+        policy_kind="support-policy",
+        endpoint="/api/ops/adoption/w10/support-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.get("/api/ops/adoption/w11/scale-readiness")
@@ -41678,12 +40861,15 @@ def get_ops_adoption_w11_readiness_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w11",
+        policy_kind="readiness-policy",
+        endpoint="/api/ops/adoption/w11/readiness-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w11/readiness-policy")
@@ -41710,12 +40896,15 @@ def set_ops_adoption_w11_readiness_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w11",
+        policy_kind="readiness-policy",
+        endpoint="/api/ops/adoption/w11/readiness-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.get("/api/ops/adoption/w12/closure-handoff")
@@ -41767,12 +40956,15 @@ def get_ops_adoption_w12_handoff_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w12",
+        policy_kind="handoff-policy",
+        endpoint="/api/ops/adoption/w12/handoff-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w12/handoff-policy")
@@ -41799,12 +40991,15 @@ def set_ops_adoption_w12_handoff_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w12",
+        policy_kind="handoff-policy",
+        endpoint="/api/ops/adoption/w12/handoff-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.get("/api/ops/adoption/w13/closure-handoff")
@@ -41856,12 +41051,15 @@ def get_ops_adoption_w13_handoff_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w13",
+        policy_kind="handoff-policy",
+        endpoint="/api/ops/adoption/w13/handoff-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w13/handoff-policy")
@@ -41888,12 +41086,15 @@ def set_ops_adoption_w13_handoff_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w13",
+        policy_kind="handoff-policy",
+        endpoint="/api/ops/adoption/w13/handoff-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 @app.get("/api/ops/adoption/w14/stability-sprint")
 def get_ops_adoption_w14_stability_sprint(
@@ -41944,12 +41145,15 @@ def get_ops_adoption_w14_stability_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w14",
+        policy_kind="stability-policy",
+        endpoint="/api/ops/adoption/w14/stability-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w14/stability-policy")
@@ -41976,12 +41180,15 @@ def set_ops_adoption_w14_stability_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w14",
+        policy_kind="stability-policy",
+        endpoint="/api/ops/adoption/w14/stability-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.get("/api/ops/adoption/w15/ops-efficiency")
@@ -42033,12 +41240,15 @@ def get_ops_adoption_w15_efficiency_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w15",
+        policy_kind="efficiency-policy",
+        endpoint="/api/ops/adoption/w15/efficiency-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 @app.put("/api/ops/adoption/w15/efficiency-policy")
@@ -42065,12 +41275,15 @@ def set_ops_adoption_w15_efficiency_policy(
             "enabled": bool(policy.get("enabled", True)),
         },
     )
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_adoption_policy_response(
+        phase="w15",
+        policy_kind="efficiency-policy",
+        endpoint="/api/ops/adoption/w15/efficiency-policy",
+        policy=policy,
+        updated_at=updated_at,
+        policy_key=policy_key,
+        policy_site=policy_site,
+    )
 
 
 

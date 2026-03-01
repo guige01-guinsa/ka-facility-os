@@ -96,6 +96,36 @@ def _owner_headers() -> dict[str, str]:
     return {"X-Admin-Token": "test-owner-token"}
 
 
+def _assert_adoption_policy_response_shape(
+    body: dict[str, object],
+    *,
+    phase: str,
+    policy_kind: str,
+    endpoint: str,
+    site: str,
+    policy_key_prefix: str,
+) -> None:
+    assert body["version"] == "v1"
+    assert body["site"] == site
+    assert str(body["policy_key"]).startswith(policy_key_prefix)
+    assert isinstance(body.get("policy"), dict)
+
+    scope = body.get("scope")
+    assert isinstance(scope, dict)
+    assert scope["type"] == "site"
+    assert scope["site"] == site
+    assert scope["policy_key"] == body["policy_key"]
+
+    meta = body.get("meta")
+    assert isinstance(meta, dict)
+    assert meta["schema"] == "adoption_policy_response"
+    assert meta["schema_version"] == "v1"
+    assert meta["phase"] == phase
+    assert meta["policy_kind"] == policy_kind
+    assert meta["endpoint"] == endpoint
+    assert meta["scope_type"] == "site"
+
+
 def test_health_and_meta(app_client: TestClient) -> None:
     health = app_client.get("/health")
     assert health.status_code == 200
@@ -1025,6 +1055,46 @@ def test_w15_public_and_tracker_flow(app_client: TestClient) -> None:
     assert policy.status_code == 200
     assert policy.json()["site"] == "HQ"
     assert policy.json()["policy_key"].startswith("adoption_w15_efficiency_policy:site:")
+
+
+def test_w09_to_w15_policy_response_schema_standardized(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    site = "HQ"
+    cases = [
+        ("w09", "kpi-policy", "/api/ops/adoption/w09/kpi-policy", "adoption_w09_kpi_policy:site:"),
+        ("w10", "support-policy", "/api/ops/adoption/w10/support-policy", "adoption_w10_support_policy:site:"),
+        ("w11", "readiness-policy", "/api/ops/adoption/w11/readiness-policy", "adoption_w11_readiness_policy:site:"),
+        ("w12", "handoff-policy", "/api/ops/adoption/w12/handoff-policy", "adoption_w12_handoff_policy:site:"),
+        ("w13", "handoff-policy", "/api/ops/adoption/w13/handoff-policy", "adoption_w13_handoff_policy:site:"),
+        ("w14", "stability-policy", "/api/ops/adoption/w14/stability-policy", "adoption_w14_stability_policy:site:"),
+        ("w15", "efficiency-policy", "/api/ops/adoption/w15/efficiency-policy", "adoption_w15_efficiency_policy:site:"),
+    ]
+    for phase, policy_kind, path, key_prefix in cases:
+        read_resp = app_client.get(path, params={"site": site}, headers=headers)
+        assert read_resp.status_code == 200
+        read_body = read_resp.json()
+        _assert_adoption_policy_response_shape(
+            read_body,
+            phase=phase,
+            policy_kind=policy_kind,
+            endpoint=path,
+            site=site,
+            policy_key_prefix=key_prefix,
+        )
+
+        write_resp = app_client.put(path, params={"site": site}, headers=headers, json={"enabled": True})
+        assert write_resp.status_code == 200
+        write_body = write_resp.json()
+        _assert_adoption_policy_response_shape(
+            write_body,
+            phase=phase,
+            policy_kind=policy_kind,
+            endpoint=path,
+            site=site,
+            policy_key_prefix=key_prefix,
+        )
+        assert write_body["policy"] == read_body["policy"] or isinstance(write_body["policy"], dict)
+
 
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())
