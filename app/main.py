@@ -343,6 +343,14 @@ API_LATENCY_P95_CRITICAL_MS = _env_float("API_LATENCY_P95_CRITICAL_MS", 900.0, m
 API_LATENCY_PERSIST_ENABLED = _env_bool("API_LATENCY_PERSIST_ENABLED", True)
 API_LATENCY_PERSIST_RETENTION_DAYS = _env_int("API_LATENCY_PERSIST_RETENTION_DAYS", 30, min_value=1)
 API_LATENCY_PERSIST_PRUNE_INTERVAL = _env_int("API_LATENCY_PERSIST_PRUNE_INTERVAL", 200, min_value=1)
+API_BURN_RATE_SHORT_WINDOW_MIN = _env_int("API_BURN_RATE_SHORT_WINDOW_MIN", 5, min_value=1)
+API_BURN_RATE_LONG_WINDOW_MIN = _env_int("API_BURN_RATE_LONG_WINDOW_MIN", 60, min_value=1)
+API_BURN_RATE_MIN_SAMPLES = _env_int("API_BURN_RATE_MIN_SAMPLES", 8, min_value=1)
+API_BURN_RATE_WARNING = _env_float("API_BURN_RATE_WARNING", 2.0, min_value=0.1)
+API_BURN_RATE_CRITICAL = _env_float("API_BURN_RATE_CRITICAL", 10.0, min_value=0.1)
+API_BURN_RATE_ERROR_SLO_PERCENT = _env_float("API_BURN_RATE_ERROR_SLO_PERCENT", 99.0, min_value=0.1)
+API_BURN_RATE_LATENCY_SLO_PERCENT = _env_float("API_BURN_RATE_LATENCY_SLO_PERCENT", 95.0, min_value=0.1)
+API_BURN_RATE_SAMPLE_LIMIT = _env_int("API_BURN_RATE_SAMPLE_LIMIT", 1500, min_value=20)
 API_LATENCY_TARGETS_RAW = (
     getenv(
         "API_LATENCY_TARGETS",
@@ -4207,7 +4215,14 @@ API_LATENCY_TARGETS: list[dict[str, str]] = _parse_api_latency_targets(API_LATEN
 _API_LATENCY_TARGET_KEYS = {entry["key"] for entry in API_LATENCY_TARGETS}
 
 
-def _record_api_latency_sample(*, method: str, path: str, duration_ms: float) -> None:
+def _record_api_latency_sample(
+    *,
+    method: str,
+    path: str,
+    duration_ms: float,
+    status_code: int | None,
+    is_error: bool,
+) -> None:
     if not API_LATENCY_MONITOR_ENABLED:
         return
     key = f"{method.upper()} {path}"
@@ -4232,6 +4247,8 @@ def _record_api_latency_sample(*, method: str, path: str, duration_ms: float) ->
         method=method.upper(),
         path=path,
         duration_ms=bounded_duration,
+        status_code=status_code,
+        is_error=is_error,
         sampled_at=sampled_at,
     )
 
@@ -4242,6 +4259,8 @@ def _persist_api_latency_sample(
     method: str,
     path: str,
     duration_ms: float,
+    status_code: int | None,
+    is_error: bool,
     sampled_at: datetime,
 ) -> None:
     if not API_LATENCY_PERSIST_ENABLED:
@@ -4255,6 +4274,8 @@ def _persist_api_latency_sample(
                     method=method[:10],
                     path=path[:240],
                     duration_ms=max(0.0, float(duration_ms)),
+                    status_code=status_code,
+                    is_error=bool(is_error),
                     sampled_at=sampled_at,
                 )
             )
@@ -4267,11 +4288,11 @@ def _persist_api_latency_sample(
         return
 
 
-def _load_persisted_api_latency_samples(
+def _load_persisted_api_latency_records(
     *,
     endpoint_key: str,
     limit: int,
-) -> tuple[list[float], str | None]:
+) -> tuple[list[dict[str, Any]], str | None]:
     if not API_LATENCY_PERSIST_ENABLED:
         return [], None
     try:
@@ -4279,6 +4300,8 @@ def _load_persisted_api_latency_samples(
             rows = conn.execute(
                 select(
                     api_latency_samples.c.duration_ms,
+                    api_latency_samples.c.status_code,
+                    api_latency_samples.c.is_error,
                     api_latency_samples.c.sampled_at,
                 )
                 .where(api_latency_samples.c.endpoint_key == endpoint_key)
@@ -4289,17 +4312,67 @@ def _load_persisted_api_latency_samples(
         return [], None
     if not rows:
         return [], None
-    samples = [max(0.0, float(row.get("duration_ms") or 0.0)) for row in rows]
+    records = [
+        {
+            "duration_ms": max(0.0, float(row.get("duration_ms") or 0.0)),
+            "status_code": int(row.get("status_code")) if row.get("status_code") is not None else None,
+            "is_error": bool(row.get("is_error")),
+            "sampled_at": _as_datetime(row.get("sampled_at")),
+        }
+        for row in rows
+    ]
     sampled_at = rows[0].get("sampled_at")
     last_seen_at = _as_datetime(sampled_at).isoformat() if sampled_at is not None else None
-    return samples, last_seen_at
+    return records, last_seen_at
+
+
+def _build_burn_rate_window_stats(
+    *,
+    records: list[dict[str, Any]],
+    since_at: datetime,
+    latency_warning_ms: float,
+    error_budget_percent: float,
+    latency_budget_percent: float,
+    min_samples: int,
+) -> dict[str, Any]:
+    scoped = [row for row in records if _as_datetime(row.get("sampled_at")) >= since_at]
+    total_count = len(scoped)
+    error_count = sum(1 for row in scoped if bool(row.get("is_error")))
+    slow_count = sum(1 for row in scoped if float(row.get("duration_ms") or 0.0) >= latency_warning_ms)
+    error_rate_percent = round((error_count / total_count) * 100.0, 4) if total_count > 0 else 0.0
+    slow_rate_percent = round((slow_count / total_count) * 100.0, 4) if total_count > 0 else 0.0
+    error_burn = round(error_rate_percent / error_budget_percent, 4) if total_count > 0 else 0.0
+    latency_burn = round(slow_rate_percent / latency_budget_percent, 4) if total_count > 0 else 0.0
+    burn_rate = round(max(error_burn, latency_burn), 4) if total_count > 0 else 0.0
+    return {
+        "sample_count": total_count,
+        "error_count": error_count,
+        "slow_count": slow_count,
+        "error_rate_percent": round(error_rate_percent, 2),
+        "slow_rate_percent": round(slow_rate_percent, 2),
+        "error_burn_rate": error_burn,
+        "latency_burn_rate": latency_burn,
+        "burn_rate": burn_rate,
+        "ready": total_count >= min_samples,
+    }
 
 
 def _build_api_latency_snapshot() -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc)
     warning_ms = max(1.0, float(API_LATENCY_P95_WARNING_MS))
     critical_ms = max(warning_ms, float(API_LATENCY_P95_CRITICAL_MS))
     min_samples = max(1, int(API_LATENCY_MIN_SAMPLES))
     window_size = max(20, API_LATENCY_MONITOR_WINDOW)
+    burn_short_window_min = max(1, int(API_BURN_RATE_SHORT_WINDOW_MIN))
+    burn_long_window_min = max(burn_short_window_min, int(API_BURN_RATE_LONG_WINDOW_MIN))
+    burn_min_samples = max(1, int(API_BURN_RATE_MIN_SAMPLES))
+    burn_warning = max(0.1, float(API_BURN_RATE_WARNING))
+    burn_critical = max(burn_warning, float(API_BURN_RATE_CRITICAL))
+    error_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_ERROR_SLO_PERCENT)))
+    latency_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_LATENCY_SLO_PERCENT)))
+    error_budget_percent = max(0.01, round(100.0 - error_slo_percent, 4))
+    latency_budget_percent = max(0.01, round(100.0 - latency_slo_percent, 4))
+    persisted_limit = max(window_size, int(API_BURN_RATE_SAMPLE_LIMIT))
     endpoints: list[dict[str, Any]] = []
 
     with _API_LATENCY_LOCK:
@@ -4307,15 +4380,22 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
         memory_last_seen = dict(_API_LATENCY_LAST_SEEN_AT)
         for target in API_LATENCY_TARGETS:
             key = target["key"]
-            persisted_samples, persisted_last_seen_at = _load_persisted_api_latency_samples(
+            persisted_records, persisted_last_seen_at = _load_persisted_api_latency_records(
                 endpoint_key=key,
-                limit=window_size,
+                limit=persisted_limit,
             )
-            sample_source = "database" if persisted_samples else "memory"
-            samples = persisted_samples if persisted_samples else list(memory_samples.get(key, []))
+            sample_source = "database" if persisted_records else "memory"
+            samples = (
+                [float(row.get("duration_ms") or 0.0) for row in persisted_records]
+                if persisted_records
+                else list(memory_samples.get(key, []))
+            )
             sample_count = len(samples)
             p95_ms = _percentile_value(samples, 95.0)
+            p99_ms = _percentile_value(samples, 99.0)
             last_seen_at = persisted_last_seen_at or memory_last_seen.get(key)
+            error_count = sum(1 for row in persisted_records if bool(row.get("is_error"))) if persisted_records else 0
+            error_rate_percent = round((error_count / sample_count) * 100.0, 2) if sample_count > 0 else 0.0
 
             status = "ok"
             message = "P95 latency is within threshold."
@@ -4332,6 +4412,55 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                 status = "warning"
                 message = f"P95 latency {round(p95_ms, 2)}ms exceeds warning threshold {round(warning_ms, 2)}ms."
 
+            burn_short = {
+                "sample_count": 0,
+                "error_count": 0,
+                "slow_count": 0,
+                "error_rate_percent": 0.0,
+                "slow_rate_percent": 0.0,
+                "error_burn_rate": 0.0,
+                "latency_burn_rate": 0.0,
+                "burn_rate": 0.0,
+                "ready": False,
+            }
+            burn_long = dict(burn_short)
+            if persisted_records:
+                burn_short = _build_burn_rate_window_stats(
+                    records=persisted_records,
+                    since_at=generated_at - timedelta(minutes=burn_short_window_min),
+                    latency_warning_ms=warning_ms,
+                    error_budget_percent=error_budget_percent,
+                    latency_budget_percent=latency_budget_percent,
+                    min_samples=burn_min_samples,
+                )
+                burn_long = _build_burn_rate_window_stats(
+                    records=persisted_records,
+                    since_at=generated_at - timedelta(minutes=burn_long_window_min),
+                    latency_warning_ms=warning_ms,
+                    error_budget_percent=error_budget_percent,
+                    latency_budget_percent=latency_budget_percent,
+                    min_samples=burn_min_samples,
+                )
+
+            burn_status = "ok"
+            burn_message = "Burn-rate is within threshold."
+            burn_rate_short = float(burn_short.get("burn_rate") or 0.0)
+            burn_rate_long = float(burn_long.get("burn_rate") or 0.0)
+            effective_burn = max(burn_rate_short, burn_rate_long)
+            if not bool(burn_short.get("ready")) or not bool(burn_long.get("ready")):
+                burn_status = "warning"
+                burn_message = "Burn-rate monitor warming up due to low recent sample coverage."
+            elif effective_burn >= burn_critical:
+                burn_status = "critical"
+                burn_message = (
+                    f"Burn-rate {round(effective_burn, 2)} exceeds critical threshold {round(burn_critical, 2)}."
+                )
+            elif effective_burn >= burn_warning:
+                burn_status = "warning"
+                burn_message = (
+                    f"Burn-rate {round(effective_burn, 2)} exceeds warning threshold {round(burn_warning, 2)}."
+                )
+
             endpoints.append(
                 {
                     "endpoint": key,
@@ -4339,10 +4468,43 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                     "path": target["path"],
                     "sample_count": sample_count,
                     "p95_ms": None if p95_ms is None else round(float(p95_ms), 2),
+                    "p99_ms": None if p99_ms is None else round(float(p99_ms), 2),
+                    "error_count": error_count,
+                    "error_rate_percent": error_rate_percent,
                     "status": status,
                     "message": message,
                     "last_seen_at": last_seen_at,
                     "sample_source": sample_source,
+                    "burn_rate_short": round(burn_rate_short, 4),
+                    "burn_rate_long": round(burn_rate_long, 4),
+                    "burn_status": burn_status,
+                    "burn_message": burn_message,
+                    "burn_windows": {
+                        "short": {
+                            "window_minutes": burn_short_window_min,
+                            "sample_count": int(burn_short.get("sample_count") or 0),
+                            "error_count": int(burn_short.get("error_count") or 0),
+                            "slow_count": int(burn_short.get("slow_count") or 0),
+                            "error_rate_percent": float(burn_short.get("error_rate_percent") or 0.0),
+                            "slow_rate_percent": float(burn_short.get("slow_rate_percent") or 0.0),
+                            "error_burn_rate": float(burn_short.get("error_burn_rate") or 0.0),
+                            "latency_burn_rate": float(burn_short.get("latency_burn_rate") or 0.0),
+                            "burn_rate": float(burn_short.get("burn_rate") or 0.0),
+                            "ready": bool(burn_short.get("ready")),
+                        },
+                        "long": {
+                            "window_minutes": burn_long_window_min,
+                            "sample_count": int(burn_long.get("sample_count") or 0),
+                            "error_count": int(burn_long.get("error_count") or 0),
+                            "slow_count": int(burn_long.get("slow_count") or 0),
+                            "error_rate_percent": float(burn_long.get("error_rate_percent") or 0.0),
+                            "slow_rate_percent": float(burn_long.get("slow_rate_percent") or 0.0),
+                            "error_burn_rate": float(burn_long.get("error_burn_rate") or 0.0),
+                            "latency_burn_rate": float(burn_long.get("latency_burn_rate") or 0.0),
+                            "burn_rate": float(burn_long.get("burn_rate") or 0.0),
+                            "ready": bool(burn_long.get("ready")),
+                        },
+                    },
                 }
             )
 
@@ -4366,6 +4528,28 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
         else:
             message = f"{warning_count} endpoint(s) exceeded warning P95 threshold or have low sample coverage."
 
+    burn_critical_count = sum(1 for item in endpoints if item.get("burn_status") == "critical")
+    burn_warning_count = sum(1 for item in endpoints if item.get("burn_status") == "warning")
+    burn_warming_up_count = sum(
+        1
+        for item in endpoints
+        if bool((item.get("burn_windows") or {}).get("short", {}).get("ready")) is False
+        or bool((item.get("burn_windows") or {}).get("long", {}).get("ready")) is False
+    )
+    burn_status = "ok"
+    if burn_critical_count > 0:
+        burn_status = "critical"
+    elif burn_warning_count > 0:
+        burn_status = "warning"
+    burn_message = "Burn-rate monitor is healthy."
+    if burn_status == "critical":
+        burn_message = f"{burn_critical_count} endpoint(s) exceeded critical burn-rate threshold."
+    elif burn_status == "warning":
+        if burn_warning_count == burn_warming_up_count:
+            burn_message = "Burn-rate monitor warming up (insufficient sample coverage)."
+        else:
+            burn_message = f"{burn_warning_count} endpoint(s) exceeded burn-rate warning threshold."
+
     return {
         "status": status,
         "message": message,
@@ -4380,6 +4564,22 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
         "critical_count": critical_count,
         "warning_count": warning_count,
         "insufficient_samples_count": insufficient_count,
+        "burn_rate": {
+            "status": burn_status,
+            "message": burn_message,
+            "short_window_minutes": burn_short_window_min,
+            "long_window_minutes": burn_long_window_min,
+            "warning_threshold": round(burn_warning, 4),
+            "critical_threshold": round(burn_critical, 4),
+            "min_samples": burn_min_samples,
+            "error_slo_percent": round(error_slo_percent, 4),
+            "latency_slo_percent": round(latency_slo_percent, 4),
+            "error_budget_percent": error_budget_percent,
+            "latency_budget_percent": latency_budget_percent,
+            "critical_count": burn_critical_count,
+            "warning_count": burn_warning_count,
+            "warming_up_count": burn_warming_up_count,
+        },
         "endpoints": endpoints,
     }
 
@@ -4799,11 +4999,24 @@ async def api_latency_monitor_middleware(request: Request, call_next: Callable[[
         response = await call_next(request)
     except Exception:
         duration_ms = (time.perf_counter() - started) * 1000.0
-        _record_api_latency_sample(method=method, path=path, duration_ms=duration_ms)
+        _record_api_latency_sample(
+            method=method,
+            path=path,
+            duration_ms=duration_ms,
+            status_code=500,
+            is_error=True,
+        )
         raise
 
     duration_ms = (time.perf_counter() - started) * 1000.0
-    _record_api_latency_sample(method=method, path=path, duration_ms=duration_ms)
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    _record_api_latency_sample(
+        method=method,
+        path=path,
+        duration_ms=duration_ms,
+        status_code=status_code if status_code > 0 else None,
+        is_error=status_code >= 500 if status_code > 0 else False,
+    )
     response.headers.setdefault("X-Request-Duration-Ms", f"{round(duration_ms, 2)}")
     return response
 
@@ -40062,6 +40275,21 @@ def _build_ops_runbook_checks_snapshot(
             "endpoints": latency_snapshot["endpoints"],
         },
         {
+            "id": "api_burn_rate",
+            "status": str((latency_snapshot.get("burn_rate") or {}).get("status") or "warning"),
+            "message": str((latency_snapshot.get("burn_rate") or {}).get("message") or "Burn-rate status unavailable."),
+            "short_window_minutes": int((latency_snapshot.get("burn_rate") or {}).get("short_window_minutes") or 0),
+            "long_window_minutes": int((latency_snapshot.get("burn_rate") or {}).get("long_window_minutes") or 0),
+            "warning_threshold": float((latency_snapshot.get("burn_rate") or {}).get("warning_threshold") or 0.0),
+            "critical_threshold": float((latency_snapshot.get("burn_rate") or {}).get("critical_threshold") or 0.0),
+            "min_samples": int((latency_snapshot.get("burn_rate") or {}).get("min_samples") or 0),
+            "error_budget_percent": float((latency_snapshot.get("burn_rate") or {}).get("error_budget_percent") or 0.0),
+            "latency_budget_percent": float((latency_snapshot.get("burn_rate") or {}).get("latency_budget_percent") or 0.0),
+            "critical_count": int((latency_snapshot.get("burn_rate") or {}).get("critical_count") or 0),
+            "warning_count": int((latency_snapshot.get("burn_rate") or {}).get("warning_count") or 0),
+            "warming_up_count": int((latency_snapshot.get("burn_rate") or {}).get("warming_up_count") or 0),
+        },
+        {
             "id": "audit_chain_integrity",
             "status": "ok" if current_month_archive["chain"]["chain_ok"] else "critical",
             "message": "Audit chain verified."
@@ -40492,6 +40720,10 @@ def get_ops_security_posture(
             "audit_signing_status": signing_snapshot["status"],
             "api_latency_status": snapshot.get("api_latency", {}).get("status"),
             "api_latency_warning_threshold_ms": snapshot.get("api_latency", {}).get("warning_threshold_ms"),
+            "api_burn_rate_status": snapshot.get("api_latency", {}).get("burn_rate", {}).get("status"),
+            "api_burn_rate_warning_threshold": snapshot.get("api_latency", {}).get("burn_rate", {}).get(
+                "warning_threshold"
+            ),
             "deploy_smoke_latest_status": snapshot.get("deploy_smoke_policy", {}).get("latest_status"),
             "deploy_smoke_latest_run_at": snapshot.get("deploy_smoke_policy", {}).get("latest_run_at"),
             "evidence_storage_backend": snapshot["evidence_storage_backend"],

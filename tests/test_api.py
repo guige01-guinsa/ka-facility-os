@@ -4446,6 +4446,7 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "w07_weekly_quality_recent" in ids
     assert "w07_quality_alert_channel" in ids
     assert "api_latency_p95" in ids
+    assert "api_burn_rate" in ids
     assert "deploy_smoke_checklist" in ids
     assert "evidence_archive_integrity_batch" in ids
 
@@ -4465,6 +4466,9 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
     assert body["api_latency"]["enabled"] is True
     assert body["api_latency"]["target_count"] >= 2
+    assert body["api_latency"]["burn_rate"]["short_window_minutes"] >= 1
+    assert body["api_latency"]["burn_rate"]["long_window_minutes"] >= body["api_latency"]["burn_rate"]["short_window_minutes"]
+    assert body["api_latency"]["burn_rate"]["status"] in {"ok", "warning", "critical"}
     assert body["deploy_smoke_policy"]["require_runbook_gate"] is True
     assert body["deploy_smoke_policy"]["recent_hours"] >= 1
     assert body["evidence_archive_integrity_policy"]["sample_per_table"] >= 1
@@ -4527,6 +4531,8 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     latency_body = latency.json()
     assert "status" in latency_body
     assert latency_body["target_count"] >= 2
+    assert "burn_rate" in latency_body
+    assert "status" in latency_body["burn_rate"]
     assert isinstance(latency_body["endpoints"], list)
 
     integrity = app_client.get(
@@ -4596,6 +4602,10 @@ def test_api_latency_samples_persisted_beyond_memory_cache(app_client: TestClien
     endpoint = next(item for item in body["endpoints"] if item["endpoint"] == "GET /health")
     assert endpoint["sample_count"] >= 6
     assert endpoint["sample_source"] == "database"
+    assert "p99_ms" in endpoint
+    assert "burn_rate_short" in endpoint
+    assert "burn_rate_long" in endpoint
+    assert endpoint["burn_status"] in {"ok", "warning", "critical"}
 
 
 def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:

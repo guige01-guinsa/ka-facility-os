@@ -194,6 +194,8 @@ api_latency_samples = Table(
     Column("method", String(10), nullable=False),
     Column("path", String(240), nullable=False),
     Column("duration_ms", Float, nullable=False),
+    Column("status_code", Integer, nullable=True),
+    Column("is_error", Boolean, nullable=False, default=False),
     Column("sampled_at", DateTime(timezone=True), nullable=False),
 )
 
