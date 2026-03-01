@@ -83,6 +83,20 @@ services:
         value: basic
       - key: EVIDENCE_SCAN_BLOCK_SUSPICIOUS
         value: "false"
+      - key: W07_QUALITY_ALERT_ENABLED
+        value: "true"
+      - key: W07_QUALITY_ALERT_COOLDOWN_MINUTES
+        value: "180"
+      - key: W07_QUALITY_ALERT_MIN_WINDOW_DAYS
+        value: "7"
+      - key: W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD
+        value: "30"
+      - key: W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD
+        value: "95"
+      - key: W07_WEEKLY_ARCHIVE_ENABLED
+        value: "true"
+      - key: W07_WEEKLY_ARCHIVE_PATH
+        value: data/adoption-w07-archives
       - key: AUDIT_ARCHIVE_SIGNING_KEY
         sync: false
   - type: cron
@@ -353,5 +367,49 @@ services:
         value: "120"
       - key: ALERT_MTTR_SLO_TOP_CHANNELS
         value: "15"
+  - type: cron
+    name: ka-facility-os-adoption-w07-weekly
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "30 23 * * 5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.adoption_w07_weekly --days 14
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URLS
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
+      - key: W07_QUALITY_ALERT_ENABLED
+        value: "true"
+      - key: W07_QUALITY_ALERT_COOLDOWN_MINUTES
+        value: "180"
+      - key: W07_QUALITY_ALERT_MIN_WINDOW_DAYS
+        value: "7"
+      - key: W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD
+        value: "30"
+      - key: W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD
+        value: "95"
+      - key: W07_WEEKLY_ARCHIVE_ENABLED
+        value: "true"
+      - key: W07_WEEKLY_ARCHIVE_PATH
+        value: data/adoption-w07-archives
 
 

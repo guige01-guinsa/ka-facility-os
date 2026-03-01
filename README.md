@@ -106,6 +106,23 @@ Open:
   - `POST /api/adoption/w02/tracker/items/{id}/evidence` (`adoption_w02:write`, multipart upload, max 5MB)
   - `GET /api/adoption/w02/tracker/items/{id}/evidence` (`adoption_w02:read`)
   - `GET /api/adoption/w02/tracker/evidence/{id}/download` (`adoption_w02:read`)
+- W07 execution tracker + quality automation
+  - `POST /api/adoption/w07/tracker/bootstrap` (`adoption_w07:write`)
+  - `GET /api/adoption/w07/tracker/items` (`adoption_w07:read`)
+  - `GET /api/adoption/w07/tracker/overview?site=...` (`adoption_w07:read`)
+  - `GET /api/adoption/w07/tracker/readiness?site=...` (`adoption_w07:read`)
+  - `GET /api/adoption/w07/tracker/completion?site=...` (`adoption_w07:read`)
+  - `POST /api/adoption/w07/tracker/complete` (`adoption_w07:write`)
+  - `PATCH /api/adoption/w07/tracker/items/{id}` (`adoption_w07:write`)
+  - `POST /api/adoption/w07/tracker/items/{id}/evidence` (`adoption_w07:write`, multipart upload, max 5MB)
+  - `GET /api/adoption/w07/tracker/items/{id}/evidence` (`adoption_w07:read`)
+  - `GET /api/adoption/w07/tracker/evidence/{id}/download` (`adoption_w07:read`)
+  - `GET /api/ops/adoption/w07/sla-quality` (`adoption_w07:read`)
+  - `GET /api/ops/adoption/w07/automation-readiness` (`adoption_w07:read`)
+  - `POST /api/ops/adoption/w07/sla-quality/run-weekly` (`adoption_w07:write`)
+  - `GET /api/ops/adoption/w07/sla-quality/latest-weekly` (`adoption_w07:read`)
+  - `GET /api/ops/adoption/w07/sla-quality/trends` (`adoption_w07:read`)
+  - `GET /api/ops/adoption/w07/sla-quality/archive.csv` (`adoption_w07:read`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -190,6 +207,7 @@ python -m app.jobs.ops_daily_check
 python -m app.jobs.alert_retention --write-archive
 python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30
 python -m app.jobs.alert_mttr_slo
+python -m app.jobs.adoption_w07_weekly --days 14
 ```
 
 Render cron target commands:
@@ -200,6 +218,7 @@ Render cron target commands:
 - `python -m app.jobs.alert_retention --write-archive` (`35 1 * * *`)
 - `python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30` (`25 * * * *`)
 - `python -m app.jobs.alert_mttr_slo` (`10 * * * *`)
+- `python -m app.jobs.adoption_w07_weekly --days 14` (`30 23 * * 5`)
 
 Optional alert webhook env:
 - `ALERT_WEBHOOK_URL` (sync false secret env)
@@ -221,6 +240,13 @@ Optional alert webhook env:
 - `ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE` (default `mttr_slo_breach`)
 - `ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES` (default `120`)
 - `ALERT_MTTR_SLO_TOP_CHANNELS` (default `15`)
+- `W07_QUALITY_ALERT_ENABLED` (default `true`)
+- `W07_QUALITY_ALERT_COOLDOWN_MINUTES` (default `180`)
+- `W07_QUALITY_ALERT_MIN_WINDOW_DAYS` (default `7`)
+- `W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD` (default `30`)
+- `W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD` (default `95`)
+- `W07_WEEKLY_ARCHIVE_ENABLED` (default `true`)
+- `W07_WEEKLY_ARCHIVE_PATH` (default `data/adoption-w07-archives`)
 - `ALERT_GUARD_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_RETENTION_DAYS` (default `90`)
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)

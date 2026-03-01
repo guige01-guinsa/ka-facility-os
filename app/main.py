@@ -8035,6 +8035,121 @@ def _build_w07_weekly_archive_csv(points: list[dict[str, Any]]) -> str:
     return buffer.getvalue()
 
 
+def _build_w07_automation_readiness_snapshot(
+    *,
+    site: str | None,
+    allowed_sites: list[str] | None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    runs = _read_w07_weekly_job_runs(site=site, allowed_sites=allowed_sites, limit=1)
+    latest_run_model: JobRunRead | None = None
+    latest_run_detail: dict[str, Any] = {}
+    if runs:
+        latest_run_model, latest_run_detail = runs[0]
+
+    latest_run_at = latest_run_model.finished_at if latest_run_model is not None else None
+    latest_run_recent = (
+        latest_run_at is not None
+        and latest_run_at >= (generated_at - timedelta(days=8))
+    )
+    latest_degraded = bool((latest_run_detail.get("degradation") or {}).get("degraded", False))
+    alert_targets = _configured_alert_targets()
+    webhook_configured = len(alert_targets) > 0
+    alert_enabled = W07_QUALITY_ALERT_ENABLED
+    weekly_window_days = int(latest_run_detail.get("window_days") or max(7, W07_QUALITY_ALERT_MIN_WINDOW_DAYS))
+
+    checks: list[dict[str, Any]] = [
+        {
+            "id": "w07_weekly_cron_recent",
+            "status": "ok" if latest_run_recent else "warning",
+            "message": (
+                "W07 weekly job observed within 8 days."
+                if latest_run_recent
+                else "No W07 weekly job run observed within 8 days."
+            ),
+        },
+        {
+            "id": "w07_alert_channel_config",
+            "status": (
+                "ok"
+                if webhook_configured or not alert_enabled
+                else "warning"
+            ),
+            "message": (
+                "Alert channel targets configured."
+                if webhook_configured
+                else (
+                    "W07 quality alert is enabled but no ALERT_WEBHOOK_URL/ALERT_WEBHOOK_URLS configured."
+                    if alert_enabled
+                    else "W07 quality alert is disabled."
+                )
+            ),
+            "webhook_target_count": len(alert_targets),
+            "alert_enabled": alert_enabled,
+        },
+        {
+            "id": "w07_latest_quality_state",
+            "status": "warning" if latest_degraded else "ok",
+            "message": (
+                "Latest W07 weekly run indicates degradation."
+                if latest_degraded
+                else "Latest W07 weekly run is within threshold."
+            ),
+            "degraded": latest_degraded,
+        },
+        {
+            "id": "w07_archive_write_mode",
+            "status": "ok" if W07_WEEKLY_ARCHIVE_ENABLED else "warning",
+            "message": (
+                "Weekly archive file writing is enabled."
+                if W07_WEEKLY_ARCHIVE_ENABLED
+                else "Weekly archive file writing is disabled."
+            ),
+            "archive_enabled": W07_WEEKLY_ARCHIVE_ENABLED,
+            "archive_path": W07_WEEKLY_ARCHIVE_PATH,
+        },
+    ]
+
+    overall = "ok"
+    if any(item.get("status") == "critical" for item in checks):
+        overall = "critical"
+    elif any(item.get("status") == "warning" for item in checks):
+        overall = "warning"
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "site": site,
+        "overall_status": overall,
+        "checks": checks,
+        "runtime": {
+            "latest_run_id": latest_run_model.id if latest_run_model is not None else None,
+            "latest_run_status": latest_run_model.status if latest_run_model is not None else None,
+            "latest_run_at": latest_run_at.isoformat() if latest_run_at is not None else None,
+            "latest_run_recent": latest_run_recent,
+            "latest_run_degraded": latest_degraded,
+            "latest_run_window_days": weekly_window_days,
+        },
+        "policy": {
+            "alert_enabled": alert_enabled,
+            "cooldown_minutes": max(0, W07_QUALITY_ALERT_COOLDOWN_MINUTES),
+            "min_window_days": max(7, W07_QUALITY_ALERT_MIN_WINDOW_DAYS),
+            "escalation_rate_threshold_percent": round(max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD), 2),
+            "alert_success_rate_threshold_percent": round(max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD)), 2),
+            "archive_enabled": W07_WEEKLY_ARCHIVE_ENABLED,
+            "archive_path": W07_WEEKLY_ARCHIVE_PATH,
+        },
+        "integration": {
+            "webhook_target_count": len(alert_targets),
+            "webhook_configured": webhook_configured,
+            "webhook_targets": alert_targets,
+            "recommended_cron_schedule_utc": "30 23 * * 5",
+            "cron_job_name": W07_WEEKLY_JOB_NAME,
+            "cron_command": "python -m app.jobs.adoption_w07_weekly --days 14",
+        },
+    }
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -9458,6 +9573,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
+        "adoption_w07_automation_readiness_api": "/api/ops/adoption/w07/automation-readiness",
         "adoption_w07_sla_quality_weekly_run_api": "/api/ops/adoption/w07/sla-quality/run-weekly",
         "adoption_w07_sla_quality_weekly_latest_api": "/api/ops/adoption/w07/sla-quality/latest-weekly",
         "adoption_w07_sla_quality_weekly_trends_api": "/api/ops/adoption/w07/sla-quality/trends",
@@ -12042,6 +12158,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
         <a href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+        <a href="/api/ops/adoption/w07/automation-readiness">W07 Automation Readiness API (Token)</a>
         <a href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
         <a href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
         <a href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
@@ -13907,6 +14024,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="adoptW07ScheduleIcs" href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
               <a id="adoptW07CoachingPlaybook" href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
               <a id="adoptW07QualityApi" href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+              <a id="adoptW07AutomationReadinessApi" href="/api/ops/adoption/w07/automation-readiness">W07 Automation Readiness API (Token)</a>
               <a id="adoptW07TrackerItemsApi" href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
               <a id="adoptW07TrackerOverviewApi" href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
               <a id="adoptW07WeeklyRunApi" href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
@@ -19967,9 +20085,21 @@ def _build_ops_runbook_checks_snapshot(
             .where(job_runs.c.finished_at >= (generated_at - timedelta(hours=6)))
             .limit(1)
         ).first()
+        w07_weekly_recent = conn.execute(
+            select(job_runs.c.id)
+            .where(job_runs.c.job_name == W07_WEEKLY_JOB_NAME)
+            .where(job_runs.c.finished_at >= (generated_at - timedelta(days=8)))
+            .limit(1)
+        ).first()
         mttr_latest = conn.execute(
             select(job_runs.c.finished_at, job_runs.c.detail_json)
             .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        w07_latest = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == W07_WEEKLY_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -20004,6 +20134,14 @@ def _build_ops_runbook_checks_snapshot(
     if not isinstance(mttr_window, dict):
         mttr_window = {}
     mttr_breach = bool(mttr_latest_detail.get("breach", False))
+    w07_latest_detail: dict[str, Any] = {}
+    w07_latest_finished_at: datetime | None = None
+    if w07_latest is not None:
+        w07_latest_detail = _parse_job_detail_json(w07_latest.get("detail_json"))
+        w07_latest_finished_at = _as_optional_datetime(w07_latest.get("finished_at"))
+    w07_latest_degraded = bool((w07_latest_detail.get("degradation") or {}).get("degraded", False))
+    w07_alert_targets = _configured_alert_targets()
+    w07_webhook_ready = len(w07_alert_targets) > 0
 
     quarantined_count = int(guard_summary.get("quarantined_count") or 0)
     guard_warning_count = int(guard_summary.get("warning_count") or 0)
@@ -20123,6 +20261,36 @@ def _build_ops_runbook_checks_snapshot(
             "window_incident_count": int(mttr_window.get("incident_count") or 0),
             "window_mttr_minutes": mttr_window.get("mttr_minutes"),
         },
+        {
+            "id": "w07_weekly_quality_recent",
+            "status": "ok" if w07_weekly_recent is not None else "warning",
+            "message": (
+                "W07 weekly SLA quality automation observed within last 8 days."
+                if w07_weekly_recent is not None
+                else "No recent W07 weekly SLA quality automation run within last 8 days."
+            ),
+            "latest_checked_at": w07_latest_finished_at.isoformat() if w07_latest_finished_at is not None else None,
+            "latest_degraded": w07_latest_degraded,
+        },
+        {
+            "id": "w07_quality_alert_channel",
+            "status": (
+                "ok"
+                if (not W07_QUALITY_ALERT_ENABLED) or w07_webhook_ready
+                else "warning"
+            ),
+            "message": (
+                "W07 quality alert channel configured."
+                if w07_webhook_ready
+                else (
+                    "W07 quality alert is enabled but no webhook channel is configured."
+                    if W07_QUALITY_ALERT_ENABLED
+                    else "W07 quality alert is disabled."
+                )
+            ),
+            "alert_enabled": W07_QUALITY_ALERT_ENABLED,
+            "webhook_target_count": len(w07_alert_targets),
+        },
     ]
     overall = "ok"
     if any(check["status"] == "critical" for check in checks):
@@ -20142,6 +20310,20 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     signing_snapshot = _audit_signing_snapshot()
     alert_targets = _configured_alert_targets()
     mttr_policy, mttr_policy_updated_at, _ = _ensure_mttr_slo_policy()
+    with get_conn() as conn:
+        w07_latest = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == W07_WEEKLY_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    w07_latest_model = _row_to_job_run_model(w07_latest) if w07_latest is not None else None
+    w07_latest_detail = (
+        w07_latest_model.detail
+        if w07_latest_model is not None and isinstance(w07_latest_model.detail, dict)
+        else {}
+    )
+    w07_latest_degraded = bool((w07_latest_detail.get("degradation") or {}).get("degraded", False))
     return {
         "generated_at": generated_at.isoformat(),
         "env": ENV_NAME,
@@ -20169,6 +20351,27 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
             "mttr_slo_notify_cooldown_minutes": int(mttr_policy.get("notify_cooldown_minutes") or 0),
             "mttr_slo_top_channels": int(mttr_policy.get("top_channels") or 0),
             "mttr_slo_policy_updated_at": mttr_policy_updated_at.isoformat(),
+            "w07_quality_alert_enabled": W07_QUALITY_ALERT_ENABLED,
+            "w07_quality_alert_cooldown_minutes": max(0, W07_QUALITY_ALERT_COOLDOWN_MINUTES),
+            "w07_quality_escalation_threshold_percent": round(max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD), 2),
+            "w07_quality_alert_success_threshold_percent": round(
+                max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD)),
+                2,
+            ),
+            "w07_quality_webhook_target_count": len(alert_targets),
+            "w07_quality_weekly_latest_run_at": (
+                w07_latest_model.finished_at.isoformat()
+                if w07_latest_model is not None
+                else None
+            ),
+            "w07_quality_weekly_latest_status": (
+                w07_latest_model.status
+                if w07_latest_model is not None
+                else None
+            ),
+            "w07_quality_weekly_latest_degraded": w07_latest_degraded,
+            "w07_quality_archive_enabled": W07_WEEKLY_ARCHIVE_ENABLED,
+            "w07_quality_archive_path": W07_WEEKLY_ARCHIVE_PATH,
         },
         "evidence_storage_backend": _normalize_evidence_storage_backend(EVIDENCE_STORAGE_BACKEND),
         "token_policy": {
@@ -20421,6 +20624,31 @@ def get_ops_adoption_w07_sla_quality(
             "response_time_improvement_percent": snapshot.get("metrics", {}).get("response_time_improvement_percent"),
             "escalation_rate_percent": snapshot.get("metrics", {}).get("escalation_rate_percent"),
             "alert_success_rate_percent": snapshot.get("metrics", {}).get("alert_success_rate_percent"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w07/automation-readiness")
+def get_ops_adoption_w07_automation_readiness(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    normalized_site = _normalize_site_name(site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w07_automation_readiness_snapshot(site=normalized_site, allowed_sites=allowed_sites)
+    _write_audit_log(
+        principal=principal,
+        action="w07_automation_readiness_view",
+        resource_type="adoption_w07_automation",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "overall_status": snapshot.get("overall_status"),
+            "webhook_target_count": snapshot.get("integration", {}).get("webhook_target_count"),
+            "latest_run_status": snapshot.get("runtime", {}).get("latest_run_status"),
+            "latest_run_recent": snapshot.get("runtime", {}).get("latest_run_recent"),
         },
     )
     return snapshot

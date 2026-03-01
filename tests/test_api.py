@@ -253,6 +253,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
     assert service_info.json()["adoption_w07_sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
     assert (
+        service_info.json()["adoption_w07_automation_readiness_api"]
+        == "/api/ops/adoption/w07/automation-readiness"
+    )
+    assert (
         service_info.json()["adoption_w07_sla_quality_weekly_run_api"]
         == "/api/ops/adoption/w07/sla-quality/run-weekly"
     )
@@ -2350,6 +2354,80 @@ def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
     assert forbidden.status_code == 403
 
 
+def test_w07_automation_readiness_endpoint(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w07_readiness_manager_ci",
+            "display_name": "W07 Readiness Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W07 Ready Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w07-readiness-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    before = app_client.get(
+        "/api/ops/adoption/w07/automation-readiness?site=W07+Ready+Site",
+        headers=manager_headers,
+    )
+    assert before.status_code == 200
+    before_body = before.json()
+    assert before_body["site"] == "W07 Ready Site"
+    assert before_body["integration"]["cron_job_name"] == "adoption_w07_sla_quality_weekly"
+    assert before_body["integration"]["recommended_cron_schedule_utc"] == "30 23 * * 5"
+    assert isinstance(before_body["checks"], list)
+    assert len(before_body["checks"]) >= 4
+
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W07 readiness overdue",
+            "description": "seed weekly run",
+            "site": "W07 Ready Site",
+            "location": "R1",
+            "priority": "critical",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert work_order.status_code == 201
+
+    weekly_run = app_client.post(
+        "/api/ops/adoption/w07/sla-quality/run-weekly?site=W07+Ready+Site&days=14",
+        headers=manager_headers,
+    )
+    assert weekly_run.status_code == 200
+
+    after = app_client.get(
+        "/api/ops/adoption/w07/automation-readiness?site=W07+Ready+Site",
+        headers=manager_headers,
+    )
+    assert after.status_code == 200
+    after_body = after.json()
+    assert after_body["runtime"]["latest_run_id"] is not None
+    assert after_body["runtime"]["latest_run_recent"] is True
+    assert after_body["runtime"]["latest_run_status"] in {"success", "warning", "critical"}
+    assert isinstance(after_body["integration"]["webhook_targets"], list)
+    assert isinstance(after_body["policy"]["archive_enabled"], bool)
+
+    forbidden = app_client.get(
+        "/api/ops/adoption/w07/automation-readiness?site=Outside+W07+Ready+Site",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
+
+
 def test_w07_weekly_run_respects_cooldown(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert
@@ -2591,6 +2669,8 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "alert_guard_recovery_recent" in ids
     assert "alert_mttr_slo_recent" in ids
     assert "alert_mttr_slo_breach" in ids
+    assert "w07_weekly_quality_recent" in ids
+    assert "w07_quality_alert_channel" in ids
 
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -2626,6 +2706,12 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["alerting"]["mttr_slo_notify_event_type"] == "mttr_slo_breach"
     assert body["alerting"]["mttr_slo_notify_cooldown_minutes"] == 120
     assert body["alerting"]["mttr_slo_top_channels"] == 15
+    assert body["alerting"]["w07_quality_alert_enabled"] is True
+    assert body["alerting"]["w07_quality_alert_cooldown_minutes"] == 180
+    assert body["alerting"]["w07_quality_escalation_threshold_percent"] == 30.0
+    assert body["alerting"]["w07_quality_alert_success_threshold_percent"] == 95.0
+    assert isinstance(body["alerting"]["w07_quality_webhook_target_count"], int)
+    assert body["alerting"]["w07_quality_archive_enabled"] is True
     assert body["token_policy"]["max_ttl_days"] == 30
 
 
