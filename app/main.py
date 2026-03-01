@@ -853,6 +853,7 @@ OPS_QUALITY_WEEKLY_JOB_NAME = "ops_quality_report_weekly"
 OPS_QUALITY_MONTHLY_JOB_NAME = "ops_quality_report_monthly"
 DR_REHEARSAL_JOB_NAME = "dr_rehearsal"
 OPS_GOVERNANCE_GATE_JOB_NAME = "ops_governance_gate"
+OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS = 30
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 6, 12)
@@ -6123,6 +6124,152 @@ def _latest_ops_governance_gate_payload() -> dict[str, Any] | None:
         "finished_at": model.finished_at.isoformat(),
         **detail,
     }
+
+
+def _governance_remediation_owner_and_sla(rule_id: str) -> tuple[str, int]:
+    owner_sla_map: dict[str, tuple[str, int]] = {
+        "preflight_no_error": ("Platform Owner", 4),
+        "runbook_no_critical": ("Ops Lead", 4),
+        "security_risk_within_max": ("Security Manager", 8),
+        "daily_check_recent": ("Ops PM", 12),
+        "dr_restore_valid_recent": ("DR Owner", 24),
+        "deploy_smoke_binding_recent": ("Release Manager", 8),
+        "weekly_streak_target_met": ("Operations Excellence Lead", 24),
+    }
+    return owner_sla_map.get(rule_id, ("Ops Manager", 24))
+
+
+def _governance_remediation_action(rule_id: str, default_message: str) -> str:
+    actions = {
+        "preflight_no_error": "필수 ENV/스토리지 설정 오류를 즉시 수정하고 preflight 재검증",
+        "runbook_no_critical": "critical 체크 항목을 담당자에게 할당하고 재실행으로 해소 확인",
+        "security_risk_within_max": "보안 위험지표를 낮추기 위해 토큰/권한 이상징후를 우선 조치",
+        "daily_check_recent": "ops daily check 배치 상태를 복구하고 최신 실행 이력을 확보",
+        "dr_restore_valid_recent": "DR 리허설을 재실행하여 restore_valid=true 결과를 확보",
+        "deploy_smoke_binding_recent": "배포 스모크를 재실행하고 롤백 가이드 경로/체크섬 바인딩을 일치",
+        "weekly_streak_target_met": "주간 품질 리포트 cadence를 복구하고 streak 목표를 회복",
+    }
+    return actions.get(rule_id, default_message or "거버넌스 규칙 이슈를 해소하고 재판정 실행")
+
+
+def _governance_rule_priority(rule_status: str, required: bool) -> int:
+    if rule_status == "fail":
+        return 1 if required else 2
+    if rule_status == "warning":
+        return 3 if required else 4
+    return 9
+
+
+def _build_ops_governance_remediation_plan(
+    *,
+    snapshot: dict[str, Any],
+    include_warnings: bool = True,
+    max_items: int = OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS,
+) -> dict[str, Any]:
+    generated_at_raw = snapshot.get("generated_at")
+    generated_at = _as_optional_datetime(generated_at_raw) or datetime.now(timezone.utc)
+    decision = str(snapshot.get("decision") or "no_go")
+    rules = snapshot.get("rules") if isinstance(snapshot.get("rules"), list) else []
+    normalized_max = max(1, min(int(max_items), 200))
+
+    items: list[dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        status = str(rule.get("status") or "").strip().lower()
+        if status == "pass":
+            continue
+        if status == "warning" and (not include_warnings):
+            continue
+        rule_id = str(rule.get("id") or "")
+        required = bool(rule.get("required", False))
+        owner_role, sla_hours = _governance_remediation_owner_and_sla(rule_id)
+        due_at = generated_at + timedelta(hours=max(1, sla_hours))
+        detail = rule.get("detail") if isinstance(rule.get("detail"), dict) else {}
+        items.append(
+            {
+                "rule_id": rule_id,
+                "rule_status": status,
+                "required": required,
+                "priority": _governance_rule_priority(status, required),
+                "owner_role": owner_role,
+                "sla_hours": max(1, sla_hours),
+                "due_at": due_at.isoformat(),
+                "action": _governance_remediation_action(rule_id, str(rule.get("message") or "")),
+                "reason": str(rule.get("message") or ""),
+                "detail": detail,
+            }
+        )
+
+    items.sort(
+        key=lambda item: (
+            int(item.get("priority") or 9),
+            int(item.get("sla_hours") or 24),
+            str(item.get("rule_id") or ""),
+        )
+    )
+    trimmed = items[:normalized_max]
+    for idx, item in enumerate(trimmed, start=1):
+        item["item_id"] = f"GR-{idx:03d}"
+
+    fail_count = sum(1 for item in items if str(item.get("rule_status")) == "fail")
+    warning_count = sum(1 for item in items if str(item.get("rule_status")) == "warning")
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "gate_generated_at": generated_at.isoformat(),
+        "decision": decision,
+        "include_warnings": include_warnings,
+        "max_items": normalized_max,
+        "summary": {
+            "total_candidates": len(items),
+            "fail_count": fail_count,
+            "warning_count": warning_count,
+            "item_count": len(trimmed),
+            "critical_path_count": sum(
+                1
+                for item in trimmed
+                if str(item.get("rule_status")) == "fail" and bool(item.get("required"))
+            ),
+        },
+        "items": trimmed,
+    }
+
+
+def _build_ops_governance_remediation_csv(plan: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "item_id",
+            "rule_id",
+            "rule_status",
+            "required",
+            "priority",
+            "owner_role",
+            "sla_hours",
+            "due_at",
+            "action",
+            "reason",
+        ]
+    )
+    for item in plan.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        writer.writerow(
+            [
+                item.get("item_id"),
+                item.get("rule_id"),
+                item.get("rule_status"),
+                bool(item.get("required", False)),
+                item.get("priority"),
+                item.get("owner_role"),
+                item.get("sla_hours"),
+                item.get("due_at"),
+                item.get("action"),
+                item.get("reason"),
+            ]
+        )
+    return out.getvalue()
 
 
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
@@ -22067,6 +22214,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_gate_run_api": "/api/ops/governance/gate/run",
         "ops_governance_gate_latest_api": "/api/ops/governance/gate/latest",
         "ops_governance_gate_history_api": "/api/ops/governance/gate/history",
+        "ops_governance_gate_remediation_api": "/api/ops/governance/gate/remediation",
+        "ops_governance_gate_remediation_csv_api": "/api/ops/governance/gate/remediation/csv",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -43191,6 +43340,73 @@ def get_ops_governance_gate_history(
         "count": len(items),
         "items": items,
     }
+
+
+@ops_router.get("/governance/gate/remediation")
+def get_ops_governance_gate_remediation(
+    include_warnings: Annotated[bool, Query()] = True,
+    max_items: Annotated[int, Query(ge=1, le=200)] = OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_ops_governance_gate_snapshot()
+    plan = _build_ops_governance_remediation_plan(
+        snapshot=snapshot,
+        include_warnings=include_warnings,
+        max_items=max_items,
+    )
+    summary = plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_remediation_view",
+        resource_type="ops_governance_gate",
+        resource_id="remediation",
+        status="success" if str(plan.get("decision") or "no_go") == "go" else "warning",
+        detail={
+            "decision": plan.get("decision"),
+            "include_warnings": include_warnings,
+            "item_count": int(summary.get("item_count") or 0),
+            "fail_count": int(summary.get("fail_count") or 0),
+            "warning_count": int(summary.get("warning_count") or 0),
+        },
+    )
+    return plan
+
+
+@ops_router.get("/governance/gate/remediation/csv")
+def get_ops_governance_gate_remediation_csv(
+    include_warnings: Annotated[bool, Query()] = True,
+    max_items: Annotated[int, Query(ge=1, le=200)] = OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    snapshot = _build_ops_governance_gate_snapshot()
+    plan = _build_ops_governance_remediation_plan(
+        snapshot=snapshot,
+        include_warnings=include_warnings,
+        max_items=max_items,
+    )
+    csv_text = _build_ops_governance_remediation_csv(plan)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-governance-remediation-{stamp}.csv"
+    summary = plan.get("summary", {}) if isinstance(plan.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_gate_remediation_csv_export",
+        resource_type="ops_governance_gate",
+        resource_id=file_name,
+        status="success" if str(plan.get("decision") or "no_go") == "go" else "warning",
+        detail={
+            "decision": plan.get("decision"),
+            "include_warnings": include_warnings,
+            "item_count": int(summary.get("item_count") or 0),
+            "fail_count": int(summary.get("fail_count") or 0),
+            "warning_count": int(summary.get("warning_count") or 0),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

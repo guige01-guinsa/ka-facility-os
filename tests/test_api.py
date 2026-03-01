@@ -513,6 +513,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_governance_gate_run_api"] == "/api/ops/governance/gate/run"
     assert service_info.json()["ops_governance_gate_latest_api"] == "/api/ops/governance/gate/latest"
     assert service_info.json()["ops_governance_gate_history_api"] == "/api/ops/governance/gate/history"
+    assert service_info.json()["ops_governance_gate_remediation_api"] == "/api/ops/governance/gate/remediation"
+    assert (
+        service_info.json()["ops_governance_gate_remediation_csv_api"]
+        == "/api/ops/governance/gate/remediation/csv"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -4930,6 +4935,36 @@ def test_ops_governance_gate_endpoints(app_client: TestClient) -> None:
     assert history_body["count"] >= 1
     assert history_body["items"][0]["run_id"] == run_body["run_id"]
     assert history_body["items"][0]["decision"] in {"go", "no_go"}
+
+
+def test_ops_governance_gate_remediation_endpoints(app_client: TestClient) -> None:
+    plan = app_client.get(
+        "/api/ops/governance/gate/remediation?include_warnings=true&max_items=20",
+        headers=_owner_headers(),
+    )
+    assert plan.status_code == 200
+    body = plan.json()
+    assert body["decision"] in {"go", "no_go"}
+    assert body["summary"]["item_count"] >= 0
+    assert body["summary"]["fail_count"] >= 0
+    assert body["summary"]["warning_count"] >= 0
+    assert isinstance(body["items"], list)
+    if body["items"]:
+        first = body["items"][0]
+        assert first["item_id"].startswith("GR-")
+        assert first["rule_status"] in {"fail", "warning"}
+        assert first["owner_role"]
+        assert int(first["sla_hours"]) >= 1
+        assert first["due_at"]
+        assert first["action"]
+
+    csv_export = app_client.get(
+        "/api/ops/governance/gate/remediation/csv?include_warnings=true&max_items=20",
+        headers=_owner_headers(),
+    )
+    assert csv_export.status_code == 200
+    assert csv_export.headers["content-type"].startswith("text/csv")
+    assert "item_id,rule_id,rule_status,required,priority,owner_role,sla_hours,due_at,action,reason" in csv_export.text
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

@@ -22,6 +22,10 @@
   - `GO/NO-GO` 자동 판정 API/배치(`ops_governance_gate`) 구현
   - preflight/runbook/security risk/deploy binding/DR/streak 규칙 기반 판정 표준화
   - 일일 거버넌스 게이트 Cron(`ka-facility-os-ops-governance-gate`) 블루프린트 추가
+- W20 착수 완료: Governance Remediation Pack
+  - 게이트 규칙 결과를 실행 가능한 조치계획으로 변환(`owner_role`, `sla_hours`, `due_at`, `action`)
+  - `/api/ops/governance/gate/remediation` + CSV export API 추가
+  - 운영자가 즉시 후속 작업을 배정할 수 있는 우선순위 목록 자동 생성
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -104,6 +108,22 @@
 완료 기준:
 - 최신 판정 기준으로 `GO/NO-GO`가 일관되게 계산됨
 - 최소 1회 수동 실행 + 이력 조회 가능
+- 회귀 테스트 전체 통과
+
+## W20: Governance Remediation Automation (우선순위 5)
+목표:
+- `NO-GO/WARNING` 판정 이후 실행 항목을 자동 생성해 조치 리드타임 단축
+- 운영자가 보고/회의 없이 바로 할당 가능한 형식(CSV) 제공
+
+주요 작업:
+1. 게이트 규칙 -> 조치계획 매핑(우선순위, 담당역할, SLA, 액션 문구)
+2. `GET /api/ops/governance/gate/remediation` API 제공
+3. `GET /api/ops/governance/gate/remediation/csv` API 제공
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- remediation item 생성 규칙이 일관되고 우선순위가 안정적으로 정렬됨
+- CSV 출력으로 현장 실행표로 바로 사용 가능
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

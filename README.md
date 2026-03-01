@@ -101,6 +101,8 @@ Open:
   - `POST /api/ops/governance/gate/run` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/latest` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/history` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -435,6 +437,8 @@ Job monitoring:
 - `POST /api/ops/governance/gate/run`
 - `GET /api/ops/governance/gate/latest`
 - `GET /api/ops/governance/gate/history`
+- `GET /api/ops/governance/gate/remediation`
+- `GET /api/ops/governance/gate/remediation/csv`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
