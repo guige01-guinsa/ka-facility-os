@@ -185,6 +185,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_w08_api" in root_json.json()
     assert "public_adoption_w09_api" in root_json.json()
     assert "public_adoption_w10_api" in root_json.json()
+    assert "public_adoption_w11_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
@@ -198,6 +199,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w10_self_serve_api" in root_json.json()
     assert "adoption_w10_support_policy_api" in root_json.json()
     assert "adoption_w10_tracker_items_api" in root_json.json()
+    assert "adoption_w11_scale_readiness_api" in root_json.json()
+    assert "adoption_w11_readiness_policy_api" in root_json.json()
+    assert "adoption_w11_tracker_items_api" in root_json.json()
     assert "adoption_w07_tracker_items_api" in root_json.json()
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
@@ -228,12 +232,15 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W08 Report Discipline" in root_html.text
     assert "W09 KPI Operation" in root_html.text
     assert "W10 Self-serve Support" in root_html.text
+    assert "W11 Scale Readiness" in root_html.text
     assert "W09 KPI Operation Dashboard (Token)" in root_html.text
     assert "W10 Self-serve Dashboard (Token)" in root_html.text
+    assert "W11 Scale Readiness Dashboard (Token)" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W07 실행 추적" in root_html.text
     assert "W10 실행 추적" in root_html.text
+    assert "W11 실행 추적" in root_html.text
     assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
@@ -316,6 +323,15 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["public_adoption_w10_schedule_ics_api"]
         == "/api/public/adoption-plan/w10/schedule.ics"
     )
+    assert service_info.json()["public_adoption_w11_api"] == "/api/public/adoption-plan/w11"
+    assert (
+        service_info.json()["public_adoption_w11_checklist_csv_api"]
+        == "/api/public/adoption-plan/w11/checklist.csv"
+    )
+    assert (
+        service_info.json()["public_adoption_w11_schedule_ics_api"]
+        == "/api/public/adoption-plan/w11/schedule.ics"
+    )
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -361,8 +377,16 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w10_tracker_readiness_api"] == "/api/adoption/w10/tracker/readiness"
     assert service_info.json()["adoption_w10_tracker_completion_api"] == "/api/adoption/w10/tracker/completion"
     assert service_info.json()["adoption_w10_tracker_complete_api"] == "/api/adoption/w10/tracker/complete"
+    assert service_info.json()["adoption_w11_tracker_items_api"] == "/api/adoption/w11/tracker/items"
+    assert service_info.json()["adoption_w11_tracker_overview_api"] == "/api/adoption/w11/tracker/overview"
+    assert service_info.json()["adoption_w11_tracker_bootstrap_api"] == "/api/adoption/w11/tracker/bootstrap"
+    assert service_info.json()["adoption_w11_tracker_readiness_api"] == "/api/adoption/w11/tracker/readiness"
+    assert service_info.json()["adoption_w11_tracker_completion_api"] == "/api/adoption/w11/tracker/completion"
+    assert service_info.json()["adoption_w11_tracker_complete_api"] == "/api/adoption/w11/tracker/complete"
     assert service_info.json()["adoption_w10_self_serve_api"] == "/api/ops/adoption/w10/self-serve"
     assert service_info.json()["adoption_w10_support_policy_api"] == "/api/ops/adoption/w10/support-policy"
+    assert service_info.json()["adoption_w11_scale_readiness_api"] == "/api/ops/adoption/w11/scale-readiness"
+    assert service_info.json()["adoption_w11_readiness_policy_api"] == "/api/ops/adoption/w11/readiness-policy"
     assert (
         service_info.json()["adoption_w07_automation_readiness_api"]
         == "/api/ops/adoption/w07/automation-readiness"
@@ -427,6 +451,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W08 Report Discipline" in adoption_html.text
     assert "W09 KPI Operation" in adoption_html.text
     assert "W10 Self-serve Support" in adoption_html.text
+    assert "W11 Scale Readiness" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -495,6 +520,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w10_self_serve_support"]["self_serve_guides"]) >= 5
     assert len(body["w10_self_serve_support"]["troubleshooting_runbook"]) >= 4
     assert len(body["w10_self_serve_support"]["scheduled_events"]) >= 5
+    assert body["w11_scale_readiness"]["timeline"]["week"] == 11
+    assert len(body["w11_scale_readiness"]["self_serve_guides"]) >= 5
+    assert len(body["w11_scale_readiness"]["troubleshooting_runbook"]) >= 4
+    assert len(body["w11_scale_readiness"]["scheduled_events"]) >= 5
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -766,6 +795,34 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w10_ics.headers["content-type"].startswith("text/calendar")
     assert "BEGIN:VCALENDAR" in w10_ics.text
     assert "SUMMARY:[W10] W10 kickoff - self-serve baseline" in w10_ics.text
+
+    w11 = app_client.get("/api/public/adoption-plan/w11")
+    assert w11.status_code == 200
+    w11_body = w11.json()
+    assert w11_body["public"] is True
+    assert w11_body["timeline"]["week"] == 11
+    assert "scale readiness" in w11_body["timeline"]["focus"].lower()
+    assert len(w11_body["self_serve_guides"]) >= 5
+    assert len(w11_body["troubleshooting_runbook"]) >= 4
+    assert len(w11_body["scheduled_events"]) >= 5
+    assert w11_body["scale_readiness_api"] == "/api/ops/adoption/w11/scale-readiness"
+    assert w11_body["readiness_policy_api"] == "/api/ops/adoption/w11/readiness-policy"
+    assert w11_body["tracker_items_api"] == "/api/adoption/w11/tracker/items"
+
+    w11_csv = app_client.get("/api/public/adoption-plan/w11/checklist.csv")
+    assert w11_csv.status_code == 200
+    assert w11_csv.headers["content-type"].startswith("text/csv")
+    assert (
+        "section,id,key_or_module,name_or_symptom,owner_role,objective_or_target,definition_or_output,api_or_time"
+        in w11_csv.text
+    )
+    assert "self_serve_guide,W11-SR-01" in w11_csv.text
+
+    w11_ics = app_client.get("/api/public/adoption-plan/w11/schedule.ics")
+    assert w11_ics.status_code == 200
+    assert w11_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w11_ics.text
+    assert "SUMMARY:[W11] W11 kickoff - scale readiness baseline" in w11_ics.text
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -3288,6 +3345,255 @@ def test_w10_self_serve_and_tracker_flow(app_client: TestClient) -> None:
 
     forbidden_tracker = app_client.get(
         "/api/adoption/w10/tracker/overview?site=Outside+W10+Site",
+        headers=manager_headers,
+    )
+    assert forbidden_tracker.status_code == 403
+
+
+def test_w11_scale_readiness_and_tracker_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w11_manager_ci",
+            "display_name": "W11 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W11 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w11-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W11 Site",
+            "location": "R1",
+            "cycle": "weekly",
+            "inspector": "w11_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    work_order_a = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "Panel recurring alarm",
+            "description": "repeat issue seed A",
+            "site": "W11 Site",
+            "location": "R2",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert work_order_a.status_code == 201
+
+    work_order_b = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "Panel recurring alarm",
+            "description": "repeat issue seed B",
+            "site": "W11 Site",
+            "location": "R3",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+        },
+    )
+    assert work_order_b.status_code == 201
+
+    snapshot = app_client.get(
+        "/api/ops/adoption/w11/scale-readiness?site=W11+Site&days=30",
+        headers=manager_headers,
+    )
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["site"] == "W11 Site"
+    assert snapshot_body["window_days"] == 30
+    assert isinstance(snapshot_body["policy"], dict)
+    assert snapshot_body["policy"]["enabled"] is True
+    assert isinstance(snapshot_body["kpis"], list)
+    assert len(snapshot_body["kpis"]) >= 4
+    assert isinstance(snapshot_body["metrics"], dict)
+    assert snapshot_body["metrics"]["guide_total_count"] >= 5
+    assert snapshot_body["metrics"]["runbook_total_count"] >= 4
+    assert snapshot_body["metrics"]["overall_status"] in {"green", "yellow", "red"}
+    assert isinstance(snapshot_body["recommendations"], list)
+    assert len(snapshot_body["recommendations"]) >= 1
+    assert isinstance(snapshot_body["top_repeat_titles"], list)
+    assert any(row["title"] == "Panel recurring alarm" for row in snapshot_body["top_repeat_titles"])
+
+    policy = app_client.get(
+        "/api/ops/adoption/w11/readiness-policy?site=W11+Site",
+        headers=manager_headers,
+    )
+    assert policy.status_code == 200
+    policy_body = policy.json()
+    assert policy_body["site"] == "W11 Site"
+    assert policy_body["policy_key"].startswith("adoption_w11_readiness_policy:site:")
+    assert isinstance(policy_body["policy"], dict)
+    assert "risk_rate_green_threshold" in policy_body["policy"]
+    assert "risk_rate_yellow_threshold" in policy_body["policy"]
+    assert "checklist_completion_green_threshold" in policy_body["policy"]
+    assert "simulation_success_green_threshold" in policy_body["policy"]
+    assert "readiness_target" in policy_body["policy"]
+
+    updated = app_client.put(
+        "/api/ops/adoption/w11/readiness-policy?site=W11+Site",
+        headers=manager_headers,
+        json={
+            "enabled": True,
+            "risk_rate_green_threshold": 18,
+            "risk_rate_yellow_threshold": 27,
+            "checklist_completion_green_threshold": 85,
+            "checklist_completion_yellow_threshold": 70,
+            "simulation_success_green_threshold": 88,
+            "simulation_success_yellow_threshold": 72,
+            "readiness_target": 82,
+        },
+    )
+    assert updated.status_code == 200
+    updated_policy = updated.json()["policy"]
+    assert updated_policy["risk_rate_green_threshold"] == 18.0
+    assert updated_policy["risk_rate_yellow_threshold"] == 27.0
+    assert updated_policy["checklist_completion_green_threshold"] == 85.0
+    assert updated_policy["checklist_completion_yellow_threshold"] == 70.0
+    assert updated_policy["simulation_success_green_threshold"] == 88.0
+    assert updated_policy["simulation_success_yellow_threshold"] == 72.0
+    assert updated_policy["readiness_target"] == 82.0
+
+    global_policy_forbidden = app_client.get(
+        "/api/ops/adoption/w11/readiness-policy",
+        headers=manager_headers,
+    )
+    assert global_policy_forbidden.status_code == 403
+
+    global_update_forbidden = app_client.put(
+        "/api/ops/adoption/w11/readiness-policy",
+        headers=manager_headers,
+        json={"enabled": False},
+    )
+    assert global_update_forbidden.status_code == 403
+
+    bootstrap = app_client.post(
+        "/api/adoption/w11/tracker/bootstrap",
+        headers=manager_headers,
+        json={"site": "W11 Site"},
+    )
+    assert bootstrap.status_code == 200
+    bootstrap_body = bootstrap.json()
+    assert bootstrap_body["site"] == "W11 Site"
+    assert bootstrap_body["total_count"] >= 14
+
+    listed = app_client.get(
+        "/api/adoption/w11/tracker/items?site=W11+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) >= 14
+
+    required_item_id: int | None = None
+    for row in items:
+        item_id = int(row["id"])
+        patched = app_client.patch(
+            f"/api/adoption/w11/tracker/items/{item_id}",
+            headers=manager_headers,
+            json={
+                "assignee": "Scale QA",
+                "status": "done",
+                "completion_checked": True,
+                "completion_note": "W11 completed in CI",
+            },
+        )
+        assert patched.status_code == 200
+        assert patched.json()["status"] == "done"
+        assert patched.json()["completion_checked"] is True
+
+        if row["item_type"] in {"self_serve_guide", "troubleshooting_runbook"}:
+            if required_item_id is None:
+                required_item_id = item_id
+            uploaded = app_client.post(
+                f"/api/adoption/w11/tracker/items/{item_id}/evidence",
+                headers=manager_headers,
+                data={"note": "w11 proof"},
+                files={"file": (f"w11-{item_id}.txt", f"proof {item_id}".encode("utf-8"), "text/plain")},
+            )
+            assert uploaded.status_code == 201
+            evidence_id = uploaded.json()["id"]
+            downloaded = app_client.get(
+                f"/api/adoption/w11/tracker/evidence/{evidence_id}/download",
+                headers=manager_headers,
+            )
+            assert downloaded.status_code == 200
+            assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    assert required_item_id is not None
+
+    evidence_list = app_client.get(
+        f"/api/adoption/w11/tracker/items/{required_item_id}/evidence",
+        headers=manager_headers,
+    )
+    assert evidence_list.status_code == 200
+    assert len(evidence_list.json()) >= 1
+
+    readiness = app_client.get(
+        "/api/adoption/w11/tracker/readiness?site=W11+Site",
+        headers=manager_headers,
+    )
+    assert readiness.status_code == 200
+    readiness_body = readiness.json()
+    assert readiness_body["ready"] is True
+    assert readiness_body["pending_count"] == 0
+    assert readiness_body["in_progress_count"] == 0
+    assert readiness_body["blocked_count"] == 0
+    assert readiness_body["missing_assignee_count"] == 0
+    assert readiness_body["missing_completion_checked_count"] == 0
+    assert readiness_body["missing_required_evidence_count"] == 0
+
+    completed = app_client.post(
+        "/api/adoption/w11/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W11 Site", "completion_note": "W11 tracker complete"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["readiness"]["ready"] is True
+
+    completion = app_client.get(
+        "/api/adoption/w11/tracker/completion?site=W11+Site",
+        headers=manager_headers,
+    )
+    assert completion.status_code == 200
+    assert completion.json()["status"] == "completed"
+
+    bootstrap_outside = app_client.post(
+        "/api/adoption/w11/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "Outside W11 Site"},
+    )
+    assert bootstrap_outside.status_code == 200
+
+    forbidden_snapshot = app_client.get(
+        "/api/ops/adoption/w11/scale-readiness?site=Outside+W11+Site&days=30",
+        headers=manager_headers,
+    )
+    assert forbidden_snapshot.status_code == 403
+
+    forbidden_tracker = app_client.get(
+        "/api/adoption/w11/tracker/overview?site=Outside+W11+Site",
         headers=manager_headers,
     )
     assert forbidden_tracker.status_code == 403

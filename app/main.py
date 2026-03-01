@@ -53,6 +53,9 @@ from app.database import (
     adoption_w10_evidence_files,
     adoption_w10_site_runs,
     adoption_w10_tracker_items,
+    adoption_w11_evidence_files,
+    adoption_w11_site_runs,
+    adoption_w11_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -156,6 +159,15 @@ from app.schemas import (
     W10TrackerItemUpdate,
     W10TrackerOverviewRead,
     W10TrackerReadinessRead,
+    W11EvidenceRead,
+    W11TrackerBootstrapRequest,
+    W11TrackerBootstrapResponse,
+    W11TrackerCompletionRead,
+    W11TrackerCompletionRequest,
+    W11TrackerItemRead,
+    W11TrackerItemUpdate,
+    W11TrackerOverviewRead,
+    W11TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -313,7 +325,10 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w09:read",
         "adoption_w09:write",
         "adoption_w10:read",
+        "adoption_w11:read",
         "adoption_w10:write",
+        "adoption_w11:read",
+        "adoption_w11:write",
     },
     "operator": {
         "inspections:read",
@@ -340,6 +355,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w09:write",
         "adoption_w10:read",
         "adoption_w10:write",
+        "adoption_w11:read",
+        "adoption_w11:write",
     },
     "auditor": {
         "inspections:read",
@@ -379,6 +396,11 @@ W10_SUPPORT_POLICY_KEY_SITE_PREFIX = "adoption_w10_support_policy:site:"
 W10_SUPPORT_STATUS_GREEN = "green"
 W10_SUPPORT_STATUS_YELLOW = "yellow"
 W10_SUPPORT_STATUS_RED = "red"
+W11_READINESS_POLICY_KEY_DEFAULT = "adoption_w11_readiness_policy:default"
+W11_READINESS_POLICY_KEY_SITE_PREFIX = "adoption_w11_readiness_policy:site:"
+W11_READINESS_STATUS_GREEN = "green"
+W11_READINESS_STATUS_YELLOW = "yellow"
+W11_READINESS_STATUS_RED = "red"
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -519,6 +541,26 @@ W10_SITE_COMPLETION_STATUS_SET = {
 }
 W10_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
 W10_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W11_TRACKER_STATUS_PENDING = "pending"
+W11_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W11_TRACKER_STATUS_DONE = "done"
+W11_TRACKER_STATUS_BLOCKED = "blocked"
+W11_TRACKER_STATUS_SET = {
+    W11_TRACKER_STATUS_PENDING,
+    W11_TRACKER_STATUS_IN_PROGRESS,
+    W11_TRACKER_STATUS_DONE,
+    W11_TRACKER_STATUS_BLOCKED,
+}
+W11_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W11_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W11_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W11_SITE_COMPLETION_STATUS_SET = {
+    W11_SITE_COMPLETION_STATUS_ACTIVE,
+    W11_SITE_COMPLETION_STATUS_COMPLETED,
+    W11_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W11_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
+W11_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -2391,6 +2433,133 @@ ADOPTION_W10_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+
+ADOPTION_W11_SELF_SERVE_GUIDES: list[dict[str, Any]] = [
+    {
+        "id": "W11-SR-01",
+        "title": "Scale Readiness Checklist",
+        "problem_cluster": "확장 사이트 운영 준비",
+        "owner_role": "Program Manager",
+        "target": "핵심 체크리스트 100%",
+        "source_api": "/api/ops/adoption/w11/scale-readiness",
+    },
+    {
+        "id": "W11-SR-02",
+        "title": "New-site Token and RBAC Baseline",
+        "problem_cluster": "권한/토큰 초기 설정 누락",
+        "owner_role": "Security Admin",
+        "target": "권한 설정 오류 0건",
+        "source_api": "/api/auth/me",
+    },
+    {
+        "id": "W11-SR-03",
+        "title": "Multi-site SOP Sync",
+        "problem_cluster": "사이트별 SOP 편차",
+        "owner_role": "Ops Lead",
+        "target": "핵심 SOP 동기화율 >= 95%",
+        "source_api": "/api/public/adoption-plan/w11",
+    },
+    {
+        "id": "W11-SR-04",
+        "title": "Fallback Playbook Coverage",
+        "problem_cluster": "장애/비상 시나리오 공백",
+        "owner_role": "SRE",
+        "target": "fallback 커버리지 >= 85%",
+        "source_api": "/api/ops/security/posture",
+    },
+    {
+        "id": "W11-SR-05",
+        "title": "Expansion Go/No-go Gate",
+        "problem_cluster": "확장 승인 기준 불명확",
+        "owner_role": "Head of Ops",
+        "target": "신규 사이트 시뮬레이션 성공률 >= 90%",
+        "source_api": "/api/ops/adoption/w11/readiness-policy",
+    },
+]
+
+ADOPTION_W11_TROUBLESHOOTING_RUNBOOK: list[dict[str, Any]] = [
+    {
+        "id": "W11-RB-01",
+        "module": "New-site Onboarding",
+        "symptom": "초기 설정 누락으로 첫 업무 실패",
+        "owner_role": "Program Manager",
+        "definition_of_done": "재현/원인/복구/검증 로그 확보",
+        "api_ref": "/api/public/adoption-plan/w11",
+    },
+    {
+        "id": "W11-RB-02",
+        "module": "RBAC and Token",
+        "symptom": "권한 부족/과다로 업무 중단",
+        "owner_role": "Security Admin",
+        "definition_of_done": "권한 매핑, 토큰 정책, 감사로그 확인",
+        "api_ref": "/api/admin/users",
+    },
+    {
+        "id": "W11-RB-03",
+        "module": "Reporting and Audit",
+        "symptom": "확장 사이트 월간 리포트 누락",
+        "owner_role": "Audit Lead",
+        "definition_of_done": "CSV/PDF 증빙 + 감사 추적 완료",
+        "api_ref": "/api/reports/monthly/csv",
+    },
+    {
+        "id": "W11-RB-04",
+        "module": "Alert and Escalation",
+        "symptom": "신규 사이트 알림 체계 미정착",
+        "owner_role": "Ops QA",
+        "definition_of_done": "채널 성공률/MTTR 기준선 충족",
+        "api_ref": "/api/ops/alerts/kpi/channels",
+    },
+]
+
+ADOPTION_W11_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W11-E01",
+        "date": "2026-05-11",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W11 kickoff - scale readiness baseline",
+        "owner": "Program Manager + Ops Lead",
+        "output": "확장 준비 기준선/오너 확정",
+    },
+    {
+        "id": "W11-E02",
+        "date": "2026-05-12",
+        "start_time": "14:00",
+        "end_time": "14:40",
+        "title": "New-site simulation drill",
+        "owner": "Site Champion",
+        "output": "신규 사이트 시뮬레이션 통과/실패 리포트",
+    },
+    {
+        "id": "W11-E03",
+        "date": "2026-05-13",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Fallback playbook drill",
+        "owner": "SRE",
+        "output": "Fallback 실행 증빙 및 개선 항목",
+    },
+    {
+        "id": "W11-E04",
+        "date": "2026-05-14",
+        "start_time": "15:00",
+        "end_time": "15:30",
+        "title": "Risk register triage",
+        "owner": "PM + QA",
+        "output": "확장 리스크 Top list 및 완화 담당자",
+    },
+    {
+        "id": "W11-E05",
+        "date": "2026-05-15",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W11 close review",
+        "owner": "Head of Ops + Program Manager",
+        "output": "Scale readiness go/no-go decision",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -2501,6 +2670,19 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "W10 Self-serve", "href": "/api/ops/adoption/w10/self-serve"},
             {"label": "W10 Support Policy", "href": "/api/ops/adoption/w10/support-policy"},
             {"label": "W10 Tracker", "href": "/api/adoption/w10/tracker/items"},
+        ],
+    },
+    {
+        "id": "scale-readiness",
+        "name": "Scale Readiness",
+        "name_ko": "확장 준비",
+        "description": "W11 기준으로 신규 사이트 확장 준비도, 시뮬레이션, fallback playbook을 운영합니다.",
+        "kpi_hint": "New-site simulation success >= 90%",
+        "links": [
+            {"label": "W11 Pack", "href": "/api/public/adoption-plan/w11"},
+            {"label": "W11 Scale Readiness", "href": "/api/ops/adoption/w11/scale-readiness"},
+            {"label": "W11 Readiness Policy", "href": "/api/ops/adoption/w11/readiness-policy"},
+            {"label": "W11 Tracker", "href": "/api/adoption/w11/tracker/items"},
         ],
     },
     {
@@ -5384,6 +5566,404 @@ def _build_w10_self_serve_snapshot(
     }
 
 
+
+def _w11_readiness_policy_key(site: str | None) -> tuple[str, str | None]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return W11_READINESS_POLICY_KEY_DEFAULT, None
+    return f"{W11_READINESS_POLICY_KEY_SITE_PREFIX}{normalized_site}", normalized_site
+
+
+def _default_w11_readiness_policy() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "risk_rate_green_threshold": 20.0,
+        "risk_rate_yellow_threshold": 30.0,
+        "checklist_completion_green_threshold": 80.0,
+        "checklist_completion_yellow_threshold": 60.0,
+        "simulation_success_green_threshold": 80.0,
+        "simulation_success_yellow_threshold": 60.0,
+        "readiness_target": 75.0,
+    }
+
+
+def _normalize_w11_readiness_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w11_readiness_policy()
+
+    def _float_value(key: str, fallback: float, min_value: float, max_value: float) -> float:
+        try:
+            raw = float(source.get(key, fallback))
+        except (TypeError, ValueError):
+            raw = fallback
+        return round(max(min_value, min(raw, max_value)), 2)
+
+    repeat_green = _float_value(
+        "risk_rate_green_threshold",
+        float(defaults["risk_rate_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    repeat_yellow = _float_value(
+        "risk_rate_yellow_threshold",
+        float(defaults["risk_rate_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if repeat_yellow < repeat_green:
+        repeat_yellow = repeat_green
+
+    guide_green = _float_value(
+        "checklist_completion_green_threshold",
+        float(defaults["checklist_completion_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    guide_yellow = _float_value(
+        "checklist_completion_yellow_threshold",
+        float(defaults["checklist_completion_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if guide_yellow > guide_green:
+        guide_yellow = guide_green
+
+    runbook_green = _float_value(
+        "simulation_success_green_threshold",
+        float(defaults["simulation_success_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    runbook_yellow = _float_value(
+        "simulation_success_yellow_threshold",
+        float(defaults["simulation_success_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if runbook_yellow > runbook_green:
+        runbook_yellow = runbook_green
+
+    readiness_target = _float_value(
+        "readiness_target",
+        float(defaults["readiness_target"]),
+        0.0,
+        100.0,
+    )
+
+    return {
+        "enabled": bool(source.get("enabled", defaults.get("enabled", True))),
+        "risk_rate_green_threshold": repeat_green,
+        "risk_rate_yellow_threshold": repeat_yellow,
+        "checklist_completion_green_threshold": guide_green,
+        "checklist_completion_yellow_threshold": guide_yellow,
+        "simulation_success_green_threshold": runbook_green,
+        "simulation_success_yellow_threshold": runbook_yellow,
+        "readiness_target": readiness_target,
+    }
+
+
+def _parse_w11_readiness_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w11_readiness_policy(loaded)
+
+
+def _ensure_w11_readiness_policy(site: str | None) -> tuple[dict[str, Any], datetime, str, str | None]:
+    policy_key, normalized_site = _w11_readiness_policy_key(site)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w11_readiness_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=policy_key,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, policy_key, normalized_site
+    policy = _parse_w11_readiness_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, policy_key, normalized_site
+
+
+def _upsert_w11_readiness_policy(site: str | None, payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str, str | None]:
+    current_policy, _, policy_key, normalized_site = _ensure_w11_readiness_policy(site)
+    incoming = payload if isinstance(payload, dict) else {}
+    merged: dict[str, Any] = {**current_policy}
+    for key in [
+        "enabled",
+        "risk_rate_green_threshold",
+        "risk_rate_yellow_threshold",
+        "checklist_completion_green_threshold",
+        "checklist_completion_yellow_threshold",
+        "simulation_success_green_threshold",
+        "simulation_success_yellow_threshold",
+        "readiness_target",
+    ]:
+        if key in incoming:
+            merged[key] = incoming[key]
+    normalized = _normalize_w11_readiness_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key, normalized_site
+
+
+def _build_w11_scale_readiness_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    window_start = now - timedelta(days=window_days)
+    policy, policy_updated_at, policy_key, policy_site = _ensure_w11_readiness_policy(site)
+
+    effective_site = policy_site if policy_site is not None else _normalize_site_name(site)
+    effective_allowed_sites = allowed_sites if effective_site is None else None
+
+    stmt = select(work_orders).where(work_orders.c.created_at >= window_start)
+    if effective_site is not None:
+        stmt = stmt.where(work_orders.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        if not effective_allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": None,
+                "window_days": window_days,
+                "policy": {
+                    "policy_key": policy_key,
+                    "updated_at": policy_updated_at.isoformat(),
+                    "enabled": bool(policy.get("enabled", True)),
+                },
+                "metrics": {
+                    "work_orders_count": 0,
+                    "unique_titles": 0,
+                    "repeated_work_orders_count": 0,
+                    "risk_rate_percent": 0.0,
+                    "guide_total_count": len(ADOPTION_W11_SELF_SERVE_GUIDES),
+                    "guide_done_count": 0,
+                    "checklist_completion_rate_percent": 0.0,
+                    "runbook_total_count": len(ADOPTION_W11_TROUBLESHOOTING_RUNBOOK),
+                    "runbook_done_count": 0,
+                    "simulation_success_rate_percent": 0.0,
+                    "scale_readiness_readiness_score": 0.0,
+                    "overall_status": W11_READINESS_STATUS_RED,
+                    "target_met": False,
+                },
+                "kpis": [],
+                "top_repeat_titles": [],
+                "scale_checklist": ADOPTION_W11_SELF_SERVE_GUIDES,
+                "simulation_runbook": ADOPTION_W11_TROUBLESHOOTING_RUNBOOK,
+                "recommendations": ["접근 가능한 site 범위가 비어 있습니다. site_scope를 확인하세요."],
+            }
+        stmt = stmt.where(work_orders.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        wo_rows = conn.execute(stmt).mappings().all()
+
+    title_counts: dict[str, int] = {}
+    title_label: dict[str, str] = {}
+    for row in wo_rows:
+        title_raw = str(row.get("title") or "").strip()
+        normalized = title_raw.lower() if title_raw else "(untitled)"
+        title_counts[normalized] = title_counts.get(normalized, 0) + 1
+        if normalized not in title_label:
+            title_label[normalized] = title_raw or "(untitled)"
+
+    total_work_orders = len(wo_rows)
+    repeated_orders_count = sum(count for count in title_counts.values() if count >= 2)
+    unique_titles = len(title_counts)
+    risk_rate_percent = round((repeated_orders_count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0
+    top_repeat_titles = sorted(
+        [
+            {
+                "title": title_label.get(key, key),
+                "count": count,
+                "share_percent": round((count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0,
+            }
+            for key, count in title_counts.items()
+            if count >= 2
+        ],
+        key=lambda item: int(item.get("count") or 0),
+        reverse=True,
+    )[:10]
+
+    tracker_stmt = select(adoption_w11_tracker_items)
+    if effective_site is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w11_tracker_items.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w11_tracker_items.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        tracker_rows = conn.execute(tracker_stmt).mappings().all()
+
+    guide_total_count = max(
+        len(ADOPTION_W11_SELF_SERVE_GUIDES),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "self_serve_guide"),
+    )
+    runbook_total_count = max(
+        len(ADOPTION_W11_TROUBLESHOOTING_RUNBOOK),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "troubleshooting_runbook"),
+    )
+    guide_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "self_serve_guide" and str(row.get("status") or "") == W11_TRACKER_STATUS_DONE
+    )
+    runbook_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "troubleshooting_runbook" and str(row.get("status") or "") == W11_TRACKER_STATUS_DONE
+    )
+    checklist_completion_rate_percent = round((guide_done_count / guide_total_count) * 100.0, 2) if guide_total_count > 0 else 0.0
+    simulation_success_rate_percent = (
+        round((runbook_done_count / runbook_total_count) * 100.0, 2) if runbook_total_count > 0 else 0.0
+    )
+
+    repeat_status = _evaluate_w09_kpi_status(
+        actual=risk_rate_percent,
+        direction="lower_better",
+        green_threshold=float(policy.get("risk_rate_green_threshold") or 20.0),
+        yellow_threshold=float(policy.get("risk_rate_yellow_threshold") or 30.0),
+    )
+    guide_status = _evaluate_w09_kpi_status(
+        actual=checklist_completion_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("checklist_completion_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+    )
+    runbook_status = _evaluate_w09_kpi_status(
+        actual=simulation_success_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("simulation_success_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("simulation_success_yellow_threshold") or 60.0),
+    )
+
+    status_points = {
+        W09_KPI_STATUS_RED: 0.0,
+        W09_KPI_STATUS_YELLOW: 50.0,
+        W09_KPI_STATUS_GREEN: 100.0,
+    }
+    scale_readiness_readiness_score = round(
+        (status_points.get(repeat_status, 0.0) + status_points.get(guide_status, 0.0) + status_points.get(runbook_status, 0.0))
+        / 3.0,
+        2,
+    )
+
+    status_set = {repeat_status, guide_status, runbook_status}
+    overall_status = W11_READINESS_STATUS_GREEN
+    if W09_KPI_STATUS_RED in status_set:
+        overall_status = W11_READINESS_STATUS_RED
+    elif W09_KPI_STATUS_YELLOW in status_set:
+        overall_status = W11_READINESS_STATUS_YELLOW
+
+    readiness_target = float(policy.get("readiness_target") or 75.0)
+    target_met = scale_readiness_readiness_score >= readiness_target and overall_status != W11_READINESS_STATUS_RED
+
+    kpis = [
+        {
+            "kpi_key": "repeat_ticket_rate_percent",
+            "kpi_name": "Repeat ticket rate",
+            "direction": "lower_better",
+            "actual_value": risk_rate_percent,
+            "green_threshold": float(policy.get("risk_rate_green_threshold") or 20.0),
+            "yellow_threshold": float(policy.get("risk_rate_yellow_threshold") or 30.0),
+            "status": repeat_status,
+            "target": f"<= {policy.get('risk_rate_green_threshold', 20.0)}%",
+        },
+        {
+            "kpi_key": "checklist_completion_rate_percent",
+            "kpi_name": "Scale readiness guide publish rate",
+            "direction": "higher_better",
+            "actual_value": checklist_completion_rate_percent,
+            "green_threshold": float(policy.get("checklist_completion_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+            "status": guide_status,
+            "target": f">= {policy.get('checklist_completion_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "simulation_success_rate_percent",
+            "kpi_name": "Runbook completion rate",
+            "direction": "higher_better",
+            "actual_value": simulation_success_rate_percent,
+            "green_threshold": float(policy.get("simulation_success_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("simulation_success_yellow_threshold") or 60.0),
+            "status": runbook_status,
+            "target": f">= {policy.get('simulation_success_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "scale_readiness_readiness_score",
+            "kpi_name": "Scale readiness readiness score",
+            "direction": "higher_better",
+            "actual_value": scale_readiness_readiness_score,
+            "green_threshold": readiness_target,
+            "yellow_threshold": max(0.0, readiness_target - 15.0),
+            "status": _evaluate_w09_kpi_status(
+                actual=scale_readiness_readiness_score,
+                direction="higher_better",
+                green_threshold=readiness_target,
+                yellow_threshold=max(0.0, readiness_target - 15.0),
+            ),
+            "target": f">= {readiness_target}",
+        },
+    ]
+
+    recommendations: list[str] = []
+    if repeat_status == W09_KPI_STATUS_RED:
+        recommendations.append("반복 티켓 비율이 높습니다. Top 반복 제목 3개를 FAQ/가이드로 우선 전환하세요.")
+    if guide_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Scale readiness guide 게시율이 낮습니다. 담당자와 마감일을 지정해 게시를 완료하세요.")
+    if runbook_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Runbook 완료율이 낮습니다. 모듈별 실습 드릴과 증빙 업로드를 마감하세요.")
+    if not recommendations:
+        recommendations.append("W11 Scale readiness 지원 전환 상태가 안정적입니다. 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": effective_site,
+        "window_days": window_days,
+        "policy": {
+            "policy_key": policy_key,
+            "updated_at": policy_updated_at.isoformat(),
+            "enabled": bool(policy.get("enabled", True)),
+            "readiness_target": readiness_target,
+        },
+        "metrics": {
+            "work_orders_count": total_work_orders,
+            "unique_titles": unique_titles,
+            "repeated_work_orders_count": repeated_orders_count,
+            "risk_rate_percent": risk_rate_percent,
+            "guide_total_count": guide_total_count,
+            "guide_done_count": guide_done_count,
+            "checklist_completion_rate_percent": checklist_completion_rate_percent,
+            "runbook_total_count": runbook_total_count,
+            "runbook_done_count": runbook_done_count,
+            "simulation_success_rate_percent": simulation_success_rate_percent,
+            "scale_readiness_readiness_score": scale_readiness_readiness_score,
+            "overall_status": overall_status,
+            "target_met": target_met,
+        },
+        "kpis": kpis,
+        "top_repeat_titles": top_repeat_titles,
+        "scale_checklist": ADOPTION_W11_SELF_SERVE_GUIDES,
+        "simulation_runbook": ADOPTION_W11_TROUBLESHOOTING_RUNBOOK,
+        "recommendations": recommendations,
+    }
+
+
 def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
     with get_conn() as conn:
         rows = conn.execute(
@@ -8119,6 +8699,300 @@ def _reset_w10_completion_if_closed(
         .where(adoption_w10_site_runs.c.site == site)
         .values(
             status=W10_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+
+def _row_to_w11_tracker_item_model(row: dict[str, Any]) -> W11TrackerItemRead:
+    return W11TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W11_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w11_evidence_model(row: dict[str, Any]) -> W11EvidenceRead:
+    return W11EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w11_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w11_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W11_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W11_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W11_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w11_tracker_overview(site: str, rows: list[W11TrackerItemRead]) -> W11TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W11TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w11_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W11TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W11TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W11_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W11TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w11_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W11_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W11_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w11_completion_model(
+    *,
+    site: str,
+    readiness: W11TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W11TrackerCompletionRead:
+    if row is None:
+        return W11TrackerCompletionRead(
+            site=site,
+            status=W11_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w11_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W11TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w11_tracker_items_for_site(site: str) -> list[W11TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w11_tracker_items)
+            .where(adoption_w11_tracker_items.c.site == site)
+            .order_by(
+                adoption_w11_tracker_items.c.item_type.asc(),
+                adoption_w11_tracker_items.c.item_key.asc(),
+                adoption_w11_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w11_tracker_item_model(row) for row in rows]
+
+
+def _reset_w11_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w11_site_runs.c.status)
+        .where(adoption_w11_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w11_site_completion_status(row.get("status"))
+    if status == W11_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w11_site_runs)
+        .where(adoption_w11_site_runs.c.site == site)
+        .values(
+            status=W11_SITE_COMPLETION_STATUS_ACTIVE,
             completion_note="",
             force_used=False,
             completed_by=None,
@@ -12184,6 +13058,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w10_api": "/api/public/adoption-plan/w10",
         "public_adoption_w10_checklist_csv_api": "/api/public/adoption-plan/w10/checklist.csv",
         "public_adoption_w10_schedule_ics_api": "/api/public/adoption-plan/w10/schedule.ics",
+        "public_adoption_w11_api": "/api/public/adoption-plan/w11",
+        "public_adoption_w11_checklist_csv_api": "/api/public/adoption-plan/w11/checklist.csv",
+        "public_adoption_w11_schedule_ics_api": "/api/public/adoption-plan/w11/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -12223,6 +13100,12 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w10_tracker_readiness_api": "/api/adoption/w10/tracker/readiness",
         "adoption_w10_tracker_completion_api": "/api/adoption/w10/tracker/completion",
         "adoption_w10_tracker_complete_api": "/api/adoption/w10/tracker/complete",
+        "adoption_w11_tracker_items_api": "/api/adoption/w11/tracker/items",
+        "adoption_w11_tracker_overview_api": "/api/adoption/w11/tracker/overview",
+        "adoption_w11_tracker_bootstrap_api": "/api/adoption/w11/tracker/bootstrap",
+        "adoption_w11_tracker_readiness_api": "/api/adoption/w11/tracker/readiness",
+        "adoption_w11_tracker_completion_api": "/api/adoption/w11/tracker/completion",
+        "adoption_w11_tracker_complete_api": "/api/adoption/w11/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
@@ -12237,6 +13120,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w09_kpi_policy_api": "/api/ops/adoption/w09/kpi-policy",
         "adoption_w10_self_serve_api": "/api/ops/adoption/w10/self-serve",
         "adoption_w10_support_policy_api": "/api/ops/adoption/w10/support-policy",
+        "adoption_w11_scale_readiness_api": "/api/ops/adoption/w11/scale-readiness",
+        "adoption_w11_readiness_policy_api": "/api/ops/adoption/w11/readiness-policy",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -12296,6 +13181,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w08_report_discipline": _adoption_w08_payload(),
         "w09_kpi_operation": _adoption_w09_payload(),
         "w10_self_serve_support": _adoption_w10_payload(),
+        "w11_scale_readiness": _adoption_w11_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -12345,6 +13231,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w10_json": "/api/public/adoption-plan/w10",
                 "w10_checklist_csv": "/api/public/adoption-plan/w10/checklist.csv",
                 "w10_schedule_ics": "/api/public/adoption-plan/w10/schedule.ics",
+                "w11_json": "/api/public/adoption-plan/w11",
+                "w11_checklist_csv": "/api/public/adoption-plan/w11/checklist.csv",
+                "w11_schedule_ics": "/api/public/adoption-plan/w11/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -13525,6 +14414,152 @@ def _build_adoption_w10_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+
+def _adoption_w11_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 11),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 11,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Autonomy",
+            "focus": "Scale readiness",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 11)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W11 Scale Readiness Pack",
+        "public": True,
+        "timeline": timeline,
+        "self_serve_guides": ADOPTION_W11_SELF_SERVE_GUIDES,
+        "troubleshooting_runbook": ADOPTION_W11_TROUBLESHOOTING_RUNBOOK,
+        "scheduled_events": ADOPTION_W11_SCHEDULED_EVENTS,
+        "scale_readiness_api": "/api/ops/adoption/w11/scale-readiness",
+        "readiness_policy_api": "/api/ops/adoption/w11/readiness-policy",
+        "tracker_items_api": "/api/adoption/w11/tracker/items",
+        "tracker_overview_api": "/api/adoption/w11/tracker/overview",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w11",
+            "checklist_csv": "/api/public/adoption-plan/w11/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w11/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w11_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "key_or_module",
+            "name_or_symptom",
+            "owner_role",
+            "objective_or_target",
+            "definition_or_output",
+            "api_or_time",
+        ]
+    )
+    for item in payload.get("self_serve_guides", []):
+        writer.writerow(
+            [
+                "self_serve_guide",
+                item.get("id", ""),
+                item.get("problem_cluster", ""),
+                item.get("title", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                "",
+                item.get("source_api", ""),
+            ]
+        )
+    for item in payload.get("troubleshooting_runbook", []):
+        writer.writerow(
+            [
+                "troubleshooting_runbook",
+                item.get("id", ""),
+                item.get("module", ""),
+                item.get("symptom", ""),
+                item.get("owner_role", ""),
+                "",
+                item.get("definition_of_done", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                "",
+                item.get("output", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w11_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w11-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W11] {str(item.get('title', 'Scale Readiness Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W11 Scale Readiness//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -13898,6 +14933,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w08_pack = plan.get("w08_report_discipline", {})
     w09_pack = plan.get("w09_kpi_operation", {})
     w10_pack = plan.get("w10_self_serve_support", {})
+    w11_pack = plan.get("w11_scale_readiness", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -14366,6 +15402,50 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w10_schedule_rows: list[str] = []
     for item in w10_pack.get("scheduled_events", []):
         w10_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w11_guide_rows: list[str] = []
+    for item in w11_pack.get("self_serve_guides", []):
+        w11_guide_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("problem_cluster", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("source_api", "")))}</td>
+            </tr>
+            """
+        )
+
+    w11_runbook_rows: list[str] = []
+    for item in w11_pack.get("troubleshooting_runbook", []):
+        w11_runbook_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("module", "")))}</td>
+              <td>{html.escape(str(item.get("symptom", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w11_schedule_rows: list[str] = []
+    for item in w11_pack.get("scheduled_events", []):
+        w11_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -15669,6 +16749,68 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w10_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    <section class="section">
+      <h2>W11 Scale Readiness</h2>
+      <p class="sub">확장 사이트 적용을 위한 체크리스트/시뮬레이션/비상대응 체계를 정착시켜 신규 사이트 전개 리스크를 줄입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w11">W11 JSON</a>
+        <a href="/api/public/adoption-plan/w11/checklist.csv">W11 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w11/schedule.ics">W11 Schedule ICS</a>
+        <a href="/api/ops/adoption/w11/scale-readiness">W11 Scale Readiness API (Token)</a>
+        <a href="/api/ops/adoption/w11/readiness-policy">W11 Readiness Policy API (Token)</a>
+        <a href="/api/adoption/w11/tracker/items">W11 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w11/tracker/overview?site=HQ">W11 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Title</th>
+              <th>Readiness Cluster</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Source API</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w11_guide_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Simulation ID</th>
+              <th>Module</th>
+              <th>Scenario</th>
+              <th>Owner Role</th>
+              <th>Definition of Done</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w11_runbook_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w11_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -17831,6 +18973,95 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w10ReadinessBlockers" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
             <div id="w10EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W11 Scale Readiness</h3>
+            <div id="adoptionW11Top" class="cards"></div>
+            <div id="adoptionW11Guides" class="empty">데이터 없음</div>
+            <div id="adoptionW11Runbook" class="empty">데이터 없음</div>
+            <div id="adoptionW11Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW11Json" href="/api/public/adoption-plan/w11">W11 JSON</a>
+              <a id="adoptW11ChecklistCsv" href="/api/public/adoption-plan/w11/checklist.csv">W11 Checklist CSV</a>
+              <a id="adoptW11ScheduleIcs" href="/api/public/adoption-plan/w11/schedule.ics">W11 Schedule ICS</a>
+              <a id="adoptW11SelfServeApi" href="/api/ops/adoption/w11/scale-readiness">W11 Scale Readiness API (Token)</a>
+              <a id="adoptW11SupportPolicyApi" href="/api/ops/adoption/w11/readiness-policy">W11 Readiness Policy API (Token)</a>
+              <a id="adoptW11TrackerItemsApi" href="/api/adoption/w11/tracker/items">W11 Tracker Items API (Token)</a>
+              <a id="adoptW11TrackerOverviewApi" href="/api/adoption/w11/tracker/overview?site=HQ">W11 Tracker Overview API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W11 Scale Readiness Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w11KpiSite" placeholder="site (optional, 비우면 전체)" />
+              <input id="w11KpiDays" value="30" placeholder="window days (14-120)" />
+              <input id="w11KpiReserved1" value="token required" disabled />
+              <input id="w11KpiReserved2" value="site scope enforced" disabled />
+              <button id="w11KpiRefreshBtn" class="btn run" type="button">W11 지표 새로고침</button>
+            </div>
+            <div id="w11KpiMeta" class="meta">조회 전</div>
+            <div id="w11KpiSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Scale KPI Status</h4>
+            <div id="w11KpiTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Top Expansion Risks</h4>
+            <div id="w11EscalationTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w11KpiRecommendations" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Policy Snapshot</h4>
+            <div id="w11PolicyMeta" class="meta">조회 전</div>
+            <div id="w11PolicyTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W11 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w11TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w11TrackItemId" placeholder="tracker_item_id" />
+              <input id="w11TrackAssignee" placeholder="assignee" />
+              <select id="w11TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w11TrackBootstrapBtn" class="btn run" type="button">W11 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w11TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w11TrackNote" placeholder="completion note (optional)" />
+              <input id="w11EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w11EvidenceFile" type="file" />
+              <button id="w11TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w11EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w11Reserved1" value="token required for write actions" disabled />
+              <input id="w11Reserved2" value="site scope enforced" disabled />
+              <input id="w11Reserved3" value="max file 5MB" disabled />
+              <button id="w11TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w11CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w11CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w11Reserved4" value="readiness gate required" disabled />
+              <button id="w11ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w11CompleteBtn" class="btn" type="button">W11 완료 확정</button>
+            </div>
+            <div id="w11TrackerMeta" class="meta">조회 전</div>
+            <div id="w11TrackerSummary" class="cards"></div>
+            <div id="w11TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W11 완료 판정 결과</h4>
+            <div id="w11ReadinessMeta" class="meta">조회 전</div>
+            <div id="w11ReadinessCards" class="cards"></div>
+            <div id="w11ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w11EvidenceTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
@@ -21015,6 +22246,388 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW11KpiOperation() {{
+        const meta = document.getElementById("w11KpiMeta");
+        const summary = document.getElementById("w11KpiSummary");
+        const kpiTable = document.getElementById("w11KpiTable");
+        const escalationTable = document.getElementById("w11EscalationTable");
+        const recommendations = document.getElementById("w11KpiRecommendations");
+        const policyMeta = document.getElementById("w11PolicyMeta");
+        const policyTable = document.getElementById("w11PolicyTable");
+        const site = (document.getElementById("w11KpiSite").value || "").trim();
+        const daysRaw = (document.getElementById("w11KpiDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w11/scale-readiness" + (params.toString() ? ("?" + params.toString()) : "");
+        const policyPath = site
+          ? "/api/ops/adoption/w11/readiness-policy?site=" + encodeURIComponent(site)
+          : "";
+        try {{
+          meta.textContent = "조회 중.. " + path;
+          if (policyPath) {{
+            policyMeta.textContent = "조회 중.. " + policyPath;
+          }} else {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }}
+          const [data, policyPayload] = await Promise.all([
+            fetchJson(path, true),
+            policyPath
+              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
+              : Promise.resolve({{ __skipped: true }}),
+          ]);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | overall=" + String(metrics.overall_status || "-")
+            + " | repeat_rate=" + String(metrics.repeat_rate_percent ?? 0) + "%"
+            + " | readiness=" + String(metrics.self_serve_readiness_score ?? 0);
+          const summaryItems = [
+            ["WO Count", metrics.work_orders_count ?? 0],
+            ["Unique Titles", metrics.unique_titles ?? 0],
+            ["Repeat WOs", metrics.repeated_work_orders_count ?? 0],
+            ["Repeat Rate %", metrics.repeat_rate_percent ?? 0],
+            ["Guide Publish %", metrics.guide_publish_rate_percent ?? 0],
+            ["Runbook Completion %", metrics.runbook_completion_rate_percent ?? 0],
+            ["Readiness Score", metrics.self_serve_readiness_score ?? 0],
+            ["Overall Status", metrics.overall_status || "-"],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          kpiTable.innerHTML = renderTable(
+            data.kpis || [],
+            [
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "actual_value", label: "Actual" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "green_threshold", label: "Green" }},
+              {{ key: "yellow_threshold", label: "Yellow" }},
+              {{ key: "status", label: "Status" }},
+            ]
+          );
+          escalationTable.innerHTML = renderTable(
+            data.top_repeat_titles || [],
+            [
+              {{ key: "title", label: "Title" }},
+              {{ key: "count", label: "Count" }},
+              {{ key: "share_percent", label: "Share %" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
+            const policy = policyPayload.policy || {{}};
+            policyMeta.textContent =
+              "성공: key=" + String(policyPayload.policy_key || "-")
+              + " | site=" + String(policyPayload.site || "default")
+              + " | updated_at=" + String(policyPayload.updated_at || "-");
+            policyTable.innerHTML = renderTable(
+              [policy],
+              [
+                {{ key: "repeat_rate_green_threshold", label: "Repeat Green <= %" }},
+                {{ key: "repeat_rate_yellow_threshold", label: "Repeat Yellow <= %" }},
+                {{ key: "guide_publish_green_threshold", label: "Guide Green >= %" }},
+                {{ key: "guide_publish_yellow_threshold", label: "Guide Yellow >= %" }},
+                {{ key: "runbook_completion_green_threshold", label: "Runbook Green >= %" }},
+                {{ key: "runbook_completion_yellow_threshold", label: "Runbook Yellow >= %" }},
+                {{ key: "readiness_target", label: "Readiness Target" }},
+                {{ key: "enabled", label: "Enabled" }},
+              ]
+            );
+          }} else if (policyPayload && policyPayload.__error) {{
+            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
+            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          kpiTable.innerHTML = renderEmpty(err.message);
+          escalationTable.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+          if (!site) {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }} else {{
+            policyMeta.textContent = "실패: " + err.message;
+            policyTable.innerHTML = renderEmpty(err.message);
+          }}
+        }}
+      }}
+
+      async function runW11Tracker() {{
+        const meta = document.getElementById("w11TrackerMeta");
+        const summary = document.getElementById("w11TrackerSummary");
+        const table = document.getElementById("w11TrackerTable");
+        const readinessMeta = document.getElementById("w11ReadinessMeta");
+        const readinessCards = document.getElementById("w11ReadinessCards");
+        const readinessBlockers = document.getElementById("w11ReadinessBlockers");
+        const evidenceTable = document.getElementById("w11EvidenceTable");
+        const site = (document.getElementById("w11TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중.. W11 tracker";
+          readinessMeta.textContent = "조회 중.. W11 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w11/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w11/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w11/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w11/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W11 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w11EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w11TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w11/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w11");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW11Readiness() {{
+        await runW11Tracker();
+      }}
+
+      async function runW11TrackerBootstrap() {{
+        const meta = document.getElementById("w11TrackerMeta");
+        const site = (document.getElementById("w11TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중.. W11 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w11/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW11Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW11Complete() {{
+        const meta = document.getElementById("w11ReadinessMeta");
+        const site = (document.getElementById("w11TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        const completionNote = (document.getElementById("w11CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w11CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중.. W11 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w11/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW11Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW11Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW11TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w11TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w11TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w11TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w11TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w11TrackCompleted").checked;
+        const note = (document.getElementById("w11TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w11EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중.. tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w11/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w11EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w11/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w11EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW11Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runW07Tracker() {{
         const meta = document.getElementById("w07TrackerMeta");
         const summary = document.getElementById("w07TrackerSummary");
@@ -21709,6 +23322,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w10Guides = document.getElementById("adoptionW10Guides");
         const w10Runbook = document.getElementById("adoptionW10Runbook");
         const w10Schedule = document.getElementById("adoptionW10Schedule");
+        const w11Top = document.getElementById("adoptionW11Top");
+        const w11Guides = document.getElementById("adoptionW11Guides");
+        const w11Runbook = document.getElementById("adoptionW11Runbook");
+        const w11Schedule = document.getElementById("adoptionW11Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -22378,6 +23995,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w11 = data.w11_scale_readiness || {{}};
+          const w11TopItems = [
+            ["Week", "W" + String(w11.timeline?.week || 11).padStart(2, "0")],
+            ["Focus", w11.timeline?.focus || "Scale readiness"],
+            ["Guides", (w11.self_serve_guides || []).length],
+            ["Runbook", (w11.troubleshooting_runbook || []).length],
+            ["Sessions", (w11.scheduled_events || []).length],
+            ["Metric", w11.timeline?.success_metric || "New-site simulation success >= 90%"],
+          ];
+          w11Top.innerHTML = w11TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w11Guides.innerHTML = renderTable(
+            (w11.self_serve_guides || []).map((row) => ({{
+              id: row.id || "",
+              title: row.title || "",
+              problem_cluster: row.problem_cluster || "",
+              owner_role: row.owner_role || "",
+              target: row.target || "",
+              source_api: row.source_api || "",
+            }})),
+            [
+              {{ key: "id", label: "Checklist ID" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "problem_cluster", label: "Readiness Cluster" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "source_api", label: "Source API" }},
+            ]
+          );
+
+          w11Runbook.innerHTML = renderTable(
+            (w11.troubleshooting_runbook || []).map((row) => ({{
+              id: row.id || "",
+              module: row.module || "",
+              symptom: row.symptom || "",
+              owner_role: row.owner_role || "",
+              definition_of_done: row.definition_of_done || "",
+              api_ref: row.api_ref || "",
+            }})),
+            [
+              {{ key: "id", label: "Simulation ID" }},
+              {{ key: "module", label: "Module" }},
+              {{ key: "symptom", label: "Scenario" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "api_ref", label: "API Ref" }},
+            ]
+          );
+
+          w11Schedule.innerHTML = renderTable(
+            (w11.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -22419,6 +24104,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW09Tracker().catch(() => null);
             runW10KpiOperation().catch(() => null);
             runW10Tracker().catch(() => null);
+            runW11KpiOperation().catch(() => null);
+            runW11Tracker().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -22574,6 +24261,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w10ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
             w10EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
 
+            const w11KpiMeta = document.getElementById("w11KpiMeta");
+            const w11KpiSummary = document.getElementById("w11KpiSummary");
+            const w11KpiTable = document.getElementById("w11KpiTable");
+            const w11EscalationTable = document.getElementById("w11EscalationTable");
+            const w11KpiRecommendations = document.getElementById("w11KpiRecommendations");
+            const w11PolicyMeta = document.getElementById("w11PolicyMeta");
+            const w11PolicyTable = document.getElementById("w11PolicyTable");
+            const w11TrackerMeta = document.getElementById("w11TrackerMeta");
+            const w11TrackerSummary = document.getElementById("w11TrackerSummary");
+            const w11TrackerTable = document.getElementById("w11TrackerTable");
+            const w11ReadinessMeta = document.getElementById("w11ReadinessMeta");
+            const w11ReadinessCards = document.getElementById("w11ReadinessCards");
+            const w11ReadinessBlockers = document.getElementById("w11ReadinessBlockers");
+            const w11EvidenceTable = document.getElementById("w11EvidenceTable");
+            w11KpiMeta.textContent = "토큰 저장 후 W11 scale-readiness API를 사용할 수 있습니다.";
+            w11KpiSummary.innerHTML = "";
+            w11KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w11EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w11KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+            w11PolicyMeta.textContent = "토큰 저장 후 W11 readiness policy API를 사용할 수 있습니다.";
+            w11PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w11TrackerMeta.textContent = "토큰 저장 후 W11 tracker API를 사용할 수 있습니다.";
+            w11TrackerSummary.innerHTML = "";
+            w11TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w11ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            w11ReadinessCards.innerHTML = "";
+            w11ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
+            w11EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
             w07ActiveItemId = null;
@@ -22626,6 +24342,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w10Guides.innerHTML = renderEmpty(err.message);
           w10Runbook.innerHTML = renderEmpty(err.message);
           w10Schedule.innerHTML = renderEmpty(err.message);
+          w11Top.innerHTML = "";
+          w11Guides.innerHTML = renderEmpty(err.message);
+          w11Runbook.innerHTML = renderEmpty(err.message);
+          w11Schedule.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
@@ -22677,6 +24397,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w10ReadinessCards").innerHTML = "";
           document.getElementById("w10ReadinessBlockers").innerHTML = renderEmpty(err.message);
           document.getElementById("w10EvidenceTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11KpiMeta").textContent = "실패: " + err.message;
+          document.getElementById("w11KpiSummary").innerHTML = "";
+          document.getElementById("w11KpiTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11EscalationTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11KpiRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11PolicyMeta").textContent = "실패: " + err.message;
+          document.getElementById("w11PolicyTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11TrackerMeta").textContent = "실패: " + err.message;
+          document.getElementById("w11TrackerSummary").innerHTML = "";
+          document.getElementById("w11TrackerTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11ReadinessMeta").textContent = "실패: " + err.message;
+          document.getElementById("w11ReadinessCards").innerHTML = "";
+          document.getElementById("w11ReadinessBlockers").innerHTML = renderEmpty(err.message);
+          document.getElementById("w11EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -22889,6 +24623,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w10ReadinessBtn").addEventListener("click", runW10Readiness);
       document.getElementById("w10CompleteBtn").addEventListener("click", runW10Complete);
       document.getElementById("w10TrackUpdateBtn").addEventListener("click", runW10TrackerUpdateAndUpload);
+      document.getElementById("w11KpiRefreshBtn").addEventListener("click", runW11KpiOperation);
+      document.getElementById("w11TrackBootstrapBtn").addEventListener("click", runW11TrackerBootstrap);
+      document.getElementById("w11TrackRefreshBtn").addEventListener("click", runW11Tracker);
+      document.getElementById("w11ReadinessBtn").addEventListener("click", runW11Readiness);
+      document.getElementById("w11CompleteBtn").addEventListener("click", runW11Complete);
+      document.getElementById("w11TrackUpdateBtn").addEventListener("click", runW11TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -22941,6 +24681,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w10TrackSite").value) {{
         document.getElementById("w10TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w11KpiSite").value) {{
+        document.getElementById("w11KpiSite").value = "HQ";
+      }}
+      if (!document.getElementById("w11TrackSite").value) {{
+        document.getElementById("w11TrackSite").value = "HQ";
       }}
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
@@ -23041,6 +24787,11 @@ def get_public_adoption_w09() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w10")
 def get_public_adoption_w10() -> dict[str, Any]:
     return _adoption_w10_payload()
+
+
+@app.get("/api/public/adoption-plan/w11")
+def get_public_adoption_w11() -> dict[str, Any]:
+    return _adoption_w11_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -23335,6 +25086,30 @@ def get_public_adoption_w10_schedule_ics() -> Response:
     payload = _adoption_w10_payload()
     ics_text = _build_adoption_w10_schedule_ics(payload)
     file_name = "ka-facility-os-adoption-w10-self-serve-support.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w11/checklist.csv")
+def get_public_adoption_w11_checklist_csv() -> Response:
+    payload = _adoption_w11_payload()
+    csv_text = _build_adoption_w11_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w11-scale-readiness-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w11/schedule.ics")
+def get_public_adoption_w11_schedule_ics() -> Response:
+    payload = _adoption_w11_payload()
+    ics_text = _build_adoption_w11_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w11-scale-readiness.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
@@ -26634,6 +28409,532 @@ def download_w10_tracker_evidence(
     )
 
 
+@app.post("/api/adoption/w11/tracker/bootstrap", response_model=W11TrackerBootstrapResponse)
+def bootstrap_w11_tracker_items(
+    payload: W11TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
+) -> W11TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w11_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w11_tracker_items.c.item_type,
+                adoption_w11_tracker_items.c.item_key,
+            ).where(adoption_w11_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w11_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W11_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w11_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w11_tracker_items)
+            .where(adoption_w11_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w11_tracker_items.c.item_type.asc(),
+                adoption_w11_tracker_items.c.item_key.asc(),
+                adoption_w11_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w11_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w11_tracker_bootstrap",
+        resource_type="adoption_w11_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W11TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w11/tracker/items", response_model=list[W11TrackerItemRead])
+def list_w11_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> list[W11TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W11_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W11 tracker status")
+
+    stmt = select(adoption_w11_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w11_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w11_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w11_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w11_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w11_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w11_tracker_items.c.updated_at.desc(),
+        adoption_w11_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w11_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w11/tracker/overview", response_model=W11TrackerOverviewRead)
+def get_w11_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> W11TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w11_tracker_items).where(adoption_w11_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w11_tracker_item_model(row) for row in rows]
+    return _compute_w11_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w11/tracker/readiness", response_model=W11TrackerReadinessRead)
+def get_w11_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> W11TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w11_tracker_items_for_site(site)
+    return _compute_w11_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w11/tracker/completion", response_model=W11TrackerCompletionRead)
+def get_w11_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> W11TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w11_tracker_items_for_site(site)
+    readiness = _compute_w11_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w11_site_runs).where(adoption_w11_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w11_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w11/tracker/complete", response_model=W11TrackerCompletionRead)
+def complete_w11_tracker(
+    payload: W11TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
+) -> W11TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w11_tracker_items_for_site(payload.site)
+    readiness = _compute_w11_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W11 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W11_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W11_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w11_site_runs).where(adoption_w11_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w11_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w11_site_runs)
+                .where(adoption_w11_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w11_site_runs).where(adoption_w11_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w11_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w11_tracker_complete",
+        resource_type="adoption_w11_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w11/tracker/items/{tracker_item_id}", response_model=W11TrackerItemRead)
+def update_w11_tracker_item(
+    tracker_item_id: int,
+    payload: W11TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
+) -> W11TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w11_tracker_items).where(adoption_w11_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W11 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W11_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W11_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W11_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W11_TRACKER_STATUS_DONE:
+            next_status = W11_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W11_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W11 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w11_tracker_items)
+            .where(adoption_w11_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w11_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w11_tracker_items).where(adoption_w11_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W11 tracker item")
+    model = _row_to_w11_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w11_tracker_item_update",
+        resource_type="adoption_w11_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w11/tracker/items/{tracker_item_id}/evidence", response_model=W11EvidenceRead, status_code=201)
+async def upload_w11_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
+) -> W11EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+    file_bytes = await file.read(W11_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W11_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W11_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w11_tracker_items).where(adoption_w11_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W11 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w11_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w11_tracker_items)
+            .where(adoption_w11_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w11_completion_if_closed(
+            conn=conn,
+            site=site,
+            actor_username=actor_username,
+            checked_at=now,
+            reason="evidence_uploaded",
+        )
+        evidence_row = conn.execute(
+            select(adoption_w11_evidence_files).where(adoption_w11_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w11_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w11_tracker_evidence_upload",
+        resource_type="adoption_w11_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w11/tracker/items/{tracker_item_id}/evidence", response_model=list[W11EvidenceRead])
+def list_w11_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> list[W11EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w11_tracker_items).where(adoption_w11_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W11 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w11_evidence_files)
+            .where(adoption_w11_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w11_evidence_files.c.uploaded_at.desc(), adoption_w11_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w11_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w11/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w11_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w11_evidence_files).where(adoption_w11_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W11 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w11_tracker_evidence_download",
+        resource_type="adoption_w11_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -28092,6 +30393,95 @@ def set_ops_adoption_w10_support_policy(
         principal=principal,
         action="w10_support_policy_update",
         resource_type="adoption_w10_support_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.get("/api/ops/adoption/w11/scale-readiness")
+def get_ops_adoption_w11_scale_readiness(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w11_scale_readiness_snapshot(site=normalized_site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w11_scale_readiness_view",
+        resource_type="adoption_w11_scale_readiness",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "overall_status": metrics.get("overall_status"),
+            "repeat_rate_percent": metrics.get("repeat_rate_percent"),
+            "readiness_score": metrics.get("scale_readiness_readiness_score"),
+            "target_met": metrics.get("target_met"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w11/readiness-policy")
+def get_ops_adoption_w11_readiness_policy(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    policy, updated_at, policy_key, policy_site = _ensure_w11_readiness_policy(normalized_site)
+    _write_audit_log(
+        principal=principal,
+        action="w11_readiness_policy_view",
+        resource_type="adoption_w11_readiness_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/adoption/w11/readiness-policy")
+def set_ops_adoption_w11_readiness_policy(
+    payload: dict[str, Any],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+        if not _has_permission(principal, "admins:manage"):
+            raise HTTPException(status_code=403, detail="Global W11 policy update requires admins:manage")
+    policy, updated_at, policy_key, policy_site = _upsert_w11_readiness_policy(normalized_site, payload)
+    _write_audit_log(
+        principal=principal,
+        action="w11_readiness_policy_update",
+        resource_type="adoption_w11_readiness_policy",
         resource_id=policy_key,
         detail={
             "site": policy_site,
