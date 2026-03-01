@@ -578,6 +578,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_remediation_tracker_kpi_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/kpi/latest"
     )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_run_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/run"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -5299,6 +5307,55 @@ def test_ops_governance_remediation_tracker_kpi_endpoints(app_client: TestClient
     assert latest_body["job_name"] == "ops_governance_remediation_kpi"
     assert latest_body["run_id"] == run_body["run_id"]
     assert latest_body["status"] in {"success", "warning", "critical"}
+    assert int(latest_body["metrics"]["open_items"]) >= 0
+
+
+def test_ops_governance_remediation_tracker_autopilot_endpoints(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+
+    run_dry = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/run?dry_run=true&force=false",
+        headers=_owner_headers(),
+    )
+    assert run_dry.status_code == 200
+    dry_body = run_dry.json()
+    assert dry_body["job_name"] == "ops_governance_remediation_autopilot"
+    assert dry_body["dry_run"] is True
+    assert isinstance(dry_body["actions"], list)
+    assert "metrics" in dry_body
+    assert int(dry_body["metrics"]["open_items"]) >= 0
+    assert isinstance(dry_body["errors"], list)
+
+    run_force = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/run?dry_run=false&force=true",
+        headers=_owner_headers(),
+    )
+    assert run_force.status_code == 200
+    force_body = run_force.json()
+    assert force_body["job_name"] == "ops_governance_remediation_autopilot"
+    assert force_body["dry_run"] is False
+    assert force_body["force"] is True
+    assert "auto_assign" in force_body["actions"]
+    assert "escalation" in force_body["actions"]
+    assert force_body["status"] in {"success", "warning", "critical"}
+    assert isinstance(force_body.get("auto_assign"), dict)
+    assert isinstance(force_body.get("escalation"), dict)
+
+    latest = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_governance_remediation_autopilot"
+    assert latest_body["run_id"] == force_body["run_id"]
+    assert latest_body["status"] in {"success", "warning", "critical"}
+    assert isinstance(latest_body["actions"], list)
     assert int(latest_body["metrics"]["open_items"]) >= 0
 
 

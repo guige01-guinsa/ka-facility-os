@@ -887,6 +887,7 @@ OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME = "ops_governance_remediation_esc
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE = "ops_governance_remediation_escalation"
 OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME = "ops_governance_remediation_auto_assign"
 OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME = "ops_governance_remediation_kpi"
+OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME = "ops_governance_remediation_autopilot"
 GOVERNANCE_REMEDIATION_ESCALATION_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_ESCALATION_ENABLED", True)
 GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS = _env_int(
     "GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS",
@@ -911,6 +912,21 @@ GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS = _env_int(
 GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS = _env_int(
     "GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS",
     24,
+    min_value=0,
+)
+GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED", True)
+GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED = _env_bool(
+    "GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED",
+    True,
+)
+GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER = _env_int(
+    "GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER",
+    1,
+    min_value=0,
+)
+GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER = _env_int(
+    "GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER",
+    1,
     min_value=0,
 )
 W23_OWNER_ROLE_TO_ADMIN_ROLES: dict[str, tuple[str, ...]] = {
@@ -7490,6 +7506,130 @@ def _latest_ops_governance_remediation_kpi_payload() -> dict[str, Any] | None:
         row = conn.execute(
             select(job_runs)
             .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
+
+
+def run_ops_governance_remediation_autopilot_job(
+    *,
+    trigger: str = "manual",
+    dry_run: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    snapshot = _build_w24_remediation_kpi_snapshot(
+        window_days=GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+        due_soon_hours=GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+        now=started_at,
+    )
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    unassigned_open_count = int(metrics.get("unassigned_open_count") or 0)
+    overdue_count = int(metrics.get("overdue_count") or 0)
+    critical_open_count = int(metrics.get("critical_open_count") or 0)
+
+    should_run_auto_assign = (
+        force or unassigned_open_count >= max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER)
+    )
+    should_run_escalation = (
+        force
+        or critical_open_count > 0
+        or overdue_count >= max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER)
+    )
+
+    auto_assign_result: dict[str, Any] | None = None
+    escalation_result: dict[str, Any] | None = None
+    actions: list[str] = []
+    errors: list[str] = []
+
+    if GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED:
+        if should_run_auto_assign:
+            actions.append("auto_assign")
+            try:
+                auto_assign_result = run_ops_governance_remediation_auto_assign_job(
+                    trigger="autopilot",
+                    dry_run=dry_run,
+                    limit=GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS,
+                )
+            except Exception as exc:
+                errors.append(f"auto_assign failed: {exc}")
+        if should_run_escalation:
+            actions.append("escalation")
+            try:
+                escalation_result = run_ops_governance_remediation_escalation_job(
+                    trigger="autopilot",
+                    dry_run=dry_run,
+                    include_due_soon_hours=GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS,
+                    notify_enabled=GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
+                )
+            except Exception as exc:
+                errors.append(f"escalation failed: {exc}")
+    else:
+        errors.append("autopilot disabled by env")
+
+    status = "success"
+    if errors:
+        status = "critical"
+    elif (overdue_count > 0 or critical_open_count > 0) and len(actions) == 0:
+        status = "warning"
+    elif not GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED:
+        status = "warning"
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED,
+        "dry_run": bool(dry_run),
+        "force": bool(force),
+        "notify_enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
+        "unassigned_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
+        "overdue_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
+        "kpi_window_days": GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+        "kpi_due_soon_hours": GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+        "metrics": metrics,
+        "actions": actions,
+        "should_run_auto_assign": bool(should_run_auto_assign),
+        "should_run_escalation": bool(should_run_escalation),
+        "auto_assign": auto_assign_result,
+        "escalation": escalation_result,
+        "errors": errors,
+    }
+    run_id = _write_job_run(
+        job_name=OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _latest_ops_governance_remediation_autopilot_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -23467,6 +23607,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_kpi_api": "/api/ops/governance/gate/remediation/tracker/kpi",
         "ops_governance_remediation_tracker_kpi_run_api": "/api/ops/governance/gate/remediation/tracker/kpi/run",
         "ops_governance_remediation_tracker_kpi_latest_api": "/api/ops/governance/gate/remediation/tracker/kpi/latest",
+        "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
+        "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -45246,6 +45388,64 @@ def get_ops_governance_gate_remediation_tracker_kpi_latest(
         detail={
             "window_days": int(payload.get("window_days") or GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS),
             "due_soon_hours": int(payload.get("due_soon_hours") or GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return payload
+
+
+@ops_router.post("/governance/gate/remediation/tracker/autopilot/run")
+def run_ops_governance_gate_remediation_tracker_autopilot(
+    dry_run: Annotated[bool, Query()] = False,
+    force: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_governance_remediation_autopilot_job(
+        trigger="api",
+        dry_run=dry_run,
+        force=force,
+    )
+    metrics = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_run",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "warning"),
+        detail={
+            "dry_run": bool(result.get("dry_run", dry_run)),
+            "force": bool(result.get("force", force)),
+            "actions": result.get("actions", []),
+            "errors": result.get("errors", []),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/latest")
+def get_ops_governance_gate_remediation_tracker_autopilot_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_ops_governance_remediation_autopilot_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No ops_governance_remediation_autopilot run found")
+    metrics = payload.get("metrics", {}) if isinstance(payload.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_latest_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        status=str(payload.get("status") or "warning"),
+        detail={
+            "actions": payload.get("actions", []),
+            "errors": payload.get("errors", []),
             "open_items": int(metrics.get("open_items") or 0),
             "overdue_count": int(metrics.get("overdue_count") or 0),
             "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),

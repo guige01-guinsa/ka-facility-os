@@ -119,6 +119,8 @@ Open:
   - `GET /api/ops/governance/gate/remediation/tracker/kpi` (permission: `admins:manage`)
   - `POST /api/ops/governance/gate/remediation/tracker/kpi/run` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation/tracker/kpi/latest` (permission: `admins:manage`)
+  - `POST /api/ops/governance/gate/remediation/tracker/autopilot/run` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -471,6 +473,8 @@ Job monitoring:
 - `GET /api/ops/governance/gate/remediation/tracker/kpi`
 - `POST /api/ops/governance/gate/remediation/tracker/kpi/run`
 - `GET /api/ops/governance/gate/remediation/tracker/kpi/latest`
+- `POST /api/ops/governance/gate/remediation/tracker/autopilot/run`
+- `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
@@ -636,6 +640,7 @@ Direct smoke helper supports backend expectation, optional strict audit-chain ga
   - `python -m app.jobs.ops_governance_remediation_escalation --include-due-soon-hours 12`
   - `python -m app.jobs.ops_governance_remediation_auto_assign --limit 30`
   - `python -m app.jobs.ops_governance_remediation_kpi --window-days 14 --due-soon-hours 24`
+  - `python -m app.jobs.ops_governance_remediation_autopilot --dry-run`
 
 - Redis allowlist update helper:
 

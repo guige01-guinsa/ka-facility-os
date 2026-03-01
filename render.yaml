@@ -89,6 +89,14 @@ services:
         value: "14"
       - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
         value: "24"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER
+        value: "1"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER
+        value: "1"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -287,6 +295,54 @@ services:
         value: "14"
       - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
         value: "24"
+  - type: cron
+    name: ka-facility-os-ops-governance-remediation-autopilot
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "55 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_governance_remediation_autopilot
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER
+        value: "1"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER
+        value: "1"
+      - key: GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
+        value: "14"
+      - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
+        value: "24"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
+        value: "12"
+      - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
+        value: "30"
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URLS
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
+      - key: ALERT_GUARD_RECOVER_MAX_TARGETS
+        value: "30"
   - type: cron
     name: ka-facility-os-ops-quality-weekly
     runtime: python

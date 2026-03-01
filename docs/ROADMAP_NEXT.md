@@ -42,6 +42,10 @@
   - KPI 스냅샷 API(`.../tracker/kpi`) 추가
   - KPI 실행/최신조회 API(`.../tracker/kpi/run|latest`) 추가
   - 시간단위 Cron 잡(`ops_governance_remediation_kpi`) 연동 준비
+- W25 착수 완료: Governance Remediation Autopilot
+  - 자동조치 실행/최신조회 API(`.../tracker/autopilot/run|latest`) 추가
+  - KPI 기반 auto-assign/escalation 연계 오케스트레이션 추가
+  - 시간단위 Cron 잡(`ops_governance_remediation_autopilot`) 연동 준비
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -203,6 +207,22 @@
 
 완료 기준:
 - window/due-soon 파라미터별 지표 계산이 일관됨
+- 최근 실행 이력(job_run) 조회 가능
+- 회귀 테스트 전체 통과
+
+## W25: Governance Remediation Autopilot (우선순위 10)
+목표:
+- KPI 상태를 기준으로 자동 배정/에스컬레이션을 일괄 실행해 MTTR 단축
+- 수동 운영 편차를 줄이고 시간단위 자동 대응 루프를 확립
+
+주요 작업:
+1. `POST /api/ops/governance/gate/remediation/tracker/autopilot/run` 실행 API 제공
+2. `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest` 최신 이력 API 제공
+3. KPI 지표(`overdue/critical/unassigned`) 기반 auto-assign + escalation 연계
+4. Cron 잡 `python -m app.jobs.ops_governance_remediation_autopilot` 추가
+
+완료 기준:
+- dry-run/실행 모드에서 action 결정 로직이 일관됨
 - 최근 실행 이력(job_run) 조회 가능
 - 회귀 테스트 전체 통과
 
