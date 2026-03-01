@@ -1,4 +1,5 @@
 .venv/
+.pytest_cache/
 __pycache__/
 *.py[cod]
 *.sqlite3
@@ -10,4 +11,5 @@ Thumbs.db
 .vscode/
 _share.html
 _render_public_api.json
+_alembic_old_empty/
 data/adoption-w07-archives/
