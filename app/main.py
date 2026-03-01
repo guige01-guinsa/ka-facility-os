@@ -59,6 +59,9 @@ from app.database import (
     adoption_w12_evidence_files,
     adoption_w12_site_runs,
     adoption_w12_tracker_items,
+    adoption_w13_evidence_files,
+    adoption_w13_site_runs,
+    adoption_w13_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -180,6 +183,15 @@ from app.schemas import (
     W12TrackerItemUpdate,
     W12TrackerOverviewRead,
     W12TrackerReadinessRead,
+    W13EvidenceRead,
+    W13TrackerBootstrapRequest,
+    W13TrackerBootstrapResponse,
+    W13TrackerCompletionRead,
+    W13TrackerCompletionRequest,
+    W13TrackerItemRead,
+    W13TrackerItemUpdate,
+    W13TrackerOverviewRead,
+    W13TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -342,6 +354,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w11:write",
         "adoption_w12:read",
         "adoption_w12:write",
+        "adoption_w13:read",
+        "adoption_w13:write",
     },
     "operator": {
         "inspections:read",
@@ -372,6 +386,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w11:write",
         "adoption_w12:read",
         "adoption_w12:write",
+        "adoption_w13:read",
+        "adoption_w13:write",
     },
     "auditor": {
         "inspections:read",
@@ -390,6 +406,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w10:read",
         "adoption_w11:read",
         "adoption_w12:read",
+        "adoption_w13:read",
     },
 }
 
@@ -423,6 +440,11 @@ W12_HANDOFF_POLICY_KEY_SITE_PREFIX = "adoption_w12_handoff_policy:site:"
 W12_HANDOFF_STATUS_GREEN = "green"
 W12_HANDOFF_STATUS_YELLOW = "yellow"
 W12_HANDOFF_STATUS_RED = "red"
+W13_HANDOFF_POLICY_KEY_DEFAULT = "adoption_w13_handoff_policy:default"
+W13_HANDOFF_POLICY_KEY_SITE_PREFIX = "adoption_w13_handoff_policy:site:"
+W13_HANDOFF_STATUS_GREEN = "green"
+W13_HANDOFF_STATUS_YELLOW = "yellow"
+W13_HANDOFF_STATUS_RED = "red"
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -603,6 +625,26 @@ W12_SITE_COMPLETION_STATUS_SET = {
 }
 W12_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
 W12_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W13_TRACKER_STATUS_PENDING = "pending"
+W13_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W13_TRACKER_STATUS_DONE = "done"
+W13_TRACKER_STATUS_BLOCKED = "blocked"
+W13_TRACKER_STATUS_SET = {
+    W13_TRACKER_STATUS_PENDING,
+    W13_TRACKER_STATUS_IN_PROGRESS,
+    W13_TRACKER_STATUS_DONE,
+    W13_TRACKER_STATUS_BLOCKED,
+}
+W13_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W13_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W13_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W13_SITE_COMPLETION_STATUS_SET = {
+    W13_SITE_COMPLETION_STATUS_ACTIVE,
+    W13_SITE_COMPLETION_STATUS_COMPLETED,
+    W13_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W13_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
+W13_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -617,7 +659,7 @@ W07_WEEKLY_JOB_NAME = "adoption_w07_sla_quality_weekly"
 W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
-ADOPTION_PLAN_END = date(2026, 5, 22)
+ADOPTION_PLAN_END = date(2026, 5, 29)
 
 ADOPTION_WEEKLY_EXECUTION: list[dict[str, Any]] = [
     {
@@ -799,6 +841,21 @@ ADOPTION_WEEKLY_EXECUTION: list[dict[str, Any]] = [
         "deliverables": ["Program closure report", "Independent execution scorecard", "Q3 roadmap draft"],
         "owner": "Executive Sponsor + Ops Director",
         "success_metric": "Independent execution >= 80%",
+    },
+    {
+        "week": 13,
+        "start_date": "2026-05-25",
+        "end_date": "2026-05-29",
+        "phase": "Sustain",
+        "focus": "Continuous improvement",
+        "actions": [
+            "Run weekly improvement review with site champions.",
+            "Convert closure findings into tracked optimization actions.",
+            "Lock next-quarter governance cadence and owners.",
+        ],
+        "deliverables": ["Improvement backlog v1", "Owner action board", "Quarterly governance calendar"],
+        "owner": "Ops Director + PMO",
+        "success_metric": "Improvement action closure >= 85%",
     },
 ]
 
@@ -2728,6 +2785,132 @@ ADOPTION_W12_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W13_SELF_SERVE_GUIDES: list[dict[str, Any]] = [
+    {
+        "id": "W13-CH-01",
+        "title": "Continuous Improvement Checklist",
+        "problem_cluster": "프로그램 종료 기준 미정의",
+        "owner_role": "Executive Sponsor",
+        "target": "종료 기준 충족 100%",
+        "source_api": "/api/ops/adoption/w13/closure-handoff",
+    },
+    {
+        "id": "W13-CH-02",
+        "title": "Stability Optimization Scorecard",
+        "problem_cluster": "운영 자율성 검증 부족",
+        "owner_role": "Head of Ops",
+        "target": "독립 실행률 >= 80%",
+        "source_api": "/api/ops/adoption/w13/handoff-policy",
+    },
+    {
+        "id": "W13-CH-03",
+        "title": "Quarterly Optimization Package",
+        "problem_cluster": "다음 분기 인수인계 누락",
+        "owner_role": "Program Manager",
+        "target": "핵심 운영 패키지 100% 이관",
+        "source_api": "/api/public/adoption-plan/w13",
+    },
+    {
+        "id": "W13-CH-04",
+        "title": "Runbook Ownership Transfer",
+        "problem_cluster": "문서 오너 미지정",
+        "owner_role": "Ops Lead",
+        "target": "핵심 런북 오너 지정률 100%",
+        "source_api": "/api/ops/runbook/checks",
+    },
+    {
+        "id": "W13-CH-05",
+        "title": "Post-Program Risk Ledger",
+        "problem_cluster": "잔여 리스크 관리 미흡",
+        "owner_role": "Audit Lead",
+        "target": "고위험 잔여 이슈 0건",
+        "source_api": "/api/public/post-mvp/risks",
+    },
+]
+
+ADOPTION_W13_TROUBLESHOOTING_RUNBOOK: list[dict[str, Any]] = [
+    {
+        "id": "W13-RB-01",
+        "module": "Inspection and Work-Order",
+        "symptom": "핵심 워크플로우 독립 실행 실패",
+        "owner_role": "Ops QA",
+        "definition_of_done": "독립 실행 재현/복구/재검증 증빙 완료",
+        "api_ref": "/api/work-orders",
+    },
+    {
+        "id": "W13-RB-02",
+        "module": "Reporting and Audit",
+        "symptom": "월간 보고 및 감사 추적 공백",
+        "owner_role": "Audit Lead",
+        "definition_of_done": "CSV/PDF/감사로그 패키지 검증 완료",
+        "api_ref": "/api/reports/monthly/csv",
+    },
+    {
+        "id": "W13-RB-03",
+        "module": "Security and Access",
+        "symptom": "토큰/권한 만료 정책 인계 누락",
+        "owner_role": "Security Admin",
+        "definition_of_done": "권한 매핑·토큰 만료·회전 정책 검증",
+        "api_ref": "/api/admin/tokens",
+    },
+    {
+        "id": "W13-RB-04",
+        "module": "Alert and SLA Guard",
+        "symptom": "경보 품질/복구 자동화 유지 실패",
+        "owner_role": "SRE",
+        "definition_of_done": "Guard latest + recovery run 증빙 완료",
+        "api_ref": "/api/ops/alerts/channels/guard",
+    },
+]
+
+ADOPTION_W13_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W13-E01",
+        "date": "2026-05-25",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W13 kickoff - improvement baseline",
+        "owner": "Executive Sponsor + Ops Director",
+        "output": "종료 기준/오너/검증 일정 확정",
+    },
+    {
+        "id": "W13-E02",
+        "date": "2026-05-26",
+        "start_time": "14:00",
+        "end_time": "14:40",
+        "title": "Independent execution drill",
+        "owner": "Site Champions",
+        "output": "핵심 워크플로우 독립 실행 증빙",
+    },
+    {
+        "id": "W13-E03",
+        "date": "2026-05-27",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Handoff package validation",
+        "owner": "Program Manager + Audit Lead",
+        "output": "운영/문서/리스크 인계 체크 완료",
+    },
+    {
+        "id": "W13-E04",
+        "date": "2026-05-28",
+        "start_time": "15:00",
+        "end_time": "15:30",
+        "title": "Q3 operating plan review",
+        "owner": "Ops Director",
+        "output": "다음 분기 실행계획 초안 확정",
+    },
+    {
+        "id": "W13-E05",
+        "date": "2026-05-29",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W13 improvement sign-off",
+        "owner": "Executive Sponsor",
+        "output": "지속 개선 운영체계 승인",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -2867,6 +3050,19 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "continuous-improvement",
+        "name": "Continuous Improvement",
+        "name_ko": "지속 개선",
+        "description": "W13 기준으로 개선 백로그 운영, 오너 액션 추적, 분기 거버넌스를 실행합니다.",
+        "kpi_hint": "Improvement action closure >= 85%",
+        "links": [
+            {"label": "W13 Pack", "href": "/api/public/adoption-plan/w13"},
+            {"label": "W13 Closure Handoff", "href": "/api/ops/adoption/w13/closure-handoff"},
+            {"label": "W13 Handoff Policy", "href": "/api/ops/adoption/w13/handoff-policy"},
+            {"label": "W13 Tracker", "href": "/api/adoption/w13/tracker/items"},
+        ],
+    },
+    {
         "id": "growth-roadmap",
         "name": "Growth and Post-MVP",
         "name_ko": "확장 로드맵",
@@ -2880,7 +3076,7 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     },
 ]
 
-POST_MVP_PLAN_START = date(2026, 5, 25)
+POST_MVP_PLAN_START = date(2026, 6, 1)
 POST_MVP_PLAN_END = date(2026, 11, 27)
 
 POST_MVP_ROADMAP_PHASES: list[dict[str, Any]] = [
@@ -9589,6 +9785,3450 @@ def _reset_w11_completion_if_closed(
 
 
 
+
+def _w13_handoff_policy_key(site: str | None) -> tuple[str, str | None]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return W13_HANDOFF_POLICY_KEY_DEFAULT, None
+    return f"{W13_HANDOFF_POLICY_KEY_SITE_PREFIX}{normalized_site}", normalized_site
+
+
+def _default_w13_handoff_policy() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "risk_rate_green_threshold": 20.0,
+        "risk_rate_yellow_threshold": 30.0,
+        "checklist_completion_green_threshold": 80.0,
+        "checklist_completion_yellow_threshold": 60.0,
+        "simulation_success_green_threshold": 80.0,
+        "simulation_success_yellow_threshold": 60.0,
+        "readiness_target": 75.0,
+    }
+
+
+def _normalize_w13_handoff_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w13_handoff_policy()
+
+    def _float_value(key: str, fallback: float, min_value: float, max_value: float) -> float:
+        try:
+            raw = float(source.get(key, fallback))
+        except (TypeError, ValueError):
+            raw = fallback
+        return round(max(min_value, min(raw, max_value)), 2)
+
+    repeat_green = _float_value(
+        "risk_rate_green_threshold",
+        float(defaults["risk_rate_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    repeat_yellow = _float_value(
+        "risk_rate_yellow_threshold",
+        float(defaults["risk_rate_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if repeat_yellow < repeat_green:
+        repeat_yellow = repeat_green
+
+    guide_green = _float_value(
+        "checklist_completion_green_threshold",
+        float(defaults["checklist_completion_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    guide_yellow = _float_value(
+        "checklist_completion_yellow_threshold",
+        float(defaults["checklist_completion_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if guide_yellow > guide_green:
+        guide_yellow = guide_green
+
+    runbook_green = _float_value(
+        "simulation_success_green_threshold",
+        float(defaults["simulation_success_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    runbook_yellow = _float_value(
+        "simulation_success_yellow_threshold",
+        float(defaults["simulation_success_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if runbook_yellow > runbook_green:
+        runbook_yellow = runbook_green
+
+    readiness_target = _float_value(
+        "readiness_target",
+        float(defaults["readiness_target"]),
+        0.0,
+        100.0,
+    )
+
+    return {
+        "enabled": bool(source.get("enabled", defaults.get("enabled", True))),
+        "risk_rate_green_threshold": repeat_green,
+        "risk_rate_yellow_threshold": repeat_yellow,
+        "checklist_completion_green_threshold": guide_green,
+        "checklist_completion_yellow_threshold": guide_yellow,
+        "simulation_success_green_threshold": runbook_green,
+        "simulation_success_yellow_threshold": runbook_yellow,
+        "readiness_target": readiness_target,
+    }
+
+
+def _parse_w13_handoff_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w13_handoff_policy(loaded)
+
+
+def _ensure_w13_handoff_policy(site: str | None) -> tuple[dict[str, Any], datetime, str, str | None]:
+    policy_key, normalized_site = _w13_handoff_policy_key(site)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w13_handoff_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=policy_key,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, policy_key, normalized_site
+    policy = _parse_w13_handoff_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, policy_key, normalized_site
+
+
+def _upsert_w13_handoff_policy(site: str | None, payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str, str | None]:
+    current_policy, _, policy_key, normalized_site = _ensure_w13_handoff_policy(site)
+    incoming = payload if isinstance(payload, dict) else {}
+    merged: dict[str, Any] = {**current_policy}
+    for key in [
+        "enabled",
+        "risk_rate_green_threshold",
+        "risk_rate_yellow_threshold",
+        "checklist_completion_green_threshold",
+        "checklist_completion_yellow_threshold",
+        "simulation_success_green_threshold",
+        "simulation_success_yellow_threshold",
+        "readiness_target",
+    ]:
+        if key in incoming:
+            merged[key] = incoming[key]
+    normalized = _normalize_w13_handoff_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key, normalized_site
+
+
+def _build_w13_closure_handoff_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    window_start = now - timedelta(days=window_days)
+    policy, policy_updated_at, policy_key, policy_site = _ensure_w13_handoff_policy(site)
+
+    effective_site = policy_site if policy_site is not None else _normalize_site_name(site)
+    effective_allowed_sites = allowed_sites if effective_site is None else None
+
+    stmt = select(work_orders).where(work_orders.c.created_at >= window_start)
+    if effective_site is not None:
+        stmt = stmt.where(work_orders.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        if not effective_allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": None,
+                "window_days": window_days,
+                "policy": {
+                    "policy_key": policy_key,
+                    "updated_at": policy_updated_at.isoformat(),
+                    "enabled": bool(policy.get("enabled", True)),
+                },
+                "metrics": {
+                    "work_orders_count": 0,
+                    "unique_titles": 0,
+                    "repeated_work_orders_count": 0,
+                    "risk_rate_percent": 0.0,
+                    "guide_total_count": len(ADOPTION_W13_SELF_SERVE_GUIDES),
+                    "guide_done_count": 0,
+                    "checklist_completion_rate_percent": 0.0,
+                    "runbook_total_count": len(ADOPTION_W13_TROUBLESHOOTING_RUNBOOK),
+                    "runbook_done_count": 0,
+                    "simulation_success_rate_percent": 0.0,
+                    "closure_handoff_readiness_score": 0.0,
+                    "overall_status": W13_HANDOFF_STATUS_RED,
+                    "target_met": False,
+                },
+                "kpis": [],
+                "top_repeat_titles": [],
+                "scale_checklist": ADOPTION_W13_SELF_SERVE_GUIDES,
+                "simulation_runbook": ADOPTION_W13_TROUBLESHOOTING_RUNBOOK,
+                "recommendations": ["접근 가능한 site 범위가 비어 있습니다. site_scope를 확인하세요."],
+            }
+        stmt = stmt.where(work_orders.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        wo_rows = conn.execute(stmt).mappings().all()
+
+    title_counts: dict[str, int] = {}
+    title_label: dict[str, str] = {}
+    for row in wo_rows:
+        title_raw = str(row.get("title") or "").strip()
+        normalized = title_raw.lower() if title_raw else "(untitled)"
+        title_counts[normalized] = title_counts.get(normalized, 0) + 1
+        if normalized not in title_label:
+            title_label[normalized] = title_raw or "(untitled)"
+
+    total_work_orders = len(wo_rows)
+    repeated_orders_count = sum(count for count in title_counts.values() if count >= 2)
+    unique_titles = len(title_counts)
+    risk_rate_percent = round((repeated_orders_count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0
+    top_repeat_titles = sorted(
+        [
+            {
+                "title": title_label.get(key, key),
+                "count": count,
+                "share_percent": round((count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0,
+            }
+            for key, count in title_counts.items()
+            if count >= 2
+        ],
+        key=lambda item: int(item.get("count") or 0),
+        reverse=True,
+    )[:10]
+
+    tracker_stmt = select(adoption_w13_tracker_items)
+    if effective_site is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w13_tracker_items.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w13_tracker_items.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        tracker_rows = conn.execute(tracker_stmt).mappings().all()
+
+    guide_total_count = max(
+        len(ADOPTION_W13_SELF_SERVE_GUIDES),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "self_serve_guide"),
+    )
+    runbook_total_count = max(
+        len(ADOPTION_W13_TROUBLESHOOTING_RUNBOOK),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "troubleshooting_runbook"),
+    )
+    guide_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "self_serve_guide" and str(row.get("status") or "") == W13_TRACKER_STATUS_DONE
+    )
+    runbook_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "troubleshooting_runbook" and str(row.get("status") or "") == W13_TRACKER_STATUS_DONE
+    )
+    checklist_completion_rate_percent = round((guide_done_count / guide_total_count) * 100.0, 2) if guide_total_count > 0 else 0.0
+    simulation_success_rate_percent = (
+        round((runbook_done_count / runbook_total_count) * 100.0, 2) if runbook_total_count > 0 else 0.0
+    )
+
+    repeat_status = _evaluate_w09_kpi_status(
+        actual=risk_rate_percent,
+        direction="lower_better",
+        green_threshold=float(policy.get("risk_rate_green_threshold") or 20.0),
+        yellow_threshold=float(policy.get("risk_rate_yellow_threshold") or 30.0),
+    )
+    guide_status = _evaluate_w09_kpi_status(
+        actual=checklist_completion_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("checklist_completion_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+    )
+    runbook_status = _evaluate_w09_kpi_status(
+        actual=simulation_success_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("simulation_success_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("simulation_success_yellow_threshold") or 60.0),
+    )
+
+    status_points = {
+        W09_KPI_STATUS_RED: 0.0,
+        W09_KPI_STATUS_YELLOW: 50.0,
+        W09_KPI_STATUS_GREEN: 100.0,
+    }
+    closure_handoff_readiness_score = round(
+        (status_points.get(repeat_status, 0.0) + status_points.get(guide_status, 0.0) + status_points.get(runbook_status, 0.0))
+        / 3.0,
+        2,
+    )
+
+    status_set = {repeat_status, guide_status, runbook_status}
+    overall_status = W13_HANDOFF_STATUS_GREEN
+    if W09_KPI_STATUS_RED in status_set:
+        overall_status = W13_HANDOFF_STATUS_RED
+    elif W09_KPI_STATUS_YELLOW in status_set:
+        overall_status = W13_HANDOFF_STATUS_YELLOW
+
+    readiness_target = float(policy.get("readiness_target") or 75.0)
+    target_met = closure_handoff_readiness_score >= readiness_target and overall_status != W13_HANDOFF_STATUS_RED
+
+    kpis = [
+        {
+            "kpi_key": "repeat_ticket_rate_percent",
+            "kpi_name": "Repeat ticket rate",
+            "direction": "lower_better",
+            "actual_value": risk_rate_percent,
+            "green_threshold": float(policy.get("risk_rate_green_threshold") or 20.0),
+            "yellow_threshold": float(policy.get("risk_rate_yellow_threshold") or 30.0),
+            "status": repeat_status,
+            "target": f"<= {policy.get('risk_rate_green_threshold', 20.0)}%",
+        },
+        {
+            "kpi_key": "checklist_completion_rate_percent",
+            "kpi_name": "Scale readiness guide publish rate",
+            "direction": "higher_better",
+            "actual_value": checklist_completion_rate_percent,
+            "green_threshold": float(policy.get("checklist_completion_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+            "status": guide_status,
+            "target": f">= {policy.get('checklist_completion_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "simulation_success_rate_percent",
+            "kpi_name": "Runbook completion rate",
+            "direction": "higher_better",
+            "actual_value": simulation_success_rate_percent,
+            "green_threshold": float(policy.get("simulation_success_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("simulation_success_yellow_threshold") or 60.0),
+            "status": runbook_status,
+            "target": f">= {policy.get('simulation_success_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "closure_handoff_readiness_score",
+            "kpi_name": "Scale readiness readiness score",
+            "direction": "higher_better",
+            "actual_value": closure_handoff_readiness_score,
+            "green_threshold": readiness_target,
+            "yellow_threshold": max(0.0, readiness_target - 15.0),
+            "status": _evaluate_w09_kpi_status(
+                actual=closure_handoff_readiness_score,
+                direction="higher_better",
+                green_threshold=readiness_target,
+                yellow_threshold=max(0.0, readiness_target - 15.0),
+            ),
+            "target": f">= {readiness_target}",
+        },
+    ]
+
+    recommendations: list[str] = []
+    if repeat_status == W09_KPI_STATUS_RED:
+        recommendations.append("반복 티켓 비율이 높습니다. Top 반복 제목 3개를 FAQ/가이드로 우선 전환하세요.")
+    if guide_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Scale readiness guide 게시율이 낮습니다. 담당자와 마감일을 지정해 게시를 완료하세요.")
+    if runbook_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Runbook 완료율이 낮습니다. 모듈별 실습 드릴과 증빙 업로드를 마감하세요.")
+    if not recommendations:
+        recommendations.append("W13 지속 개선 상태가 안정적입니다. 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": effective_site,
+        "window_days": window_days,
+        "policy": {
+            "policy_key": policy_key,
+            "updated_at": policy_updated_at.isoformat(),
+            "enabled": bool(policy.get("enabled", True)),
+            "readiness_target": readiness_target,
+        },
+        "metrics": {
+            "work_orders_count": total_work_orders,
+            "unique_titles": unique_titles,
+            "repeated_work_orders_count": repeated_orders_count,
+            "risk_rate_percent": risk_rate_percent,
+            "guide_total_count": guide_total_count,
+            "guide_done_count": guide_done_count,
+            "checklist_completion_rate_percent": checklist_completion_rate_percent,
+            "runbook_total_count": runbook_total_count,
+            "runbook_done_count": runbook_done_count,
+            "simulation_success_rate_percent": simulation_success_rate_percent,
+            "closure_handoff_readiness_score": closure_handoff_readiness_score,
+            "overall_status": overall_status,
+            "target_met": target_met,
+        },
+        "kpis": kpis,
+        "top_repeat_titles": top_repeat_titles,
+        "scale_checklist": ADOPTION_W13_SELF_SERVE_GUIDES,
+        "simulation_runbook": ADOPTION_W13_TROUBLESHOOTING_RUNBOOK,
+        "recommendations": recommendations,
+    }
+def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "alert_mttr_slo_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(max(1, min(max_rows, 500)))
+        ).mappings().all()
+    for row in rows:
+        raw = str(row.get("detail_json") or "{}")
+        try:
+            detail = json.loads(raw)
+        except json.JSONDecodeError:
+            detail = {}
+        if not isinstance(detail, dict):
+            continue
+        if bool(detail.get("breach")):
+            finished_at = _as_optional_datetime(row.get("finished_at"))
+            if finished_at is not None:
+                return finished_at
+    return None
+
+
+def _configured_alert_targets() -> list[str]:
+    targets: list[str] = []
+    merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
+    for part in merged_raw.split(","):
+        value = part.strip()
+        if value:
+            targets.append(value)
+    if ALERT_WEBHOOK_URL:
+        targets.append(ALERT_WEBHOOK_URL)
+
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for target in targets:
+        if target in seen:
+            continue
+        seen.add(target)
+        deduped.append(target)
+    return deduped
+
+
+def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized in {"off", "none", "disabled"}:
+        return "off"
+    if normalized in {"warning", "warn"}:
+        return "warning"
+    if normalized in {"critical", "crit"}:
+        return "critical"
+    if normalized in {"always", "all", "ok"}:
+        return "always"
+    return "critical"
+
+
+def _is_alert_failure_status(status: str) -> bool:
+    return status.strip().lower() in {"failed", "warning"}
+
+
+def _compute_alert_channel_guard_state(
+    target: str,
+    *,
+    now: datetime | None = None,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+) -> dict[str, Any]:
+    current_time = now or datetime.now(timezone.utc)
+    normalized_lookback_days = max(1, lookback_days)
+    history_start = current_time - timedelta(days=normalized_lookback_days)
+    stmt = (
+        select(
+            alert_deliveries.c.status,
+            alert_deliveries.c.error,
+            alert_deliveries.c.last_attempt_at,
+        )
+        .where(alert_deliveries.c.target == target)
+        .where(alert_deliveries.c.last_attempt_at >= history_start)
+        .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+        .limit(200)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    last_attempt_at: datetime | None = None
+    last_status: str | None = None
+    last_error: str | None = None
+    last_success_at: datetime | None = None
+    last_failure_at: datetime | None = None
+    consecutive_failures = 0
+
+    for idx, row in enumerate(rows):
+        attempted_at = _as_optional_datetime(row.get("last_attempt_at"))
+        if attempted_at is None:
+            continue
+        status = str(row.get("status") or "failed").strip().lower()
+        error_text = str(row.get("error") or "")
+        if idx == 0:
+            last_attempt_at = attempted_at
+            last_status = status
+            last_error = error_text or None
+
+        if status == "success":
+            last_success_at = attempted_at
+            # Consecutive failure run is determined from most recent attempt backward
+            break
+        if _is_alert_failure_status(status):
+            if last_failure_at is None:
+                last_failure_at = attempted_at
+            consecutive_failures += 1
+            continue
+        break
+
+    threshold = max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD)
+    cooldown_minutes = max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES)
+    quarantined_until: datetime | None = None
+    state = "healthy"
+    if consecutive_failures >= threshold and last_failure_at is not None:
+        quarantined_until = last_failure_at + timedelta(minutes=cooldown_minutes)
+        if current_time < quarantined_until:
+            state = "quarantined"
+        else:
+            state = "warning"
+    elif consecutive_failures > 0:
+        state = "warning"
+
+    remaining_quarantine_minutes = 0
+    if quarantined_until is not None and current_time < quarantined_until:
+        remaining_quarantine_minutes = max(
+            1,
+            int(math.ceil((quarantined_until - current_time).total_seconds() / 60.0)),
+        )
+
+    return {
+        "target": target,
+        "state": state if ALERT_CHANNEL_GUARD_ENABLED else "disabled",
+        "state_computed": state,
+        "consecutive_failures": consecutive_failures,
+        "threshold": threshold,
+        "cooldown_minutes": cooldown_minutes,
+        "remaining_quarantine_minutes": remaining_quarantine_minutes,
+        "quarantined_until": quarantined_until.isoformat() if quarantined_until is not None else None,
+        "last_attempt_at": last_attempt_at.isoformat() if last_attempt_at is not None else None,
+        "last_status": last_status,
+        "last_error": last_error,
+        "last_success_at": last_success_at.isoformat() if last_success_at is not None else None,
+        "last_failure_at": last_failure_at.isoformat() if last_failure_at is not None else None,
+        "delivery_count_lookback": len(rows),
+    }
+
+
+def _build_alert_channel_guard_snapshot(
+    *,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+    max_targets: int = 100,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current_time = now or datetime.now(timezone.utc)
+    normalized_lookback_days = max(1, lookback_days)
+    normalized_max_targets = max(1, min(max_targets, 500))
+    history_start = current_time - timedelta(days=normalized_lookback_days)
+    target_set: set[str] = set(_configured_alert_targets())
+
+    stmt = (
+        select(alert_deliveries.c.target)
+        .where(alert_deliveries.c.last_attempt_at >= history_start)
+        .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+        .limit(2000)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+    with get_conn() as conn:
+        recent_targets = conn.execute(stmt).all()
+    for row in recent_targets:
+        value = str(row[0] or "").strip()
+        if value:
+            target_set.add(value)
+
+    channels = [
+        _compute_alert_channel_guard_state(
+            target,
+            now=current_time,
+            event_type=event_type,
+            lookback_days=normalized_lookback_days,
+        )
+        for target in sorted(target_set)
+    ]
+
+    def _state_rank(item: dict[str, Any]) -> int:
+        state = str(item.get("state_computed") or "healthy")
+        if state == "quarantined":
+            return 0
+        if state == "warning":
+            return 1
+        return 2
+
+    channels.sort(key=lambda item: (_state_rank(item), str(item.get("target") or "")))
+    limited_channels = channels[:normalized_max_targets]
+    quarantined_count = sum(1 for item in channels if str(item.get("state_computed")) == "quarantined")
+    warning_count = sum(1 for item in channels if str(item.get("state_computed")) == "warning")
+    healthy_count = sum(1 for item in channels if str(item.get("state_computed")) == "healthy")
+    status = "ok"
+    if quarantined_count > 0:
+        status = "critical"
+    elif warning_count > 0:
+        status = "warning"
+    if not ALERT_CHANNEL_GUARD_ENABLED:
+        status = "warning" if warning_count > 0 else "ok"
+
+    return {
+        "generated_at": current_time.isoformat(),
+        "event_type": event_type,
+        "lookback_days": normalized_lookback_days,
+        "policy": {
+            "enabled": ALERT_CHANNEL_GUARD_ENABLED,
+            "failure_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
+            "cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
+            "recovery_steps": [
+                "1) 원인 채널(네트워크/토큰/권한) 확인",
+                "2) /api/ops/alerts/channels/guard/recover로 probe 실행",
+                "3) 성공 시 채널 상태 healthy 복귀 확인",
+            ],
+        },
+        "summary": {
+            "status": status,
+            "target_count": len(channels),
+            "healthy_count": healthy_count,
+            "warning_count": warning_count,
+            "quarantined_count": quarantined_count,
+            "returned_count": len(limited_channels),
+        },
+        "channels": limited_channels,
+    }
+
+
+def _build_alert_delivery_archive_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "event_type",
+            "target",
+            "status",
+            "error",
+            "attempt_count",
+            "last_attempt_at",
+            "created_at",
+            "updated_at",
+            "payload_json",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                int(row.get("id") or 0),
+                str(row.get("event_type") or ""),
+                str(row.get("target") or ""),
+                str(row.get("status") or ""),
+                str(row.get("error") or ""),
+                int(row.get("attempt_count") or 0),
+                _as_optional_datetime(row.get("last_attempt_at")).isoformat()
+                if _as_optional_datetime(row.get("last_attempt_at")) is not None
+                else "",
+                _as_optional_datetime(row.get("created_at")).isoformat()
+                if _as_optional_datetime(row.get("created_at")) is not None
+                else "",
+                _as_optional_datetime(row.get("updated_at")).isoformat()
+                if _as_optional_datetime(row.get("updated_at")) is not None
+                else "",
+                str(row.get("payload_json") or "{}"),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def run_alert_retention_job(
+    *,
+    retention_days: int | None = None,
+    max_delete: int | None = None,
+    dry_run: bool = False,
+    write_archive: bool | None = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    resolved_retention_days = max(1, int(retention_days if retention_days is not None else ALERT_RETENTION_DAYS))
+    resolved_max_delete = max(1, min(int(max_delete if max_delete is not None else ALERT_RETENTION_MAX_DELETE), 50000))
+    resolved_write_archive = ALERT_RETENTION_ARCHIVE_ENABLED if write_archive is None else bool(write_archive)
+    cutoff = started_at - timedelta(days=resolved_retention_days)
+
+    archive_file: str | None = None
+    archive_error: str | None = None
+    deleted_count = 0
+    candidate_count = 0
+    candidate_ids: list[int] = []
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(alert_deliveries)
+            .where(alert_deliveries.c.last_attempt_at < cutoff)
+            .order_by(alert_deliveries.c.last_attempt_at.asc(), alert_deliveries.c.id.asc())
+            .limit(resolved_max_delete)
+        ).mappings().all()
+        candidate_count = len(rows)
+        candidate_ids = [int(row["id"]) for row in rows]
+
+        can_delete = not dry_run
+        if rows and not dry_run and resolved_write_archive:
+            try:
+                archive_dir = Path(ALERT_RETENTION_ARCHIVE_PATH)
+                archive_dir.mkdir(parents=True, exist_ok=True)
+                stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+                first_id = candidate_ids[0]
+                last_id = candidate_ids[-1]
+                file_path = archive_dir / f"alert-deliveries-{stamp}-{first_id}-{last_id}.csv"
+                file_path.write_text(_build_alert_delivery_archive_csv([dict(row) for row in rows]), encoding="utf-8")
+                archive_file = str(file_path)
+            except Exception as exc:  # pragma: no cover - defensive path
+                archive_error = str(exc)
+                can_delete = False
+
+        if rows and can_delete:
+            delete_result = conn.execute(
+                delete(alert_deliveries).where(alert_deliveries.c.id.in_(candidate_ids))
+            )
+            deleted_count = int(delete_result.rowcount or 0)
+
+    finished_at = datetime.now(timezone.utc)
+    status = "success" if archive_error is None else "warning"
+    run_id = _write_job_run(
+        job_name="alert_retention",
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "retention_days": resolved_retention_days,
+            "max_delete": resolved_max_delete,
+            "dry_run": dry_run,
+            "write_archive": resolved_write_archive,
+            "cutoff": cutoff.isoformat(),
+            "candidate_count": candidate_count,
+            "deleted_count": deleted_count,
+            "archive_file": archive_file,
+            "archive_error": archive_error,
+            "candidate_ids": candidate_ids[:200],
+        },
+    )
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": status,
+        "retention_days": resolved_retention_days,
+        "max_delete": resolved_max_delete,
+        "dry_run": dry_run,
+        "write_archive": resolved_write_archive,
+        "cutoff": cutoff.isoformat(),
+        "candidate_count": candidate_count,
+        "deleted_count": deleted_count,
+        "archive_file": archive_file,
+        "archive_error": archive_error,
+    }
+
+
+def run_alert_guard_recover_job(
+    *,
+    event_type: str | None = None,
+    state_filter: str = "quarantined",
+    max_targets: int | None = None,
+    dry_run: bool = False,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    normalized_state_filter = (state_filter or "quarantined").strip().lower()
+    if normalized_state_filter not in {"quarantined", "warning", "all"}:
+        normalized_state_filter = "quarantined"
+    resolved_max_targets = max(1, min(int(max_targets if max_targets is not None else ALERT_GUARD_RECOVER_MAX_TARGETS), 500))
+
+    snapshot = _build_alert_channel_guard_snapshot(
+        event_type=event_type,
+        lookback_days=30,
+        max_targets=max(200, resolved_max_targets * 5),
+        now=started_at,
+    )
+    channels = snapshot.get("channels", [])
+    if not isinstance(channels, list):
+        channels = []
+
+    def _matches(item: dict[str, Any]) -> bool:
+        state = str(item.get("state_computed") or "")
+        if normalized_state_filter == "all":
+            return state in {"quarantined", "warning"}
+        return state == normalized_state_filter
+
+    selected = [item for item in channels if isinstance(item, dict) and _matches(item)][:resolved_max_targets]
+
+    processed_count = 0
+    success_count = 0
+    warning_count = 0
+    failed_count = 0
+    skipped_count = 0
+    results: list[dict[str, Any]] = []
+
+    for item in selected:
+        target = str(item.get("target") or "").strip()
+        if not target:
+            continue
+        processed_count += 1
+        before_state = _compute_alert_channel_guard_state(
+            target,
+            event_type=event_type,
+            now=datetime.now(timezone.utc),
+        )
+        if dry_run:
+            skipped_count += 1
+            results.append(
+                {
+                    "target": target,
+                    "status": "skipped",
+                    "reason": "dry_run",
+                    "before_state": before_state.get("state"),
+                    "after_state": before_state.get("state"),
+                }
+            )
+            continue
+
+        probe_payload = {
+            "event": "alert_guard_recovery_batch_probe",
+            "target": target,
+            "event_type_scope": event_type,
+            "state_filter": normalized_state_filter,
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+        ok, err = _post_json_with_retries(
+            url=target,
+            payload=probe_payload,
+            retries=ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        probe_status = "success" if ok and err is None else ("warning" if ok else "failed")
+        if probe_status == "success":
+            success_count += 1
+        elif probe_status == "warning":
+            warning_count += 1
+        else:
+            failed_count += 1
+
+        delivery_id = _write_alert_delivery(
+            event_type=event_type or "alert_guard_recover",
+            target=target,
+            status=probe_status,
+            error=err,
+            payload={**probe_payload, "probe": True},
+        )
+        after_state = _compute_alert_channel_guard_state(
+            target,
+            event_type=event_type,
+            now=datetime.now(timezone.utc),
+        )
+        results.append(
+            {
+                "target": target,
+                "status": probe_status,
+                "error": err,
+                "delivery_id": delivery_id,
+                "before_state": before_state.get("state"),
+                "after_state": after_state.get("state"),
+                "before_consecutive_failures": before_state.get("consecutive_failures"),
+                "after_consecutive_failures": after_state.get("consecutive_failures"),
+            }
+        )
+
+    finished_at = datetime.now(timezone.utc)
+    job_status = "success"
+    if failed_count > 0:
+        job_status = "warning"
+    run_id = _write_job_run(
+        job_name="alert_guard_recover",
+        trigger=trigger,
+        status=job_status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "state_filter": normalized_state_filter,
+            "max_targets": resolved_max_targets,
+            "dry_run": dry_run,
+            "selected_target_count": len(selected),
+            "processed_count": processed_count,
+            "success_count": success_count,
+            "warning_count": warning_count,
+            "failed_count": failed_count,
+            "skipped_count": skipped_count,
+            "results": results[:200],
+        },
+    )
+
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": job_status,
+        "event_type": event_type,
+        "state_filter": normalized_state_filter,
+        "max_targets": resolved_max_targets,
+        "dry_run": dry_run,
+        "selected_target_count": len(selected),
+        "processed_count": processed_count,
+        "success_count": success_count,
+        "warning_count": warning_count,
+        "failed_count": failed_count,
+        "skipped_count": skipped_count,
+        "results": results,
+    }
+
+
+def run_alert_mttr_slo_check_job(
+    *,
+    event_type: str | None = None,
+    force_notify: bool = False,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    policy, policy_updated_at, policy_key = _ensure_mttr_slo_policy()
+    window_days = int(policy.get("window_days") or 30)
+    threshold_minutes = float(policy.get("threshold_minutes") or 60)
+    min_incidents = int(policy.get("min_incidents") or 1)
+
+    snapshot = _build_alert_channel_mttr_snapshot(
+        event_type=event_type,
+        windows=[window_days],
+        now=started_at,
+    )
+    windows = snapshot.get("windows", [])
+    window: dict[str, Any] = windows[0] if isinstance(windows, list) and windows else {}
+    incident_count = int(window.get("incident_count") or 0)
+    recovered_incidents = int(window.get("recovered_incidents") or 0)
+    unresolved_incidents = int(window.get("unresolved_incidents") or 0)
+    mttr_minutes = window.get("mttr_minutes")
+    mttr_value = float(mttr_minutes) if mttr_minutes is not None else None
+    breach = (
+        bool(policy.get("enabled", True))
+        and incident_count >= max(1, min_incidents)
+        and mttr_value is not None
+        and mttr_value > threshold_minutes
+    )
+
+    channels = window.get("channels", [])
+    if not isinstance(channels, list):
+        channels = []
+    top_channels_limit = max(1, min(int(policy.get("top_channels") or 10), 50))
+    top_channels = [
+        {
+            "target": str(item.get("target") or ""),
+            "incident_count": int(item.get("incident_count") or 0),
+            "recovered_incidents": int(item.get("recovered_incidents") or 0),
+            "unresolved_incidents": int(item.get("unresolved_incidents") or 0),
+            "mttr_minutes": item.get("mttr_minutes"),
+            "last_incident_start": item.get("last_incident_start"),
+            "last_recovery_at": item.get("last_recovery_at"),
+        }
+        for item in channels
+        if isinstance(item, dict)
+    ][:top_channels_limit]
+
+    auto_recover_attempted = False
+    auto_recover_result: dict[str, Any] | None = None
+    if breach and bool(policy.get("auto_recover_enabled", True)):
+        auto_recover_attempted = True
+        recovered = run_alert_guard_recover_job(
+            event_type=event_type,
+            state_filter=str(policy.get("recover_state") or "quarantined"),
+            max_targets=int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+            dry_run=False,
+            trigger="mttr_slo_auto",
+        )
+        auto_recover_result = {
+            "run_id": recovered.get("run_id"),
+            "status": recovered.get("status"),
+            "state_filter": recovered.get("state_filter"),
+            "max_targets": recovered.get("max_targets"),
+            "processed_count": recovered.get("processed_count"),
+            "success_count": recovered.get("success_count"),
+            "failed_count": recovered.get("failed_count"),
+            "skipped_count": recovered.get("skipped_count"),
+        }
+
+    notify_attempted = False
+    notify_dispatched = False
+    notify_error: str | None = None
+    notify_channels: list[dict[str, Any]] = []
+    cooldown_active = False
+    cooldown_remaining_minutes = 0
+    last_breach_at = _latest_mttr_slo_breach_finished_at()
+    cooldown_minutes = int(policy.get("notify_cooldown_minutes") or 0)
+    if breach and bool(policy.get("notify_enabled", True)):
+        if not force_notify and cooldown_minutes > 0 and last_breach_at is not None:
+            next_allowed_at = last_breach_at + timedelta(minutes=cooldown_minutes)
+            if started_at < next_allowed_at:
+                cooldown_active = True
+                cooldown_remaining_minutes = max(
+                    1,
+                    int(math.ceil((next_allowed_at - started_at).total_seconds() / 60.0)),
+                )
+        if force_notify or not cooldown_active:
+            notify_attempted = True
+            notify_dispatched, notify_error, channel_results = _dispatch_alert_event(
+                event_type=str(policy.get("notify_event_type") or "mttr_slo_breach"),
+                payload={
+                    "event": "mttr_slo_breach",
+                    "checked_at": started_at.isoformat(),
+                    "event_type_scope": event_type,
+                    "policy": {
+                        "policy_key": policy_key,
+                        "enabled": bool(policy.get("enabled", True)),
+                        "window_days": window_days,
+                        "threshold_minutes": threshold_minutes,
+                        "min_incidents": min_incidents,
+                        "auto_recover_enabled": bool(policy.get("auto_recover_enabled", True)),
+                        "recover_state": str(policy.get("recover_state") or "quarantined"),
+                        "recover_max_targets": int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+                    },
+                    "window": {
+                        "days": window_days,
+                        "incident_count": incident_count,
+                        "recovered_incidents": recovered_incidents,
+                        "unresolved_incidents": unresolved_incidents,
+                        "mttr_minutes": mttr_value,
+                    },
+                    "top_channels": top_channels,
+                    "auto_recover_result": auto_recover_result,
+                },
+            )
+            notify_channels = [item.model_dump() for item in channel_results]
+
+    finished_at = datetime.now(timezone.utc)
+    status = "success"
+    if breach:
+        status = "warning"
+    if notify_attempted and notify_error is not None and notify_dispatched is False:
+        status = "warning"
+
+    run_id = _write_job_run(
+        job_name="alert_mttr_slo_check",
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "policy_key": policy_key,
+            "policy_updated_at": policy_updated_at.isoformat(),
+            "policy": policy,
+            "window": {
+                "days": window_days,
+                "incident_count": incident_count,
+                "recovered_incidents": recovered_incidents,
+                "unresolved_incidents": unresolved_incidents,
+                "mttr_minutes": mttr_value,
+            },
+            "breach": breach,
+            "top_channels": top_channels,
+            "actions": {
+                "auto_recover_attempted": auto_recover_attempted,
+                "auto_recover_result": auto_recover_result,
+                "notify_attempted": notify_attempted,
+                "notify_dispatched": notify_dispatched,
+                "notify_error": notify_error,
+                "notify_channels": notify_channels,
+                "force_notify": force_notify,
+                "cooldown_minutes": cooldown_minutes,
+                "cooldown_active": cooldown_active,
+                "cooldown_remaining_minutes": cooldown_remaining_minutes,
+                "last_breach_at": last_breach_at.isoformat() if last_breach_at is not None else None,
+            },
+        },
+    )
+
+    return {
+        "run_id": run_id,
+        "checked_at": finished_at.isoformat(),
+        "status": status,
+        "event_type": event_type,
+        "policy_key": policy_key,
+        "policy_updated_at": policy_updated_at.isoformat(),
+        "policy": policy,
+        "window": {
+            "days": window_days,
+            "incident_count": incident_count,
+            "recovered_incidents": recovered_incidents,
+            "unresolved_incidents": unresolved_incidents,
+            "mttr_minutes": mttr_value,
+        },
+        "breach": breach,
+        "top_channels": top_channels,
+        "actions": {
+            "auto_recover_attempted": auto_recover_attempted,
+            "auto_recover_result": auto_recover_result,
+            "notify_attempted": notify_attempted,
+            "notify_dispatched": notify_dispatched,
+            "notify_error": notify_error,
+            "notify_channels": notify_channels,
+            "force_notify": force_notify,
+            "cooldown_minutes": cooldown_minutes,
+            "cooldown_active": cooldown_active,
+            "cooldown_remaining_minutes": cooldown_remaining_minutes,
+            "last_breach_at": last_breach_at.isoformat() if last_breach_at is not None else None,
+        },
+    }
+
+
+def _post_json_with_retries(
+    *,
+    url: str,
+    payload: dict[str, Any],
+    retries: int,
+    timeout_sec: float,
+) -> tuple[bool, str | None]:
+    body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+    attempts = max(1, retries)
+    for attempt in range(1, attempts + 1):
+        req = url_request.Request(
+            url=url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with url_request.urlopen(req, timeout=timeout_sec) as resp:
+                status_code = int(getattr(resp, "status", 0))
+                if 200 <= status_code < 300:
+                    return True, None
+                err = f"webhook returned status {status_code}"
+        except url_error.HTTPError as exc:
+            err = f"webhook http error {exc.code}"
+        except url_error.URLError as exc:
+            err = f"webhook url error: {exc.reason}"
+        except Exception as exc:  # pragma: no cover - defensive path
+            err = f"webhook unexpected error: {exc}"
+
+        if attempt < attempts:
+            time.sleep(0.5 * (2 ** (attempt - 1)))
+    return False, err
+
+
+def _dispatch_alert_event(
+    *,
+    event_type: str,
+    payload: dict[str, Any],
+) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
+    targets = _configured_alert_targets()
+    if not targets:
+        return False, None, []
+
+    results: list[SlaAlertChannelResult] = []
+    success_count = 0
+    failed_count = 0
+
+    for target in targets:
+        guard_state = _compute_alert_channel_guard_state(target, event_type=event_type)
+        if ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
+            guard_error = (
+                "channel quarantined until "
+                + str(guard_state.get("quarantined_until") or "unknown")
+                + " (consecutive_failures="
+                + str(guard_state.get("consecutive_failures") or 0)
+                + ")"
+            )
+            _write_alert_delivery(
+                event_type=event_type,
+                target=target,
+                status="warning",
+                error=guard_error,
+                payload={
+                    **payload,
+                    "guard": {
+                        "state": guard_state.get("state_computed"),
+                        "consecutive_failures": guard_state.get("consecutive_failures"),
+                        "quarantined_until": guard_state.get("quarantined_until"),
+                    },
+                },
+            )
+            failed_count += 1
+            results.append(SlaAlertChannelResult(target=target, success=False, error=guard_error))
+            continue
+
+        ok, err = _post_json_with_retries(
+            url=target,
+            payload=payload,
+            retries=ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+        )
+        delivery_status = "success" if ok and err is None else ("warning" if ok else "failed")
+        _write_alert_delivery(
+            event_type=event_type,
+            target=target,
+            status=delivery_status,
+            error=err,
+            payload=payload,
+        )
+        if ok:
+            success_count += 1
+        else:
+            failed_count += 1
+        results.append(SlaAlertChannelResult(target=target, success=ok, error=err))
+
+    if failed_count == 0:
+        return True, None, results
+    if success_count > 0:
+        return True, f"{failed_count}/{len(results)} alert channels failed", results
+    return False, "all alert channels failed", results
+
+
+def _dispatch_sla_alert(
+    *,
+    site: str | None,
+    checked_at: datetime,
+    escalated_count: int,
+    work_order_ids: list[int],
+) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
+    if escalated_count <= 0:
+        return False, None, []
+
+    payload = {
+        "event": "sla_escalation",
+        "site": site or "ALL",
+        "checked_at": checked_at.isoformat(),
+        "escalated_count": escalated_count,
+        "work_order_ids": work_order_ids,
+    }
+    return _dispatch_alert_event(event_type="sla_escalation", payload=payload)
+
+
+def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
+    role = str(row["role"])
+    custom_permissions = _permission_text_to_list(row["permissions"])
+    user_site_scope = _site_scope_text_to_list(row["site_scope"], default_all=True)
+    return AdminUserRead(
+        id=int(row["id"]),
+        username=str(row["username"]),
+        display_name=str(row["display_name"] or row["username"]),
+        role=role,
+        permissions=_effective_permissions(role, custom_permissions),
+        site_scope=user_site_scope,
+        is_active=bool(row["is_active"]),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
+    user_scope = _site_scope_text_to_list(row.get("user_site_scope"), default_all=True)
+    token_scope_raw = row.get("token_site_scope")
+    token_scope = None
+    if token_scope_raw is not None:
+        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
+    effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+    created_at = _as_datetime(row["created_at"])
+    expires_at = _as_optional_datetime(row["expires_at"])
+    last_used_at = _as_optional_datetime(row["last_used_at"])
+    rotate_due_at = _token_rotate_due_at(created_at)
+    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
+    warning_due_at = None
+    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
+        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
+    must_rotate = rotate_due_at is not None and warning_due_at is not None and datetime.now(timezone.utc) >= warning_due_at
+    return AdminTokenRead(
+        token_id=int(row["token_id"]),
+        user_id=int(row["user_id"]),
+        username=str(row["username"]),
+        label=str(row["label"] or ""),
+        is_active=bool(row["is_active"]),
+        site_scope=effective_scope,
+        expires_at=expires_at,
+        last_used_at=last_used_at,
+        created_at=created_at,
+        rotate_due_at=rotate_due_at,
+        idle_due_at=idle_due_at,
+        must_rotate=must_rotate,
+    )
+
+
+def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
+    due_at = _as_optional_datetime(row["due_at"])
+    status = row["status"]
+    return WorkOrderRead(
+        id=row["id"],
+        title=row["title"],
+        description=row["description"] or "",
+        site=row["site"],
+        location=row["location"],
+        priority=row["priority"],
+        status=status,
+        assignee=row["assignee"],
+        reporter=row["reporter"],
+        inspection_id=row["inspection_id"],
+        due_at=due_at,
+        acknowledged_at=_as_optional_datetime(row["acknowledged_at"]),
+        completed_at=_as_optional_datetime(row["completed_at"]),
+        resolution_notes=row["resolution_notes"] or "",
+        is_escalated=bool(row["is_escalated"]),
+        is_overdue=_is_overdue(status, due_at),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _validate_work_order_transition(current_status: str, next_status: str) -> None:
+    allowed = WORK_ORDER_TRANSITIONS.get(current_status, set())
+    if next_status not in allowed:
+        raise HTTPException(status_code=409, detail=f"Invalid status transition: {current_status} -> {next_status}")
+
+
+def _append_work_order_event(
+    conn: Any,
+    *,
+    work_order_id: int,
+    event_type: str,
+    actor_username: str,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    note: str = "",
+    detail: dict[str, Any] | None = None,
+) -> None:
+    conn.execute(
+        insert(work_order_events).values(
+            work_order_id=work_order_id,
+            event_type=event_type,
+            actor_username=actor_username,
+            from_status=from_status,
+            to_status=to_status,
+            note=note,
+            detail_json=_to_json_text(detail),
+            created_at=datetime.now(timezone.utc),
+        )
+    )
+
+
+def _row_to_work_order_event_model(row: dict[str, Any]) -> WorkOrderEventRead:
+    raw = str(row["detail_json"] or "{}")
+    try:
+        detail = json.loads(raw)
+    except json.JSONDecodeError:
+        detail = {"raw": raw}
+    if not isinstance(detail, dict):
+        detail = {"value": detail}
+
+    return WorkOrderEventRead(
+        id=int(row["id"]),
+        work_order_id=int(row["work_order_id"]),
+        event_type=str(row["event_type"]),
+        actor_username=str(row["actor_username"]),
+        from_status=row["from_status"],
+        to_status=row["to_status"],
+        note=str(row["note"] or ""),
+        detail=detail,
+        created_at=_as_datetime(row["created_at"]),
+    )
+
+
+def _row_to_workflow_lock_model(row: dict[str, Any]) -> WorkflowLockRead:
+    raw = str(row["content_json"] or "{}")
+    try:
+        content = json.loads(raw)
+    except json.JSONDecodeError:
+        content = {"raw": raw}
+    if not isinstance(content, dict):
+        content = {"value": content}
+
+    return WorkflowLockRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        workflow_key=str(row["workflow_key"]),
+        status=str(row["status"]),
+        content=content,
+        requested_ticket=row.get("requested_ticket"),
+        last_comment=str(row.get("last_comment") or ""),
+        lock_reason=row.get("lock_reason"),
+        unlock_reason=row.get("unlock_reason"),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        reviewed_by=row.get("reviewed_by"),
+        approved_by=row.get("approved_by"),
+        locked_by=row.get("locked_by"),
+        unlocked_by=row.get("unlocked_by"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+        reviewed_at=_as_optional_datetime(row.get("reviewed_at")),
+        approved_at=_as_optional_datetime(row.get("approved_at")),
+        locked_at=_as_optional_datetime(row.get("locked_at")),
+        unlocked_at=_as_optional_datetime(row.get("unlocked_at")),
+    )
+
+
+def _row_to_w02_tracker_item_model(row: dict[str, Any]) -> W02TrackerItemRead:
+    return W02TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w02_evidence_model(row: dict[str, Any]) -> W02EvidenceRead:
+    return W02EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w02_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w02_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W02_SOP_RUNBOOKS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sop_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("name", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W02_SANDBOX_SCENARIOS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sandbox_scenario",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("objective", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W02_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w02_tracker_overview(site: str, rows: list[W02TrackerItemRead]) -> W02TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W02TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w02_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W02TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W02TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W02_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1
+        for row in rows
+        if row.item_type in W02_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(sandbox_scenario) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W02TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w02_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W02_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W02_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w02_completion_model(
+    *,
+    site: str,
+    readiness: W02TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W02TrackerCompletionRead:
+    if row is None:
+        return W02TrackerCompletionRead(
+            site=site,
+            status=W02_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w02_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W02TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w02_tracker_items_for_site(site: str) -> list[W02TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w02_tracker_items)
+            .where(adoption_w02_tracker_items.c.site == site)
+            .order_by(
+                adoption_w02_tracker_items.c.item_type.asc(),
+                adoption_w02_tracker_items.c.item_key.asc(),
+                adoption_w02_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w02_tracker_item_model(row) for row in rows]
+
+
+def _reset_w02_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w02_site_runs.c.status)
+        .where(adoption_w02_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w02_site_completion_status(row.get("status"))
+    if status == W02_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w02_site_runs)
+        .where(adoption_w02_site_runs.c.site == site)
+        .values(
+            status=W02_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w03_tracker_item_model(row: dict[str, Any]) -> W03TrackerItemRead:
+    return W03TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w03_evidence_model(row: dict[str, Any]) -> W03EvidenceRead:
+    return W03EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w03_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w03_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W03_KICKOFF_AGENDA:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "kickoff_agenda",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("topic", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W03_ROLE_WORKSHOPS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "role_workshop",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("objective", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W03_OFFICE_HOURS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "office_hour",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("focus", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W03_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w03_tracker_overview(site: str, rows: list[W03TrackerItemRead]) -> W03TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W03TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w03_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W03TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W03TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W03_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1
+        for row in rows
+        if row.item_type in W03_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(role_workshop) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W03TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w03_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W03_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W03_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w03_completion_model(
+    *,
+    site: str,
+    readiness: W03TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W03TrackerCompletionRead:
+    if row is None:
+        return W03TrackerCompletionRead(
+            site=site,
+            status=W03_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w03_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W03TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w03_tracker_items_for_site(site: str) -> list[W03TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w03_tracker_items)
+            .where(adoption_w03_tracker_items.c.site == site)
+            .order_by(
+                adoption_w03_tracker_items.c.item_type.asc(),
+                adoption_w03_tracker_items.c.item_key.asc(),
+                adoption_w03_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w03_tracker_item_model(row) for row in rows]
+
+
+def _reset_w03_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w03_site_runs.c.status)
+        .where(adoption_w03_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w03_site_completion_status(row.get("status"))
+    if status == W03_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w03_site_runs)
+        .where(adoption_w03_site_runs.c.site == site)
+        .values(
+            status=W03_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w04_tracker_item_model(row: dict[str, Any]) -> W04TrackerItemRead:
+    return W04TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w04_evidence_model(row: dict[str, Any]) -> W04EvidenceRead:
+    return W04EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w04_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w04_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W04_COACHING_ACTIONS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "coaching_action",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("action", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W04_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w04_tracker_overview(site: str, rows: list[W04TrackerItemRead]) -> W04TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W04TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w04_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W04TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W04TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1
+        for row in rows
+        if row.item_type in W04_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(coaching_action) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W04TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w04_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W04_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W04_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w04_completion_model(
+    *,
+    site: str,
+    readiness: W04TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W04TrackerCompletionRead:
+    if row is None:
+        return W04TrackerCompletionRead(
+            site=site,
+            status=W04_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w04_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W04TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w04_tracker_items_for_site(site: str) -> list[W04TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w04_tracker_items)
+            .where(adoption_w04_tracker_items.c.site == site)
+            .order_by(
+                adoption_w04_tracker_items.c.item_type.asc(),
+                adoption_w04_tracker_items.c.item_key.asc(),
+                adoption_w04_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w04_tracker_item_model(row) for row in rows]
+
+
+def _reset_w04_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w04_site_runs.c.status)
+        .where(adoption_w04_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w04_site_completion_status(row.get("status"))
+    if status == W04_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w04_site_runs)
+        .where(adoption_w04_site_runs.c.site == site)
+        .values(
+            status=W04_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w07_tracker_item_model(row: dict[str, Any]) -> W07TrackerItemRead:
+    return W07TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w07_evidence_model(row: dict[str, Any]) -> W07EvidenceRead:
+    return W07EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w07_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w07_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W07_SLA_CHECKLIST:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sla_checklist",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("control", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W07_COACHING_PLAYS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "coaching_play",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("play", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W07_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w07_tracker_overview(site: str, rows: list[W07TrackerItemRead]) -> W07TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W07TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w07_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W07TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W07TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W07_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(sla_checklist/coaching_play) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W07TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w07_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W07_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W07_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w07_completion_model(
+    *,
+    site: str,
+    readiness: W07TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W07TrackerCompletionRead:
+    if row is None:
+        return W07TrackerCompletionRead(
+            site=site,
+            status=W07_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w07_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W07TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w07_tracker_items_for_site(site: str) -> list[W07TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w07_tracker_items)
+            .where(adoption_w07_tracker_items.c.site == site)
+            .order_by(
+                adoption_w07_tracker_items.c.item_type.asc(),
+                adoption_w07_tracker_items.c.item_key.asc(),
+                adoption_w07_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w07_tracker_item_model(row) for row in rows]
+
+
+def _reset_w07_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w07_site_runs.c.status)
+        .where(adoption_w07_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w07_site_completion_status(row.get("status"))
+    if status == W07_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w07_site_runs)
+        .where(adoption_w07_site_runs.c.site == site)
+        .values(
+            status=W07_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w09_tracker_item_model(row: dict[str, Any]) -> W09TrackerItemRead:
+    return W09TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w09_evidence_model(row: dict[str, Any]) -> W09EvidenceRead:
+    return W09EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w09_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w09_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W09_KPI_THRESHOLD_MATRIX:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "kpi_threshold",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("kpi_name", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W09_ESCALATION_MAP:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "kpi_escalation",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("action", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W09_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w09_tracker_overview(site: str, rows: list[W09TrackerItemRead]) -> W09TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W09TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w09_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W09TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W09TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W09_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(kpi_threshold/kpi_escalation) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W09TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w09_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W09_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W09_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w09_completion_model(
+    *,
+    site: str,
+    readiness: W09TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W09TrackerCompletionRead:
+    if row is None:
+        return W09TrackerCompletionRead(
+            site=site,
+            status=W09_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w09_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W09TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w09_tracker_items_for_site(site: str) -> list[W09TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w09_tracker_items)
+            .where(adoption_w09_tracker_items.c.site == site)
+            .order_by(
+                adoption_w09_tracker_items.c.item_type.asc(),
+                adoption_w09_tracker_items.c.item_key.asc(),
+                adoption_w09_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w09_tracker_item_model(row) for row in rows]
+
+
+def _reset_w09_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w09_site_runs.c.status)
+        .where(adoption_w09_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w09_site_completion_status(row.get("status"))
+    if status == W09_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w09_site_runs)
+        .where(adoption_w09_site_runs.c.site == site)
+        .values(
+            status=W09_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w10_tracker_item_model(row: dict[str, Any]) -> W10TrackerItemRead:
+    return W10TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W10_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w10_evidence_model(row: dict[str, Any]) -> W10EvidenceRead:
+    return W10EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w10_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w10_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W10_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W10_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W10_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w10_tracker_overview(site: str, rows: list[W10TrackerItemRead]) -> W10TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W10TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w10_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W10TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W10TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W10_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W10_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W10TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w10_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W10_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W10_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w10_completion_model(
+    *,
+    site: str,
+    readiness: W10TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W10TrackerCompletionRead:
+    if row is None:
+        return W10TrackerCompletionRead(
+            site=site,
+            status=W10_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w10_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W10TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w10_tracker_items_for_site(site: str) -> list[W10TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w10_tracker_items)
+            .where(adoption_w10_tracker_items.c.site == site)
+            .order_by(
+                adoption_w10_tracker_items.c.item_type.asc(),
+                adoption_w10_tracker_items.c.item_key.asc(),
+                adoption_w10_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w10_tracker_item_model(row) for row in rows]
+
+
+def _reset_w10_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w10_site_runs.c.status)
+        .where(adoption_w10_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w10_site_completion_status(row.get("status"))
+    if status == W10_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w10_site_runs)
+        .where(adoption_w10_site_runs.c.site == site)
+        .values(
+            status=W10_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+
+def _row_to_w11_tracker_item_model(row: dict[str, Any]) -> W11TrackerItemRead:
+    return W11TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W11_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w11_evidence_model(row: dict[str, Any]) -> W11EvidenceRead:
+    return W11EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w11_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w11_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W11_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W11_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W11_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w11_tracker_overview(site: str, rows: list[W11TrackerItemRead]) -> W11TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W11TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w11_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W11TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W11TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W11_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W11_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W11TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w11_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W11_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W11_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w11_completion_model(
+    *,
+    site: str,
+    readiness: W11TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W11TrackerCompletionRead:
+    if row is None:
+        return W11TrackerCompletionRead(
+            site=site,
+            status=W11_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w11_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W11TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w11_tracker_items_for_site(site: str) -> list[W11TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w11_tracker_items)
+            .where(adoption_w11_tracker_items.c.site == site)
+            .order_by(
+                adoption_w11_tracker_items.c.item_type.asc(),
+                adoption_w11_tracker_items.c.item_key.asc(),
+                adoption_w11_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w11_tracker_item_model(row) for row in rows]
+
+
+def _reset_w11_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w11_site_runs.c.status)
+        .where(adoption_w11_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w11_site_completion_status(row.get("status"))
+    if status == W11_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w11_site_runs)
+        .where(adoption_w11_site_runs.c.site == site)
+        .values(
+            status=W11_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+
 def _row_to_w12_tracker_item_model(row: dict[str, Any]) -> W12TrackerItemRead:
     return W12TrackerItemRead(
         id=int(row["id"]),
@@ -9864,6 +13504,299 @@ def _reset_w12_completion_if_closed(
         .where(adoption_w12_site_runs.c.site == site)
         .values(
             status=W12_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _row_to_w13_tracker_item_model(row: dict[str, Any]) -> W13TrackerItemRead:
+    return W13TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W13_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w13_evidence_model(row: dict[str, Any]) -> W13EvidenceRead:
+    return W13EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w13_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w13_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W13_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W13_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W13_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w13_tracker_overview(site: str, rows: list[W13TrackerItemRead]) -> W13TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W13TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w13_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W13TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W13TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W13_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W13_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W13TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w13_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W13_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W13_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w13_completion_model(
+    *,
+    site: str,
+    readiness: W13TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W13TrackerCompletionRead:
+    if row is None:
+        return W13TrackerCompletionRead(
+            site=site,
+            status=W13_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w13_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W13TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w13_tracker_items_for_site(site: str) -> list[W13TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w13_tracker_items)
+            .where(adoption_w13_tracker_items.c.site == site)
+            .order_by(
+                adoption_w13_tracker_items.c.item_type.asc(),
+                adoption_w13_tracker_items.c.item_key.asc(),
+                adoption_w13_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w13_tracker_item_model(row) for row in rows]
+
+
+def _reset_w13_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w13_site_runs.c.status)
+        .where(adoption_w13_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w13_site_completion_status(row.get("status"))
+    if status == W13_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w13_site_runs)
+        .where(adoption_w13_site_runs.c.site == site)
+        .values(
+            status=W13_SITE_COMPLETION_STATUS_ACTIVE,
             completion_note="",
             force_used=False,
             completed_by=None,
@@ -13933,6 +17866,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w12_api": "/api/public/adoption-plan/w12",
         "public_adoption_w12_checklist_csv_api": "/api/public/adoption-plan/w12/checklist.csv",
         "public_adoption_w12_schedule_ics_api": "/api/public/adoption-plan/w12/schedule.ics",
+        "public_adoption_w13_api": "/api/public/adoption-plan/w13",
+        "public_adoption_w13_checklist_csv_api": "/api/public/adoption-plan/w13/checklist.csv",
+        "public_adoption_w13_schedule_ics_api": "/api/public/adoption-plan/w13/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -13984,6 +17920,12 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w12_tracker_readiness_api": "/api/adoption/w12/tracker/readiness",
         "adoption_w12_tracker_completion_api": "/api/adoption/w12/tracker/completion",
         "adoption_w12_tracker_complete_api": "/api/adoption/w12/tracker/complete",
+        "adoption_w13_tracker_items_api": "/api/adoption/w13/tracker/items",
+        "adoption_w13_tracker_overview_api": "/api/adoption/w13/tracker/overview",
+        "adoption_w13_tracker_bootstrap_api": "/api/adoption/w13/tracker/bootstrap",
+        "adoption_w13_tracker_readiness_api": "/api/adoption/w13/tracker/readiness",
+        "adoption_w13_tracker_completion_api": "/api/adoption/w13/tracker/completion",
+        "adoption_w13_tracker_complete_api": "/api/adoption/w13/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
@@ -14002,6 +17944,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w11_readiness_policy_api": "/api/ops/adoption/w11/readiness-policy",
         "adoption_w12_closure_handoff_api": "/api/ops/adoption/w12/closure-handoff",
         "adoption_w12_handoff_policy_api": "/api/ops/adoption/w12/handoff-policy",
+        "adoption_w13_closure_handoff_api": "/api/ops/adoption/w13/closure-handoff",
+        "adoption_w13_handoff_policy_api": "/api/ops/adoption/w13/handoff-policy",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -14063,6 +18007,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w10_self_serve_support": _adoption_w10_payload(),
         "w11_scale_readiness": _adoption_w11_payload(),
         "w12_closure_handoff": _adoption_w12_payload(),
+        "w13_continuous_improvement": _adoption_w13_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -14118,6 +18063,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w12_json": "/api/public/adoption-plan/w12",
                 "w12_checklist_csv": "/api/public/adoption-plan/w12/checklist.csv",
                 "w12_schedule_ics": "/api/public/adoption-plan/w12/schedule.ics",
+                "w13_json": "/api/public/adoption-plan/w13",
+                "w13_checklist_csv": "/api/public/adoption-plan/w13/checklist.csv",
+                "w13_schedule_ics": "/api/public/adoption-plan/w13/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -15589,6 +19537,152 @@ def _build_adoption_w12_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+
+def _adoption_w13_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 13),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 13,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Autonomy",
+            "focus": "Continuous improvement",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 13)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W13 Continuous Improvement Pack",
+        "public": True,
+        "timeline": timeline,
+        "self_serve_guides": ADOPTION_W13_SELF_SERVE_GUIDES,
+        "troubleshooting_runbook": ADOPTION_W13_TROUBLESHOOTING_RUNBOOK,
+        "scheduled_events": ADOPTION_W13_SCHEDULED_EVENTS,
+        "closure_handoff_api": "/api/ops/adoption/w13/closure-handoff",
+        "handoff_policy_api": "/api/ops/adoption/w13/handoff-policy",
+        "tracker_items_api": "/api/adoption/w13/tracker/items",
+        "tracker_overview_api": "/api/adoption/w13/tracker/overview",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w13",
+            "checklist_csv": "/api/public/adoption-plan/w13/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w13/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w13_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "key_or_module",
+            "name_or_symptom",
+            "owner_role",
+            "objective_or_target",
+            "definition_or_output",
+            "api_or_time",
+        ]
+    )
+    for item in payload.get("self_serve_guides", []):
+        writer.writerow(
+            [
+                "self_serve_guide",
+                item.get("id", ""),
+                item.get("problem_cluster", ""),
+                item.get("title", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                "",
+                item.get("source_api", ""),
+            ]
+        )
+    for item in payload.get("troubleshooting_runbook", []):
+        writer.writerow(
+            [
+                "troubleshooting_runbook",
+                item.get("id", ""),
+                item.get("module", ""),
+                item.get("symptom", ""),
+                item.get("owner_role", ""),
+                "",
+                item.get("definition_of_done", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                "",
+                item.get("output", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w13_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w13-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W13] {str(item.get('title', 'Continuous Improvement Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W13 Continuous Improvement//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -15964,6 +20058,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w10_pack = plan.get("w10_self_serve_support", {})
     w11_pack = plan.get("w11_scale_readiness", {})
     w12_pack = plan.get("w12_closure_handoff", {})
+    w13_pack = plan.get("w13_continuous_improvement", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -16520,6 +20615,50 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w12_schedule_rows: list[str] = []
     for item in w12_pack.get("scheduled_events", []):
         w12_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w13_guide_rows: list[str] = []
+    for item in w13_pack.get("self_serve_guides", []):
+        w13_guide_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("problem_cluster", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("source_api", "")))}</td>
+            </tr>
+            """
+        )
+
+    w13_runbook_rows: list[str] = []
+    for item in w13_pack.get("troubleshooting_runbook", []):
+        w13_runbook_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("module", "")))}</td>
+              <td>{html.escape(str(item.get("symptom", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w13_schedule_rows: list[str] = []
+    for item in w13_pack.get("scheduled_events", []):
+        w13_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -17949,6 +22088,70 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w12_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W13 Continuous Improvement</h2>
+      <p class="sub">W12 종료 결과를 개선 백로그로 전환하고 분기 거버넌스로 정착시키는 지속 개선 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w13">W13 JSON</a>
+        <a href="/api/public/adoption-plan/w13/checklist.csv">W13 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w13/schedule.ics">W13 Schedule ICS</a>
+        <a href="/api/ops/adoption/w13/closure-handoff">W13 Closure Handoff API (Token)</a>
+        <a href="/api/ops/adoption/w13/handoff-policy">W13 Handoff Policy API (Token)</a>
+        <a href="/api/adoption/w13/tracker/items">W13 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w13/tracker/overview?site=HQ">W13 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Title</th>
+              <th>Handoff Cluster</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Source API</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w13_guide_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Runbook ID</th>
+              <th>Module</th>
+              <th>Symptom</th>
+              <th>Owner Role</th>
+              <th>Definition of Done</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w13_runbook_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w13_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -25937,6 +30140,11 @@ def get_public_adoption_w12() -> dict[str, Any]:
     return _adoption_w12_payload()
 
 
+@app.get("/api/public/adoption-plan/w13")
+def get_public_adoption_w13() -> dict[str, Any]:
+    return _adoption_w13_payload()
+
+
 @app.get("/api/public/modules", response_model=None)
 def get_public_modules(request: Request) -> Any:
     payload = _facility_modules_payload()
@@ -26277,6 +30485,30 @@ def get_public_adoption_w12_schedule_ics() -> Response:
     payload = _adoption_w12_payload()
     ics_text = _build_adoption_w12_schedule_ics(payload)
     file_name = "ka-facility-os-adoption-w12-closure-handoff.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w13/checklist.csv")
+def get_public_adoption_w13_checklist_csv() -> Response:
+    payload = _adoption_w13_payload()
+    csv_text = _build_adoption_w13_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w13-continuous-improvement-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w13/schedule.ics")
+def get_public_adoption_w13_schedule_ics() -> Response:
+    payload = _adoption_w13_payload()
+    ics_text = _build_adoption_w13_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w13-continuous-improvement.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
@@ -30625,6 +34857,531 @@ def download_w12_tracker_evidence(
         },
     )
 
+
+@app.post("/api/adoption/w13/tracker/bootstrap", response_model=W13TrackerBootstrapResponse)
+def bootstrap_w13_tracker_items(
+    payload: W13TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
+) -> W13TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w13_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w13_tracker_items.c.item_type,
+                adoption_w13_tracker_items.c.item_key,
+            ).where(adoption_w13_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w13_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W13_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w13_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w13_tracker_items)
+            .where(adoption_w13_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w13_tracker_items.c.item_type.asc(),
+                adoption_w13_tracker_items.c.item_key.asc(),
+                adoption_w13_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w13_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w13_tracker_bootstrap",
+        resource_type="adoption_w13_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W13TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w13/tracker/items", response_model=list[W13TrackerItemRead])
+def list_w13_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> list[W13TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W13_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W13 tracker status")
+
+    stmt = select(adoption_w13_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w13_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w13_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w13_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w13_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w13_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w13_tracker_items.c.updated_at.desc(),
+        adoption_w13_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w13_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w13/tracker/overview", response_model=W13TrackerOverviewRead)
+def get_w13_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> W13TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w13_tracker_items).where(adoption_w13_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w13_tracker_item_model(row) for row in rows]
+    return _compute_w13_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w13/tracker/readiness", response_model=W13TrackerReadinessRead)
+def get_w13_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> W13TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w13_tracker_items_for_site(site)
+    return _compute_w13_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w13/tracker/completion", response_model=W13TrackerCompletionRead)
+def get_w13_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> W13TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w13_tracker_items_for_site(site)
+    readiness = _compute_w13_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w13_site_runs).where(adoption_w13_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w13_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w13/tracker/complete", response_model=W13TrackerCompletionRead)
+def complete_w13_tracker(
+    payload: W13TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
+) -> W13TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w13_tracker_items_for_site(payload.site)
+    readiness = _compute_w13_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W13 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W13_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W13_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w13_site_runs).where(adoption_w13_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w13_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w13_site_runs)
+                .where(adoption_w13_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w13_site_runs).where(adoption_w13_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w13_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w13_tracker_complete",
+        resource_type="adoption_w13_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w13/tracker/items/{tracker_item_id}", response_model=W13TrackerItemRead)
+def update_w13_tracker_item(
+    tracker_item_id: int,
+    payload: W13TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
+) -> W13TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w13_tracker_items).where(adoption_w13_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W13 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W13_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W13_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W13_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W13_TRACKER_STATUS_DONE:
+            next_status = W13_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W13_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W13 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w13_tracker_items)
+            .where(adoption_w13_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w13_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w13_tracker_items).where(adoption_w13_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W13 tracker item")
+    model = _row_to_w13_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w13_tracker_item_update",
+        resource_type="adoption_w13_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w13/tracker/items/{tracker_item_id}/evidence", response_model=W13EvidenceRead, status_code=201)
+async def upload_w13_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
+) -> W13EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+    file_bytes = await file.read(W13_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W13_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W13_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w13_tracker_items).where(adoption_w13_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W13 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w13_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        conn.execute(
+            update(adoption_w13_tracker_items)
+            .where(adoption_w13_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=adoption_w13_tracker_items.c.evidence_count + 1,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w13_completion_if_closed(
+            conn=conn,
+            site=site,
+            actor_username=actor_username,
+            checked_at=now,
+            reason="evidence_uploaded",
+        )
+        evidence_row = conn.execute(
+            select(adoption_w13_evidence_files).where(adoption_w13_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w13_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w13_tracker_evidence_upload",
+        resource_type="adoption_w13_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w13/tracker/items/{tracker_item_id}/evidence", response_model=list[W13EvidenceRead])
+def list_w13_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> list[W13EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w13_tracker_items).where(adoption_w13_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W13 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w13_evidence_files)
+            .where(adoption_w13_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w13_evidence_files.c.uploaded_at.desc(), adoption_w13_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w13_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w13/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w13_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w13_evidence_files).where(adoption_w13_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W13 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w13_tracker_evidence_download",
+        resource_type="adoption_w13_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -32261,6 +37018,95 @@ def set_ops_adoption_w12_handoff_policy(
         principal=principal,
         action="w12_handoff_policy_update",
         resource_type="adoption_w12_handoff_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.get("/api/ops/adoption/w13/closure-handoff")
+def get_ops_adoption_w13_closure_handoff(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w13_closure_handoff_snapshot(site=normalized_site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w13_closure_handoff_view",
+        resource_type="adoption_w13_closure_handoff",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "overall_status": metrics.get("overall_status"),
+            "repeat_rate_percent": metrics.get("repeat_rate_percent"),
+            "readiness_score": metrics.get("closure_handoff_readiness_score"),
+            "target_met": metrics.get("target_met"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w13/handoff-policy")
+def get_ops_adoption_w13_handoff_policy(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    policy, updated_at, policy_key, policy_site = _ensure_w13_handoff_policy(normalized_site)
+    _write_audit_log(
+        principal=principal,
+        action="w13_handoff_policy_view",
+        resource_type="adoption_w13_handoff_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/adoption/w13/handoff-policy")
+def set_ops_adoption_w13_handoff_policy(
+    payload: dict[str, Any],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+        if not _has_permission(principal, "admins:manage"):
+            raise HTTPException(status_code=403, detail="Global W13 policy update requires admins:manage")
+    policy, updated_at, policy_key, policy_site = _upsert_w13_handoff_policy(normalized_site, payload)
+    _write_audit_log(
+        principal=principal,
+        action="w13_handoff_policy_update",
+        resource_type="adoption_w13_handoff_policy",
         resource_id=policy_key,
         detail={
             "site": policy_site,
