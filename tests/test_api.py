@@ -583,6 +583,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         == "/api/ops/governance/gate/remediation/tracker/autopilot/run"
     )
     assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_policy_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/policy"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_preview_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/preview"
+    )
+    assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
     )
@@ -5357,6 +5365,73 @@ def test_ops_governance_remediation_tracker_autopilot_endpoints(app_client: Test
     assert latest_body["status"] in {"success", "warning", "critical"}
     assert isinstance(latest_body["actions"], list)
     assert int(latest_body["metrics"]["open_items"]) >= 0
+
+
+def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(app_client: TestClient) -> None:
+    policy_get = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
+        headers=_owner_headers(),
+    )
+    assert policy_get.status_code == 200
+    get_body = policy_get.json()
+    assert get_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert isinstance(get_body["policy"], dict)
+    assert "enabled" in get_body["policy"]
+    assert "kpi_window_days" in get_body["policy"]
+    assert "auto_assign_max_items" in get_body["policy"]
+
+    policy_set = app_client.put(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
+        headers=_owner_headers(),
+        json={
+            "enabled": True,
+            "notify_enabled": False,
+            "unassigned_trigger": 2,
+            "overdue_trigger": 3,
+            "kpi_window_days": 10,
+            "kpi_due_soon_hours": 18,
+            "escalation_due_soon_hours": 8,
+            "auto_assign_max_items": 25,
+        },
+    )
+    assert policy_set.status_code == 200
+    set_body = policy_set.json()
+    assert set_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert set_body["policy"]["notify_enabled"] is False
+    assert int(set_body["policy"]["unassigned_trigger"]) == 2
+    assert int(set_body["policy"]["overdue_trigger"]) == 3
+    assert int(set_body["policy"]["kpi_window_days"]) == 10
+    assert int(set_body["policy"]["kpi_due_soon_hours"]) == 18
+    assert int(set_body["policy"]["escalation_due_soon_hours"]) == 8
+    assert int(set_body["policy"]["auto_assign_max_items"]) == 25
+
+    preview = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/preview",
+        headers=_owner_headers(),
+        json={
+            "force": True,
+            "policy": {
+                "enabled": True,
+                "notify_enabled": True,
+                "unassigned_trigger": 9999,
+                "overdue_trigger": 9999,
+                "kpi_window_days": 7,
+                "kpi_due_soon_hours": 12,
+                "escalation_due_soon_hours": 6,
+                "auto_assign_max_items": 12,
+            },
+        },
+    )
+    assert preview.status_code == 200
+    preview_body = preview.json()
+    assert preview_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert preview_body["force"] is True
+    assert isinstance(preview_body["planned_actions"], list)
+    assert "auto_assign" in preview_body["planned_actions"]
+    assert "escalation" in preview_body["planned_actions"]
+    assert int(preview_body["policy"]["kpi_window_days"]) == 7
+    assert int(preview_body["policy"]["auto_assign_max_items"]) == 12
+    assert int(preview_body["metrics"]["open_items"]) >= 0
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

@@ -46,6 +46,10 @@
   - 자동조치 실행/최신조회 API(`.../tracker/autopilot/run|latest`) 추가
   - KPI 기반 auto-assign/escalation 연계 오케스트레이션 추가
   - 시간단위 Cron 잡(`ops_governance_remediation_autopilot`) 연동 준비
+- W26 착수 완료: Governance Remediation Autopilot Policy and Preview
+  - 자동조치 정책 조회/수정 API(`.../tracker/autopilot/policy`) 추가
+  - 실행 전 판정 API(`.../tracker/autopilot/preview`) 추가
+  - 정책 기반 임계치/윈도우/알림 설정 런타임 반영
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -224,6 +228,22 @@
 완료 기준:
 - dry-run/실행 모드에서 action 결정 로직이 일관됨
 - 최근 실행 이력(job_run) 조회 가능
+- 회귀 테스트 전체 통과
+
+## W26: Governance Remediation Autopilot Policy and Preview (우선순위 11)
+목표:
+- Autopilot 임계치/윈도우/알림 설정을 API로 안전하게 조정
+- 실행 전 영향(planned actions)을 미리 검토해 운영 리스크를 낮춤
+
+주요 작업:
+1. `GET/PUT /api/ops/governance/gate/remediation/tracker/autopilot/policy` 제공
+2. `POST /api/ops/governance/gate/remediation/tracker/autopilot/preview` 제공
+3. autopilot 실행시 정책(sla_policies) 기반으로 동작하도록 연결
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- 정책 변경 후 다음 실행부터 설정이 반영됨
+- preview 결과와 실행 decision이 같은 규칙으로 계산됨
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

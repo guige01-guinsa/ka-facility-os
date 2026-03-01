@@ -571,6 +571,7 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "critical": 2,
 }
 ALERT_MTTR_SLO_POLICY_KEY = "alert_mttr_slo_default"
+OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY = "ops_governance_remediation_autopilot_policy"
 ALERT_MTTR_SLO_RECOVER_STATE_SET = {"quarantined", "warning", "all"}
 W09_KPI_POLICY_KEY_DEFAULT = "adoption_w09_kpi_policy:default"
 W09_KPI_POLICY_KEY_SITE_PREFIX = "adoption_w09_kpi_policy:site:"
@@ -7524,84 +7525,237 @@ def _latest_ops_governance_remediation_kpi_payload() -> dict[str, Any] | None:
     }
 
 
-def run_ops_governance_remediation_autopilot_job(
+def _default_w26_remediation_autopilot_policy() -> dict[str, Any]:
+    return {
+        "enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED,
+        "notify_enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
+        "unassigned_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
+        "overdue_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
+        "kpi_window_days": max(1, min(GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS, 180)),
+        "kpi_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS, 168)),
+        "escalation_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS, 168)),
+        "auto_assign_max_items": max(1, min(GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS, 500)),
+    }
+
+
+def _normalize_w26_remediation_autopilot_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w26_remediation_autopilot_policy()
+
+    def _to_int(raw: Any, fallback: int, *, min_value: int, max_value: int) -> int:
+        try:
+            parsed = int(raw)
+        except (TypeError, ValueError):
+            parsed = fallback
+        return max(min_value, min(parsed, max_value))
+
+    return {
+        "enabled": bool(source.get("enabled", defaults["enabled"])),
+        "notify_enabled": bool(source.get("notify_enabled", defaults["notify_enabled"])),
+        "unassigned_trigger": _to_int(
+            source.get("unassigned_trigger"),
+            int(defaults["unassigned_trigger"]),
+            min_value=0,
+            max_value=100000,
+        ),
+        "overdue_trigger": _to_int(
+            source.get("overdue_trigger"),
+            int(defaults["overdue_trigger"]),
+            min_value=0,
+            max_value=100000,
+        ),
+        "kpi_window_days": _to_int(
+            source.get("kpi_window_days"),
+            int(defaults["kpi_window_days"]),
+            min_value=1,
+            max_value=180,
+        ),
+        "kpi_due_soon_hours": _to_int(
+            source.get("kpi_due_soon_hours"),
+            int(defaults["kpi_due_soon_hours"]),
+            min_value=0,
+            max_value=168,
+        ),
+        "escalation_due_soon_hours": _to_int(
+            source.get("escalation_due_soon_hours"),
+            int(defaults["escalation_due_soon_hours"]),
+            min_value=0,
+            max_value=168,
+        ),
+        "auto_assign_max_items": _to_int(
+            source.get("auto_assign_max_items"),
+            int(defaults["auto_assign_max_items"]),
+            min_value=1,
+            max_value=500,
+        ),
+    }
+
+
+def _parse_w26_remediation_autopilot_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w26_remediation_autopilot_policy(loaded)
+
+
+def _ensure_w26_remediation_autopilot_policy() -> tuple[dict[str, Any], datetime, str]:
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies)
+            .where(sla_policies.c.policy_key == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY)
+            .limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w26_remediation_autopilot_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
+    policy = _parse_w26_remediation_autopilot_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
+
+
+def _upsert_w26_remediation_autopilot_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
+    current_policy, _, policy_key = _ensure_w26_remediation_autopilot_policy()
+    merged = {**current_policy, **(payload if isinstance(payload, dict) else {})}
+    normalized = _normalize_w26_remediation_autopilot_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key
+
+
+def _evaluate_w26_remediation_autopilot(
     *,
-    trigger: str = "manual",
-    dry_run: bool = False,
-    force: bool = False,
+    force: bool,
+    policy: dict[str, Any],
+    now: datetime | None = None,
 ) -> dict[str, Any]:
-    started_at = datetime.now(timezone.utc)
+    checked_at = now or datetime.now(timezone.utc)
+    normalized_policy = _normalize_w26_remediation_autopilot_policy(policy)
     snapshot = _build_w24_remediation_kpi_snapshot(
-        window_days=GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
-        due_soon_hours=GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
-        now=started_at,
+        window_days=int(normalized_policy["kpi_window_days"]),
+        due_soon_hours=int(normalized_policy["kpi_due_soon_hours"]),
+        now=checked_at,
     )
     metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
     unassigned_open_count = int(metrics.get("unassigned_open_count") or 0)
     overdue_count = int(metrics.get("overdue_count") or 0)
     critical_open_count = int(metrics.get("critical_open_count") or 0)
 
-    should_run_auto_assign = (
-        force or unassigned_open_count >= max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER)
+    should_run_auto_assign = force or (
+        unassigned_open_count >= int(normalized_policy["unassigned_trigger"])
     )
-    should_run_escalation = (
-        force
-        or critical_open_count > 0
-        or overdue_count >= max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER)
+    should_run_escalation = force or critical_open_count > 0 or (
+        overdue_count >= int(normalized_policy["overdue_trigger"])
     )
+
+    planned_actions: list[str] = []
+    if bool(normalized_policy["enabled"]):
+        if should_run_auto_assign:
+            planned_actions.append("auto_assign")
+        if should_run_escalation:
+            planned_actions.append("escalation")
+
+    return {
+        "checked_at": checked_at.isoformat(),
+        "force": bool(force),
+        "policy": normalized_policy,
+        "metrics": metrics,
+        "should_run_auto_assign": bool(should_run_auto_assign),
+        "should_run_escalation": bool(should_run_escalation),
+        "planned_actions": planned_actions,
+        "kpi_snapshot": snapshot,
+    }
+
+
+def run_ops_governance_remediation_autopilot_job(
+    *,
+    trigger: str = "manual",
+    dry_run: bool = False,
+    force: bool = False,
+    policy_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    current_policy, policy_updated_at, policy_key = _ensure_w26_remediation_autopilot_policy()
+    if isinstance(policy_override, dict) and policy_override:
+        effective_policy = _normalize_w26_remediation_autopilot_policy({**current_policy, **policy_override})
+    else:
+        effective_policy = current_policy
+
+    evaluation = _evaluate_w26_remediation_autopilot(
+        force=force,
+        policy=effective_policy,
+        now=started_at,
+    )
+    metrics = evaluation.get("metrics", {}) if isinstance(evaluation.get("metrics"), dict) else {}
 
     auto_assign_result: dict[str, Any] | None = None
     escalation_result: dict[str, Any] | None = None
-    actions: list[str] = []
+    actions = list(evaluation.get("planned_actions", []))
     errors: list[str] = []
 
-    if GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED:
-        if should_run_auto_assign:
-            actions.append("auto_assign")
+    if bool(effective_policy.get("enabled", True)):
+        if "auto_assign" in actions:
             try:
                 auto_assign_result = run_ops_governance_remediation_auto_assign_job(
                     trigger="autopilot",
                     dry_run=dry_run,
-                    limit=GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS,
+                    limit=int(effective_policy.get("auto_assign_max_items") or 30),
                 )
             except Exception as exc:
                 errors.append(f"auto_assign failed: {exc}")
-        if should_run_escalation:
-            actions.append("escalation")
+        if "escalation" in actions:
             try:
                 escalation_result = run_ops_governance_remediation_escalation_job(
                     trigger="autopilot",
                     dry_run=dry_run,
-                    include_due_soon_hours=GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS,
-                    notify_enabled=GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
+                    include_due_soon_hours=int(effective_policy.get("escalation_due_soon_hours") or 12),
+                    notify_enabled=bool(effective_policy.get("notify_enabled", True)),
                 )
             except Exception as exc:
                 errors.append(f"escalation failed: {exc}")
     else:
-        errors.append("autopilot disabled by env")
+        errors.append("autopilot disabled by policy")
+
+    overdue_count = int(metrics.get("overdue_count") or 0)
+    critical_open_count = int(metrics.get("critical_open_count") or 0)
+    unassigned_open_count = int(metrics.get("unassigned_open_count") or 0)
 
     status = "success"
     if errors:
         status = "critical"
-    elif (overdue_count > 0 or critical_open_count > 0) and len(actions) == 0:
+    elif overdue_count > 0 or critical_open_count > 0:
         status = "warning"
-    elif not GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED:
+    elif unassigned_open_count > 0 and "auto_assign" not in actions:
         status = "warning"
 
     finished_at = datetime.now(timezone.utc)
     detail = {
-        "enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED,
+        "enabled": bool(effective_policy.get("enabled", True)),
         "dry_run": bool(dry_run),
         "force": bool(force),
-        "notify_enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
-        "unassigned_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
-        "overdue_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
-        "kpi_window_days": GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
-        "kpi_due_soon_hours": GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+        "policy_key": policy_key,
+        "policy_updated_at": policy_updated_at.isoformat(),
+        "policy": effective_policy,
         "metrics": metrics,
         "actions": actions,
-        "should_run_auto_assign": bool(should_run_auto_assign),
-        "should_run_escalation": bool(should_run_escalation),
+        "should_run_auto_assign": bool(evaluation.get("should_run_auto_assign", False)),
+        "should_run_escalation": bool(evaluation.get("should_run_escalation", False)),
         "auto_assign": auto_assign_result,
         "escalation": escalation_result,
         "errors": errors,
@@ -23607,6 +23761,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_kpi_api": "/api/ops/governance/gate/remediation/tracker/kpi",
         "ops_governance_remediation_tracker_kpi_run_api": "/api/ops/governance/gate/remediation/tracker/kpi/run",
         "ops_governance_remediation_tracker_kpi_latest_api": "/api/ops/governance/gate/remediation/tracker/kpi/latest",
+        "ops_governance_remediation_tracker_autopilot_policy_api": "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
+        "ops_governance_remediation_tracker_autopilot_preview_api": "/api/ops/governance/gate/remediation/tracker/autopilot/preview",
         "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
         "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
@@ -45427,6 +45583,98 @@ def run_ops_governance_gate_remediation_tracker_autopilot(
         },
     )
     return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/policy")
+def get_ops_governance_gate_remediation_tracker_autopilot_policy(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    policy, updated_at, policy_key = _ensure_w26_remediation_autopilot_policy()
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_policy_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=policy_key,
+        status="success",
+        detail={
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "unassigned_trigger": int(policy.get("unassigned_trigger") or 0),
+            "overdue_trigger": int(policy.get("overdue_trigger") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@ops_router.put("/governance/gate/remediation/tracker/autopilot/policy")
+def set_ops_governance_gate_remediation_tracker_autopilot_policy(
+    payload: dict[str, Any],
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    policy, updated_at, policy_key = _upsert_w26_remediation_autopilot_policy(payload)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_policy_update",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=policy_key,
+        status="success",
+        detail={
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "notify_enabled": bool(policy.get("notify_enabled", True)),
+            "unassigned_trigger": int(policy.get("unassigned_trigger") or 0),
+            "overdue_trigger": int(policy.get("overdue_trigger") or 0),
+            "kpi_window_days": int(policy.get("kpi_window_days") or 0),
+            "kpi_due_soon_hours": int(policy.get("kpi_due_soon_hours") or 0),
+            "escalation_due_soon_hours": int(policy.get("escalation_due_soon_hours") or 0),
+            "auto_assign_max_items": int(policy.get("auto_assign_max_items") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@ops_router.post("/governance/gate/remediation/tracker/autopilot/preview")
+def preview_ops_governance_gate_remediation_tracker_autopilot(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    current_policy, _, policy_key = _ensure_w26_remediation_autopilot_policy()
+    policy_override = body.get("policy") if isinstance(body.get("policy"), dict) else {}
+    effective_policy = _normalize_w26_remediation_autopilot_policy({**current_policy, **policy_override})
+    force = bool(body.get("force", False))
+    evaluation = _evaluate_w26_remediation_autopilot(
+        force=force,
+        policy=effective_policy,
+    )
+    metrics = evaluation.get("metrics", {}) if isinstance(evaluation.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_preview",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=policy_key,
+        status="success",
+        detail={
+            "force": force,
+            "planned_actions": evaluation.get("planned_actions", []),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        **evaluation,
+    }
 
 
 @ops_router.get("/governance/gate/remediation/tracker/autopilot/latest")
