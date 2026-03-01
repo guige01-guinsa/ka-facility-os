@@ -519,6 +519,7 @@ Integrity/Archive:
 - `GET /api/admin/audit-integrity` verifies current month chain
 - `POST /api/admin/audit-chain/rebaseline` repairs hash chain from target month (or full history)
 - `GET /api/admin/audit-archive/monthly` returns signed monthly archive payload
+  - includes `dr_rehearsal_attachment` (latest in-month DR result + latest baseline snapshot)
 
 Example:
 

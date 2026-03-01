@@ -4362,6 +4362,13 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert body["signature_algorithm"] in {"hmac-sha256", "unsigned"}
     assert len(body["archive_sha256"]) == 64
 
+    dr_run = app_client.post(
+        "/api/ops/dr/rehearsal/run?simulate_restore=true",
+        headers=_owner_headers(),
+    )
+    assert dr_run.status_code == 200
+    dr_run_body = dr_run.json()
+
     archive = app_client.get(
         f"/api/admin/audit-archive/monthly?month={month}&include_entries=1",
         headers=_owner_headers(),
@@ -4371,6 +4378,10 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_body["month"] == month
     assert archive_body["entry_count"] >= 1
     assert isinstance(archive_body["entries"], list)
+    assert "dr_rehearsal_attachment" in archive_body
+    assert archive_body["dr_rehearsal_attachment"]["month"] == month
+    assert archive_body["dr_rehearsal_attachment"]["included"] is True
+    assert archive_body["dr_rehearsal_attachment"]["latest_in_month"]["run_id"] == dr_run_body["run_id"]
 
     archive_csv = app_client.get(
         f"/api/admin/audit-archive/monthly/csv?month={month}",
@@ -4601,6 +4612,7 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
             "base_url": "http://testserver",
             "checklist_version": checklist_body["version"],
             "rollback_reference": "docs/W15_MIGRATION_ROLLBACK.md",
+            "rollback_reference_sha256": checklist_body["policy"]["rollback_guide_sha256"],
             "rollback_ready": True,
             "runbook_gate_passed": True,
             "checks": [
@@ -4614,6 +4626,9 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert smoke_record_body["job_name"] == "deploy_smoke"
     assert smoke_record_body["status"] in {"success", "warning", "critical"}
     assert smoke_record_body["run_id"] is not None
+    assert smoke_record_body["detail"]["rollback_reference_match"] is True
+    assert smoke_record_body["detail"]["rollback_reference_exists"] is True
+    assert smoke_record_body["detail"]["rollback_reference_sha256_match"] is True
 
     runbook = app_client.get(
         "/api/ops/runbook/checks",
@@ -4624,6 +4639,31 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     deploy_check = next(item for item in runbook_body["checks"] if item["id"] == "deploy_smoke_checklist")
     assert deploy_check["latest_run_status"] in {"success", "warning", "critical"}
     assert deploy_check["latest_run_at"] is not None
+
+
+def test_ops_deploy_smoke_record_marks_warning_on_rollback_reference_mismatch(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    smoke_record = app_client.post(
+        "/api/ops/deploy/smoke/record",
+        headers=headers,
+        json={
+            "deploy_id": "deploy-ci-rollback-mismatch",
+            "environment": "test",
+            "status": "success",
+            "base_url": "http://testserver",
+            "checklist_version": "2026.03.v1",
+            "rollback_reference": "docs/NOT_EXISTING.md",
+            "rollback_ready": True,
+            "runbook_gate_passed": True,
+            "checks": [
+                {"id": "health", "status": "ok", "message": "health endpoint ok"},
+            ],
+        },
+    )
+    assert smoke_record.status_code == 200
+    body = smoke_record.json()
+    assert body["status"] == "warning"
+    assert body["detail"]["rollback_reference_match"] is False
 
 
 def test_api_latency_samples_persisted_beyond_memory_cache(app_client: TestClient) -> None:
@@ -4774,10 +4814,19 @@ def test_ops_admin_security_dashboard_endpoint(app_client: TestClient) -> None:
     assert dashboard.status_code == 200
     body = dashboard.json()
     assert body["window_days"] == 30
-    assert body["overall_status"] in {"ok", "warning"}
+    assert body["overall_status"] in {"ok", "warning", "critical"}
     assert body["users"]["total_users"] >= 1
     assert body["tokens"]["active_tokens"] >= 1
+    assert "wildcard_scope_tokens" in body["tokens"]
+    assert "non_owner_wildcard_tokens" in body["tokens"]
+    assert "coverage" in body
+    assert "active_users_without_token" in body["coverage"]
     assert body["actions"]["total"] >= 0
+    assert "risk" in body
+    assert body["risk"]["level"] in {"low", "medium", "high", "critical"}
+    assert 0 <= int(body["risk"]["score"]) <= 100
+    assert isinstance(body["recent_sensitive_events"], list)
+    assert isinstance(body["recommendations"], list)
     assert isinstance(body["top_actors"], list)
 
 

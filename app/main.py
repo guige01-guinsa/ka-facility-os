@@ -5075,21 +5075,31 @@ def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any
                 admin_tokens.c.expires_at,
                 admin_tokens.c.last_used_at,
                 admin_tokens.c.created_at,
+                admin_tokens.c.site_scope,
+                admin_users.c.role.label("role"),
+                admin_users.c.username.label("username"),
             ).where(admin_tokens.c.is_active.is_(True))
+            .where(admin_users.c.id == admin_tokens.c.user_id)
         ).mappings().all()
-        user_count = int(conn.execute(select(func.count()).select_from(admin_users)).scalar_one_or_none() or 0)
-        active_user_count = int(
-            conn.execute(
-                select(func.count()).select_from(admin_users).where(admin_users.c.is_active.is_(True))
-            ).scalar_one_or_none()
-            or 0
-        )
+        user_rows = conn.execute(
+            select(
+                admin_users.c.id,
+                admin_users.c.username,
+                admin_users.c.role,
+                admin_users.c.is_active,
+            )
+        ).mappings().all()
+
+    user_count = len(user_rows)
+    active_users = [row for row in user_rows if bool(row.get("is_active"))]
+    active_user_count = len(active_users)
 
     total_actions = len(audit_rows)
     failed_actions = 0
     sensitive_count = 0
     actor_counts: dict[str, int] = {}
     off_hours_actions = 0
+    sensitive_events: list[dict[str, Any]] = []
 
     for row in audit_rows:
         actor = str(row.get("actor_username") or "unknown")
@@ -5103,21 +5113,57 @@ def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any
         created_at = _as_optional_datetime(row.get("created_at"))
         if created_at is not None and (created_at.hour < 6 or created_at.hour >= 22):
             off_hours_actions += 1
+        if action in sensitive_actions:
+            sensitive_events.append(
+                {
+                    "actor": actor,
+                    "action": action,
+                    "status": status,
+                    "created_at": created_at.isoformat() if created_at is not None else None,
+                    "off_hours": bool(created_at is not None and (created_at.hour < 6 or created_at.hour >= 22)),
+                }
+            )
 
     expiring_7d = 0
     stale_14d = 0
     rotate_overdue = 0
+    wildcard_scope_tokens = 0
+    non_owner_wildcard_tokens = 0
+    dormant_30d = 0
+    active_token_user_ids: set[int] = set()
     for row in token_rows:
         expires_at = _as_optional_datetime(row.get("expires_at"))
         last_used = _as_optional_datetime(row.get("last_used_at"))
         created_at = _as_optional_datetime(row.get("created_at"))
+        user_id_raw = row.get("user_id")
+        try:
+            user_id = int(user_id_raw) if user_id_raw is not None else None
+        except (TypeError, ValueError):
+            user_id = None
+        if user_id is not None:
+            active_token_user_ids.add(user_id)
         if expires_at is not None and expires_at <= (now + timedelta(days=7)):
             expiring_7d += 1
         baseline = last_used or created_at
         if baseline is not None and baseline <= (now - timedelta(days=14)):
             stale_14d += 1
+        if baseline is not None and baseline <= (now - timedelta(days=30)):
+            dormant_30d += 1
         if created_at is not None and created_at <= (now - timedelta(days=max(1, ADMIN_TOKEN_ROTATE_AFTER_DAYS))):
             rotate_overdue += 1
+        token_scope = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        role = str(row.get("role") or "operator").strip().lower() or "operator"
+        if SITE_SCOPE_ALL in token_scope:
+            wildcard_scope_tokens += 1
+            if role not in {"owner", "admin"}:
+                non_owner_wildcard_tokens += 1
+
+    active_user_ids = {
+        int(row["id"])
+        for row in active_users
+        if row.get("id") is not None
+    }
+    users_without_active_token = len(active_user_ids - active_token_user_ids)
 
     anomalies: list[dict[str, Any]] = []
     if failed_actions >= max(10, window_days):
@@ -5180,13 +5226,92 @@ def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any
                 "message": "Some active tokens exceeded rotate-after policy window.",
             }
         )
+    if users_without_active_token > 0:
+        anomalies.append(
+            {
+                "id": "users_without_active_token",
+                "status": "warning",
+                "metric": users_without_active_token,
+                "threshold": 0,
+                "message": "Some active admin users do not have any active token.",
+            }
+        )
+    if dormant_30d > 0:
+        anomalies.append(
+            {
+                "id": "dormant_tokens",
+                "status": "warning",
+                "metric": dormant_30d,
+                "threshold": 0,
+                "message": "Some active tokens have not been used in 30+ days.",
+            }
+        )
+    if non_owner_wildcard_tokens > 0:
+        anomalies.append(
+            {
+                "id": "token_wildcard_scope_non_owner",
+                "status": "critical",
+                "metric": non_owner_wildcard_tokens,
+                "threshold": 0,
+                "message": "Wildcard-scope tokens are issued to non-owner roles.",
+            }
+        )
 
     top_actors = [
         {"actor": actor, "action_count": count}
         for actor, count in sorted(actor_counts.items(), key=lambda item: item[1], reverse=True)[:10]
     ]
 
-    overall_status = "warning" if anomalies else "ok"
+    risk_score = 0
+    risk_score += min(25, failed_actions * 2)
+    risk_score += min(15, off_hours_actions * 2)
+    risk_score += min(20, expiring_7d * 3)
+    risk_score += min(20, rotate_overdue * 3)
+    risk_score += min(10, users_without_active_token * 2)
+    risk_score += min(10, dormant_30d * 2)
+    risk_score += min(40, non_owner_wildcard_tokens * 20)
+    risk_score = min(100, risk_score)
+
+    if risk_score >= 80:
+        risk_level = "critical"
+    elif risk_score >= 60:
+        risk_level = "high"
+    elif risk_score >= 30:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    anomaly_statuses = {str(item.get("status") or "warning") for item in anomalies}
+    if "critical" in anomaly_statuses or risk_level == "critical":
+        overall_status = "critical"
+    elif anomalies:
+        overall_status = "warning"
+    else:
+        overall_status = "ok"
+
+    recommendation_map = {
+        "failed_actions_spike": "최근 실패/경고 관리자 액션을 감사로그에서 원인별로 분류하고 소유자를 지정하세요.",
+        "sensitive_action_volume": "민감 작업(토큰/정책/체인수정) 수행자 2인 검토 절차를 적용하세요.",
+        "off_hours_activity": "오프아워 작업은 Change Ticket 연동을 의무화하세요.",
+        "token_expiring_soon": "7일 이내 만료 토큰을 선제 재발급하고 오래된 토큰을 폐기하세요.",
+        "stale_token_usage": "14일 이상 미사용 토큰을 회수 또는 비활성화하세요.",
+        "token_rotate_overdue": "회전 주기 초과 토큰을 즉시 rotate 하세요.",
+        "users_without_active_token": "활성 사용자 중 토큰이 없는 계정을 점검하고 최소 권한 토큰을 발급하세요.",
+        "dormant_tokens": "30일 이상 미사용 토큰은 revoke 후 필요 시 재발급하세요.",
+        "token_wildcard_scope_non_owner": "비-owner wildcard 토큰을 site 범위 토큰으로 즉시 교체하세요.",
+    }
+    recommendations: list[str] = []
+    for anomaly in anomalies:
+        rec = recommendation_map.get(str(anomaly.get("id") or ""))
+        if rec and rec not in recommendations:
+            recommendations.append(rec)
+
+    recent_sensitive_events = sorted(
+        sensitive_events,
+        key=lambda item: str(item.get("created_at") or ""),
+        reverse=True,
+    )[:20]
+
     return {
         "generated_at": now.isoformat(),
         "window_days": window_days,
@@ -5202,6 +5327,12 @@ def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any
             "expiring_7d": expiring_7d,
             "stale_14d": stale_14d,
             "rotate_overdue": rotate_overdue,
+            "dormant_30d": dormant_30d,
+            "wildcard_scope_tokens": wildcard_scope_tokens,
+            "non_owner_wildcard_tokens": non_owner_wildcard_tokens,
+        },
+        "coverage": {
+            "active_users_without_token": users_without_active_token,
         },
         "actions": {
             "total": total_actions,
@@ -5210,8 +5341,14 @@ def _build_admin_security_dashboard_snapshot(*, days: int = 30) -> dict[str, Any
             "off_hours_total": off_hours_actions,
             "unique_actors": len(actor_counts),
         },
+        "risk": {
+            "score": risk_score,
+            "level": risk_level,
+        },
         "anomalies": anomalies,
         "top_actors": top_actors,
+        "recent_sensitive_events": recent_sensitive_events,
+        "recommendations": recommendations,
     }
 
 
@@ -6705,6 +6842,21 @@ def build_monthly_audit_archive(
             .order_by(admin_audit_logs.c.created_at.asc(), admin_audit_logs.c.id.asc())
             .limit(max_entries)
         ).mappings().all()
+        dr_month_row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .where(job_runs.c.finished_at >= start)
+            .where(job_runs.c.finished_at < end)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+        dr_latest_row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .where(job_runs.c.finished_at < end)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
 
     chain = _verify_audit_chain([dict(row) for row in rows], initial_prev_hash=anchor_hash)
     archive_rows: list[dict[str, Any]] = []
@@ -6731,6 +6883,58 @@ def build_monthly_audit_archive(
                 }
             )
 
+    def _to_dr_attachment(row: dict[str, Any] | None) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        detail_raw = str(row.get("detail_json") or "{}")
+        try:
+            detail = json.loads(detail_raw)
+        except json.JSONDecodeError:
+            detail = {"raw": detail_raw}
+        if not isinstance(detail, dict):
+            detail = {"value": detail}
+        started_at = _as_optional_datetime(row.get("started_at"))
+        finished_at = _as_optional_datetime(row.get("finished_at"))
+        counts_raw = detail.get("counts")
+        counts = counts_raw if isinstance(counts_raw, dict) else {}
+        return {
+            "run_id": int(row["id"]),
+            "status": str(row.get("status") or "unknown"),
+            "trigger": str(row.get("trigger") or "unknown"),
+            "started_at": started_at.isoformat() if started_at is not None else None,
+            "finished_at": finished_at.isoformat() if finished_at is not None else None,
+            "restore_valid": bool(detail.get("restore_valid", False)),
+            "simulate_restore": bool(detail.get("simulate_restore", False)),
+            "backup_file": detail.get("backup_file"),
+            "pruned_files": int(detail.get("pruned_files") or 0),
+            "counts": counts,
+            "notes": detail.get("notes") if isinstance(detail.get("notes"), list) else [],
+        }
+
+    dr_latest_in_month = _to_dr_attachment(dr_month_row)
+    dr_latest_before_window_end = _to_dr_attachment(dr_latest_row)
+    dr_attachment = {
+        "required": DR_REHEARSAL_ENABLED,
+        "month": normalized,
+        "included": dr_latest_in_month is not None,
+        "status": (
+            "ok"
+            if dr_latest_in_month is not None
+            else ("warning" if DR_REHEARSAL_ENABLED else "info")
+        ),
+        "message": (
+            "DR rehearsal result attached for target month."
+            if dr_latest_in_month is not None
+            else (
+                "No DR rehearsal result in target month."
+                if DR_REHEARSAL_ENABLED
+                else "DR rehearsal is disabled by policy."
+            )
+        ),
+        "latest_in_month": dr_latest_in_month,
+        "latest_before_window_end": dr_latest_before_window_end,
+    }
+
     payload = {
         "month": normalized,
         "window_start": start.isoformat(),
@@ -6739,6 +6943,7 @@ def build_monthly_audit_archive(
         "entry_count": len(rows),
         "max_entries": max_entries,
         "chain": chain,
+        "dr_rehearsal_attachment": dr_attachment,
         "entries": archive_rows if include_entries else [],
     }
     payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -41199,19 +41404,69 @@ def post_ops_deploy_smoke_record(
                 }
             )
 
+    checklist_payload = _build_deploy_checklist_payload()
+    checklist_policy = checklist_payload.get("policy") if isinstance(checklist_payload.get("policy"), dict) else {}
+    expected_rollback_reference = str(
+        checklist_policy.get("rollback_guide_path") or "docs/W15_MIGRATION_ROLLBACK.md"
+    ).replace("\\", "/")
+    expected_rollback_exists = bool(checklist_policy.get("rollback_guide_exists", False))
+    expected_rollback_sha256 = str(checklist_policy.get("rollback_guide_sha256") or "").strip().lower()
+    provided_rollback_reference = str(
+        payload.get("rollback_reference") or expected_rollback_reference
+    ).replace("\\", "/")
+    provided_rollback_sha256 = str(payload.get("rollback_reference_sha256") or "").strip().lower()
+    rollback_reference_match = provided_rollback_reference == expected_rollback_reference
+    rollback_sha_provided = provided_rollback_sha256 != ""
+    rollback_sha_match = (not rollback_sha_provided) or (provided_rollback_sha256 == expected_rollback_sha256)
+
     runbook_gate_passed = bool(payload.get("runbook_gate_passed", False))
     rollback_ready = bool(payload.get("rollback_ready", False))
     if status == "success" and DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE and not runbook_gate_passed:
         status = "warning"
     if status == "success" and not rollback_ready:
         status = "warning"
+    if status == "success" and not expected_rollback_exists:
+        status = "critical"
+    if status == "success" and not rollback_reference_match:
+        status = "warning"
+    if status == "success" and rollback_sha_provided and not rollback_sha_match:
+        status = "warning"
+
+    rollback_binding_status = "ok"
+    rollback_binding_message = "Rollback guide binding is valid."
+    if not expected_rollback_exists:
+        rollback_binding_status = "critical"
+        rollback_binding_message = "Rollback guide file is missing from repository."
+    elif not rollback_reference_match:
+        rollback_binding_status = "warning"
+        rollback_binding_message = "Rollback guide reference does not match checklist policy."
+    elif rollback_sha_provided and not rollback_sha_match:
+        rollback_binding_status = "warning"
+        rollback_binding_message = "Rollback guide checksum does not match checklist policy."
+    elif not rollback_sha_provided:
+        rollback_binding_status = "warning"
+        rollback_binding_message = "Rollback guide checksum was not provided by smoke client."
+
+    checks.append(
+        {
+            "id": "rollback_guide_binding",
+            "status": rollback_binding_status,
+            "message": rollback_binding_message,
+        }
+    )
 
     detail = {
         "deploy_id": str(payload.get("deploy_id") or ""),
         "environment": str(payload.get("environment") or ENV_NAME),
         "base_url": str(payload.get("base_url") or ""),
         "checklist_version": str(payload.get("checklist_version") or DEPLOY_CHECKLIST_VERSION),
-        "rollback_reference": str(payload.get("rollback_reference") or "docs/W15_MIGRATION_ROLLBACK.md"),
+        "rollback_reference": provided_rollback_reference,
+        "rollback_reference_expected": expected_rollback_reference,
+        "rollback_reference_match": rollback_reference_match,
+        "rollback_reference_exists": expected_rollback_exists,
+        "rollback_reference_sha256": provided_rollback_sha256 or None,
+        "rollback_reference_expected_sha256": expected_rollback_sha256 or None,
+        "rollback_reference_sha256_match": rollback_sha_match if rollback_sha_provided else None,
         "rollback_ready": rollback_ready,
         "runbook_gate_passed": runbook_gate_passed,
         "notes": str(payload.get("notes") or ""),

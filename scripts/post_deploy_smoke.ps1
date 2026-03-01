@@ -18,6 +18,8 @@ $overallStatus = "success"
 $failureMessage = ""
 $runbookGatePassed = $false
 $rollbackReady = $true
+$rollbackReference = "docs/W15_MIGRATION_ROLLBACK.md"
+$rollbackReferenceSha = ""
 
 function Add-SmokeCheck {
   param(
@@ -59,7 +61,8 @@ function Record-SmokeRun {
       status = $FinalStatus
       base_url = $BaseUrl
       checklist_version = $ChecklistVersion
-      rollback_reference = "docs/W15_MIGRATION_ROLLBACK.md"
+      rollback_reference = $rollbackReference
+      rollback_reference_sha256 = $rollbackReferenceSha
       rollback_ready = $rollbackReady
       runbook_gate_passed = $runbookGatePassed
       notes = $FinalMessage
@@ -92,10 +95,17 @@ try {
     if (-not $deployChecklist.policy.rollback_guide_exists) {
       throw "Deploy checklist validation failed: rollback guide file missing"
     }
+    if ($deployChecklist.policy.rollback_guide_path) {
+      $rollbackReference = "$($deployChecklist.policy.rollback_guide_path)"
+    }
+    if (-not $rollbackReference) {
+      $rollbackReference = "docs/W15_MIGRATION_ROLLBACK.md"
+    }
+    $rollbackReferenceSha = "$($deployChecklist.policy.rollback_guide_sha256)"
     if (-not $deployChecklist.policy.rollback_guide_sha256) {
       throw "Deploy checklist validation failed: rollback guide checksum missing"
     }
-    Add-SmokeCheck -Id "rollback_guide" -Status "ok" -Message "Rollback guide presence/checksum validated"
+    Add-SmokeCheck -Id "rollback_guide" -Status "ok" -Message "Rollback guide presence/checksum validated ($rollbackReference)"
 
     $me = Invoke-JsonGet -Uri "$BaseUrl/api/auth/me" -Headers $headers
     if (-not $me.role) {
