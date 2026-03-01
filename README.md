@@ -36,6 +36,9 @@ Open:
   - `GET /api/public/adoption-plan/w08/checklist.csv` (W08 report discipline checklist export)
   - `GET /api/public/adoption-plan/w08/schedule.ics` (W08 calendar import)
   - `GET /api/public/adoption-plan/w08/reporting-sop` (W08 reporting SOP pack)
+  - `GET /api/public/adoption-plan/w09` (W09 KPI operation execution pack)
+  - `GET /api/public/adoption-plan/w09/checklist.csv` (W09 KPI checklist export)
+  - `GET /api/public/adoption-plan/w09/schedule.ics` (W09 calendar import)
   - `GET /api/public/post-mvp` (post-MVP roadmap/backlog/release/KPI/risk plan)
   - `GET /api/public/post-mvp/backlog.csv` (execution backlog export)
   - `GET /api/public/post-mvp/releases.ics` (release calendar import)
@@ -131,6 +134,20 @@ Open:
 - W08 report discipline
   - `GET /api/ops/adoption/w08/report-discipline` (`adoption_w08:read`)
   - `GET /api/ops/adoption/w08/site-benchmark` (`adoption_w08:read`)
+- W09 KPI operation + execution tracker
+  - `GET /api/ops/adoption/w09/kpi-operation` (`adoption_w09:read`)
+  - `GET /api/ops/adoption/w09/kpi-policy` (`adoption_w09:read`)
+  - `PUT /api/ops/adoption/w09/kpi-policy` (`adoption_w09:write`; global update requires `admins:manage`)
+  - `POST /api/adoption/w09/tracker/bootstrap` (`adoption_w09:write`)
+  - `GET /api/adoption/w09/tracker/items` (`adoption_w09:read`)
+  - `GET /api/adoption/w09/tracker/overview?site=...` (`adoption_w09:read`)
+  - `GET /api/adoption/w09/tracker/readiness?site=...` (`adoption_w09:read`)
+  - `GET /api/adoption/w09/tracker/completion?site=...` (`adoption_w09:read`)
+  - `POST /api/adoption/w09/tracker/complete` (`adoption_w09:write`)
+  - `PATCH /api/adoption/w09/tracker/items/{id}` (`adoption_w09:write`)
+  - `POST /api/adoption/w09/tracker/items/{id}/evidence` (`adoption_w09:write`, multipart upload, max 5MB)
+  - `GET /api/adoption/w09/tracker/items/{id}/evidence` (`adoption_w09:read`)
+  - `GET /api/adoption/w09/tracker/evidence/{id}/download` (`adoption_w09:read`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -175,6 +192,9 @@ Open:
     - `manager/operator`: read + write
     - `auditor`: read
   - W08 report discipline:
+    - `manager/operator`: read + write
+    - `auditor`: read
+  - W09 KPI operation/tracker:
     - `manager/operator`: read + write
     - `auditor`: read
 - Legacy bootstrap:
@@ -263,7 +283,7 @@ Optional alert webhook env:
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
 - `ALERT_RETENTION_ARCHIVE_ENABLED` (default `true`)
 - `ALERT_RETENTION_ARCHIVE_PATH` (default `data/alert-archives`)
-- `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
+- `EVIDENCE_ALLOWED_CONTENT_TYPES` (comma-separated allowlist for W02/W07/W09 evidence upload; default: pdf/txt/csv/json/png/jpeg/webp)
 - `API_RATE_LIMIT_ENABLED` (default `1`)
 - `API_RATE_LIMIT_WINDOW_SEC` (default `60`)
 - `API_RATE_LIMIT_MAX_PUBLIC` (default `120` requests/window per IP)
@@ -327,8 +347,15 @@ Job monitoring:
 - `GET /api/public/adoption-plan/w08/checklist.csv`
 - `GET /api/public/adoption-plan/w08/schedule.ics`
 - `GET /api/public/adoption-plan/w08/reporting-sop`
+- `GET /api/public/adoption-plan/w09`
+- `GET /api/public/adoption-plan/w09/checklist.csv`
+- `GET /api/public/adoption-plan/w09/schedule.ics`
 - `GET /api/ops/adoption/w08/report-discipline`
 - `GET /api/ops/adoption/w08/site-benchmark`
+- `GET /api/ops/adoption/w09/kpi-operation`
+- `GET /api/ops/adoption/w09/kpi-policy`
+- `GET /api/adoption/w09/tracker/items`
+- `GET /api/adoption/w09/tracker/overview?site=...`
 - `GET /api/public/post-mvp`
 - `GET /api/public/post-mvp/backlog.csv`
 - `GET /api/public/post-mvp/releases.ics`

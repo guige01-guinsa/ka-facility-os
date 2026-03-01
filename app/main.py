@@ -47,6 +47,9 @@ from app.database import (
     adoption_w07_evidence_files,
     adoption_w07_site_runs,
     adoption_w07_tracker_items,
+    adoption_w09_evidence_files,
+    adoption_w09_site_runs,
+    adoption_w09_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -132,6 +135,15 @@ from app.schemas import (
     W07TrackerItemUpdate,
     W07TrackerOverviewRead,
     W07TrackerReadinessRead,
+    W09EvidenceRead,
+    W09TrackerBootstrapRequest,
+    W09TrackerBootstrapResponse,
+    W09TrackerCompletionRead,
+    W09TrackerCompletionRequest,
+    W09TrackerItemRead,
+    W09TrackerItemUpdate,
+    W09TrackerOverviewRead,
+    W09TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -286,6 +298,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w07:write",
         "adoption_w08:read",
         "adoption_w08:write",
+        "adoption_w09:read",
+        "adoption_w09:write",
     },
     "operator": {
         "inspections:read",
@@ -308,6 +322,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w07:write",
         "adoption_w08:read",
         "adoption_w08:write",
+        "adoption_w09:read",
+        "adoption_w09:write",
     },
     "auditor": {
         "inspections:read",
@@ -322,6 +338,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w06:read",
         "adoption_w07:read",
         "adoption_w08:read",
+        "adoption_w09:read",
     },
 }
 
@@ -335,6 +352,11 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
 }
 ALERT_MTTR_SLO_POLICY_KEY = "alert_mttr_slo_default"
 ALERT_MTTR_SLO_RECOVER_STATE_SET = {"quarantined", "warning", "all"}
+W09_KPI_POLICY_KEY_DEFAULT = "adoption_w09_kpi_policy:default"
+W09_KPI_POLICY_KEY_SITE_PREFIX = "adoption_w09_kpi_policy:site:"
+W09_KPI_STATUS_GREEN = "green"
+W09_KPI_STATUS_YELLOW = "yellow"
+W09_KPI_STATUS_RED = "red"
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -435,6 +457,26 @@ W07_SITE_COMPLETION_STATUS_SET = {
 }
 W07_EVIDENCE_REQUIRED_ITEM_TYPES = {"sla_checklist", "coaching_play"}
 W07_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W09_TRACKER_STATUS_PENDING = "pending"
+W09_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W09_TRACKER_STATUS_DONE = "done"
+W09_TRACKER_STATUS_BLOCKED = "blocked"
+W09_TRACKER_STATUS_SET = {
+    W09_TRACKER_STATUS_PENDING,
+    W09_TRACKER_STATUS_IN_PROGRESS,
+    W09_TRACKER_STATUS_DONE,
+    W09_TRACKER_STATUS_BLOCKED,
+}
+W09_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W09_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W09_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W09_SITE_COMPLETION_STATUS_SET = {
+    W09_SITE_COMPLETION_STATUS_ACTIVE,
+    W09_SITE_COMPLETION_STATUS_COMPLETED,
+    W09_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W09_EVIDENCE_REQUIRED_ITEM_TYPES = {"kpi_threshold", "kpi_escalation"}
+W09_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -2040,6 +2082,147 @@ ADOPTION_W08_REPORTING_SOP: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W09_KPI_THRESHOLD_MATRIX: list[dict[str, Any]] = [
+    {
+        "id": "W09-KPI-01",
+        "kpi_key": "two_week_retention_percent",
+        "kpi_name": "Two-week retention",
+        "direction": "higher_better",
+        "owner_role": "Ops Manager",
+        "green_threshold": 65.0,
+        "yellow_threshold": 55.0,
+        "target": ">= 65%",
+        "source_api": "/api/ops/adoption/w05/consistency",
+    },
+    {
+        "id": "W09-KPI-02",
+        "kpi_key": "weekly_active_rate_percent",
+        "kpi_name": "Weekly active rate",
+        "direction": "higher_better",
+        "owner_role": "Ops Lead",
+        "green_threshold": 75.0,
+        "yellow_threshold": 65.0,
+        "target": ">= 75%",
+        "source_api": "/api/ops/adoption/w06/rhythm",
+    },
+    {
+        "id": "W09-KPI-03",
+        "kpi_key": "escalation_rate_percent",
+        "kpi_name": "Escalation rate",
+        "direction": "lower_better",
+        "owner_role": "Site Champion",
+        "green_threshold": 20.0,
+        "yellow_threshold": 30.0,
+        "target": "<= 20%",
+        "source_api": "/api/ops/adoption/w07/sla-quality",
+    },
+    {
+        "id": "W09-KPI-04",
+        "kpi_key": "report_discipline_score",
+        "kpi_name": "Report discipline score",
+        "direction": "higher_better",
+        "owner_role": "Audit Lead",
+        "green_threshold": 85.0,
+        "yellow_threshold": 75.0,
+        "target": ">= 85",
+        "source_api": "/api/ops/adoption/w08/report-discipline",
+    },
+    {
+        "id": "W09-KPI-05",
+        "kpi_key": "data_quality_issue_rate_percent",
+        "kpi_name": "Data quality issue rate",
+        "direction": "lower_better",
+        "owner_role": "Ops PM",
+        "green_threshold": 5.0,
+        "yellow_threshold": 10.0,
+        "target": "<= 5%",
+        "source_api": "/api/ops/adoption/w08/report-discipline",
+    },
+]
+
+ADOPTION_W09_ESCALATION_MAP: list[dict[str, Any]] = [
+    {
+        "id": "W09-ESC-01",
+        "kpi_key": "two_week_retention_percent",
+        "condition": "status == red for 1 week",
+        "escalate_to": "Head of Ops",
+        "sla_hours": 24,
+        "action": "Run retention recovery clinic and role mission rebalance",
+    },
+    {
+        "id": "W09-ESC-02",
+        "kpi_key": "weekly_active_rate_percent",
+        "condition": "status == red for 1 week",
+        "escalate_to": "Owner",
+        "sla_hours": 24,
+        "action": "Assign daily cadence owner and close missing role coverage",
+    },
+    {
+        "id": "W09-ESC-03",
+        "kpi_key": "escalation_rate_percent",
+        "condition": "status == red for 3 consecutive days",
+        "escalate_to": "Ops Lead + QA",
+        "sla_hours": 8,
+        "action": "Force triage window and high-risk queue split",
+    },
+    {
+        "id": "W09-ESC-04",
+        "kpi_key": "report_discipline_score",
+        "condition": "status == red on weekly close",
+        "escalate_to": "Audit Lead",
+        "sla_hours": 24,
+        "action": "Issue export remediation order and verify audit traces",
+    },
+]
+
+ADOPTION_W09_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W09-E01",
+        "date": "2026-04-27",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W09 kickoff - KPI ownership lock",
+        "owner": "Head of Ops",
+        "output": "KPI owner assignment matrix",
+    },
+    {
+        "id": "W09-E02",
+        "date": "2026-04-28",
+        "start_time": "14:00",
+        "end_time": "14:30",
+        "title": "Threshold tuning clinic",
+        "owner": "Ops PM + QA",
+        "output": "Green/yellow/red threshold baseline",
+    },
+    {
+        "id": "W09-E03",
+        "date": "2026-04-29",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Mid-week KPI red review",
+        "owner": "Owner + Ops Lead",
+        "output": "Top blockers and escalation owners",
+    },
+    {
+        "id": "W09-E04",
+        "date": "2026-04-30",
+        "start_time": "15:00",
+        "end_time": "15:30",
+        "title": "Escalation map dry-run",
+        "owner": "Site Champion",
+        "output": "Escalation response rehearsal note",
+    },
+    {
+        "id": "W09-E05",
+        "date": "2026-05-01",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W09 close review",
+        "owner": "Head of Ops + Owner",
+        "output": "KPI 운영 전환 승인",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -2124,6 +2307,19 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "W08 Pack", "href": "/api/public/adoption-plan/w08"},
             {"label": "W08 Discipline", "href": "/api/ops/adoption/w08/report-discipline"},
             {"label": "W08 Benchmark", "href": "/api/ops/adoption/w08/site-benchmark"},
+        ],
+    },
+    {
+        "id": "kpi-operations",
+        "name": "KPI Operations",
+        "name_ko": "KPI 운영전환",
+        "description": "W09 기준 KPI 임계값/오너/에스컬레이션을 운영하고 사이트별 상태를 추적합니다.",
+        "kpi_hint": "KPI owner coverage 100%",
+        "links": [
+            {"label": "W09 Pack", "href": "/api/public/adoption-plan/w09"},
+            {"label": "W09 KPI Ops", "href": "/api/ops/adoption/w09/kpi-operation"},
+            {"label": "W09 KPI Policy", "href": "/api/ops/adoption/w09/kpi-policy"},
+            {"label": "W09 Tracker", "href": "/api/adoption/w09/tracker/items"},
         ],
     },
     {
@@ -2788,6 +2984,7 @@ def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[
             or ("/api/adoption/w03/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w04/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w07/tracker/items/" in path and path.endswith("/evidence"))
+            or ("/api/adoption/w09/tracker/items/" in path and path.endswith("/evidence"))
         ):
             return "auth-upload", API_RATE_LIMIT_MAX_AUTH_UPLOAD
         if path.startswith("/api/admin/"):
@@ -4411,6 +4608,202 @@ def _upsert_mttr_slo_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], da
             )
         )
     return normalized, now, policy_key
+
+
+def _w09_policy_key(site: str | None) -> tuple[str, str | None]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return W09_KPI_POLICY_KEY_DEFAULT, None
+    return f"{W09_KPI_POLICY_KEY_SITE_PREFIX}{normalized_site}", normalized_site
+
+
+def _default_w09_kpi_policy() -> dict[str, Any]:
+    kpis: list[dict[str, Any]] = []
+    for item in ADOPTION_W09_KPI_THRESHOLD_MATRIX:
+        kpis.append(
+            {
+                "kpi_key": str(item.get("kpi_key") or ""),
+                "kpi_name": str(item.get("kpi_name") or ""),
+                "direction": str(item.get("direction") or "higher_better"),
+                "owner_role": str(item.get("owner_role") or ""),
+                "green_threshold": float(item.get("green_threshold") or 0.0),
+                "yellow_threshold": float(item.get("yellow_threshold") or 0.0),
+                "target": str(item.get("target") or ""),
+                "source_api": str(item.get("source_api") or ""),
+            }
+        )
+    escalation_map: list[dict[str, Any]] = []
+    for item in ADOPTION_W09_ESCALATION_MAP:
+        escalation_map.append(
+            {
+                "id": str(item.get("id") or ""),
+                "kpi_key": str(item.get("kpi_key") or ""),
+                "condition": str(item.get("condition") or ""),
+                "escalate_to": str(item.get("escalate_to") or ""),
+                "sla_hours": int(item.get("sla_hours") or 24),
+                "action": str(item.get("action") or ""),
+            }
+        )
+    return {
+        "enabled": True,
+        "kpis": kpis,
+        "escalation_map": escalation_map,
+    }
+
+
+def _normalize_w09_kpi_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w09_kpi_policy()
+    default_kpis = defaults.get("kpis", [])
+    default_map = {
+        str(item.get("kpi_key") or ""): item
+        for item in default_kpis
+        if str(item.get("kpi_key") or "")
+    }
+    merged_map: dict[str, dict[str, Any]] = {}
+
+    source_kpis = source.get("kpis", [])
+    if isinstance(source_kpis, list):
+        for item in source_kpis:
+            if not isinstance(item, dict):
+                continue
+            kpi_key = str(item.get("kpi_key") or "").strip()
+            if not kpi_key:
+                continue
+            merged_map[kpi_key] = item
+
+    normalized_kpis: list[dict[str, Any]] = []
+    for key, default_item in default_map.items():
+        incoming = merged_map.get(key, {})
+        if not isinstance(incoming, dict):
+            incoming = {}
+        direction = str(incoming.get("direction") or default_item.get("direction") or "higher_better").strip().lower()
+        if direction not in {"higher_better", "lower_better"}:
+            direction = str(default_item.get("direction") or "higher_better")
+        try:
+            green = float(incoming.get("green_threshold", default_item.get("green_threshold", 0.0)))
+        except (TypeError, ValueError):
+            green = float(default_item.get("green_threshold", 0.0))
+        try:
+            yellow = float(incoming.get("yellow_threshold", default_item.get("yellow_threshold", 0.0)))
+        except (TypeError, ValueError):
+            yellow = float(default_item.get("yellow_threshold", 0.0))
+
+        normalized_kpis.append(
+            {
+                "kpi_key": key,
+                "kpi_name": str(incoming.get("kpi_name") or default_item.get("kpi_name") or ""),
+                "direction": direction,
+                "owner_role": str(incoming.get("owner_role") or default_item.get("owner_role") or ""),
+                "green_threshold": round(green, 2),
+                "yellow_threshold": round(yellow, 2),
+                "target": str(incoming.get("target") or default_item.get("target") or ""),
+                "source_api": str(incoming.get("source_api") or default_item.get("source_api") or ""),
+            }
+        )
+
+    escalation_source = source.get("escalation_map", defaults.get("escalation_map", []))
+    normalized_escalations: list[dict[str, Any]] = []
+    if isinstance(escalation_source, list):
+        for item in escalation_source:
+            if not isinstance(item, dict):
+                continue
+            kpi_key = str(item.get("kpi_key") or "").strip()
+            if kpi_key and kpi_key not in default_map:
+                continue
+            try:
+                sla_hours = int(item.get("sla_hours") or 24)
+            except (TypeError, ValueError):
+                sla_hours = 24
+            normalized_escalations.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "kpi_key": kpi_key,
+                    "condition": str(item.get("condition") or ""),
+                    "escalate_to": str(item.get("escalate_to") or ""),
+                    "sla_hours": max(1, min(sla_hours, 168)),
+                    "action": str(item.get("action") or ""),
+                }
+            )
+
+    return {
+        "enabled": bool(source.get("enabled", defaults.get("enabled", True))),
+        "kpis": normalized_kpis,
+        "escalation_map": normalized_escalations,
+    }
+
+
+def _parse_w09_kpi_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w09_kpi_policy(loaded)
+
+
+def _ensure_w09_kpi_policy(site: str | None) -> tuple[dict[str, Any], datetime, str, str | None]:
+    policy_key, normalized_site = _w09_policy_key(site)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w09_kpi_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=policy_key,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, policy_key, normalized_site
+    policy = _parse_w09_kpi_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, policy_key, normalized_site
+
+
+def _upsert_w09_kpi_policy(site: str | None, payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str, str | None]:
+    current_policy, _, policy_key, normalized_site = _ensure_w09_kpi_policy(site)
+    incoming = payload if isinstance(payload, dict) else {}
+    merged: dict[str, Any] = {**current_policy}
+    for key in ["enabled", "kpis", "escalation_map"]:
+        if key in incoming:
+            merged[key] = incoming[key]
+    normalized = _normalize_w09_kpi_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key, normalized_site
+
+
+def _evaluate_w09_kpi_status(
+    *,
+    actual: float | None,
+    direction: str,
+    green_threshold: float,
+    yellow_threshold: float,
+) -> str:
+    if actual is None:
+        return W09_KPI_STATUS_RED
+    if direction == "lower_better":
+        if actual <= green_threshold:
+            return W09_KPI_STATUS_GREEN
+        if actual <= yellow_threshold:
+            return W09_KPI_STATUS_YELLOW
+        return W09_KPI_STATUS_RED
+    if actual >= green_threshold:
+        return W09_KPI_STATUS_GREEN
+    if actual >= yellow_threshold:
+        return W09_KPI_STATUS_YELLOW
+    return W09_KPI_STATUS_RED
 
 
 def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
@@ -6580,6 +6973,299 @@ def _reset_w07_completion_if_closed(
     )
 
 
+def _row_to_w09_tracker_item_model(row: dict[str, Any]) -> W09TrackerItemRead:
+    return W09TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w09_evidence_model(row: dict[str, Any]) -> W09EvidenceRead:
+    return W09EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w09_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w09_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W09_KPI_THRESHOLD_MATRIX:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "kpi_threshold",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("kpi_name", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W09_ESCALATION_MAP:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "kpi_escalation",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("action", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W09_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w09_tracker_overview(site: str, rows: list[W09TrackerItemRead]) -> W09TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W09TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w09_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W09TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W09TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W09_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W09_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(kpi_threshold/kpi_escalation) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W09TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w09_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W09_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W09_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w09_completion_model(
+    *,
+    site: str,
+    readiness: W09TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W09TrackerCompletionRead:
+    if row is None:
+        return W09TrackerCompletionRead(
+            site=site,
+            status=W09_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w09_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W09TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w09_tracker_items_for_site(site: str) -> list[W09TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w09_tracker_items)
+            .where(adoption_w09_tracker_items.c.site == site)
+            .order_by(
+                adoption_w09_tracker_items.c.item_type.asc(),
+                adoption_w09_tracker_items.c.item_key.asc(),
+                adoption_w09_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w09_tracker_item_model(row) for row in rows]
+
+
+def _reset_w09_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w09_site_runs.c.status)
+        .where(adoption_w09_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w09_site_completion_status(row.get("status"))
+    if status == W09_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w09_site_runs)
+        .where(adoption_w09_site_runs.c.site == site)
+        .values(
+            status=W09_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
 def _median_minutes(values: list[float]) -> float | None:
     if not values:
         return None
@@ -8277,6 +8963,219 @@ def _build_w08_report_discipline_snapshot(
         },
         "top_risk_sites": top_risk_sites,
         "site_benchmark": site_benchmark,
+        "recommendations": recommendations,
+    }
+
+
+def _build_w09_kpi_operation_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    policy, policy_updated_at, policy_key, policy_site = _ensure_w09_kpi_policy(site)
+
+    effective_site = policy_site if policy_site is not None else _normalize_site_name(site)
+    effective_allowed_sites = allowed_sites if effective_site is None else None
+
+    w05 = _build_w05_usage_consistency_snapshot(
+        site=effective_site,
+        days=window_days,
+        allowed_sites=effective_allowed_sites,
+    )
+    w06 = _build_w06_operational_rhythm_snapshot(
+        site=effective_site,
+        days=window_days,
+        allowed_sites=effective_allowed_sites,
+    )
+    w07 = _build_w07_sla_quality_snapshot(
+        site=effective_site,
+        days=max(7, min(window_days, 90)),
+        allowed_sites=effective_allowed_sites,
+    )
+    w08 = _build_w08_report_discipline_snapshot(
+        site=effective_site,
+        days=window_days,
+        allowed_sites=effective_allowed_sites,
+    )
+
+    w05_metrics = w05.get("metrics", {}) if isinstance(w05.get("metrics"), dict) else {}
+    w06_metrics = w06.get("metrics", {}) if isinstance(w06.get("metrics"), dict) else {}
+    w07_metrics = w07.get("metrics", {}) if isinstance(w07.get("metrics"), dict) else {}
+    w08_metrics = w08.get("metrics", {}) if isinstance(w08.get("metrics"), dict) else {}
+
+    metric_values: dict[str, float | None] = {
+        "two_week_retention_percent": (
+            float(w05_metrics.get("two_week_retention_percent"))
+            if w05_metrics.get("two_week_retention_percent") is not None
+            else None
+        ),
+        "weekly_active_rate_percent": (
+            float(w06_metrics.get("weekly_active_rate_percent"))
+            if w06_metrics.get("weekly_active_rate_percent") is not None
+            else None
+        ),
+        "escalation_rate_percent": (
+            float(w07_metrics.get("escalation_rate_percent"))
+            if w07_metrics.get("escalation_rate_percent") is not None
+            else None
+        ),
+        "report_discipline_score": (
+            float(w08_metrics.get("discipline_score"))
+            if w08_metrics.get("discipline_score") is not None
+            else None
+        ),
+        "data_quality_issue_rate_percent": (
+            float(w08_metrics.get("data_quality_issue_rate_percent"))
+            if w08_metrics.get("data_quality_issue_rate_percent") is not None
+            else None
+        ),
+    }
+
+    kpis = policy.get("kpis", []) if isinstance(policy.get("kpis"), list) else []
+    rows: list[dict[str, Any]] = []
+    status_counts = {W09_KPI_STATUS_GREEN: 0, W09_KPI_STATUS_YELLOW: 0, W09_KPI_STATUS_RED: 0}
+    owner_assigned_count = 0
+
+    escalation_map = policy.get("escalation_map", []) if isinstance(policy.get("escalation_map"), list) else []
+    escalation_by_kpi: dict[str, list[dict[str, Any]]] = {}
+    for item in escalation_map:
+        if not isinstance(item, dict):
+            continue
+        kpi_key = str(item.get("kpi_key") or "")
+        escalation_by_kpi.setdefault(kpi_key, []).append(item)
+
+    for item in kpis:
+        if not isinstance(item, dict):
+            continue
+        kpi_key = str(item.get("kpi_key") or "").strip()
+        if not kpi_key:
+            continue
+        kpi_name = str(item.get("kpi_name") or kpi_key)
+        direction = str(item.get("direction") or "higher_better").strip().lower()
+        owner_role = str(item.get("owner_role") or "").strip()
+        if owner_role:
+            owner_assigned_count += 1
+        try:
+            green_threshold = float(item.get("green_threshold") or 0.0)
+        except (TypeError, ValueError):
+            green_threshold = 0.0
+        try:
+            yellow_threshold = float(item.get("yellow_threshold") or 0.0)
+        except (TypeError, ValueError):
+            yellow_threshold = 0.0
+
+        actual_value = metric_values.get(kpi_key)
+        status = _evaluate_w09_kpi_status(
+            actual=actual_value,
+            direction=direction,
+            green_threshold=green_threshold,
+            yellow_threshold=yellow_threshold,
+        )
+        status_counts[status] = int(status_counts.get(status, 0)) + 1
+        rows.append(
+            {
+                "kpi_key": kpi_key,
+                "kpi_name": kpi_name,
+                "owner_role": owner_role,
+                "direction": direction,
+                "target": str(item.get("target") or ""),
+                "actual_value": actual_value,
+                "green_threshold": round(green_threshold, 2),
+                "yellow_threshold": round(yellow_threshold, 2),
+                "status": status,
+                "source_api": str(item.get("source_api") or ""),
+                "escalation_rules": escalation_by_kpi.get(kpi_key, []),
+            }
+        )
+
+    total_kpis = len(rows)
+    owner_coverage_percent = round((owner_assigned_count / total_kpis) * 100.0, 2) if total_kpis > 0 else 0.0
+    red_count = int(status_counts.get(W09_KPI_STATUS_RED, 0))
+    yellow_count = int(status_counts.get(W09_KPI_STATUS_YELLOW, 0))
+    green_count = int(status_counts.get(W09_KPI_STATUS_GREEN, 0))
+
+    overall_status = W09_KPI_STATUS_GREEN
+    if red_count > 0:
+        overall_status = W09_KPI_STATUS_RED
+    elif yellow_count > 0:
+        overall_status = W09_KPI_STATUS_YELLOW
+    if owner_coverage_percent < 100.0 and overall_status == W09_KPI_STATUS_GREEN:
+        overall_status = W09_KPI_STATUS_YELLOW
+
+    escalation_candidates: list[dict[str, Any]] = []
+    for row in rows:
+        if str(row.get("status")) != W09_KPI_STATUS_RED:
+            continue
+        for rule in row.get("escalation_rules", []):
+            if not isinstance(rule, dict):
+                continue
+            escalation_candidates.append(
+                {
+                    "kpi_key": row.get("kpi_key"),
+                    "kpi_name": row.get("kpi_name"),
+                    "actual_value": row.get("actual_value"),
+                    "condition": str(rule.get("condition") or ""),
+                    "escalate_to": str(rule.get("escalate_to") or ""),
+                    "sla_hours": int(rule.get("sla_hours") or 24),
+                    "action": str(rule.get("action") or ""),
+                }
+            )
+
+    top_red_kpis = [
+        {
+            "kpi_key": row.get("kpi_key"),
+            "kpi_name": row.get("kpi_name"),
+            "actual_value": row.get("actual_value"),
+            "target": row.get("target"),
+            "owner_role": row.get("owner_role"),
+        }
+        for row in rows
+        if str(row.get("status")) == W09_KPI_STATUS_RED
+    ][:3]
+
+    recommendations: list[str] = []
+    if owner_coverage_percent < 100.0:
+        recommendations.append("KPI owner 미지정 항목이 있습니다. Owner assignment를 100%로 맞추세요.")
+    if red_count > 0:
+        recommendations.append("Red KPI가 있습니다. 에스컬레이션 맵 기준으로 즉시 담당/기한을 지정하세요.")
+    if red_count == 0 and yellow_count > 0:
+        recommendations.append("Yellow KPI가 남아 있습니다. 임계값 경계 KPI를 주중 재점검하세요.")
+    if red_count == 0 and yellow_count == 0 and owner_coverage_percent >= 100.0:
+        recommendations.append("W09 KPI 운영 상태가 안정적입니다. 현재 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": effective_site,
+        "window_days": window_days,
+        "policy": {
+            "policy_key": policy_key,
+            "updated_at": policy_updated_at.isoformat(),
+            "enabled": bool(policy.get("enabled", True)),
+            "kpi_count": total_kpis,
+            "escalation_rule_count": len(escalation_map),
+        },
+        "metrics": {
+            "kpi_count": total_kpis,
+            "owner_assigned_count": owner_assigned_count,
+            "owner_coverage_percent": owner_coverage_percent,
+            "green_count": green_count,
+            "yellow_count": yellow_count,
+            "red_count": red_count,
+            "overall_status": overall_status,
+        },
+        "kpis": rows,
+        "top_red_kpis": top_red_kpis,
+        "escalation_candidates": escalation_candidates[:10],
+        "source_metrics": {
+            "w05_two_week_retention_percent": metric_values.get("two_week_retention_percent"),
+            "w06_weekly_active_rate_percent": metric_values.get("weekly_active_rate_percent"),
+            "w07_escalation_rate_percent": metric_values.get("escalation_rate_percent"),
+            "w08_report_discipline_score": metric_values.get("report_discipline_score"),
+            "w08_data_quality_issue_rate_percent": metric_values.get("data_quality_issue_rate_percent"),
+        },
         "recommendations": recommendations,
     }
 
@@ -10408,6 +11307,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w08_checklist_csv_api": "/api/public/adoption-plan/w08/checklist.csv",
         "public_adoption_w08_schedule_ics_api": "/api/public/adoption-plan/w08/schedule.ics",
         "public_adoption_w08_reporting_sop_api": "/api/public/adoption-plan/w08/reporting-sop",
+        "public_adoption_w09_api": "/api/public/adoption-plan/w09",
+        "public_adoption_w09_checklist_csv_api": "/api/public/adoption-plan/w09/checklist.csv",
+        "public_adoption_w09_schedule_ics_api": "/api/public/adoption-plan/w09/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -10435,6 +11337,12 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w07_tracker_completion_api": "/api/adoption/w07/tracker/completion",
         "adoption_w07_tracker_completion_package_api": "/api/adoption/w07/tracker/completion-package",
         "adoption_w07_tracker_complete_api": "/api/adoption/w07/tracker/complete",
+        "adoption_w09_tracker_items_api": "/api/adoption/w09/tracker/items",
+        "adoption_w09_tracker_overview_api": "/api/adoption/w09/tracker/overview",
+        "adoption_w09_tracker_bootstrap_api": "/api/adoption/w09/tracker/bootstrap",
+        "adoption_w09_tracker_readiness_api": "/api/adoption/w09/tracker/readiness",
+        "adoption_w09_tracker_completion_api": "/api/adoption/w09/tracker/completion",
+        "adoption_w09_tracker_complete_api": "/api/adoption/w09/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
@@ -10445,6 +11353,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w07_sla_quality_weekly_archive_csv_api": "/api/ops/adoption/w07/sla-quality/archive.csv",
         "adoption_w08_report_discipline_api": "/api/ops/adoption/w08/report-discipline",
         "adoption_w08_site_benchmark_api": "/api/ops/adoption/w08/site-benchmark",
+        "adoption_w09_kpi_operation_api": "/api/ops/adoption/w09/kpi-operation",
+        "adoption_w09_kpi_policy_api": "/api/ops/adoption/w09/kpi-policy",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -10502,6 +11412,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w06_operational_rhythm": _adoption_w06_payload(),
         "w07_sla_quality": _adoption_w07_payload(),
         "w08_report_discipline": _adoption_w08_payload(),
+        "w09_kpi_operation": _adoption_w09_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -10545,6 +11456,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w08_checklist_csv": "/api/public/adoption-plan/w08/checklist.csv",
                 "w08_schedule_ics": "/api/public/adoption-plan/w08/schedule.ics",
                 "w08_reporting_sop": "/api/public/adoption-plan/w08/reporting-sop",
+                "w09_json": "/api/public/adoption-plan/w09",
+                "w09_checklist_csv": "/api/public/adoption-plan/w09/checklist.csv",
+                "w09_schedule_ics": "/api/public/adoption-plan/w09/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -11428,6 +12342,158 @@ def _build_adoption_w08_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w09_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 9),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 9,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Autonomy",
+            "focus": "Shift to KPI operation",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 9)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+    return {
+        "title": "W09 KPI Operation Pack",
+        "public": True,
+        "timeline": timeline,
+        "kpi_threshold_matrix": ADOPTION_W09_KPI_THRESHOLD_MATRIX,
+        "escalation_map": ADOPTION_W09_ESCALATION_MAP,
+        "scheduled_events": ADOPTION_W09_SCHEDULED_EVENTS,
+        "kpi_operation_api": "/api/ops/adoption/w09/kpi-operation",
+        "kpi_policy_api": "/api/ops/adoption/w09/kpi-policy",
+        "tracker_items_api": "/api/adoption/w09/tracker/items",
+        "tracker_overview_api": "/api/adoption/w09/tracker/overview",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w09",
+            "checklist_csv": "/api/public/adoption-plan/w09/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w09/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w09_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "kpi_or_event_key",
+            "name_or_title",
+            "owner_or_escalate_to",
+            "direction_or_condition",
+            "green_or_sla_hours",
+            "yellow_or_action",
+            "target_or_output",
+            "source_or_time",
+        ]
+    )
+    for item in payload.get("kpi_threshold_matrix", []):
+        writer.writerow(
+            [
+                "kpi_threshold",
+                item.get("id", ""),
+                item.get("kpi_key", ""),
+                item.get("kpi_name", ""),
+                item.get("owner_role", ""),
+                item.get("direction", ""),
+                item.get("green_threshold", ""),
+                item.get("yellow_threshold", ""),
+                item.get("target", ""),
+                item.get("source_api", ""),
+            ]
+        )
+    for item in payload.get("escalation_map", []):
+        writer.writerow(
+            [
+                "escalation_map",
+                item.get("id", ""),
+                item.get("kpi_key", ""),
+                "",
+                item.get("escalate_to", ""),
+                item.get("condition", ""),
+                item.get("sla_hours", ""),
+                item.get("action", ""),
+                "",
+                "",
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                "",
+                "",
+                "",
+                item.get("output", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w09_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w09-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W09] {str(item.get('title', 'KPI Operation Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W09 KPI Operation//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -11799,6 +12865,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w06_pack = plan.get("w06_operational_rhythm", {})
     w07_pack = plan.get("w07_sla_quality", {})
     w08_pack = plan.get("w08_report_discipline", {})
+    w09_pack = plan.get("w09_kpi_operation", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -12176,6 +13243,53 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w08_schedule_rows: list[str] = []
     for item in w08_pack.get("scheduled_events", []):
         w08_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w09_threshold_rows: list[str] = []
+    for item in w09_pack.get("kpi_threshold_matrix", []):
+        w09_threshold_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("kpi_name", "")))}</td>
+              <td>{html.escape(str(item.get("kpi_key", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("direction", "")))}</td>
+              <td>{html.escape(str(item.get("green_threshold", "")))}</td>
+              <td>{html.escape(str(item.get("yellow_threshold", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("source_api", "")))}</td>
+            </tr>
+            """
+        )
+
+    w09_escalation_rows: list[str] = []
+    for item in w09_pack.get("escalation_map", []):
+        w09_escalation_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("kpi_key", "")))}</td>
+              <td>{html.escape(str(item.get("condition", "")))}</td>
+              <td>{html.escape(str(item.get("escalate_to", "")))}</td>
+              <td>{html.escape(str(item.get("sla_hours", "")))}</td>
+              <td>{html.escape(str(item.get("action", "")))}</td>
+            </tr>
+            """
+        )
+
+    w09_schedule_rows: list[str] = []
+    for item in w09_pack.get("scheduled_events", []):
+        w09_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -12857,6 +13971,9 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w08/checklist.csv">W08 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w08/schedule.ics">W08 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w08/reporting-sop">W08 Reporting SOP</a>
+        <a href="/api/public/adoption-plan/w09">W09 JSON</a>
+        <a href="/api/public/adoption-plan/w09/checklist.csv">W09 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w09/schedule.ics">W09 Schedule ICS</a>
         <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
@@ -13345,6 +14462,73 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w08_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W09 KPI Operation</h2>
+      <p class="sub">KPI 임계값/오너/에스컬레이션 정책을 기준으로 운영 상태를 주간 점검하고 실행 추적으로 닫습니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w09">W09 JSON</a>
+        <a href="/api/public/adoption-plan/w09/checklist.csv">W09 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w09/schedule.ics">W09 Schedule ICS</a>
+        <a href="/api/ops/adoption/w09/kpi-operation">W09 KPI Operation API (Token)</a>
+        <a href="/api/ops/adoption/w09/kpi-policy">W09 KPI Policy API (Token)</a>
+        <a href="/api/adoption/w09/tracker/items">W09 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w09/tracker/overview?site=HQ">W09 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>KPI ID</th>
+              <th>KPI Name</th>
+              <th>KPI Key</th>
+              <th>Owner Role</th>
+              <th>Direction</th>
+              <th>Green Threshold</th>
+              <th>Yellow Threshold</th>
+              <th>Target</th>
+              <th>Source API</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w09_threshold_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Escalation ID</th>
+              <th>KPI Key</th>
+              <th>Condition</th>
+              <th>Escalate To</th>
+              <th>SLA Hours</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w09_escalation_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w09_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -15331,6 +16515,95 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w08DisciplineRecommendations" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W09 KPI Operation</h3>
+            <div id="adoptionW09Top" class="cards"></div>
+            <div id="adoptionW09Thresholds" class="empty">데이터 없음</div>
+            <div id="adoptionW09Escalation" class="empty">데이터 없음</div>
+            <div id="adoptionW09Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW09Json" href="/api/public/adoption-plan/w09">W09 JSON</a>
+              <a id="adoptW09ChecklistCsv" href="/api/public/adoption-plan/w09/checklist.csv">W09 Checklist CSV</a>
+              <a id="adoptW09ScheduleIcs" href="/api/public/adoption-plan/w09/schedule.ics">W09 Schedule ICS</a>
+              <a id="adoptW09KpiOperationApi" href="/api/ops/adoption/w09/kpi-operation">W09 KPI Operation API (Token)</a>
+              <a id="adoptW09KpiPolicyApi" href="/api/ops/adoption/w09/kpi-policy">W09 KPI Policy API (Token)</a>
+              <a id="adoptW09TrackerItemsApi" href="/api/adoption/w09/tracker/items">W09 Tracker Items API (Token)</a>
+              <a id="adoptW09TrackerOverviewApi" href="/api/adoption/w09/tracker/overview?site=HQ">W09 Tracker Overview API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W09 KPI Operation Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w09KpiSite" placeholder="site (optional, 비우면 전체)" />
+              <input id="w09KpiDays" value="30" placeholder="window days (14-120)" />
+              <input id="w09KpiReserved1" value="token required" disabled />
+              <input id="w09KpiReserved2" value="site scope enforced" disabled />
+              <button id="w09KpiRefreshBtn" class="btn run" type="button">W09 KPI 새로고침</button>
+            </div>
+            <div id="w09KpiMeta" class="meta">조회 전</div>
+            <div id="w09KpiSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">KPI Status</h4>
+            <div id="w09KpiTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Escalation Candidates</h4>
+            <div id="w09EscalationTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w09KpiRecommendations" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Policy Snapshot</h4>
+            <div id="w09PolicyMeta" class="meta">조회 전</div>
+            <div id="w09PolicyTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W09 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w09TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w09TrackItemId" placeholder="tracker_item_id" />
+              <input id="w09TrackAssignee" placeholder="assignee" />
+              <select id="w09TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w09TrackBootstrapBtn" class="btn run" type="button">W09 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w09TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w09TrackNote" placeholder="completion note (optional)" />
+              <input id="w09EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w09EvidenceFile" type="file" />
+              <button id="w09TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w09EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w09Reserved1" value="token required for write actions" disabled />
+              <input id="w09Reserved2" value="site scope enforced" disabled />
+              <input id="w09Reserved3" value="max file 5MB" disabled />
+              <button id="w09TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w09CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w09CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w09Reserved4" value="readiness gate required" disabled />
+              <button id="w09ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w09CompleteBtn" class="btn" type="button">W09 완료 확정</button>
+            </div>
+            <div id="w09TrackerMeta" class="meta">조회 전</div>
+            <div id="w09TrackerSummary" class="cards"></div>
+            <div id="w09TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W09 완료 판정 결과</h4>
+            <div id="w09ReadinessMeta" class="meta">조회 전</div>
+            <div id="w09ReadinessCards" class="cards"></div>
+            <div id="w09ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w09EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
@@ -15965,9 +17238,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (!Array.isArray(rows) || rows.length === 0) {{
           return renderEmpty("증빙 파일이 없습니다.");
         }}
-        const phase = trackerPhase === "w07"
-          ? "w07"
-          : (trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02"));
+        const phase = trackerPhase === "w09"
+          ? "w09"
+          : (trackerPhase === "w07"
+            ? "w07"
+            : (trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02")));
         const body = rows.map((row) => {{
           const downloadHref = "/api/adoption/" + phase + "/tracker/evidence/" + encodeURIComponent(String(row.id || "")) + "/download";
           return (
@@ -17741,6 +19016,392 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW09KpiOperation() {{
+        const meta = document.getElementById("w09KpiMeta");
+        const summary = document.getElementById("w09KpiSummary");
+        const kpiTable = document.getElementById("w09KpiTable");
+        const escalationTable = document.getElementById("w09EscalationTable");
+        const recommendations = document.getElementById("w09KpiRecommendations");
+        const policyMeta = document.getElementById("w09PolicyMeta");
+        const policyTable = document.getElementById("w09PolicyTable");
+        const site = (document.getElementById("w09KpiSite").value || "").trim();
+        const daysRaw = (document.getElementById("w09KpiDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w09/kpi-operation" + (params.toString() ? ("?" + params.toString()) : "");
+        const policyPath = site
+          ? "/api/ops/adoption/w09/kpi-policy?site=" + encodeURIComponent(site)
+          : "";
+        try {{
+          meta.textContent = "조회 중.. " + path;
+          if (policyPath) {{
+            policyMeta.textContent = "조회 중.. " + policyPath;
+          }} else {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }}
+          const [data, policyPayload] = await Promise.all([
+            fetchJson(path, true),
+            policyPath
+              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
+              : Promise.resolve({{ __skipped: true }}),
+          ]);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | overall=" + String(metrics.overall_status || "-")
+            + " | red=" + String(metrics.red_count || 0)
+            + " | yellow=" + String(metrics.yellow_count || 0)
+            + " | green=" + String(metrics.green_count || 0);
+          const summaryItems = [
+            ["KPI Count", metrics.kpi_count ?? 0],
+            ["Owner Assigned", metrics.owner_assigned_count ?? 0],
+            ["Owner Coverage %", metrics.owner_coverage_percent ?? 0],
+            ["Overall Status", metrics.overall_status || "-"],
+            ["Green", metrics.green_count ?? 0],
+            ["Yellow", metrics.yellow_count ?? 0],
+            ["Red", metrics.red_count ?? 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          kpiTable.innerHTML = renderTable(
+            data.kpis || [],
+            [
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "actual_value", label: "Actual" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "green_threshold", label: "Green" }},
+              {{ key: "yellow_threshold", label: "Yellow" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "source_api", label: "Source API" }},
+            ]
+          );
+          escalationTable.innerHTML = renderTable(
+            data.escalation_candidates || [],
+            [
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "actual_value", label: "Actual" }},
+              {{ key: "condition", label: "Condition" }},
+              {{ key: "escalate_to", label: "Escalate To" }},
+              {{ key: "sla_hours", label: "SLA Hours" }},
+              {{ key: "action", label: "Action" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
+            const policy = policyPayload.policy || {{}};
+            policyMeta.textContent =
+              "성공: key=" + String(policyPayload.policy_key || "-")
+              + " | site=" + String(policyPayload.site || "default")
+              + " | updated_at=" + String(policyPayload.updated_at || "-");
+            policyTable.innerHTML = renderTable(
+              policy.kpis || [],
+              [
+                {{ key: "kpi_key", label: "KPI Key" }},
+                {{ key: "kpi_name", label: "KPI Name" }},
+                {{ key: "owner_role", label: "Owner Role" }},
+                {{ key: "direction", label: "Direction" }},
+                {{ key: "green_threshold", label: "Green" }},
+                {{ key: "yellow_threshold", label: "Yellow" }},
+                {{ key: "target", label: "Target" }},
+              ]
+            );
+          }} else if (policyPayload && policyPayload.__error) {{
+            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
+            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          kpiTable.innerHTML = renderEmpty(err.message);
+          escalationTable.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+          if (!site) {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }} else {{
+            policyMeta.textContent = "실패: " + err.message;
+            policyTable.innerHTML = renderEmpty(err.message);
+          }}
+        }}
+      }}
+
+      async function runW09Tracker() {{
+        const meta = document.getElementById("w09TrackerMeta");
+        const summary = document.getElementById("w09TrackerSummary");
+        const table = document.getElementById("w09TrackerTable");
+        const readinessMeta = document.getElementById("w09ReadinessMeta");
+        const readinessCards = document.getElementById("w09ReadinessCards");
+        const readinessBlockers = document.getElementById("w09ReadinessBlockers");
+        const evidenceTable = document.getElementById("w09EvidenceTable");
+        const site = (document.getElementById("w09TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중.. W09 tracker";
+          readinessMeta.textContent = "조회 중.. W09 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w09/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w09/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w09/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w09/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W09 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w09EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w09TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w09/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w09");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW09Readiness() {{
+        await runW09Tracker();
+      }}
+
+      async function runW09TrackerBootstrap() {{
+        const meta = document.getElementById("w09TrackerMeta");
+        const site = (document.getElementById("w09TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중.. W09 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w09/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW09Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW09Complete() {{
+        const meta = document.getElementById("w09ReadinessMeta");
+        const site = (document.getElementById("w09TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        const completionNote = (document.getElementById("w09CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w09CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중.. W09 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w09/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW09Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW09Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW09TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w09TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w09TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w09TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w09TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w09TrackCompleted").checked;
+        const note = (document.getElementById("w09TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w09EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중.. tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w09/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w09EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w09/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w09EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW09Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runW07Tracker() {{
         const meta = document.getElementById("w07TrackerMeta");
         const summary = document.getElementById("w07TrackerSummary");
@@ -18427,6 +20088,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w08Checklist = document.getElementById("adoptionW08Checklist");
         const w08Quality = document.getElementById("adoptionW08Quality");
         const w08Schedule = document.getElementById("adoptionW08Schedule");
+        const w09Top = document.getElementById("adoptionW09Top");
+        const w09Thresholds = document.getElementById("adoptionW09Thresholds");
+        const w09Escalation = document.getElementById("adoptionW09Escalation");
+        const w09Schedule = document.getElementById("adoptionW09Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -18954,6 +20619,80 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w09 = data.w09_kpi_operation || {{}};
+          const w09TopItems = [
+            ["Week", "W" + String(w09.timeline?.week || 9).padStart(2, "0")],
+            ["Focus", w09.timeline?.focus || "KPI operation"],
+            ["Threshold KPIs", (w09.kpi_threshold_matrix || []).length],
+            ["Escalation Rules", (w09.escalation_map || []).length],
+            ["Sessions", (w09.scheduled_events || []).length],
+            ["Metric", w09.timeline?.success_metric || "Green ratio >= 80%"],
+          ];
+          w09Top.innerHTML = w09TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w09Thresholds.innerHTML = renderTable(
+            (w09.kpi_threshold_matrix || []).map((row) => ({{
+              id: row.id || "",
+              kpi_name: row.kpi_name || "",
+              kpi_key: row.kpi_key || "",
+              owner_role: row.owner_role || "",
+              direction: row.direction || "",
+              green_threshold: row.green_threshold ?? "",
+              yellow_threshold: row.yellow_threshold ?? "",
+              target: row.target || "",
+              source_api: row.source_api || "",
+            }})),
+            [
+              {{ key: "id", label: "KPI ID" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "direction", label: "Direction" }},
+              {{ key: "green_threshold", label: "Green" }},
+              {{ key: "yellow_threshold", label: "Yellow" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "source_api", label: "Source API" }},
+            ]
+          );
+
+          w09Escalation.innerHTML = renderTable(
+            (w09.escalation_map || []).map((row) => ({{
+              id: row.id || "",
+              kpi_key: row.kpi_key || "",
+              condition: row.condition || "",
+              escalate_to: row.escalate_to || "",
+              sla_hours: row.sla_hours ?? "",
+              action: row.action || "",
+            }})),
+            [
+              {{ key: "id", label: "Rule ID" }},
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "condition", label: "Condition" }},
+              {{ key: "escalate_to", label: "Escalate To" }},
+              {{ key: "sla_hours", label: "SLA Hours" }},
+              {{ key: "action", label: "Action" }},
+            ]
+          );
+
+          w09Schedule.innerHTML = renderTable(
+            (w09.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -18991,6 +20730,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW06Rhythm().catch(() => null);
             runW07SlaQuality().catch(() => null);
             runW08ReportDiscipline().catch(() => null);
+            runW09KpiOperation().catch(() => null);
+            runW09Tracker().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -19088,6 +20829,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w08DisciplineBenchmark.innerHTML = renderEmpty("인증 토큰 필요");
             w08DisciplineRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
 
+            const w09KpiMeta = document.getElementById("w09KpiMeta");
+            const w09KpiSummary = document.getElementById("w09KpiSummary");
+            const w09KpiTable = document.getElementById("w09KpiTable");
+            const w09EscalationTable = document.getElementById("w09EscalationTable");
+            const w09KpiRecommendations = document.getElementById("w09KpiRecommendations");
+            const w09PolicyMeta = document.getElementById("w09PolicyMeta");
+            const w09PolicyTable = document.getElementById("w09PolicyTable");
+            const w09TrackerMeta = document.getElementById("w09TrackerMeta");
+            const w09TrackerSummary = document.getElementById("w09TrackerSummary");
+            const w09TrackerTable = document.getElementById("w09TrackerTable");
+            const w09ReadinessMeta = document.getElementById("w09ReadinessMeta");
+            const w09ReadinessCards = document.getElementById("w09ReadinessCards");
+            const w09ReadinessBlockers = document.getElementById("w09ReadinessBlockers");
+            const w09EvidenceTable = document.getElementById("w09EvidenceTable");
+            w09KpiMeta.textContent = "?좏겙 ?????W09 KPI operation API瑜??ъ슜?????덉뒿?덈떎.";
+            w09KpiSummary.innerHTML = "";
+            w09KpiTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09EscalationTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09KpiRecommendations.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09PolicyMeta.textContent = "?좏겙 ?????W09 policy API瑜??ъ슜?????덉뒿?덈떎.";
+            w09PolicyTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09TrackerMeta.textContent = "?좏겙 ?????W09 tracker API瑜??ъ슜?????덉뒿?덈떎.";
+            w09TrackerSummary.innerHTML = "";
+            w09TrackerTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09ReadinessMeta.textContent = "?좏겙 ??????꾨즺 ?먯젙 API瑜??ъ슜?????덉뒿?덈떎.";
+            w09ReadinessCards.innerHTML = "";
+            w09ReadinessBlockers.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+            w09EvidenceTable.innerHTML = renderEmpty("?몄쬆 ?좏겙 ?꾩슂");
+
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
             w07ActiveItemId = null;
@@ -19155,6 +20925,24 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w08DisciplineTopSites").innerHTML = renderEmpty(err.message);
           document.getElementById("w08DisciplineBenchmark").innerHTML = renderEmpty(err.message);
           document.getElementById("w08DisciplineRecommendations").innerHTML = renderEmpty(err.message);
+          w09Top.innerHTML = "";
+          w09Thresholds.innerHTML = renderEmpty(err.message);
+          w09Escalation.innerHTML = renderEmpty(err.message);
+          w09Schedule.innerHTML = renderEmpty(err.message);
+          document.getElementById("w09KpiMeta").textContent = "실패: " + err.message;
+          document.getElementById("w09KpiSummary").innerHTML = "";
+          document.getElementById("w09KpiTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09EscalationTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09KpiRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09PolicyMeta").textContent = "실패: " + err.message;
+          document.getElementById("w09PolicyTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09TrackerMeta").textContent = "실패: " + err.message;
+          document.getElementById("w09TrackerSummary").innerHTML = "";
+          document.getElementById("w09TrackerTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09ReadinessMeta").textContent = "실패: " + err.message;
+          document.getElementById("w09ReadinessCards").innerHTML = "";
+          document.getElementById("w09ReadinessBlockers").innerHTML = renderEmpty(err.message);
+          document.getElementById("w09EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -19355,6 +21143,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
       document.getElementById("w07WeeklyTrendsBtn").addEventListener("click", runW07WeeklyTrends);
       document.getElementById("w08DisciplineRefreshBtn").addEventListener("click", runW08ReportDiscipline);
+      document.getElementById("w09KpiRefreshBtn").addEventListener("click", runW09KpiOperation);
+      document.getElementById("w09TrackBootstrapBtn").addEventListener("click", runW09TrackerBootstrap);
+      document.getElementById("w09TrackRefreshBtn").addEventListener("click", runW09Tracker);
+      document.getElementById("w09ReadinessBtn").addEventListener("click", runW09Readiness);
+      document.getElementById("w09CompleteBtn").addEventListener("click", runW09Complete);
+      document.getElementById("w09TrackUpdateBtn").addEventListener("click", runW09TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -19395,6 +21189,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w08DisciplineSite").value) {{
         document.getElementById("w08DisciplineSite").value = "HQ";
+      }}
+      if (!document.getElementById("w09KpiSite").value) {{
+        document.getElementById("w09KpiSite").value = "HQ";
+      }}
+      if (!document.getElementById("w09TrackSite").value) {{
+        document.getElementById("w09TrackSite").value = "HQ";
       }}
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
@@ -19485,6 +21285,11 @@ def get_public_adoption_w07() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w08")
 def get_public_adoption_w08() -> dict[str, Any]:
     return _adoption_w08_payload()
+
+
+@app.get("/api/public/adoption-plan/w09")
+def get_public_adoption_w09() -> dict[str, Any]:
+    return _adoption_w09_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -19731,6 +21536,30 @@ def get_public_adoption_w08_schedule_ics() -> Response:
     payload = _adoption_w08_payload()
     ics_text = _build_adoption_w08_schedule_ics(payload)
     file_name = "ka-facility-os-adoption-w08-report-discipline.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w09/checklist.csv")
+def get_public_adoption_w09_checklist_csv() -> Response:
+    payload = _adoption_w09_payload()
+    csv_text = _build_adoption_w09_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w09-kpi-operation-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w09/schedule.ics")
+def get_public_adoption_w09_schedule_ics() -> Response:
+    payload = _adoption_w09_payload()
+    ics_text = _build_adoption_w09_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w09-kpi-operation.ics"
     return Response(
         content=ics_text,
         media_type="text/calendar; charset=utf-8",
@@ -21976,6 +23805,532 @@ def download_w07_tracker_evidence(
 
 
 
+@app.post("/api/adoption/w09/tracker/bootstrap", response_model=W09TrackerBootstrapResponse)
+def bootstrap_w09_tracker_items(
+    payload: W09TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
+) -> W09TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w09_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w09_tracker_items.c.item_type,
+                adoption_w09_tracker_items.c.item_key,
+            ).where(adoption_w09_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w09_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W09_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w09_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w09_tracker_items)
+            .where(adoption_w09_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w09_tracker_items.c.item_type.asc(),
+                adoption_w09_tracker_items.c.item_key.asc(),
+                adoption_w09_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w09_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w09_tracker_bootstrap",
+        resource_type="adoption_w09_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W09TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w09/tracker/items", response_model=list[W09TrackerItemRead])
+def list_w09_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> list[W09TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W09_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W09 tracker status")
+
+    stmt = select(adoption_w09_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w09_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w09_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w09_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w09_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w09_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w09_tracker_items.c.updated_at.desc(),
+        adoption_w09_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w09_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w09/tracker/overview", response_model=W09TrackerOverviewRead)
+def get_w09_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> W09TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w09_tracker_items).where(adoption_w09_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w09_tracker_item_model(row) for row in rows]
+    return _compute_w09_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w09/tracker/readiness", response_model=W09TrackerReadinessRead)
+def get_w09_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> W09TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w09_tracker_items_for_site(site)
+    return _compute_w09_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w09/tracker/completion", response_model=W09TrackerCompletionRead)
+def get_w09_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> W09TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w09_tracker_items_for_site(site)
+    readiness = _compute_w09_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w09_site_runs).where(adoption_w09_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w09_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w09/tracker/complete", response_model=W09TrackerCompletionRead)
+def complete_w09_tracker(
+    payload: W09TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
+) -> W09TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w09_tracker_items_for_site(payload.site)
+    readiness = _compute_w09_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W09 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W09_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W09_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w09_site_runs).where(adoption_w09_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w09_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w09_site_runs)
+                .where(adoption_w09_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w09_site_runs).where(adoption_w09_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w09_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w09_tracker_complete",
+        resource_type="adoption_w09_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w09/tracker/items/{tracker_item_id}", response_model=W09TrackerItemRead)
+def update_w09_tracker_item(
+    tracker_item_id: int,
+    payload: W09TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
+) -> W09TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w09_tracker_items).where(adoption_w09_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W09 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W09_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W09_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W09_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W09_TRACKER_STATUS_DONE:
+            next_status = W09_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W09_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W09 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w09_tracker_items)
+            .where(adoption_w09_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w09_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w09_tracker_items).where(adoption_w09_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W09 tracker item")
+    model = _row_to_w09_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w09_tracker_item_update",
+        resource_type="adoption_w09_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w09/tracker/items/{tracker_item_id}/evidence", response_model=W09EvidenceRead, status_code=201)
+async def upload_w09_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
+) -> W09EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+    file_bytes = await file.read(W09_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W09_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W09_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w09_tracker_items).where(adoption_w09_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W09 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w09_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w09_tracker_items)
+            .where(adoption_w09_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w09_completion_if_closed(
+            conn=conn,
+            site=site,
+            actor_username=actor_username,
+            checked_at=now,
+            reason="evidence_uploaded",
+        )
+        evidence_row = conn.execute(
+            select(adoption_w09_evidence_files).where(adoption_w09_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w09_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w09_tracker_evidence_upload",
+        resource_type="adoption_w09_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w09/tracker/items/{tracker_item_id}/evidence", response_model=list[W09EvidenceRead])
+def list_w09_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> list[W09EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w09_tracker_items).where(adoption_w09_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W09 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w09_evidence_files)
+            .where(adoption_w09_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w09_evidence_files.c.uploaded_at.desc(), adoption_w09_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w09_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w09/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w09_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w09_evidence_files).where(adoption_w09_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W09 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w09_tracker_evidence_download",
+        resource_type="adoption_w09_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -23260,6 +25615,103 @@ def get_ops_adoption_w08_site_benchmark(
         "count": len(limited),
         "items": limited,
         "thresholds": snapshot.get("thresholds", {}),
+    }
+
+
+@app.get("/api/ops/adoption/w09/kpi-operation")
+def get_ops_adoption_w09_kpi_operation(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w09_kpi_operation_snapshot(site=normalized_site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w09_kpi_operation_view",
+        resource_type="adoption_w09_kpi_operation",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "overall_status": metrics.get("overall_status"),
+            "kpi_count": metrics.get("kpi_count"),
+            "owner_coverage_percent": metrics.get("owner_coverage_percent"),
+            "red_count": metrics.get("red_count"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w09/kpi-policy")
+def get_ops_adoption_w09_kpi_policy(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    policy, updated_at, policy_key, policy_site = _ensure_w09_kpi_policy(normalized_site)
+    _write_audit_log(
+        principal=principal,
+        action="w09_kpi_policy_view",
+        resource_type="adoption_w09_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "kpi_count": len(policy.get("kpis", []) if isinstance(policy.get("kpis"), list) else []),
+            "escalation_rule_count": len(
+                policy.get("escalation_map", []) if isinstance(policy.get("escalation_map"), list) else []
+            ),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/adoption/w09/kpi-policy")
+def set_ops_adoption_w09_kpi_policy(
+    payload: dict[str, Any],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+        if not _has_permission(principal, "admins:manage"):
+            raise HTTPException(status_code=403, detail="Global W09 policy update requires admins:manage")
+    policy, updated_at, policy_key, policy_site = _upsert_w09_kpi_policy(normalized_site, payload)
+    _write_audit_log(
+        principal=principal,
+        action="w09_kpi_policy_update",
+        resource_type="adoption_w09_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+            "kpi_count": len(policy.get("kpis", []) if isinstance(policy.get("kpis"), list) else []),
+            "escalation_rule_count": len(
+                policy.get("escalation_map", []) if isinstance(policy.get("escalation_map"), list) else []
+            ),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
     }
 
 
@@ -26147,4 +28599,5 @@ def print_monthly_report(
 </body>
 </html>
 """
+
 

@@ -183,6 +183,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_w06_api" in root_json.json()
     assert "public_adoption_w07_api" in root_json.json()
     assert "public_adoption_w08_api" in root_json.json()
+    assert "public_adoption_w09_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
@@ -190,6 +191,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w06_rhythm_api" in root_json.json()
     assert "adoption_w07_sla_quality_api" in root_json.json()
     assert "adoption_w08_report_discipline_api" in root_json.json()
+    assert "adoption_w09_kpi_operation_api" in root_json.json()
+    assert "adoption_w09_kpi_policy_api" in root_json.json()
+    assert "adoption_w09_tracker_items_api" in root_json.json()
     assert "adoption_w07_tracker_items_api" in root_json.json()
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
@@ -218,6 +222,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W06 Operational Rhythm" in root_html.text
     assert "W07 SLA Quality" in root_html.text
     assert "W08 Report Discipline" in root_html.text
+    assert "W09 KPI Operation" in root_html.text
+    assert "W09 KPI Operation Dashboard (Token)" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W07 실행 추적" in root_html.text
@@ -285,6 +291,15 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["public_adoption_w08_reporting_sop_api"]
         == "/api/public/adoption-plan/w08/reporting-sop"
     )
+    assert service_info.json()["public_adoption_w09_api"] == "/api/public/adoption-plan/w09"
+    assert (
+        service_info.json()["public_adoption_w09_checklist_csv_api"]
+        == "/api/public/adoption-plan/w09/checklist.csv"
+    )
+    assert (
+        service_info.json()["public_adoption_w09_schedule_ics_api"]
+        == "/api/public/adoption-plan/w09/schedule.ics"
+    )
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -316,6 +331,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w07_sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
     assert service_info.json()["adoption_w08_report_discipline_api"] == "/api/ops/adoption/w08/report-discipline"
     assert service_info.json()["adoption_w08_site_benchmark_api"] == "/api/ops/adoption/w08/site-benchmark"
+    assert service_info.json()["adoption_w09_tracker_items_api"] == "/api/adoption/w09/tracker/items"
+    assert service_info.json()["adoption_w09_tracker_overview_api"] == "/api/adoption/w09/tracker/overview"
+    assert service_info.json()["adoption_w09_tracker_bootstrap_api"] == "/api/adoption/w09/tracker/bootstrap"
+    assert service_info.json()["adoption_w09_tracker_readiness_api"] == "/api/adoption/w09/tracker/readiness"
+    assert service_info.json()["adoption_w09_tracker_completion_api"] == "/api/adoption/w09/tracker/completion"
+    assert service_info.json()["adoption_w09_tracker_complete_api"] == "/api/adoption/w09/tracker/complete"
+    assert service_info.json()["adoption_w09_kpi_operation_api"] == "/api/ops/adoption/w09/kpi-operation"
+    assert service_info.json()["adoption_w09_kpi_policy_api"] == "/api/ops/adoption/w09/kpi-policy"
     assert (
         service_info.json()["adoption_w07_automation_readiness_api"]
         == "/api/ops/adoption/w07/automation-readiness"
@@ -378,6 +401,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W06 Operational Rhythm" in adoption_html.text
     assert "W07 SLA Quality" in adoption_html.text
     assert "W08 Report Discipline" in adoption_html.text
+    assert "W09 KPI Operation" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -438,6 +462,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w08_report_discipline"]["data_quality_controls"]) >= 4
     assert len(body["w08_report_discipline"]["scheduled_events"]) >= 5
     assert len(body["w08_report_discipline"]["reporting_sop"]) >= 4
+    assert body["w09_kpi_operation"]["timeline"]["week"] == 9
+    assert len(body["w09_kpi_operation"]["kpi_threshold_matrix"]) >= 5
+    assert len(body["w09_kpi_operation"]["escalation_map"]) >= 4
+    assert len(body["w09_kpi_operation"]["scheduled_events"]) >= 5
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -653,6 +681,34 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w08_sop.status_code == 200
     assert w08_sop.json()["public"] is True
     assert len(w08_sop.json()["items"]) >= 4
+
+    w09 = app_client.get("/api/public/adoption-plan/w09")
+    assert w09.status_code == 200
+    w09_body = w09.json()
+    assert w09_body["public"] is True
+    assert w09_body["timeline"]["week"] == 9
+    assert "kpi operation" in w09_body["timeline"]["focus"].lower()
+    assert len(w09_body["kpi_threshold_matrix"]) >= 5
+    assert len(w09_body["escalation_map"]) >= 4
+    assert len(w09_body["scheduled_events"]) >= 5
+    assert w09_body["kpi_operation_api"] == "/api/ops/adoption/w09/kpi-operation"
+    assert w09_body["kpi_policy_api"] == "/api/ops/adoption/w09/kpi-policy"
+    assert w09_body["tracker_items_api"] == "/api/adoption/w09/tracker/items"
+
+    w09_csv = app_client.get("/api/public/adoption-plan/w09/checklist.csv")
+    assert w09_csv.status_code == 200
+    assert w09_csv.headers["content-type"].startswith("text/csv")
+    assert (
+        "section,id,kpi_or_event_key,name_or_title,owner_or_escalate_to,direction_or_condition,green_or_sla_hours,yellow_or_action,target_or_output,source_or_time"
+        in w09_csv.text
+    )
+    assert "kpi_threshold,W09-KPI-01" in w09_csv.text
+
+    w09_ics = app_client.get("/api/public/adoption-plan/w09/schedule.ics")
+    assert w09_ics.status_code == 200
+    assert w09_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w09_ics.text
+    assert "SUMMARY:[W09] W09 kickoff - KPI ownership lock" in w09_ics.text
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -2702,6 +2758,233 @@ def test_w08_report_discipline_snapshot_flow(app_client: TestClient) -> None:
         headers=manager_headers,
     )
     assert forbidden.status_code == 403
+
+
+def test_w09_kpi_operation_and_tracker_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w09_manager_ci",
+            "display_name": "W09 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W09 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w09-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W09 Site",
+            "location": "K1",
+            "cycle": "daily",
+            "inspector": "w09_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W09 overdue signal",
+            "description": "seed KPI operation metrics",
+            "site": "W09 Site",
+            "location": "K2",
+            "priority": "critical",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert work_order.status_code == 201
+
+    snapshot = app_client.get(
+        "/api/ops/adoption/w09/kpi-operation?site=W09+Site&days=30",
+        headers=manager_headers,
+    )
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["site"] == "W09 Site"
+    assert snapshot_body["window_days"] == 30
+    assert snapshot_body["policy"]["kpi_count"] >= 5
+    assert snapshot_body["policy"]["escalation_rule_count"] >= 4
+    assert isinstance(snapshot_body["kpis"], list)
+    assert len(snapshot_body["kpis"]) >= 5
+    assert isinstance(snapshot_body["metrics"], dict)
+    assert snapshot_body["metrics"]["kpi_count"] >= 5
+    assert snapshot_body["metrics"]["overall_status"] in {"green", "yellow", "red"}
+    assert isinstance(snapshot_body["recommendations"], list)
+    assert len(snapshot_body["recommendations"]) >= 1
+
+    policy = app_client.get(
+        "/api/ops/adoption/w09/kpi-policy?site=W09+Site",
+        headers=manager_headers,
+    )
+    assert policy.status_code == 200
+    policy_body = policy.json()
+    assert policy_body["site"] == "W09 Site"
+    assert policy_body["policy_key"].startswith("adoption_w09_kpi_policy:site:")
+    assert isinstance(policy_body["policy"]["kpis"], list)
+    assert len(policy_body["policy"]["kpis"]) >= 5
+
+    updated = app_client.put(
+        "/api/ops/adoption/w09/kpi-policy?site=W09+Site",
+        headers=manager_headers,
+        json={
+            "enabled": True,
+            "kpis": [
+                {
+                    "kpi_key": "two_week_retention_percent",
+                    "owner_role": "Ops Lead",
+                    "direction": "higher_better",
+                    "green_threshold": 80,
+                    "yellow_threshold": 65,
+                }
+            ],
+        },
+    )
+    assert updated.status_code == 200
+    updated_policy = updated.json()["policy"]
+    kpi_map = {row["kpi_key"]: row for row in updated_policy["kpis"]}
+    assert kpi_map["two_week_retention_percent"]["owner_role"] == "Ops Lead"
+    assert kpi_map["two_week_retention_percent"]["green_threshold"] == 80.0
+    assert kpi_map["two_week_retention_percent"]["yellow_threshold"] == 65.0
+
+    global_policy_forbidden = app_client.get(
+        "/api/ops/adoption/w09/kpi-policy",
+        headers=manager_headers,
+    )
+    assert global_policy_forbidden.status_code == 403
+
+    global_update_forbidden = app_client.put(
+        "/api/ops/adoption/w09/kpi-policy",
+        headers=manager_headers,
+        json={"enabled": False},
+    )
+    assert global_update_forbidden.status_code == 403
+
+    bootstrap = app_client.post(
+        "/api/adoption/w09/tracker/bootstrap",
+        headers=manager_headers,
+        json={"site": "W09 Site"},
+    )
+    assert bootstrap.status_code == 200
+    bootstrap_body = bootstrap.json()
+    assert bootstrap_body["site"] == "W09 Site"
+    assert bootstrap_body["total_count"] >= 14
+
+    listed = app_client.get(
+        "/api/adoption/w09/tracker/items?site=W09+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) >= 14
+
+    required_item_id: int | None = None
+    for row in items:
+        item_id = int(row["id"])
+        patched = app_client.patch(
+            f"/api/adoption/w09/tracker/items/{item_id}",
+            headers=manager_headers,
+            json={
+                "assignee": "Ops QA",
+                "status": "done",
+                "completion_checked": True,
+                "completion_note": "W09 completed in CI",
+            },
+        )
+        assert patched.status_code == 200
+        assert patched.json()["status"] == "done"
+        assert patched.json()["completion_checked"] is True
+
+        if row["item_type"] in {"kpi_threshold", "kpi_escalation"}:
+            if required_item_id is None:
+                required_item_id = item_id
+            uploaded = app_client.post(
+                f"/api/adoption/w09/tracker/items/{item_id}/evidence",
+                headers=manager_headers,
+                data={"note": "w09 proof"},
+                files={"file": (f"w09-{item_id}.txt", f"proof {item_id}".encode("utf-8"), "text/plain")},
+            )
+            assert uploaded.status_code == 201
+            evidence_id = uploaded.json()["id"]
+            downloaded = app_client.get(
+                f"/api/adoption/w09/tracker/evidence/{evidence_id}/download",
+                headers=manager_headers,
+            )
+            assert downloaded.status_code == 200
+            assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    assert required_item_id is not None
+
+    evidence_list = app_client.get(
+        f"/api/adoption/w09/tracker/items/{required_item_id}/evidence",
+        headers=manager_headers,
+    )
+    assert evidence_list.status_code == 200
+    assert len(evidence_list.json()) >= 1
+
+    readiness = app_client.get(
+        "/api/adoption/w09/tracker/readiness?site=W09+Site",
+        headers=manager_headers,
+    )
+    assert readiness.status_code == 200
+    readiness_body = readiness.json()
+    assert readiness_body["ready"] is True
+    assert readiness_body["pending_count"] == 0
+    assert readiness_body["in_progress_count"] == 0
+    assert readiness_body["blocked_count"] == 0
+    assert readiness_body["missing_assignee_count"] == 0
+    assert readiness_body["missing_completion_checked_count"] == 0
+    assert readiness_body["missing_required_evidence_count"] == 0
+
+    completed = app_client.post(
+        "/api/adoption/w09/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W09 Site", "completion_note": "W09 tracker complete"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["readiness"]["ready"] is True
+
+    completion = app_client.get(
+        "/api/adoption/w09/tracker/completion?site=W09+Site",
+        headers=manager_headers,
+    )
+    assert completion.status_code == 200
+    assert completion.json()["status"] == "completed"
+
+    bootstrap_outside = app_client.post(
+        "/api/adoption/w09/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "Outside W09 Site"},
+    )
+    assert bootstrap_outside.status_code == 200
+
+    forbidden_kpi = app_client.get(
+        "/api/ops/adoption/w09/kpi-operation?site=Outside+W09+Site&days=30",
+        headers=manager_headers,
+    )
+    assert forbidden_kpi.status_code == 403
+
+    forbidden_tracker = app_client.get(
+        "/api/adoption/w09/tracker/overview?site=Outside+W09+Site",
+        headers=manager_headers,
+    )
+    assert forbidden_tracker.status_code == 403
 
 
 def test_w07_weekly_run_respects_cooldown(app_client: TestClient) -> None:
