@@ -74,6 +74,10 @@ Open:
   - `GET /api/ops/job-runs` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/summary` (permission: `admins:manage`)
   - `GET /api/ops/dashboard/trends` (permission: `admins:manage`)
+  - `GET /api/ops/performance/api-latency` (permission: `admins:manage`)
+  - `GET /api/ops/integrity/evidence-archive` (permission: `admins:manage`)
+  - `GET /api/ops/deploy/checklist` (permission: `admins:manage`)
+  - `POST /api/ops/deploy/smoke/record` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks` (permission: `admins:manage`)
   - `POST /api/ops/runbook/checks/run` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks/latest` (permission: `admins:manage`)
@@ -328,6 +332,17 @@ Optional alert webhook env:
 - `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES` (default `200`; max evidence files included in W07 completion package ZIP)
 - `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES` (default `52428800` = 50MB; max total evidence bytes included in W07 completion package ZIP)
 - `AUDIT_ARCHIVE_SIGNING_KEY` (HMAC key for signed monthly audit archive)
+- `API_LATENCY_MONITOR_ENABLED` (default `true`)
+- `API_LATENCY_MONITOR_WINDOW` (default `300`; in-memory sample window per critical API)
+- `API_LATENCY_MIN_SAMPLES` (default `8`)
+- `API_LATENCY_P95_WARNING_MS` (default `450`)
+- `API_LATENCY_P95_CRITICAL_MS` (default `900`)
+- `API_LATENCY_TARGETS` (comma list of `METHOD /path`; default health/meta/inspections/work-orders/dashboard-summary)
+- `DEPLOY_SMOKE_RECENT_HOURS` (default `48`; runbook recent smoke window)
+- `DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE` (default `true`)
+- `DEPLOY_CHECKLIST_VERSION` (default `2026.03.v1`)
+- `EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE` (default `20`)
+- `EVIDENCE_INTEGRITY_MAX_ISSUES` (default `50`)
 
 Security hardening:
 - common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
@@ -346,6 +361,10 @@ Job monitoring:
 - `GET /api/ops/job-runs?job_name=sla_escalation`
 - `GET /api/ops/dashboard/summary?days=30&job_limit=10`
 - `GET /api/ops/dashboard/trends?days=30`
+- `GET /api/ops/performance/api-latency`
+- `GET /api/ops/integrity/evidence-archive?sample_per_table=20&max_issues=50`
+- `GET /api/ops/deploy/checklist`
+- `POST /api/ops/deploy/smoke/record`
 - `GET /api/ops/runbook/checks`
 - `POST /api/ops/runbook/checks/run`
 - `GET /api/ops/runbook/checks/latest`
@@ -471,13 +490,23 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
   -ServiceId "<render-service-id>" `
   -BaseUrl "https://ops.ka-part.com" `
   -AdminToken "<owner-token>" `
+  -ExpectRateLimitBackend "redis" `
+  -RunRunbookGate $true `
+  -ChecklistVersion "2026.03.v1" `
   -RollbackOnFailure
 ```
 
-Direct smoke helper supports backend expectation and optional strict audit-chain gate:
+Direct smoke helper supports backend expectation, optional strict audit-chain gate, runbook gate, and smoke record:
 
 ```powershell
-.\scripts\post_deploy_smoke.ps1 -BaseUrl "https://ops.ka-part.com" -AdminToken "<owner-token>" -ExpectRateLimitBackend "redis"
+.\scripts\post_deploy_smoke.ps1 `
+  -BaseUrl "https://ops.ka-part.com" `
+  -AdminToken "<owner-token>" `
+  -ExpectRateLimitBackend "redis" `
+  -DeployId "<render-deploy-id>" `
+  -ChecklistVersion "2026.03.v1" `
+  -RunRunbookGate $true `
+  -RecordSmokeRun $true
 ```
 
 - Backup/restore rehearsal helper:
@@ -516,6 +545,11 @@ alembic upgrade head
 
 Startup behavior:
 - app startup runs `alembic upgrade head` automatically via `ensure_database()`
+
+W15 migration rollback policy:
+- revision `20260303_0021` is forward-only (additive tracker/evidence tables)
+- preferred rollback is app version rollback with schema retained
+- optional manual schema rollback runbook: `docs/W15_MIGRATION_ROLLBACK.md`
 
 ## Render deploy
 

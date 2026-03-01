@@ -9,7 +9,10 @@ param(
   [string]$RenderApiKey = "",
   [int]$PollSeconds = 5,
   [int]$MaxWaitSeconds = 900,
-  [switch]$RollbackOnFailure
+  [switch]$RollbackOnFailure,
+  [string]$ExpectRateLimitBackend = "",
+  [bool]$RunRunbookGate = $true,
+  [string]$ChecklistVersion = "2026.03.v1"
 )
 
 $ErrorActionPreference = "Stop"
@@ -74,7 +77,14 @@ if ($targetDeploy.status -ne "live") {
   exit 1
 }
 
-& "$PSScriptRoot/post_deploy_smoke.ps1" -BaseUrl $BaseUrl -AdminToken $AdminToken
+& "$PSScriptRoot/post_deploy_smoke.ps1" `
+  -BaseUrl $BaseUrl `
+  -AdminToken $AdminToken `
+  -ExpectRateLimitBackend $ExpectRateLimitBackend `
+  -DeployId $targetDeploy.id `
+  -ChecklistVersion $ChecklistVersion `
+  -RunRunbookGate $RunRunbookGate `
+  -RecordSmokeRun $true
 if ($LASTEXITCODE -ne 0) {
   Write-Output "SMOKE_FAILED deploy=$($targetDeploy.id)"
   if ($RollbackOnFailure -and $lastLiveId -ne "") {

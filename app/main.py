@@ -248,6 +248,17 @@ def _env_int(name: str, default: int, *, min_value: int = 0) -> int:
     return max(value, min_value)
 
 
+def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
+    raw = getenv(name)
+    if raw is None:
+        return max(default, min_value)
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return max(default, min_value)
+    return max(value, min_value)
+
+
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
 ENV_NAME = getenv("ENV", "local").lower()
 ALLOW_INSECURE_LOCAL_AUTH = _env_bool("ALLOW_INSECURE_LOCAL_AUTH", True)
@@ -323,6 +334,23 @@ EVIDENCE_STORAGE_PATH = getenv("EVIDENCE_STORAGE_PATH", "data/evidence-objects")
 EVIDENCE_SCAN_MODE = getenv("EVIDENCE_SCAN_MODE", "basic").strip().lower() or "basic"
 EVIDENCE_SCAN_BLOCK_SUSPICIOUS = _env_bool("EVIDENCE_SCAN_BLOCK_SUSPICIOUS", False)
 AUDIT_ARCHIVE_SIGNING_KEY = getenv("AUDIT_ARCHIVE_SIGNING_KEY", "").strip()
+API_LATENCY_MONITOR_ENABLED = _env_bool("API_LATENCY_MONITOR_ENABLED", True)
+API_LATENCY_MONITOR_WINDOW = _env_int("API_LATENCY_MONITOR_WINDOW", 300, min_value=20)
+API_LATENCY_MIN_SAMPLES = _env_int("API_LATENCY_MIN_SAMPLES", 8, min_value=1)
+API_LATENCY_P95_WARNING_MS = _env_float("API_LATENCY_P95_WARNING_MS", 450.0, min_value=1.0)
+API_LATENCY_P95_CRITICAL_MS = _env_float("API_LATENCY_P95_CRITICAL_MS", 900.0, min_value=1.0)
+API_LATENCY_TARGETS_RAW = (
+    getenv(
+        "API_LATENCY_TARGETS",
+        "GET /health,GET /meta,GET /api/inspections,GET /api/work-orders,GET /api/ops/dashboard/summary",
+    ).strip()
+    or "GET /health,GET /meta,GET /api/inspections,GET /api/work-orders,GET /api/ops/dashboard/summary"
+)
+DEPLOY_SMOKE_RECENT_HOURS = _env_int("DEPLOY_SMOKE_RECENT_HOURS", 48, min_value=1)
+DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE = _env_bool("DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE", True)
+EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE = _env_int("EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE", 20, min_value=1)
+EVIDENCE_INTEGRITY_MAX_ISSUES = _env_int("EVIDENCE_INTEGRITY_MAX_ISSUES", 50, min_value=1)
+DEPLOY_CHECKLIST_VERSION = getenv("DEPLOY_CHECKLIST_VERSION", "2026.03.v1").strip() or "2026.03.v1"
 SECURITY_HEADERS_BASE: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -342,6 +370,24 @@ HTML_CSP_POLICY = (
 _RATE_LIMIT_LOCK = Lock()
 _RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
 _RATE_LIMIT_REDIS: Any = None
+_API_LATENCY_LOCK = Lock()
+_API_LATENCY_SAMPLES: dict[str, deque[float]] = {}
+_API_LATENCY_LAST_SEEN_AT: dict[str, str] = {}
+_API_LATENCY_TARGET_KEYS: set[str] = set()
+
+EVIDENCE_INTEGRITY_TABLES: list[tuple[str, Any]] = [
+    ("w02", adoption_w02_evidence_files),
+    ("w03", adoption_w03_evidence_files),
+    ("w04", adoption_w04_evidence_files),
+    ("w07", adoption_w07_evidence_files),
+    ("w09", adoption_w09_evidence_files),
+    ("w10", adoption_w10_evidence_files),
+    ("w11", adoption_w11_evidence_files),
+    ("w12", adoption_w12_evidence_files),
+    ("w13", adoption_w13_evidence_files),
+    ("w14", adoption_w14_evidence_files),
+    ("w15", adoption_w15_evidence_files),
+]
 
 ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "owner": {"*"},
@@ -4093,6 +4139,395 @@ def _audit_signing_snapshot() -> dict[str, Any]:
     }
 
 
+def _parse_api_latency_targets(raw: str) -> list[dict[str, str]]:
+    methods = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    entries: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for token in str(raw or "").split(","):
+        chunk = token.strip()
+        if not chunk:
+            continue
+        method = "GET"
+        path = chunk
+
+        if ":" in chunk:
+            maybe_method, maybe_path = chunk.split(":", 1)
+            maybe_method = maybe_method.strip().upper()
+            if maybe_method in methods:
+                method = maybe_method
+                path = maybe_path.strip()
+        elif " " in chunk:
+            maybe_method, maybe_path = chunk.split(None, 1)
+            maybe_method = maybe_method.strip().upper()
+            if maybe_method in methods:
+                method = maybe_method
+                path = maybe_path.strip()
+
+        if not path:
+            continue
+        if not path.startswith("/"):
+            path = "/" + path.lstrip("/")
+        key = f"{method} {path}"
+        if key in seen:
+            continue
+        seen.add(key)
+        entries.append({"key": key, "method": method, "path": path})
+
+    if entries:
+        return entries
+    return [
+        {"key": "GET /health", "method": "GET", "path": "/health"},
+        {"key": "GET /meta", "method": "GET", "path": "/meta"},
+    ]
+
+
+def _percentile_value(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    sorted_values = sorted(values)
+    if percentile <= 0:
+        return float(sorted_values[0])
+    if percentile >= 100:
+        return float(sorted_values[-1])
+    rank = (len(sorted_values) - 1) * (percentile / 100.0)
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return float(sorted_values[lower])
+    weight = rank - lower
+    return float(sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * weight)
+
+
+API_LATENCY_TARGETS: list[dict[str, str]] = _parse_api_latency_targets(API_LATENCY_TARGETS_RAW)
+_API_LATENCY_TARGET_KEYS = {entry["key"] for entry in API_LATENCY_TARGETS}
+
+
+def _record_api_latency_sample(*, method: str, path: str, duration_ms: float) -> None:
+    if not API_LATENCY_MONITOR_ENABLED:
+        return
+    key = f"{method.upper()} {path}"
+    if key not in _API_LATENCY_TARGET_KEYS:
+        return
+    bounded_duration = max(0.0, float(duration_ms))
+    max_samples = max(20, API_LATENCY_MONITOR_WINDOW)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    with _API_LATENCY_LOCK:
+        bucket = _API_LATENCY_SAMPLES.get(key)
+        if bucket is None:
+            bucket = deque(maxlen=max_samples)
+            _API_LATENCY_SAMPLES[key] = bucket
+        elif bucket.maxlen != max_samples:
+            bucket = deque(bucket, maxlen=max_samples)
+            _API_LATENCY_SAMPLES[key] = bucket
+        bucket.append(bounded_duration)
+        _API_LATENCY_LAST_SEEN_AT[key] = now_iso
+
+
+def _build_api_latency_snapshot() -> dict[str, Any]:
+    warning_ms = max(1.0, float(API_LATENCY_P95_WARNING_MS))
+    critical_ms = max(warning_ms, float(API_LATENCY_P95_CRITICAL_MS))
+    min_samples = max(1, int(API_LATENCY_MIN_SAMPLES))
+    endpoints: list[dict[str, Any]] = []
+
+    with _API_LATENCY_LOCK:
+        for target in API_LATENCY_TARGETS:
+            key = target["key"]
+            samples = list(_API_LATENCY_SAMPLES.get(key, deque()))
+            sample_count = len(samples)
+            p95_ms = _percentile_value(samples, 95.0)
+            last_seen_at = _API_LATENCY_LAST_SEEN_AT.get(key)
+
+            status = "ok"
+            message = "P95 latency is within threshold."
+            if sample_count < min_samples:
+                status = "warning"
+                message = f"Insufficient samples (need >= {min_samples})."
+            elif p95_ms is None:
+                status = "warning"
+                message = "Latency samples are unavailable."
+            elif p95_ms >= critical_ms:
+                status = "critical"
+                message = f"P95 latency {round(p95_ms, 2)}ms exceeds critical threshold {round(critical_ms, 2)}ms."
+            elif p95_ms >= warning_ms:
+                status = "warning"
+                message = f"P95 latency {round(p95_ms, 2)}ms exceeds warning threshold {round(warning_ms, 2)}ms."
+
+            endpoints.append(
+                {
+                    "endpoint": key,
+                    "method": target["method"],
+                    "path": target["path"],
+                    "sample_count": sample_count,
+                    "p95_ms": None if p95_ms is None else round(float(p95_ms), 2),
+                    "status": status,
+                    "message": message,
+                    "last_seen_at": last_seen_at,
+                }
+            )
+
+    critical_count = sum(1 for item in endpoints if item["status"] == "critical")
+    warning_count = sum(1 for item in endpoints if item["status"] == "warning")
+    insufficient_count = sum(
+        1 for item in endpoints if int(item.get("sample_count") or 0) < min_samples
+    )
+    status = "ok"
+    if critical_count > 0:
+        status = "critical"
+    elif warning_count > 0:
+        status = "warning"
+
+    message = "Critical API latency monitor is healthy."
+    if status == "critical":
+        message = f"{critical_count} endpoint(s) exceeded critical P95 threshold."
+    elif status == "warning":
+        if insufficient_count > 0 and warning_count == insufficient_count:
+            message = f"Latency monitor is warming up ({insufficient_count} endpoint(s) below minimum samples)."
+        else:
+            message = f"{warning_count} endpoint(s) exceeded warning P95 threshold or have low sample coverage."
+
+    return {
+        "status": status,
+        "message": message,
+        "enabled": API_LATENCY_MONITOR_ENABLED,
+        "warning_threshold_ms": round(warning_ms, 2),
+        "critical_threshold_ms": round(critical_ms, 2),
+        "min_samples": min_samples,
+        "window_size": max(20, API_LATENCY_MONITOR_WINDOW),
+        "target_count": len(API_LATENCY_TARGETS),
+        "critical_count": critical_count,
+        "warning_count": warning_count,
+        "insufficient_samples_count": insufficient_count,
+        "endpoints": endpoints,
+    }
+
+
+def _build_evidence_archive_integrity_batch(
+    *,
+    sample_per_table: int | None = None,
+    max_issues: int | None = None,
+) -> dict[str, Any]:
+    per_table_limit = max(1, min(int(sample_per_table or EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE), 200))
+    issue_limit = max(1, min(int(max_issues or EVIDENCE_INTEGRITY_MAX_ISSUES), 500))
+    checked_count = 0
+    missing_blob_count = 0
+    missing_hash_count = 0
+    digest_mismatch_count = 0
+    read_error_count = 0
+    issues: list[dict[str, Any]] = []
+    table_summaries: list[dict[str, Any]] = []
+
+    with get_conn() as conn:
+        for module, table in EVIDENCE_INTEGRITY_TABLES:
+            rows = conn.execute(
+                select(table)
+                .order_by(table.c.uploaded_at.desc(), table.c.id.desc())
+                .limit(per_table_limit)
+            ).mappings().all()
+            table_checked = 0
+            table_missing_blob = 0
+            table_missing_hash = 0
+            table_digest_mismatch = 0
+            table_read_error = 0
+
+            for row in rows:
+                table_checked += 1
+                checked_count += 1
+                row_id = int(row.get("id") or 0)
+                site = str(row.get("site") or "")
+                stored_sha = str(row.get("sha256") or "").strip().lower()
+                if not stored_sha:
+                    table_missing_hash += 1
+                    missing_hash_count += 1
+                    if len(issues) < issue_limit:
+                        issues.append(
+                            {
+                                "module": module,
+                                "evidence_id": row_id,
+                                "site": site,
+                                "reason": "missing_sha256",
+                            }
+                        )
+
+                try:
+                    blob = _read_evidence_blob(row=dict(row))
+                except Exception as exc:  # pragma: no cover - defensive path
+                    blob = None
+                    table_read_error += 1
+                    read_error_count += 1
+                    if len(issues) < issue_limit:
+                        issues.append(
+                            {
+                                "module": module,
+                                "evidence_id": row_id,
+                                "site": site,
+                                "reason": "read_error",
+                                "error": str(exc),
+                            }
+                        )
+
+                if blob is None:
+                    table_missing_blob += 1
+                    missing_blob_count += 1
+                    if len(issues) < issue_limit:
+                        issues.append(
+                            {
+                                "module": module,
+                                "evidence_id": row_id,
+                                "site": site,
+                                "reason": "missing_blob",
+                                "storage_backend": str(row.get("storage_backend") or "db"),
+                            }
+                        )
+                    continue
+
+                actual_sha = hashlib.sha256(blob).hexdigest()
+                if stored_sha and stored_sha != actual_sha:
+                    table_digest_mismatch += 1
+                    digest_mismatch_count += 1
+                    if len(issues) < issue_limit:
+                        issues.append(
+                            {
+                                "module": module,
+                                "evidence_id": row_id,
+                                "site": site,
+                                "reason": "sha256_mismatch",
+                                "stored_sha256": stored_sha,
+                                "actual_sha256": actual_sha,
+                            }
+                        )
+
+            table_summaries.append(
+                {
+                    "module": module,
+                    "checked_count": table_checked,
+                    "missing_blob_count": table_missing_blob,
+                    "missing_hash_count": table_missing_hash,
+                    "digest_mismatch_count": table_digest_mismatch,
+                    "read_error_count": table_read_error,
+                }
+            )
+
+    archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
+    archive_payload = {
+        "month": archive["month"],
+        "window_start": archive["window_start"],
+        "window_end": archive["window_end"],
+        "generated_at": archive["generated_at"],
+        "entry_count": archive["entry_count"],
+        "max_entries": archive["max_entries"],
+        "chain": archive["chain"],
+        "entries": archive["entries"],
+    }
+    archive_payload_text = json.dumps(archive_payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+    computed_archive_sha = hashlib.sha256(archive_payload_text.encode("utf-8")).hexdigest()
+    expected_signature = _sign_payload(archive_payload_text)
+    stored_signature = archive.get("signature")
+    stored_signature_algorithm = str(archive.get("signature_algorithm") or "unsigned")
+    archive_sha_ok = str(archive.get("archive_sha256") or "") == computed_archive_sha
+    if expected_signature is None:
+        archive_signature_ok = stored_signature in {None, ""}
+        archive_signature_algorithm_ok = stored_signature_algorithm == "unsigned"
+    else:
+        archive_signature_ok = stored_signature == expected_signature
+        archive_signature_algorithm_ok = stored_signature_algorithm == "hmac-sha256"
+
+    status = "ok"
+    if digest_mismatch_count > 0 or (not archive_sha_ok) or (not archive_signature_ok) or (not archive_signature_algorithm_ok):
+        status = "critical"
+    elif missing_blob_count > 0 or missing_hash_count > 0 or read_error_count > 0 or checked_count == 0:
+        status = "warning"
+
+    if status == "critical":
+        message = "Evidence/archive integrity critical issue detected."
+    elif status == "warning":
+        if checked_count == 0:
+            message = "No evidence rows available for integrity sampling."
+        else:
+            message = "Evidence/archive integrity sampling found warnings."
+    else:
+        message = "Evidence/archive integrity sampling is healthy."
+
+    return {
+        "status": status,
+        "message": message,
+        "sample_per_table": per_table_limit,
+        "checked_count": checked_count,
+        "missing_blob_count": missing_blob_count,
+        "missing_hash_count": missing_hash_count,
+        "digest_mismatch_count": digest_mismatch_count,
+        "read_error_count": read_error_count,
+        "issue_count": len(issues),
+        "issues": issues,
+        "tables": table_summaries,
+        "archive": {
+            "month": archive.get("month"),
+            "entry_count": archive.get("entry_count"),
+            "chain_ok": bool((archive.get("chain") or {}).get("chain_ok", False)),
+            "archive_sha_ok": archive_sha_ok,
+            "signature_ok": archive_signature_ok,
+            "signature_algorithm_ok": archive_signature_algorithm_ok,
+            "signature_algorithm": stored_signature_algorithm,
+            "signed": expected_signature is not None,
+        },
+    }
+
+
+def _build_deploy_checklist_payload() -> dict[str, Any]:
+    return {
+        "version": DEPLOY_CHECKLIST_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "policy": {
+            "deploy_smoke_recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
+            "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
+            "rollback_on_failure_recommended": True,
+        },
+        "steps": [
+            {
+                "phase": "pre_deploy",
+                "id": "pre_01_backup",
+                "required": True,
+                "item": "Confirm DB backup/snapshot is available.",
+            },
+            {
+                "phase": "pre_deploy",
+                "id": "pre_02_release_note",
+                "required": True,
+                "item": "Record release scope and rollback owner.",
+            },
+            {
+                "phase": "post_deploy",
+                "id": "smoke_01_health",
+                "required": True,
+                "item": "Verify /health and /meta responses.",
+            },
+            {
+                "phase": "post_deploy",
+                "id": "smoke_02_auth_and_runbook",
+                "required": True,
+                "item": "Verify /api/auth/me and runbook checks (no critical).",
+            },
+            {
+                "phase": "post_deploy",
+                "id": "smoke_03_security",
+                "required": True,
+                "item": "Verify /api/ops/security/posture and expected rate-limit backend.",
+            },
+            {
+                "phase": "rollback_ready",
+                "id": "rollback_01_trigger",
+                "required": True,
+                "item": "Rollback command prepared (Render rollback API or dashboard).",
+            },
+            {
+                "phase": "rollback_ready",
+                "id": "rollback_02_checklist",
+                "required": True,
+                "item": "Use docs/W15_MIGRATION_ROLLBACK.md for verification sequence.",
+            },
+        ],
+    }
+
+
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
@@ -4265,6 +4700,28 @@ async def api_rate_limit_middleware(request: Request, call_next: Callable[[Reque
     response = await call_next(request)
     for key, value in headers.items():
         response.headers.setdefault(key, value)
+    return response
+
+
+@app.middleware("http")
+async def api_latency_monitor_middleware(request: Request, call_next: Callable[[Request], Any]) -> Any:
+    should_track = API_LATENCY_MONITOR_ENABLED and request.method.upper() in {"GET", "POST", "PUT", "PATCH", "DELETE"}
+    if not should_track:
+        return await call_next(request)
+
+    path = request.url.path
+    method = request.method.upper()
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started) * 1000.0
+        _record_api_latency_sample(method=method, path=path, duration_ms=duration_ms)
+        raise
+
+    duration_ms = (time.perf_counter() - started) * 1000.0
+    _record_api_latency_sample(method=method, path=path, duration_ms=duration_ms)
+    response.headers.setdefault("X-Request-Duration-Ms", f"{round(duration_ms, 2)}")
     return response
 
 
@@ -19592,6 +20049,10 @@ def _service_info_payload() -> dict[str, str]:
         "job_runs_api": "/api/ops/job-runs",
         "dashboard_summary_api": "/api/ops/dashboard/summary",
         "dashboard_trends_api": "/api/ops/dashboard/trends",
+        "ops_api_latency_api": "/api/ops/performance/api-latency",
+        "ops_evidence_archive_integrity_api": "/api/ops/integrity/evidence-archive",
+        "ops_deploy_checklist_api": "/api/ops/deploy/checklist",
+        "ops_deploy_smoke_record_api": "/api/ops/deploy/smoke/record",
         "ops_runbook_checks_api": "/api/ops/runbook/checks",
         "ops_runbook_checks_run_api": "/api/ops/runbook/checks/run",
         "ops_runbook_checks_latest_api": "/api/ops/runbook/checks/latest",
@@ -26726,6 +27187,95 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w11EvidenceTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W15 Operations Efficiency</h3>
+            <div id="adoptionW15Top" class="cards"></div>
+            <div id="adoptionW15Guides" class="empty">데이터 없음</div>
+            <div id="adoptionW15Runbook" class="empty">데이터 없음</div>
+            <div id="adoptionW15Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW15Json" href="/api/public/adoption-plan/w15">W15 JSON</a>
+              <a id="adoptW15ChecklistCsv" href="/api/public/adoption-plan/w15/checklist.csv">W15 Checklist CSV</a>
+              <a id="adoptW15ScheduleIcs" href="/api/public/adoption-plan/w15/schedule.ics">W15 Schedule ICS</a>
+              <a id="adoptW15OpsEfficiencyApi" href="/api/ops/adoption/w15/ops-efficiency">W15 Ops Efficiency API (Token)</a>
+              <a id="adoptW15EfficiencyPolicyApi" href="/api/ops/adoption/w15/efficiency-policy">W15 Efficiency Policy API (Token)</a>
+              <a id="adoptW15TrackerItemsApi" href="/api/adoption/w15/tracker/items">W15 Tracker Items API (Token)</a>
+              <a id="adoptW15TrackerOverviewApi" href="/api/adoption/w15/tracker/overview?site=HQ">W15 Tracker Overview API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W15 Operations Efficiency Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w15KpiSite" placeholder="site (optional, 비우면 전체)" />
+              <input id="w15KpiDays" value="30" placeholder="window days (14-120)" />
+              <input id="w15KpiReserved1" value="token required" disabled />
+              <input id="w15KpiReserved2" value="site scope enforced" disabled />
+              <button id="w15KpiRefreshBtn" class="btn run" type="button">W15 지표 새로고침</button>
+            </div>
+            <div id="w15KpiMeta" class="meta">조회 전</div>
+            <div id="w15KpiSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Efficiency KPI Status</h4>
+            <div id="w15KpiTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Top Repeat Incidents</h4>
+            <div id="w15EscalationTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w15KpiRecommendations" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Policy Snapshot</h4>
+            <div id="w15PolicyMeta" class="meta">조회 전</div>
+            <div id="w15PolicyTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W15 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w15TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w15TrackItemId" placeholder="tracker_item_id" />
+              <input id="w15TrackAssignee" placeholder="assignee" />
+              <select id="w15TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w15TrackBootstrapBtn" class="btn run" type="button">W15 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w15TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w15TrackNote" placeholder="completion note (optional)" />
+              <input id="w15EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w15EvidenceFile" type="file" />
+              <button id="w15TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w15EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w15Reserved1" value="token required for write actions" disabled />
+              <input id="w15Reserved2" value="site scope enforced" disabled />
+              <input id="w15Reserved3" value="max file 5MB" disabled />
+              <button id="w15TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w15CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w15CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w15Reserved4" value="readiness gate required" disabled />
+              <button id="w15ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w15CompleteBtn" class="btn" type="button">W15 완료 확정</button>
+            </div>
+            <div id="w15TrackerMeta" class="meta">조회 전</div>
+            <div id="w15TrackerSummary" class="cards"></div>
+            <div id="w15TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W15 완료 판정 결과</h4>
+            <div id="w15ReadinessMeta" class="meta">조회 전</div>
+            <div id="w15ReadinessCards" class="cards"></div>
+            <div id="w15ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w15EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
@@ -30290,6 +30840,388 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW15KpiOperation() {{
+        const meta = document.getElementById("w15KpiMeta");
+        const summary = document.getElementById("w15KpiSummary");
+        const kpiTable = document.getElementById("w15KpiTable");
+        const escalationTable = document.getElementById("w15EscalationTable");
+        const recommendations = document.getElementById("w15KpiRecommendations");
+        const policyMeta = document.getElementById("w15PolicyMeta");
+        const policyTable = document.getElementById("w15PolicyTable");
+        const site = (document.getElementById("w15KpiSite").value || "").trim();
+        const daysRaw = (document.getElementById("w15KpiDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w15/ops-efficiency" + (params.toString() ? ("?" + params.toString()) : "");
+        const policyPath = site
+          ? "/api/ops/adoption/w15/efficiency-policy?site=" + encodeURIComponent(site)
+          : "";
+        try {{
+          meta.textContent = "조회 중.. " + path;
+          if (policyPath) {{
+            policyMeta.textContent = "조회 중.. " + policyPath;
+          }} else {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }}
+          const [data, policyPayload] = await Promise.all([
+            fetchJson(path, true),
+            policyPath
+              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
+              : Promise.resolve({{ __skipped: true }}),
+          ]);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | overall=" + String(metrics.overall_status || "-")
+            + " | repeat_rate=" + String(metrics.incident_repeat_rate_percent ?? 0) + "%"
+            + " | readiness=" + String(metrics.ops_efficiency_readiness_score ?? 0);
+          const summaryItems = [
+            ["Incidents", metrics.incidents_count ?? 0],
+            ["Unique Titles", metrics.unique_titles ?? 0],
+            ["Repeated Incidents", metrics.repeated_incidents_count ?? 0],
+            ["Repeat Rate %", metrics.incident_repeat_rate_percent ?? 0],
+            ["Checklist %", metrics.checklist_completion_rate_percent ?? 0],
+            ["Runbook %", metrics.simulation_success_rate_percent ?? 0],
+            ["Readiness Score", metrics.ops_efficiency_readiness_score ?? 0],
+            ["Overall Status", metrics.overall_status || "-"],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          kpiTable.innerHTML = renderTable(
+            data.kpis || [],
+            [
+              {{ key: "kpi_key", label: "KPI Key" }},
+              {{ key: "kpi_name", label: "KPI Name" }},
+              {{ key: "actual_value", label: "Actual" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "green_threshold", label: "Green" }},
+              {{ key: "yellow_threshold", label: "Yellow" }},
+              {{ key: "status", label: "Status" }},
+            ]
+          );
+          escalationTable.innerHTML = renderTable(
+            data.top_repeat_incidents || [],
+            [
+              {{ key: "title", label: "Title" }},
+              {{ key: "count", label: "Count" }},
+              {{ key: "share_percent", label: "Share %" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
+            const policy = policyPayload.policy || {{}};
+            policyMeta.textContent =
+              "성공: key=" + String(policyPayload.policy_key || "-")
+              + " | site=" + String(policyPayload.site || "default")
+              + " | updated_at=" + String(policyPayload.updated_at || "-");
+            policyTable.innerHTML = renderTable(
+              [policy],
+              [
+                {{ key: "risk_rate_green_threshold", label: "Risk Green <= %" }},
+                {{ key: "risk_rate_yellow_threshold", label: "Risk Yellow <= %" }},
+                {{ key: "checklist_completion_green_threshold", label: "Checklist Green >= %" }},
+                {{ key: "checklist_completion_yellow_threshold", label: "Checklist Yellow >= %" }},
+                {{ key: "simulation_success_green_threshold", label: "Simulation Green >= %" }},
+                {{ key: "simulation_success_yellow_threshold", label: "Simulation Yellow >= %" }},
+                {{ key: "readiness_target", label: "Readiness Target" }},
+                {{ key: "enabled", label: "Enabled" }},
+              ]
+            );
+          }} else if (policyPayload && policyPayload.__error) {{
+            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
+            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          kpiTable.innerHTML = renderEmpty(err.message);
+          escalationTable.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+          if (!site) {{
+            policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+          }} else {{
+            policyMeta.textContent = "실패: " + err.message;
+            policyTable.innerHTML = renderEmpty(err.message);
+          }}
+        }}
+      }}
+
+      async function runW15Tracker() {{
+        const meta = document.getElementById("w15TrackerMeta");
+        const summary = document.getElementById("w15TrackerSummary");
+        const table = document.getElementById("w15TrackerTable");
+        const readinessMeta = document.getElementById("w15ReadinessMeta");
+        const readinessCards = document.getElementById("w15ReadinessCards");
+        const readinessBlockers = document.getElementById("w15ReadinessBlockers");
+        const evidenceTable = document.getElementById("w15EvidenceTable");
+        const site = (document.getElementById("w15TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중.. W15 tracker";
+          readinessMeta.textContent = "조회 중.. W15 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w15/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w15/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w15/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w15/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W15 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w15EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w15TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w15/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w15");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW15Readiness() {{
+        await runW15Tracker();
+      }}
+
+      async function runW15TrackerBootstrap() {{
+        const meta = document.getElementById("w15TrackerMeta");
+        const site = (document.getElementById("w15TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중.. W15 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w15/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW15Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW15Complete() {{
+        const meta = document.getElementById("w15ReadinessMeta");
+        const site = (document.getElementById("w15TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요";
+          return;
+        }}
+        const completionNote = (document.getElementById("w15CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w15CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중.. W15 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w15/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW15Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW15Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW15TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w15TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w15TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w15TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w15TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w15TrackCompleted").checked;
+        const note = (document.getElementById("w15TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w15EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중.. tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w15/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w15EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w15/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w15EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW15Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runW07Tracker() {{
         const meta = document.getElementById("w07TrackerMeta");
         const summary = document.getElementById("w07TrackerSummary");
@@ -30988,6 +31920,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w11Guides = document.getElementById("adoptionW11Guides");
         const w11Runbook = document.getElementById("adoptionW11Runbook");
         const w11Schedule = document.getElementById("adoptionW11Schedule");
+        const w15Top = document.getElementById("adoptionW15Top");
+        const w15Guides = document.getElementById("adoptionW15Guides");
+        const w15Runbook = document.getElementById("adoptionW15Runbook");
+        const w15Schedule = document.getElementById("adoptionW15Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -31725,6 +32661,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w15 = data.w15_operations_efficiency || {{}};
+          const w15TopItems = [
+            ["Week", "W" + String(w15.timeline?.week || 15).padStart(2, "0")],
+            ["Focus", w15.timeline?.focus || "Operations efficiency"],
+            ["Guides", (w15.self_serve_guides || []).length],
+            ["Runbook", (w15.troubleshooting_runbook || []).length],
+            ["Sessions", (w15.scheduled_events || []).length],
+            ["Metric", w15.timeline?.success_metric || "Operations efficiency readiness >= 75"],
+          ];
+          w15Top.innerHTML = w15TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w15Guides.innerHTML = renderTable(
+            (w15.self_serve_guides || []).map((row) => ({{
+              id: row.id || "",
+              title: row.title || "",
+              problem_cluster: row.problem_cluster || "",
+              owner_role: row.owner_role || "",
+              target: row.target || "",
+              source_api: row.source_api || "",
+            }})),
+            [
+              {{ key: "id", label: "Guide ID" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "problem_cluster", label: "Problem Cluster" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "source_api", label: "Source API" }},
+            ]
+          );
+
+          w15Runbook.innerHTML = renderTable(
+            (w15.troubleshooting_runbook || []).map((row) => ({{
+              id: row.id || "",
+              module: row.module || "",
+              symptom: row.symptom || "",
+              owner_role: row.owner_role || "",
+              definition_of_done: row.definition_of_done || "",
+              api_ref: row.api_ref || "",
+            }})),
+            [
+              {{ key: "id", label: "Runbook ID" }},
+              {{ key: "module", label: "Module" }},
+              {{ key: "symptom", label: "Scenario" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "api_ref", label: "API Ref" }},
+            ]
+          );
+
+          w15Schedule.innerHTML = renderTable(
+            (w15.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -31768,6 +32772,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW10Tracker().catch(() => null);
             runW11KpiOperation().catch(() => null);
             runW11Tracker().catch(() => null);
+            runW15KpiOperation().catch(() => null);
+            runW15Tracker().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -31952,6 +32958,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w11ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
             w11EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
 
+            const w15KpiMeta = document.getElementById("w15KpiMeta");
+            const w15KpiSummary = document.getElementById("w15KpiSummary");
+            const w15KpiTable = document.getElementById("w15KpiTable");
+            const w15EscalationTable = document.getElementById("w15EscalationTable");
+            const w15KpiRecommendations = document.getElementById("w15KpiRecommendations");
+            const w15PolicyMeta = document.getElementById("w15PolicyMeta");
+            const w15PolicyTable = document.getElementById("w15PolicyTable");
+            const w15TrackerMeta = document.getElementById("w15TrackerMeta");
+            const w15TrackerSummary = document.getElementById("w15TrackerSummary");
+            const w15TrackerTable = document.getElementById("w15TrackerTable");
+            const w15ReadinessMeta = document.getElementById("w15ReadinessMeta");
+            const w15ReadinessCards = document.getElementById("w15ReadinessCards");
+            const w15ReadinessBlockers = document.getElementById("w15ReadinessBlockers");
+            const w15EvidenceTable = document.getElementById("w15EvidenceTable");
+            w15KpiMeta.textContent = "토큰 저장 후 W15 ops-efficiency API를 사용할 수 있습니다.";
+            w15KpiSummary.innerHTML = "";
+            w15KpiTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w15EscalationTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w15KpiRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+            w15PolicyMeta.textContent = "토큰 저장 후 W15 efficiency policy API를 사용할 수 있습니다.";
+            w15PolicyTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w15TrackerMeta.textContent = "토큰 저장 후 W15 tracker API를 사용할 수 있습니다.";
+            w15TrackerSummary.innerHTML = "";
+            w15TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w15ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            w15ReadinessCards.innerHTML = "";
+            w15ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
+            w15EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
             w07ActiveItemId = null;
@@ -32008,6 +33043,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w11Guides.innerHTML = renderEmpty(err.message);
           w11Runbook.innerHTML = renderEmpty(err.message);
           w11Schedule.innerHTML = renderEmpty(err.message);
+          w15Top.innerHTML = "";
+          w15Guides.innerHTML = renderEmpty(err.message);
+          w15Runbook.innerHTML = renderEmpty(err.message);
+          w15Schedule.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
@@ -32073,6 +33112,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w11ReadinessCards").innerHTML = "";
           document.getElementById("w11ReadinessBlockers").innerHTML = renderEmpty(err.message);
           document.getElementById("w11EvidenceTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15KpiMeta").textContent = "실패: " + err.message;
+          document.getElementById("w15KpiSummary").innerHTML = "";
+          document.getElementById("w15KpiTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15EscalationTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15KpiRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15PolicyMeta").textContent = "실패: " + err.message;
+          document.getElementById("w15PolicyTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15TrackerMeta").textContent = "실패: " + err.message;
+          document.getElementById("w15TrackerSummary").innerHTML = "";
+          document.getElementById("w15TrackerTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15ReadinessMeta").textContent = "실패: " + err.message;
+          document.getElementById("w15ReadinessCards").innerHTML = "";
+          document.getElementById("w15ReadinessBlockers").innerHTML = renderEmpty(err.message);
+          document.getElementById("w15EvidenceTable").innerHTML = renderEmpty(err.message);
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -32291,6 +33344,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w11ReadinessBtn").addEventListener("click", runW11Readiness);
       document.getElementById("w11CompleteBtn").addEventListener("click", runW11Complete);
       document.getElementById("w11TrackUpdateBtn").addEventListener("click", runW11TrackerUpdateAndUpload);
+      document.getElementById("w15KpiRefreshBtn").addEventListener("click", runW15KpiOperation);
+      document.getElementById("w15TrackBootstrapBtn").addEventListener("click", runW15TrackerBootstrap);
+      document.getElementById("w15TrackRefreshBtn").addEventListener("click", runW15Tracker);
+      document.getElementById("w15ReadinessBtn").addEventListener("click", runW15Readiness);
+      document.getElementById("w15CompleteBtn").addEventListener("click", runW15Complete);
+      document.getElementById("w15TrackUpdateBtn").addEventListener("click", runW15TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -32349,6 +33408,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w11TrackSite").value) {{
         document.getElementById("w11TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w15KpiSite").value) {{
+        document.getElementById("w15KpiSite").value = "HQ";
+      }}
+      if (!document.getElementById("w15TrackSite").value) {{
+        document.getElementById("w15TrackSite").value = "HQ";
       }}
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
@@ -39440,6 +40505,159 @@ def list_job_runs(
     return [_row_to_job_run_model(row) for row in rows]
 
 
+@app.get("/api/ops/performance/api-latency")
+def get_ops_api_latency_snapshot(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_api_latency_snapshot()
+    _write_audit_log(
+        principal=principal,
+        action="ops_api_latency_view",
+        resource_type="ops_performance",
+        resource_id="api_latency",
+        detail={
+            "status": snapshot.get("status"),
+            "target_count": snapshot.get("target_count"),
+            "critical_count": snapshot.get("critical_count"),
+            "warning_count": snapshot.get("warning_count"),
+            "insufficient_samples_count": snapshot.get("insufficient_samples_count"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/integrity/evidence-archive")
+def get_ops_evidence_archive_integrity(
+    sample_per_table: Annotated[int | None, Query(ge=1, le=200)] = None,
+    max_issues: Annotated[int | None, Query(ge=1, le=500)] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_evidence_archive_integrity_batch(
+        sample_per_table=sample_per_table,
+        max_issues=max_issues,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_evidence_archive_integrity_view",
+        resource_type="ops_integrity",
+        resource_id="evidence_archive",
+        detail={
+            "status": snapshot.get("status"),
+            "checked_count": snapshot.get("checked_count"),
+            "digest_mismatch_count": snapshot.get("digest_mismatch_count"),
+            "issue_count": snapshot.get("issue_count"),
+            "sample_per_table": snapshot.get("sample_per_table"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/deploy/checklist")
+def get_ops_deploy_checklist(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _build_deploy_checklist_payload()
+    _write_audit_log(
+        principal=principal,
+        action="ops_deploy_checklist_view",
+        resource_type="ops_deploy",
+        resource_id=payload["version"],
+        detail={
+            "checklist_version": payload["version"],
+            "step_count": len(payload.get("steps", [])),
+        },
+    )
+    return payload
+
+
+@app.post("/api/ops/deploy/smoke/record")
+def post_ops_deploy_smoke_record(
+    payload: dict[str, Any],
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    started_at = _as_optional_datetime(payload.get("started_at")) or now
+    finished_at = _as_optional_datetime(payload.get("finished_at")) or now
+    if finished_at < started_at:
+        finished_at = started_at
+
+    raw_status = str(payload.get("status") or "success").strip().lower()
+    if raw_status in {"ok", "success", "healthy"}:
+        status = "success"
+    elif raw_status in {"warning", "warn", "degraded"}:
+        status = "warning"
+    elif raw_status in {"critical", "failed", "error"}:
+        status = "critical"
+    else:
+        status = "warning"
+
+    checks_raw = payload.get("checks")
+    checks: list[dict[str, Any]] = []
+    if isinstance(checks_raw, list):
+        for item in checks_raw[:50]:
+            if not isinstance(item, dict):
+                continue
+            checks.append(
+                {
+                    "id": str(item.get("id") or ""),
+                    "status": str(item.get("status") or ""),
+                    "message": str(item.get("message") or ""),
+                }
+            )
+
+    runbook_gate_passed = bool(payload.get("runbook_gate_passed", False))
+    rollback_ready = bool(payload.get("rollback_ready", False))
+    if status == "success" and DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE and not runbook_gate_passed:
+        status = "warning"
+    if status == "success" and not rollback_ready:
+        status = "warning"
+
+    detail = {
+        "deploy_id": str(payload.get("deploy_id") or ""),
+        "environment": str(payload.get("environment") or ENV_NAME),
+        "base_url": str(payload.get("base_url") or ""),
+        "checklist_version": str(payload.get("checklist_version") or DEPLOY_CHECKLIST_VERSION),
+        "rollback_reference": str(payload.get("rollback_reference") or "docs/W15_MIGRATION_ROLLBACK.md"),
+        "rollback_ready": rollback_ready,
+        "runbook_gate_passed": runbook_gate_passed,
+        "notes": str(payload.get("notes") or ""),
+        "checks": checks,
+    }
+    run_id = _write_job_run(
+        job_name="deploy_smoke",
+        trigger="api",
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+
+    _write_audit_log(
+        principal=principal,
+        action="ops_deploy_smoke_record",
+        resource_type="ops_deploy",
+        resource_id=str(run_id or "pending"),
+        status="success" if status == "success" else "warning",
+        detail={
+            "run_id": run_id,
+            "status": status,
+            "deploy_id": detail["deploy_id"],
+            "rollback_ready": rollback_ready,
+            "runbook_gate_passed": runbook_gate_passed,
+            "check_count": len(checks),
+            "checklist_version": detail["checklist_version"],
+        },
+    )
+    return {
+        "run_id": run_id,
+        "job_name": "deploy_smoke",
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "detail": detail,
+    }
+
+
 @app.get("/api/ops/dashboard/summary", response_model=DashboardSummaryRead)
 def get_dashboard_summary(
     site: Annotated[str | None, Query()] = None,
@@ -39520,9 +40738,17 @@ def _build_ops_runbook_checks_snapshot(
             .where(admin_tokens.c.expires_at.is_not(None))
             .where(admin_tokens.c.expires_at <= expiring_soon_cutoff)
         ).all()
+        deploy_smoke_latest = conn.execute(
+            select(job_runs.c.finished_at, job_runs.c.status, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "deploy_smoke")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
 
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
+    latency_snapshot = _build_api_latency_snapshot()
+    integrity_batch = _build_evidence_archive_integrity_batch()
     guard_snapshot = _build_alert_channel_guard_snapshot(now=generated_at, lookback_days=30, max_targets=200)
     guard_summary = guard_snapshot.get("summary", {})
     mttr_policy, _, _ = _ensure_mttr_slo_policy()
@@ -39556,6 +40782,40 @@ def _build_ops_runbook_checks_snapshot(
     quarantined_count = int(guard_summary.get("quarantined_count") or 0)
     guard_warning_count = int(guard_summary.get("warning_count") or 0)
     current_month_archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
+    deploy_recent_hours = max(1, DEPLOY_SMOKE_RECENT_HOURS)
+    deploy_smoke_finished_at: datetime | None = None
+    deploy_smoke_status = "missing"
+    deploy_smoke_detail: dict[str, Any] = {}
+    if deploy_smoke_latest is not None:
+        deploy_smoke_finished_at = _as_optional_datetime(deploy_smoke_latest.get("finished_at"))
+        deploy_smoke_status = str(deploy_smoke_latest.get("status") or "unknown")
+        deploy_smoke_detail = _parse_job_detail_json(deploy_smoke_latest.get("detail_json"))
+    deploy_smoke_recent_cutoff = generated_at - timedelta(hours=deploy_recent_hours)
+    deploy_smoke_is_recent = (
+        deploy_smoke_finished_at is not None and deploy_smoke_finished_at >= deploy_smoke_recent_cutoff
+    )
+    deploy_smoke_rollback_ready = bool(deploy_smoke_detail.get("rollback_ready", False))
+    deploy_smoke_runbook_gate_passed = bool(deploy_smoke_detail.get("runbook_gate_passed", False))
+    deploy_smoke_checklist_version = str(deploy_smoke_detail.get("checklist_version") or "")
+    deploy_smoke_status_value = "ok"
+    if deploy_smoke_finished_at is None:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = "No deploy smoke record found."
+    elif not deploy_smoke_is_recent:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = f"Latest deploy smoke is older than {deploy_recent_hours} hours."
+    elif deploy_smoke_status in {"critical", "failed", "error"}:
+        deploy_smoke_status_value = "critical"
+        deploy_smoke_message = "Latest deploy smoke run reported critical/failure status."
+    elif DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE and not deploy_smoke_runbook_gate_passed:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = "Deploy smoke recorded without passing runbook gate."
+    elif not deploy_smoke_rollback_ready:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = "Deploy smoke recorded without rollback-ready confirmation."
+    else:
+        deploy_smoke_message = "Deploy smoke checklist and rollback readiness are healthy."
+
     checks = [
         {
             "id": "sla_cron_recent",
@@ -39572,12 +40832,50 @@ def _build_ops_runbook_checks_snapshot(
             else "No recent alert retry job run in last 90 minutes.",
         },
         {
+            "id": "api_latency_p95",
+            "status": latency_snapshot["status"],
+            "message": latency_snapshot["message"],
+            "target_count": latency_snapshot["target_count"],
+            "warning_threshold_ms": latency_snapshot["warning_threshold_ms"],
+            "critical_threshold_ms": latency_snapshot["critical_threshold_ms"],
+            "min_samples": latency_snapshot["min_samples"],
+            "insufficient_samples_count": latency_snapshot["insufficient_samples_count"],
+            "critical_count": latency_snapshot["critical_count"],
+            "warning_count": latency_snapshot["warning_count"],
+            "endpoints": latency_snapshot["endpoints"],
+        },
+        {
             "id": "audit_chain_integrity",
             "status": "ok" if current_month_archive["chain"]["chain_ok"] else "critical",
             "message": "Audit chain verified."
             if current_month_archive["chain"]["chain_ok"]
             else "Audit chain mismatch detected.",
             "issue_count": current_month_archive["chain"]["issue_count"],
+        },
+        {
+            "id": "evidence_archive_integrity_batch",
+            "status": integrity_batch["status"],
+            "message": integrity_batch["message"],
+            "sample_per_table": integrity_batch["sample_per_table"],
+            "checked_count": integrity_batch["checked_count"],
+            "missing_blob_count": integrity_batch["missing_blob_count"],
+            "missing_hash_count": integrity_batch["missing_hash_count"],
+            "digest_mismatch_count": integrity_batch["digest_mismatch_count"],
+            "read_error_count": integrity_batch["read_error_count"],
+            "archive": integrity_batch["archive"],
+            "issue_count": integrity_batch["issue_count"],
+        },
+        {
+            "id": "deploy_smoke_checklist",
+            "status": deploy_smoke_status_value,
+            "message": deploy_smoke_message,
+            "recent_window_hours": deploy_recent_hours,
+            "latest_run_at": deploy_smoke_finished_at.isoformat() if deploy_smoke_finished_at is not None else None,
+            "latest_run_status": deploy_smoke_status,
+            "rollback_ready": deploy_smoke_rollback_ready,
+            "runbook_gate_passed": deploy_smoke_runbook_gate_passed,
+            "checklist_version": deploy_smoke_checklist_version,
+            "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
         },
         {
             "id": "token_expiry_pressure",
@@ -39718,6 +41016,7 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     generated_at = now or datetime.now(timezone.utc)
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
+    latency_snapshot = _build_api_latency_snapshot()
     alert_targets = _configured_alert_targets()
     mttr_policy, mttr_policy_updated_at, _ = _ensure_mttr_slo_policy()
     with get_conn() as conn:
@@ -39727,7 +41026,19 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
+        deploy_smoke_latest = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "deploy_smoke")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
     w07_latest_model = _row_to_job_run_model(w07_latest) if w07_latest is not None else None
+    deploy_smoke_latest_model = _row_to_job_run_model(deploy_smoke_latest) if deploy_smoke_latest is not None else None
+    deploy_smoke_latest_detail = (
+        deploy_smoke_latest_model.detail
+        if deploy_smoke_latest_model is not None and isinstance(deploy_smoke_latest_model.detail, dict)
+        else {}
+    )
     w07_latest_detail = (
         w07_latest_model.detail
         if w07_latest_model is not None and isinstance(w07_latest_model.detail, dict)
@@ -39739,6 +41050,29 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
         "env": ENV_NAME,
         "rate_limit": rate_limit_snapshot,
         "audit_archive_signing": signing_snapshot,
+        "api_latency": latency_snapshot,
+        "deploy_smoke_policy": {
+            "checklist_version": DEPLOY_CHECKLIST_VERSION,
+            "recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
+            "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
+            "latest_run_at": (
+                deploy_smoke_latest_model.finished_at.isoformat()
+                if deploy_smoke_latest_model is not None
+                else None
+            ),
+            "latest_status": (
+                deploy_smoke_latest_model.status
+                if deploy_smoke_latest_model is not None
+                else None
+            ),
+            "latest_runbook_gate_passed": bool(deploy_smoke_latest_detail.get("runbook_gate_passed", False)),
+            "latest_rollback_ready": bool(deploy_smoke_latest_detail.get("rollback_ready", False)),
+        },
+        "evidence_archive_integrity_policy": {
+            "sample_per_table": max(1, EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE),
+            "max_issues": max(1, EVIDENCE_INTEGRITY_MAX_ISSUES),
+            "modules": [name for name, _ in EVIDENCE_INTEGRITY_TABLES],
+        },
         "alerting": {
             "webhook_target_count": len(alert_targets),
             "ops_daily_check_alert_level": _normalize_ops_daily_check_alert_level(OPS_DAILY_CHECK_ALERT_LEVEL),
@@ -39939,6 +41273,10 @@ def get_ops_security_posture(
             "rate_limit_status": rate_limit_snapshot["status"],
             "audit_signing_enabled": signing_snapshot["enabled"],
             "audit_signing_status": signing_snapshot["status"],
+            "api_latency_status": snapshot.get("api_latency", {}).get("status"),
+            "api_latency_warning_threshold_ms": snapshot.get("api_latency", {}).get("warning_threshold_ms"),
+            "deploy_smoke_latest_status": snapshot.get("deploy_smoke_policy", {}).get("latest_status"),
+            "deploy_smoke_latest_run_at": snapshot.get("deploy_smoke_policy", {}).get("latest_run_at"),
             "evidence_storage_backend": snapshot["evidence_storage_backend"],
             "ops_daily_check_alert_level": snapshot.get("alerting", {}).get("ops_daily_check_alert_level"),
             "alert_webhook_target_count": snapshot.get("alerting", {}).get("webhook_target_count"),

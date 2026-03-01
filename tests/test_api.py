@@ -249,14 +249,17 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W09 KPI Operation" in root_html.text
     assert "W10 Self-serve Support" in root_html.text
     assert "W11 Scale Readiness" in root_html.text
+    assert "W15 Operations Efficiency" in root_html.text
     assert "W09 KPI Operation Dashboard (Token)" in root_html.text
     assert "W10 Self-serve Dashboard (Token)" in root_html.text
     assert "W11 Scale Readiness Dashboard (Token)" in root_html.text
+    assert "W15 Operations Efficiency Dashboard (Token)" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W07 실행 추적" in root_html.text
     assert "W10 실행 추적" in root_html.text
     assert "W11 실행 추적" in root_html.text
+    assert "W15 실행 추적" in root_html.text
     assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
@@ -447,6 +450,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_runbook_checks_run_api"] == "/api/ops/runbook/checks/run"
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
+    assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
+    assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
+    assert service_info.json()["ops_deploy_checklist_api"] == "/api/ops/deploy/checklist"
+    assert service_info.json()["ops_deploy_smoke_record_api"] == "/api/ops/deploy/smoke/record"
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
     assert service_info.json()["alert_channel_mttr_kpi_api"] == "/api/ops/alerts/kpi/mttr"
     assert service_info.json()["alert_mttr_slo_policy_api"] == "/api/ops/alerts/mttr-slo/policy"
@@ -3791,6 +3798,340 @@ def test_w11_auditor_read_access_and_write_block(app_client: TestClient) -> None
     assert write_forbidden.status_code == 403
 
 
+def test_w15_ops_efficiency_and_tracker_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w15_manager_ci",
+            "display_name": "W15 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W15 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w15-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W15 Site",
+            "location": "E1",
+            "cycle": "weekly",
+            "inspector": "w15_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    work_order_a = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W15 recurring incident",
+            "description": "repeat issue seed A",
+            "site": "W15 Site",
+            "location": "E2",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert work_order_a.status_code == 201
+
+    work_order_b = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W15 recurring incident",
+            "description": "repeat issue seed B",
+            "site": "W15 Site",
+            "location": "E3",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) + timedelta(hours=4)).isoformat(),
+        },
+    )
+    assert work_order_b.status_code == 201
+
+    snapshot = app_client.get(
+        "/api/ops/adoption/w15/ops-efficiency?site=W15+Site&days=30",
+        headers=manager_headers,
+    )
+    assert snapshot.status_code == 200
+    snapshot_body = snapshot.json()
+    assert snapshot_body["site"] == "W15 Site"
+    assert snapshot_body["window_days"] == 30
+    assert isinstance(snapshot_body["policy"], dict)
+    assert snapshot_body["policy"]["enabled"] is True
+    assert isinstance(snapshot_body["kpis"], list)
+    assert len(snapshot_body["kpis"]) >= 4
+    assert isinstance(snapshot_body["metrics"], dict)
+    assert snapshot_body["metrics"]["incidents_count"] >= 2
+    assert snapshot_body["metrics"]["guide_total_count"] >= 5
+    assert snapshot_body["metrics"]["runbook_total_count"] >= 4
+    assert snapshot_body["metrics"]["overall_status"] in {"green", "yellow", "red"}
+    assert isinstance(snapshot_body["recommendations"], list)
+    assert len(snapshot_body["recommendations"]) >= 1
+    assert isinstance(snapshot_body["top_repeat_incidents"], list)
+    assert any(row["title"] == "W15 recurring incident" for row in snapshot_body["top_repeat_incidents"])
+
+    policy = app_client.get(
+        "/api/ops/adoption/w15/efficiency-policy?site=W15+Site",
+        headers=manager_headers,
+    )
+    assert policy.status_code == 200
+    policy_body = policy.json()
+    assert policy_body["site"] == "W15 Site"
+    assert policy_body["policy_key"].startswith("adoption_w15_efficiency_policy:site:")
+    assert isinstance(policy_body["policy"], dict)
+    assert "risk_rate_green_threshold" in policy_body["policy"]
+    assert "risk_rate_yellow_threshold" in policy_body["policy"]
+    assert "checklist_completion_green_threshold" in policy_body["policy"]
+    assert "simulation_success_green_threshold" in policy_body["policy"]
+    assert "readiness_target" in policy_body["policy"]
+
+    updated = app_client.put(
+        "/api/ops/adoption/w15/efficiency-policy?site=W15+Site",
+        headers=manager_headers,
+        json={
+            "enabled": True,
+            "risk_rate_green_threshold": 18,
+            "risk_rate_yellow_threshold": 27,
+            "checklist_completion_green_threshold": 85,
+            "checklist_completion_yellow_threshold": 70,
+            "simulation_success_green_threshold": 88,
+            "simulation_success_yellow_threshold": 72,
+            "readiness_target": 82,
+        },
+    )
+    assert updated.status_code == 200
+    updated_policy = updated.json()["policy"]
+    assert updated_policy["risk_rate_green_threshold"] == 18.0
+    assert updated_policy["risk_rate_yellow_threshold"] == 27.0
+    assert updated_policy["checklist_completion_green_threshold"] == 85.0
+    assert updated_policy["checklist_completion_yellow_threshold"] == 70.0
+    assert updated_policy["simulation_success_green_threshold"] == 88.0
+    assert updated_policy["simulation_success_yellow_threshold"] == 72.0
+    assert updated_policy["readiness_target"] == 82.0
+
+    global_policy_forbidden = app_client.get(
+        "/api/ops/adoption/w15/efficiency-policy",
+        headers=manager_headers,
+    )
+    assert global_policy_forbidden.status_code == 403
+
+    global_update_forbidden = app_client.put(
+        "/api/ops/adoption/w15/efficiency-policy",
+        headers=manager_headers,
+        json={"enabled": False},
+    )
+    assert global_update_forbidden.status_code == 403
+
+    bootstrap = app_client.post(
+        "/api/adoption/w15/tracker/bootstrap",
+        headers=manager_headers,
+        json={"site": "W15 Site"},
+    )
+    assert bootstrap.status_code == 200
+    bootstrap_body = bootstrap.json()
+    assert bootstrap_body["site"] == "W15 Site"
+    assert bootstrap_body["total_count"] >= 14
+
+    complete_gate_fail = app_client.post(
+        "/api/adoption/w15/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W15 Site", "completion_note": "attempt normal close"},
+    )
+    assert complete_gate_fail.status_code == 409
+
+    listed = app_client.get(
+        "/api/adoption/w15/tracker/items?site=W15+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) >= 14
+
+    required_item_id: int | None = None
+    downloaded_evidence_id: int | None = None
+    for row in items:
+        item_id = int(row["id"])
+        patched = app_client.patch(
+            f"/api/adoption/w15/tracker/items/{item_id}",
+            headers=manager_headers,
+            json={
+                "assignee": "Ops Efficiency QA",
+                "status": "done",
+                "completion_checked": True,
+                "completion_note": "W15 completed in CI",
+            },
+        )
+        assert patched.status_code == 200
+        assert patched.json()["status"] == "done"
+        assert patched.json()["completion_checked"] is True
+
+        if row["item_type"] in {"self_serve_guide", "troubleshooting_runbook"}:
+            if required_item_id is None:
+                required_item_id = item_id
+            uploaded = app_client.post(
+                f"/api/adoption/w15/tracker/items/{item_id}/evidence",
+                headers=manager_headers,
+                data={"note": "w15 proof"},
+                files={"file": (f"w15-{item_id}.txt", f"proof {item_id}".encode("utf-8"), "text/plain")},
+            )
+            assert uploaded.status_code == 201
+            if downloaded_evidence_id is None:
+                downloaded_evidence_id = uploaded.json()["id"]
+
+    assert required_item_id is not None
+    assert downloaded_evidence_id is not None
+
+    evidence_list = app_client.get(
+        f"/api/adoption/w15/tracker/items/{required_item_id}/evidence",
+        headers=manager_headers,
+    )
+    assert evidence_list.status_code == 200
+    assert len(evidence_list.json()) >= 1
+
+    downloaded = app_client.get(
+        f"/api/adoption/w15/tracker/evidence/{downloaded_evidence_id}/download",
+        headers=manager_headers,
+    )
+    assert downloaded.status_code == 200
+    assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    readiness = app_client.get(
+        "/api/adoption/w15/tracker/readiness?site=W15+Site",
+        headers=manager_headers,
+    )
+    assert readiness.status_code == 200
+    readiness_body = readiness.json()
+    assert readiness_body["ready"] is True
+    assert readiness_body["pending_count"] == 0
+    assert readiness_body["in_progress_count"] == 0
+    assert readiness_body["blocked_count"] == 0
+    assert readiness_body["missing_assignee_count"] == 0
+    assert readiness_body["missing_completion_checked_count"] == 0
+    assert readiness_body["missing_required_evidence_count"] == 0
+
+    completed = app_client.post(
+        "/api/adoption/w15/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W15 Site", "completion_note": "W15 tracker complete"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["readiness"]["ready"] is True
+
+    completion = app_client.get(
+        "/api/adoption/w15/tracker/completion?site=W15+Site",
+        headers=manager_headers,
+    )
+    assert completion.status_code == 200
+    assert completion.json()["status"] == "completed"
+
+    bootstrap_outside = app_client.post(
+        "/api/adoption/w15/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "Outside W15 Site"},
+    )
+    assert bootstrap_outside.status_code == 200
+
+    forbidden_snapshot = app_client.get(
+        "/api/ops/adoption/w15/ops-efficiency?site=Outside+W15+Site&days=30",
+        headers=manager_headers,
+    )
+    assert forbidden_snapshot.status_code == 403
+
+    forbidden_tracker = app_client.get(
+        "/api/adoption/w15/tracker/overview?site=Outside+W15+Site",
+        headers=manager_headers,
+    )
+    assert forbidden_tracker.status_code == 403
+
+
+def test_w15_auditor_read_access_and_write_block(app_client: TestClient) -> None:
+    bootstrap = app_client.post(
+        "/api/adoption/w15/tracker/bootstrap",
+        headers=_owner_headers(),
+        json={"site": "W15 Auditor Site"},
+    )
+    assert bootstrap.status_code == 200
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w15_auditor_ci",
+            "display_name": "W15 Auditor CI",
+            "role": "auditor",
+            "permissions": [],
+            "site_scope": ["W15 Auditor Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w15-auditor-token"},
+    )
+    assert issued.status_code == 201
+    auditor_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    overview = app_client.get(
+        "/api/adoption/w15/tracker/overview?site=W15+Auditor+Site",
+        headers=auditor_headers,
+    )
+    assert overview.status_code == 200
+    assert overview.json()["site"] == "W15 Auditor Site"
+
+    snapshot = app_client.get(
+        "/api/ops/adoption/w15/ops-efficiency?site=W15+Auditor+Site&days=30",
+        headers=auditor_headers,
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["site"] == "W15 Auditor Site"
+
+    listed = app_client.get(
+        "/api/adoption/w15/tracker/items?site=W15+Auditor+Site&limit=1",
+        headers=auditor_headers,
+    )
+    assert listed.status_code == 200
+    tracker_item_id = listed.json()[0]["id"]
+
+    write_forbidden_bootstrap = app_client.post(
+        "/api/adoption/w15/tracker/bootstrap",
+        headers=auditor_headers,
+        json={"site": "W15 Auditor Site"},
+    )
+    assert write_forbidden_bootstrap.status_code == 403
+
+    write_forbidden_patch = app_client.patch(
+        f"/api/adoption/w15/tracker/items/{tracker_item_id}",
+        headers=auditor_headers,
+        json={"status": "in_progress"},
+    )
+    assert write_forbidden_patch.status_code == 403
+
+    write_forbidden_complete = app_client.post(
+        "/api/adoption/w15/tracker/complete",
+        headers=auditor_headers,
+        json={"site": "W15 Auditor Site"},
+    )
+    assert write_forbidden_complete.status_code == 403
+
+
 def test_w07_weekly_run_respects_cooldown(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert
@@ -4034,6 +4375,9 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "alert_mttr_slo_breach" in ids
     assert "w07_weekly_quality_recent" in ids
     assert "w07_quality_alert_channel" in ids
+    assert "api_latency_p95" in ids
+    assert "deploy_smoke_checklist" in ids
+    assert "evidence_archive_integrity_batch" in ids
 
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -4049,6 +4393,12 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["rate_limit"]["status"] == "ok"
     assert body["audit_archive_signing"]["enabled"] is True
     assert body["audit_archive_signing"]["algorithm"] == "hmac-sha256"
+    assert body["api_latency"]["enabled"] is True
+    assert body["api_latency"]["target_count"] >= 2
+    assert body["deploy_smoke_policy"]["require_runbook_gate"] is True
+    assert body["deploy_smoke_policy"]["recent_hours"] >= 1
+    assert body["evidence_archive_integrity_policy"]["sample_per_table"] >= 1
+    assert "w02" in body["evidence_archive_integrity_policy"]["modules"]
     assert body["alerting"]["ops_daily_check_alert_level"] == "critical"
     assert isinstance(body["alerting"]["webhook_target_count"], int)
     assert body["alerting"]["channel_guard_enabled"] is True
@@ -4076,6 +4426,82 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert isinstance(body["alerting"]["w07_quality_webhook_target_count"], int)
     assert body["alerting"]["w07_quality_archive_enabled"] is True
     assert body["token_policy"]["max_ttl_days"] == 30
+
+
+def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    checklist = app_client.get(
+        "/api/ops/deploy/checklist",
+        headers=headers,
+    )
+    assert checklist.status_code == 200
+    checklist_body = checklist.json()
+    assert checklist_body["version"]
+    assert len(checklist_body["steps"]) >= 5
+
+    health = app_client.get("/health")
+    meta = app_client.get("/meta")
+    inspections = app_client.get("/api/inspections", headers=headers)
+    work_orders = app_client.get("/api/work-orders", headers=headers)
+    assert health.status_code == 200
+    assert meta.status_code == 200
+    assert inspections.status_code == 200
+    assert work_orders.status_code == 200
+
+    latency = app_client.get(
+        "/api/ops/performance/api-latency",
+        headers=headers,
+    )
+    assert latency.status_code == 200
+    latency_body = latency.json()
+    assert "status" in latency_body
+    assert latency_body["target_count"] >= 2
+    assert isinstance(latency_body["endpoints"], list)
+
+    integrity = app_client.get(
+        "/api/ops/integrity/evidence-archive?sample_per_table=1&max_issues=10",
+        headers=headers,
+    )
+    assert integrity.status_code == 200
+    integrity_body = integrity.json()
+    assert integrity_body["sample_per_table"] == 1
+    assert "archive" in integrity_body
+    assert "chain_ok" in integrity_body["archive"]
+
+    smoke_record = app_client.post(
+        "/api/ops/deploy/smoke/record",
+        headers=headers,
+        json={
+            "deploy_id": "deploy-ci-001",
+            "environment": "test",
+            "status": "success",
+            "base_url": "http://testserver",
+            "checklist_version": checklist_body["version"],
+            "rollback_reference": "docs/W15_MIGRATION_ROLLBACK.md",
+            "rollback_ready": True,
+            "runbook_gate_passed": True,
+            "checks": [
+                {"id": "health", "status": "ok", "message": "health endpoint ok"},
+                {"id": "runbook_gate", "status": "ok", "message": "no critical checks"},
+            ],
+        },
+    )
+    assert smoke_record.status_code == 200
+    smoke_record_body = smoke_record.json()
+    assert smoke_record_body["job_name"] == "deploy_smoke"
+    assert smoke_record_body["status"] in {"success", "warning", "critical"}
+    assert smoke_record_body["run_id"] is not None
+
+    runbook = app_client.get(
+        "/api/ops/runbook/checks",
+        headers=headers,
+    )
+    assert runbook.status_code == 200
+    runbook_body = runbook.json()
+    deploy_check = next(item for item in runbook_body["checks"] if item["id"] == "deploy_smoke_checklist")
+    assert deploy_check["latest_run_status"] in {"success", "warning", "critical"}
+    assert deploy_check["latest_run_at"] is not None
 
 
 def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
