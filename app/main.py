@@ -261,6 +261,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w05:write",
         "adoption_w06:read",
         "adoption_w06:write",
+        "adoption_w07:read",
+        "adoption_w07:write",
     },
     "operator": {
         "inspections:read",
@@ -279,6 +281,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w05:write",
         "adoption_w06:read",
         "adoption_w06:write",
+        "adoption_w07:read",
+        "adoption_w07:write",
     },
     "auditor": {
         "inspections:read",
@@ -291,6 +295,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w04:read",
         "adoption_w05:read",
         "adoption_w06:read",
+        "adoption_w07:read",
     },
 }
 
@@ -1695,6 +1700,132 @@ ADOPTION_W06_RBAC_AUDIT_CHECKLIST: list[dict[str, Any]] = [
         "objective": "주간 주요 운영 행위 감사 로그 추적 가능",
         "api_ref": "/api/admin/audit-logs",
         "pass_criteria": "핵심 운영 action 감사 누락 0건",
+    },
+]
+
+ADOPTION_W07_SLA_CHECKLIST: list[dict[str, Any]] = [
+    {
+        "id": "W07-SLA-01",
+        "cadence": "Daily 09:00",
+        "control": "Overdue/ack-delay triage by site",
+        "owner_role": "Ops Lead",
+        "target": "전일 overdue open 작업지시 100% owner 재확인",
+        "definition_of_done": "지연 원인/대응 ETA가 모든 항목에 기록됨",
+        "evidence_hint": "SLA triage board screenshot",
+    },
+    {
+        "id": "W07-SLA-02",
+        "cadence": "Daily 14:00",
+        "control": "Escalation follow-up and unblock",
+        "owner_role": "Manager/Operator",
+        "target": "신규 escalated 항목 24시간 내 ack 100%",
+        "definition_of_done": "escalated 항목마다 assignee/ETA 갱신",
+        "evidence_hint": "Escalation follow-up memo",
+    },
+    {
+        "id": "W07-SLA-03",
+        "cadence": "Wednesday 16:00",
+        "control": "Mid-week SLA quality review",
+        "owner_role": "Ops PM + QA",
+        "target": "ack median 개선 추세 유지",
+        "definition_of_done": "site별 위험 순위 + 개선 액션 3건 확정",
+        "evidence_hint": "SLA quality review note",
+    },
+    {
+        "id": "W07-SLA-04",
+        "cadence": "Friday 17:00",
+        "control": "Weekly close and next-week hardening",
+        "owner_role": "Owner/Manager",
+        "target": "SLA response time 10% 개선",
+        "definition_of_done": "주간 KPI 결과와 다음 주 액션 승인",
+        "evidence_hint": "Weekly SLA close report",
+    },
+]
+
+ADOPTION_W07_COACHING_PLAYS: list[dict[str, Any]] = [
+    {
+        "id": "W07-CP-01",
+        "trigger": "ack median > 60분 (site)",
+        "play": "긴급 triage 20분 + 담당자 재할당 + due_at 재설정",
+        "owner": "Site Champion",
+        "expected_impact": "ack latency 단기 하향",
+        "evidence_hint": "Before/after ack median snapshot",
+        "api_ref": "/api/ops/adoption/w07/sla-quality",
+    },
+    {
+        "id": "W07-CP-02",
+        "trigger": "escalation rate >= 30%",
+        "play": "고위험 우선순위 분리 보드 + 하루 2회 점검",
+        "owner": "Ops Lead",
+        "expected_impact": "escalation rate 안정화",
+        "evidence_hint": "Escalation board export",
+        "api_ref": "/api/work-orders/escalations/run",
+    },
+    {
+        "id": "W07-CP-03",
+        "trigger": "alert success rate < 95%",
+        "play": "실패 채널 재시도 + 타깃 URL/네트워크 점검",
+        "owner": "Ops Engineer",
+        "expected_impact": "Alert delivery 신뢰도 회복",
+        "evidence_hint": "Retry run result + guard state",
+        "api_ref": "/api/ops/alerts/retries/run",
+    },
+    {
+        "id": "W07-CP-04",
+        "trigger": "SLA run cadence < 주 1회",
+        "play": "Cron 스케줄 검증 + 수동 백업 런 수행",
+        "owner": "Owner/Admin",
+        "expected_impact": "SLA 점검 누락 방지",
+        "evidence_hint": "Job run log export",
+        "api_ref": "/api/ops/job-runs",
+    },
+]
+
+ADOPTION_W07_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W07-E01",
+        "date": "2026-04-13",
+        "start_time": "09:00",
+        "end_time": "09:30",
+        "title": "W07 kickoff - SLA quality baseline",
+        "owner": "Ops Lead + QA",
+        "output": "Baseline snapshot and risk shortlist",
+    },
+    {
+        "id": "W07-E02",
+        "date": "2026-04-14",
+        "start_time": "14:00",
+        "end_time": "14:30",
+        "title": "Escalation coaching clinic",
+        "owner": "Site Champion",
+        "output": "Coaching action checklist",
+    },
+    {
+        "id": "W07-E03",
+        "date": "2026-04-15",
+        "start_time": "16:00",
+        "end_time": "16:40",
+        "title": "Mid-week SLA quality review",
+        "owner": "Ops PM + QA",
+        "output": "Top risk sites and mitigation owner",
+    },
+    {
+        "id": "W07-E04",
+        "date": "2026-04-16",
+        "start_time": "15:30",
+        "end_time": "16:00",
+        "title": "Alert retry follow-up checkpoint",
+        "owner": "Ops Engineer",
+        "output": "Alert failure remediation log",
+    },
+    {
+        "id": "W07-E05",
+        "date": "2026-04-17",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W07 close review",
+        "owner": "Owner + Ops Manager",
+        "output": "SLA quality close report",
     },
 ]
 
@@ -6771,6 +6902,291 @@ def _build_w06_operational_rhythm_snapshot(
     }
 
 
+def _build_w07_sla_quality_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(7, min(int(days), 90))
+    baseline_days = window_days
+    start = now - timedelta(days=window_days)
+    baseline_start = start - timedelta(days=baseline_days)
+
+    current_stmt = select(
+        work_orders.c.site,
+        work_orders.c.status,
+        work_orders.c.created_at,
+        work_orders.c.acknowledged_at,
+        work_orders.c.completed_at,
+        work_orders.c.due_at,
+        work_orders.c.is_escalated,
+    ).where(work_orders.c.created_at >= start)
+    baseline_stmt = (
+        select(
+            work_orders.c.site,
+            work_orders.c.created_at,
+            work_orders.c.acknowledged_at,
+        )
+        .where(work_orders.c.created_at >= baseline_start)
+        .where(work_orders.c.created_at < start)
+    )
+    open_stmt = select(
+        work_orders.c.site,
+        work_orders.c.status,
+        work_orders.c.due_at,
+        work_orders.c.is_escalated,
+    ).where(work_orders.c.status.in_(["open", "acked"]))
+    alert_stmt = select(
+        alert_deliveries.c.status,
+        alert_deliveries.c.payload_json,
+        alert_deliveries.c.created_at,
+    ).where(alert_deliveries.c.created_at >= start)
+    sla_run_stmt = (
+        select(job_runs.c.detail_json)
+        .where(job_runs.c.job_name == "sla_escalation")
+        .where(job_runs.c.finished_at >= start)
+    )
+
+    if site is not None:
+        current_stmt = current_stmt.where(work_orders.c.site == site)
+        baseline_stmt = baseline_stmt.where(work_orders.c.site == site)
+        open_stmt = open_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "baseline_days": baseline_days,
+                "target_response_improvement_percent": 10.0,
+                "metrics": {
+                    "created_work_orders": 0,
+                    "acked_work_orders": 0,
+                    "completed_work_orders": 0,
+                    "median_ack_minutes": None,
+                    "baseline_median_ack_minutes": None,
+                    "response_time_improvement_percent": None,
+                    "target_met": False,
+                    "open_work_orders": 0,
+                    "overdue_open_work_orders": 0,
+                    "escalated_open_work_orders": 0,
+                    "escalated_work_orders": 0,
+                    "escalation_rate_percent": 0.0,
+                    "alert_total": 0,
+                    "alert_success_count": 0,
+                    "alert_success_rate_percent": 0.0,
+                    "sla_run_count": 0,
+                },
+                "top_risk_sites": [],
+                "recommendations": [],
+            }
+        current_stmt = current_stmt.where(work_orders.c.site.in_(allowed_sites))
+        baseline_stmt = baseline_stmt.where(work_orders.c.site.in_(allowed_sites))
+        open_stmt = open_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        current_rows = conn.execute(current_stmt).mappings().all()
+        baseline_rows = conn.execute(baseline_stmt).mappings().all()
+        open_rows = conn.execute(open_stmt).mappings().all()
+        alert_rows = conn.execute(alert_stmt).mappings().all()
+        sla_run_rows = conn.execute(sla_run_stmt).mappings().all()
+
+    def _ack_minutes(rows: list[dict[str, Any]]) -> list[float]:
+        values: list[float] = []
+        for row in rows:
+            created_at = _as_optional_datetime(row.get("created_at"))
+            acknowledged_at = _as_optional_datetime(row.get("acknowledged_at"))
+            if created_at is None or acknowledged_at is None or acknowledged_at < created_at:
+                continue
+            values.append((acknowledged_at - created_at).total_seconds() / 60.0)
+        return values
+
+    current_ack_minutes = _ack_minutes(current_rows)
+    baseline_ack_minutes = _ack_minutes(baseline_rows)
+    median_ack_minutes = round(statistics.median(current_ack_minutes), 2) if current_ack_minutes else None
+    baseline_median_ack_minutes = round(statistics.median(baseline_ack_minutes), 2) if baseline_ack_minutes else None
+    response_time_improvement_percent: float | None = None
+    if baseline_median_ack_minutes is not None and median_ack_minutes is not None:
+        if baseline_median_ack_minutes > 0:
+            response_time_improvement_percent = round(
+                ((baseline_median_ack_minutes - median_ack_minutes) / baseline_median_ack_minutes) * 100.0,
+                2,
+            )
+        else:
+            response_time_improvement_percent = 0.0
+
+    created_work_orders = len(current_rows)
+    acked_work_orders = sum(1 for row in current_rows if _as_optional_datetime(row.get("acknowledged_at")) is not None)
+    completed_work_orders = sum(1 for row in current_rows if _as_optional_datetime(row.get("completed_at")) is not None)
+    escalated_work_orders = sum(1 for row in current_rows if bool(row.get("is_escalated", False)))
+    escalation_rate_percent = (
+        round((escalated_work_orders / created_work_orders) * 100.0, 2) if created_work_orders > 0 else 0.0
+    )
+
+    open_work_orders = 0
+    overdue_open_work_orders = 0
+    escalated_open_work_orders = 0
+    site_open: dict[str, int] = {}
+    site_overdue: dict[str, int] = {}
+    site_escalated: dict[str, int] = {}
+    for row in open_rows:
+        row_site = str(row.get("site") or "").strip()
+        if not row_site:
+            continue
+        open_work_orders += 1
+        site_open[row_site] = int(site_open.get(row_site, 0)) + 1
+        due_at = _as_optional_datetime(row.get("due_at"))
+        if due_at is not None and due_at < now:
+            overdue_open_work_orders += 1
+            site_overdue[row_site] = int(site_overdue.get(row_site, 0)) + 1
+        if bool(row.get("is_escalated", False)):
+            escalated_open_work_orders += 1
+            site_escalated[row_site] = int(site_escalated.get(row_site, 0)) + 1
+
+    alert_total = 0
+    alert_success_count = 0
+    for row in alert_rows:
+        payload_raw = str(row.get("payload_json") or "{}")
+        payload: dict[str, Any] = {}
+        try:
+            loaded = json.loads(payload_raw)
+            if isinstance(loaded, dict):
+                payload = loaded
+        except json.JSONDecodeError:
+            payload = {}
+
+        payload_site_raw = payload.get("site")
+        payload_site = _normalize_site_name(str(payload_site_raw)) if payload_site_raw is not None else None
+        if site is not None:
+            if payload_site != site:
+                continue
+        elif allowed_sites is not None:
+            if payload_site is None or payload_site == "ALL" or payload_site not in allowed_sites:
+                continue
+
+        alert_total += 1
+        if str(row.get("status") or "").strip().lower() == "success":
+            alert_success_count += 1
+    alert_success_rate_percent = round((alert_success_count / alert_total) * 100.0, 2) if alert_total > 0 else 0.0
+
+    sla_run_count = 0
+    for row in sla_run_rows:
+        run_site: str | None = None
+        detail_raw = str(row.get("detail_json") or "{}")
+        try:
+            loaded = json.loads(detail_raw)
+            if isinstance(loaded, dict):
+                site_raw = loaded.get("site")
+                if site_raw is not None:
+                    run_site = _normalize_site_name(str(site_raw))
+        except json.JSONDecodeError:
+            run_site = None
+
+        if site is not None:
+            if run_site not in {None, site}:
+                continue
+        elif allowed_sites is not None:
+            if run_site is not None and run_site not in allowed_sites:
+                continue
+        sla_run_count += 1
+
+    site_ack: dict[str, list[float]] = {}
+    for row in current_rows:
+        row_site = str(row.get("site") or "").strip()
+        if not row_site:
+            continue
+        created_at = _as_optional_datetime(row.get("created_at"))
+        acknowledged_at = _as_optional_datetime(row.get("acknowledged_at"))
+        if created_at is None or acknowledged_at is None or acknowledged_at < created_at:
+            continue
+        site_ack.setdefault(row_site, []).append((acknowledged_at - created_at).total_seconds() / 60.0)
+
+    top_risk_sites: list[dict[str, Any]] = []
+    if site is None:
+        for site_name, open_count in site_open.items():
+            ack_values = site_ack.get(site_name, [])
+            top_risk_sites.append(
+                {
+                    "site": site_name,
+                    "open_work_orders": open_count,
+                    "overdue_open_work_orders": int(site_overdue.get(site_name, 0)),
+                    "escalated_open_work_orders": int(site_escalated.get(site_name, 0)),
+                    "median_ack_minutes": round(statistics.median(ack_values), 2) if ack_values else None,
+                }
+            )
+        top_risk_sites = sorted(
+            top_risk_sites,
+            key=lambda item: (
+                int(item.get("overdue_open_work_orders") or 0),
+                int(item.get("escalated_open_work_orders") or 0),
+                int(item.get("open_work_orders") or 0),
+            ),
+            reverse=True,
+        )[:5]
+    elif site is not None:
+        ack_values = site_ack.get(site, [])
+        top_risk_sites = [
+            {
+                "site": site,
+                "open_work_orders": open_work_orders,
+                "overdue_open_work_orders": overdue_open_work_orders,
+                "escalated_open_work_orders": escalated_open_work_orders,
+                "median_ack_minutes": round(statistics.median(ack_values), 2) if ack_values else None,
+            }
+        ]
+
+    target_response_improvement_percent = 10.0
+    recommendations: list[str] = []
+    if response_time_improvement_percent is None:
+        recommendations.append("ACK 반응시간 비교 데이터가 부족합니다. ack 이벤트를 누락 없이 기록하세요.")
+    elif response_time_improvement_percent < target_response_improvement_percent:
+        recommendations.append("SLA response 개선폭이 목표 미만입니다. 지연 site를 우선 코칭하세요.")
+    if overdue_open_work_orders > 0:
+        recommendations.append("overdue open 작업지시가 남아 있습니다. 담당자 재할당과 ETA 재설정을 수행하세요.")
+    if escalation_rate_percent >= 30.0:
+        recommendations.append("escalation rate가 높습니다. 고위험 작업 분리 보드를 운영하세요.")
+    if alert_total > 0 and alert_success_rate_percent < 95.0:
+        recommendations.append("alert 성공률이 낮습니다. 재시도 런과 채널 상태 점검을 실행하세요.")
+    expected_runs = max(1, window_days // 7)
+    if sla_run_count < expected_runs:
+        recommendations.append("SLA 에스컬레이션 런 빈도가 낮습니다. Cron/수동 백업 런을 점검하세요.")
+    if not recommendations:
+        recommendations.append("SLA 품질 지표가 목표 범위입니다. 현재 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "baseline_days": baseline_days,
+        "target_response_improvement_percent": target_response_improvement_percent,
+        "metrics": {
+            "created_work_orders": created_work_orders,
+            "acked_work_orders": acked_work_orders,
+            "completed_work_orders": completed_work_orders,
+            "median_ack_minutes": median_ack_minutes,
+            "baseline_median_ack_minutes": baseline_median_ack_minutes,
+            "response_time_improvement_percent": response_time_improvement_percent,
+            "target_met": (
+                response_time_improvement_percent is not None
+                and response_time_improvement_percent >= target_response_improvement_percent
+            ),
+            "open_work_orders": open_work_orders,
+            "overdue_open_work_orders": overdue_open_work_orders,
+            "escalated_open_work_orders": escalated_open_work_orders,
+            "escalated_work_orders": escalated_work_orders,
+            "escalation_rate_percent": escalation_rate_percent,
+            "alert_total": alert_total,
+            "alert_success_count": alert_success_count,
+            "alert_success_rate_percent": alert_success_rate_percent,
+            "sla_run_count": sla_run_count,
+        },
+        "top_risk_sites": top_risk_sites,
+        "recommendations": recommendations,
+    }
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -8161,6 +8577,10 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w06_checklist_csv_api": "/api/public/adoption-plan/w06/checklist.csv",
         "public_adoption_w06_schedule_ics_api": "/api/public/adoption-plan/w06/schedule.ics",
         "public_adoption_w06_rbac_audit_template_api": "/api/public/adoption-plan/w06/rbac-audit-template",
+        "public_adoption_w07_api": "/api/public/adoption-plan/w07",
+        "public_adoption_w07_checklist_csv_api": "/api/public/adoption-plan/w07/checklist.csv",
+        "public_adoption_w07_schedule_ics_api": "/api/public/adoption-plan/w07/schedule.ics",
+        "public_adoption_w07_coaching_playbook_api": "/api/public/adoption-plan/w07/coaching-playbook",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -8183,6 +8603,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w04_tracker_complete_api": "/api/adoption/w04/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
+        "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -8238,6 +8659,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w04_first_success_acceleration": _adoption_w04_payload(),
         "w05_usage_consistency": _adoption_w05_payload(),
         "w06_operational_rhythm": _adoption_w06_payload(),
+        "w07_sla_quality": _adoption_w07_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -8273,6 +8695,10 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w06_checklist_csv": "/api/public/adoption-plan/w06/checklist.csv",
                 "w06_schedule_ics": "/api/public/adoption-plan/w06/schedule.ics",
                 "w06_rbac_audit_template": "/api/public/adoption-plan/w06/rbac-audit-template",
+                "w07_json": "/api/public/adoption-plan/w07",
+                "w07_checklist_csv": "/api/public/adoption-plan/w07/checklist.csv",
+                "w07_schedule_ics": "/api/public/adoption-plan/w07/schedule.ics",
+                "w07_coaching_playbook": "/api/public/adoption-plan/w07/coaching-playbook",
             },
             "next_review_date": next_review_date,
         },
@@ -8868,6 +9294,149 @@ def _build_adoption_w06_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w07_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 7),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 7,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Habit",
+            "focus": "SLA quality",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 7)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W07 SLA Quality Pack",
+        "public": True,
+        "timeline": timeline,
+        "sla_checklist": ADOPTION_W07_SLA_CHECKLIST,
+        "coaching_plays": ADOPTION_W07_COACHING_PLAYS,
+        "scheduled_events": ADOPTION_W07_SCHEDULED_EVENTS,
+        "sla_quality_api": "/api/ops/adoption/w07/sla-quality",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w07",
+            "checklist_csv": "/api/public/adoption-plan/w07/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w07/schedule.ics",
+            "coaching_playbook": "/api/public/adoption-plan/w07/coaching-playbook",
+        },
+    }
+
+
+def _build_adoption_w07_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "cadence_or_trigger",
+            "control_or_play",
+            "owner",
+            "target_or_expected_impact",
+            "definition_of_done_or_evidence",
+            "api_ref",
+        ]
+    )
+    for item in payload.get("sla_checklist", []):
+        writer.writerow(
+            [
+                "sla_checklist",
+                item.get("id", ""),
+                item.get("cadence", ""),
+                item.get("control", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                item.get("definition_of_done", ""),
+                "",
+            ]
+        )
+    for item in payload.get("coaching_plays", []):
+        writer.writerow(
+            [
+                "coaching_play",
+                item.get("id", ""),
+                item.get("trigger", ""),
+                item.get("play", ""),
+                item.get("owner", ""),
+                item.get("expected_impact", ""),
+                item.get("evidence_hint", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                item.get("date", ""),
+                item.get("title", ""),
+                item.get("owner", ""),
+                item.get("output", ""),
+                f"{item.get('start_time', '')}-{item.get('end_time', '')}",
+                "",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w07_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w07-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W07] {str(item.get('title', 'SLA Quality Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W07 SLA Quality//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -9237,6 +9806,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w04_pack = plan.get("w04_first_success_acceleration", {})
     w05_pack = plan.get("w05_usage_consistency", {})
     w06_pack = plan.get("w06_operational_rhythm", {})
+    w07_pack = plan.get("w07_sla_quality", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -9530,6 +10100,52 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
               <td>{html.escape(str(item.get("objective", "")))}</td>
               <td>{html.escape(str(item.get("api_ref", "")))}</td>
               <td>{html.escape(str(item.get("pass_criteria", "")))}</td>
+            </tr>
+            """
+        )
+
+    w07_checklist_rows: list[str] = []
+    for item in w07_pack.get("sla_checklist", []):
+        w07_checklist_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("cadence", "")))}</td>
+              <td>{html.escape(str(item.get("control", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_hint", "")))}</td>
+            </tr>
+            """
+        )
+
+    w07_coaching_rows: list[str] = []
+    for item in w07_pack.get("coaching_plays", []):
+        w07_coaching_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("trigger", "")))}</td>
+              <td>{html.escape(str(item.get("play", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("expected_impact", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_hint", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w07_schedule_rows: list[str] = []
+    for item in w07_pack.get("scheduled_events", []):
+        w07_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
             </tr>
             """
         )
@@ -10196,6 +10812,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w06/checklist.csv">W06 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w06/schedule.ics">W06 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w06/rbac-audit-template">W06 RBAC Audit Template</a>
+        <a href="/api/public/adoption-plan/w07">W07 JSON</a>
+        <a href="/api/public/adoption-plan/w07/checklist.csv">W07 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
         <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
@@ -10550,6 +11170,70 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w06_rbac_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W07 SLA Quality</h2>
+      <p class="sub">SLA 반응시간 개선, escalation 억제, alert 품질 회복을 주간 운영 루틴으로 고정하는 실행 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w07">W07 JSON</a>
+        <a href="/api/public/adoption-plan/w07/checklist.csv">W07 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
+        <a href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Cadence</th>
+              <th>Control</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Definition of Done</th>
+              <th>Evidence Hint</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w07_checklist_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Play ID</th>
+              <th>Trigger</th>
+              <th>Play</th>
+              <th>Owner</th>
+              <th>Expected Impact</th>
+              <th>Evidence Hint</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w07_coaching_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w07_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -12350,6 +13034,36 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w06RhythmRecommendations" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W07 SLA Quality</h3>
+            <div id="adoptionW07Top" class="cards"></div>
+            <div id="adoptionW07Checklist" class="empty">데이터 없음</div>
+            <div id="adoptionW07Coaching" class="empty">데이터 없음</div>
+            <div id="adoptionW07Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW07Json" href="/api/public/adoption-plan/w07">W07 JSON</a>
+              <a id="adoptW07ChecklistCsv" href="/api/public/adoption-plan/w07/checklist.csv">W07 Checklist CSV</a>
+              <a id="adoptW07ScheduleIcs" href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
+              <a id="adoptW07CoachingPlaybook" href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
+              <a id="adoptW07QualityApi" href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W07 SLA Quality Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w07QualitySite" placeholder="site (optional, 빈 값이면 전체)" />
+              <input id="w07QualityDays" value="14" placeholder="window days (7-90)" />
+              <input id="w07QualityReserved1" value="token required" disabled />
+              <input id="w07QualityReserved2" value="site scope enforced" disabled />
+              <button id="w07QualityRefreshBtn" class="btn run" type="button">W07 품질 새로고침</button>
+            </div>
+            <div id="w07QualityMeta" class="meta">조회 전</div>
+            <div id="w07QualitySummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Top Risk Sites</h4>
+            <div id="w07QualityTopSites" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w07QualityRecommendations" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -13926,6 +14640,78 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW07SlaQuality() {{
+        const meta = document.getElementById("w07QualityMeta");
+        const summary = document.getElementById("w07QualitySummary");
+        const topSites = document.getElementById("w07QualityTopSites");
+        const recommendations = document.getElementById("w07QualityRecommendations");
+        const site = (document.getElementById("w07QualitySite").value || "").trim();
+        const daysRaw = (document.getElementById("w07QualityDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w07/sla-quality" + (params.toString() ? ("?" + params.toString()) : "");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | ack_improvement=" + String(metrics.response_time_improvement_percent ?? "-") + "%";
+          const summaryItems = [
+            ["Created WOs", metrics.created_work_orders ?? 0],
+            ["Acked WOs", metrics.acked_work_orders ?? 0],
+            ["Completed WOs", metrics.completed_work_orders ?? 0],
+            ["Median ACK(min)", metrics.median_ack_minutes ?? "-"],
+            ["Baseline ACK(min)", metrics.baseline_median_ack_minutes ?? "-"],
+            ["ACK Improvement %", metrics.response_time_improvement_percent ?? "-"],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+            ["Open WOs", metrics.open_work_orders ?? 0],
+            ["Overdue Open", metrics.overdue_open_work_orders ?? 0],
+            ["Escalated Open", metrics.escalated_open_work_orders ?? 0],
+            ["Escalation Rate %", metrics.escalation_rate_percent ?? 0],
+            ["Alert Success %", metrics.alert_success_rate_percent ?? 0],
+            ["SLA Runs", metrics.sla_run_count ?? 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          topSites.innerHTML = renderTable(
+            data.top_risk_sites || [],
+            [
+              {{ key: "site", label: "Site" }},
+              {{ key: "open_work_orders", label: "Open WOs" }},
+              {{ key: "overdue_open_work_orders", label: "Overdue Open" }},
+              {{ key: "escalated_open_work_orders", label: "Escalated Open" }},
+              {{ key: "median_ack_minutes", label: "Median ACK(min)" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          topSites.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
@@ -13951,6 +14737,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w06Checklist = document.getElementById("adoptionW06Checklist");
         const w06Schedule = document.getElementById("adoptionW06Schedule");
         const w06RbacAudit = document.getElementById("adoptionW06RbacAudit");
+        const w07Top = document.getElementById("adoptionW07Top");
+        const w07Checklist = document.getElementById("adoptionW07Checklist");
+        const w07Coaching = document.getElementById("adoptionW07Coaching");
+        const w07Schedule = document.getElementById("adoptionW07Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -14338,6 +15128,78 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w07 = data.w07_sla_quality || {{}};
+          const w07TopItems = [
+            ["Week", "W" + String(w07.timeline?.week || 7).padStart(2, "0")],
+            ["Focus", w07.timeline?.focus || "SLA quality"],
+            ["SLA Checklist", (w07.sla_checklist || []).length],
+            ["Coaching Plays", (w07.coaching_plays || []).length],
+            ["Sessions", (w07.scheduled_events || []).length],
+            ["Metric", w07.timeline?.success_metric || "SLA response time improves >= 10%"],
+          ];
+          w07Top.innerHTML = w07TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w07Checklist.innerHTML = renderTable(
+            (w07.sla_checklist || []).map((row) => ({{
+              id: row.id || "",
+              cadence: row.cadence || "",
+              control: row.control || "",
+              owner_role: row.owner_role || "",
+              target: row.target || "",
+              definition_of_done: row.definition_of_done || "",
+              evidence_hint: row.evidence_hint || "",
+            }})),
+            [
+              {{ key: "id", label: "Checklist ID" }},
+              {{ key: "cadence", label: "Cadence" }},
+              {{ key: "control", label: "Control" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "evidence_hint", label: "Evidence Hint" }},
+            ]
+          );
+
+          w07Coaching.innerHTML = renderTable(
+            (w07.coaching_plays || []).map((row) => ({{
+              id: row.id || "",
+              trigger: row.trigger || "",
+              play: row.play || "",
+              owner: row.owner || "",
+              expected_impact: row.expected_impact || "",
+              evidence_hint: row.evidence_hint || "",
+              api_ref: row.api_ref || "",
+            }})),
+            [
+              {{ key: "id", label: "Play ID" }},
+              {{ key: "trigger", label: "Trigger" }},
+              {{ key: "play", label: "Play" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "expected_impact", label: "Expected Impact" }},
+              {{ key: "evidence_hint", label: "Evidence Hint" }},
+              {{ key: "api_ref", label: "API Ref" }},
+            ]
+          );
+
+          w07Schedule.innerHTML = renderTable(
+            (w07.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -14373,6 +15235,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW04FunnelBlockers().catch(() => null);
             runW05Consistency().catch(() => null);
             runW06Rhythm().catch(() => null);
+            runW07SlaQuality().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -14447,6 +15310,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w06RhythmRoleCoverage.innerHTML = renderEmpty("인증 토큰 필요");
             w06RhythmSiteActivity.innerHTML = renderEmpty("인증 토큰 필요");
             w06RhythmRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+
+            const w07QualityMeta = document.getElementById("w07QualityMeta");
+            const w07QualitySummary = document.getElementById("w07QualitySummary");
+            const w07QualityTopSites = document.getElementById("w07QualityTopSites");
+            const w07QualityRecommendations = document.getElementById("w07QualityRecommendations");
+            w07QualityMeta.textContent = "토큰 저장 후 W07 SLA quality API를 사용할 수 있습니다.";
+            w07QualitySummary.innerHTML = "";
+            w07QualityTopSites.innerHTML = renderEmpty("인증 토큰 필요");
+            w07QualityRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
           }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
@@ -14473,6 +15345,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w06Checklist.innerHTML = renderEmpty(err.message);
           w06Schedule.innerHTML = renderEmpty(err.message);
           w06RbacAudit.innerHTML = renderEmpty(err.message);
+          w07Top.innerHTML = "";
+          w07Checklist.innerHTML = renderEmpty(err.message);
+          w07Coaching.innerHTML = renderEmpty(err.message);
+          w07Schedule.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
@@ -14482,6 +15358,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w06RhythmRoleCoverage").innerHTML = renderEmpty(err.message);
           document.getElementById("w06RhythmSiteActivity").innerHTML = renderEmpty(err.message);
           document.getElementById("w06RhythmRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07QualityMeta").textContent = "실패: " + err.message;
+          document.getElementById("w07QualitySummary").innerHTML = "";
+          document.getElementById("w07QualityTopSites").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07QualityRecommendations").innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -14553,6 +15433,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w04TrackUpdateBtn").addEventListener("click", runW04TrackerUpdateAndUpload);
       document.getElementById("w05ConsistencyRefreshBtn").addEventListener("click", runW05Consistency);
       document.getElementById("w06RhythmRefreshBtn").addEventListener("click", runW06Rhythm);
+      document.getElementById("w07QualityRefreshBtn").addEventListener("click", runW07SlaQuality);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -14581,6 +15462,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w06RhythmSite").value) {{
         document.getElementById("w06RhythmSite").value = "HQ";
+      }}
+      if (!document.getElementById("w07QualitySite").value) {{
+        document.getElementById("w07QualitySite").value = "HQ";
       }}
       activate("{selected_tab}", false);
 
@@ -14659,6 +15543,11 @@ def get_public_adoption_w05() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w06")
 def get_public_adoption_w06() -> dict[str, Any]:
     return _adoption_w06_payload()
+
+
+@app.get("/api/public/adoption-plan/w07")
+def get_public_adoption_w07() -> dict[str, Any]:
+    return _adoption_w07_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -14850,6 +15739,41 @@ def get_public_adoption_w06_rbac_audit_template() -> dict[str, Any]:
         "public": True,
         "timeline": payload.get("timeline", {}),
         "items": payload.get("rbac_audit_checklist", []),
+    }
+
+
+@app.get("/api/public/adoption-plan/w07/checklist.csv")
+def get_public_adoption_w07_checklist_csv() -> Response:
+    payload = _adoption_w07_payload()
+    csv_text = _build_adoption_w07_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w07-sla-quality-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w07/schedule.ics")
+def get_public_adoption_w07_schedule_ics() -> Response:
+    payload = _adoption_w07_payload()
+    ics_text = _build_adoption_w07_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w07-sla-quality.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w07/coaching-playbook")
+def get_public_adoption_w07_coaching_playbook() -> dict[str, Any]:
+    payload = _adoption_w07_payload()
+    return {
+        "title": "W07 Coaching Playbook",
+        "public": True,
+        "timeline": payload.get("timeline", {}),
+        "items": payload.get("coaching_plays", []),
     }
 
 
@@ -17603,6 +18527,32 @@ def get_ops_adoption_w06_rhythm(
             "weekly_active_rate_percent": snapshot.get("metrics", {}).get("weekly_active_rate_percent"),
             "cadence_adherence_percent": snapshot.get("metrics", {}).get("cadence_adherence_percent"),
             "users_without_active_token": snapshot.get("metrics", {}).get("users_without_active_token"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w07/sla-quality")
+def get_ops_adoption_w07_sla_quality(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=7, le=90)] = 14,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w07_sla_quality_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    _write_audit_log(
+        principal=principal,
+        action="w07_sla_quality_view",
+        resource_type="adoption_w07_sla_quality",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "median_ack_minutes": snapshot.get("metrics", {}).get("median_ack_minutes"),
+            "response_time_improvement_percent": snapshot.get("metrics", {}).get("response_time_improvement_percent"),
+            "escalation_rate_percent": snapshot.get("metrics", {}).get("escalation_rate_percent"),
+            "alert_success_rate_percent": snapshot.get("metrics", {}).get("alert_success_rate_percent"),
         },
     )
     return snapshot

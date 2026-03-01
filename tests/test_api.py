@@ -140,11 +140,13 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_w02_api" in root_json.json()
     assert "public_adoption_w05_api" in root_json.json()
     assert "public_adoption_w06_api" in root_json.json()
+    assert "public_adoption_w07_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
     assert "adoption_w05_consistency_api" in root_json.json()
     assert "adoption_w06_rhythm_api" in root_json.json()
+    assert "adoption_w07_sla_quality_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -169,10 +171,12 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W04 First Success Acceleration" in root_html.text
     assert "W05 Usage Consistency" in root_html.text
     assert "W06 Operational Rhythm" in root_html.text
+    assert "W07 SLA Quality" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
+    assert "W07 품질 새로고침" in root_html.text
     assert "완료 판정" in root_html.text
     assert "W02 완료 확정" in root_html.text
     assert "W04 완료 확정" in root_html.text
@@ -212,6 +216,13 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w06_checklist_csv_api"] == "/api/public/adoption-plan/w06/checklist.csv"
     assert service_info.json()["public_adoption_w06_schedule_ics_api"] == "/api/public/adoption-plan/w06/schedule.ics"
     assert service_info.json()["public_adoption_w06_rbac_audit_template_api"] == "/api/public/adoption-plan/w06/rbac-audit-template"
+    assert service_info.json()["public_adoption_w07_api"] == "/api/public/adoption-plan/w07"
+    assert service_info.json()["public_adoption_w07_checklist_csv_api"] == "/api/public/adoption-plan/w07/checklist.csv"
+    assert service_info.json()["public_adoption_w07_schedule_ics_api"] == "/api/public/adoption-plan/w07/schedule.ics"
+    assert (
+        service_info.json()["public_adoption_w07_coaching_playbook_api"]
+        == "/api/public/adoption-plan/w07/coaching-playbook"
+    )
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -231,6 +242,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w04_tracker_complete_api"] == "/api/adoption/w04/tracker/complete"
     assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
     assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
+    assert service_info.json()["adoption_w07_sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
@@ -271,6 +283,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W04 First Success Acceleration" in adoption_html.text
     assert "W05 Usage Consistency" in adoption_html.text
     assert "W06 Operational Rhythm" in adoption_html.text
+    assert "W07 SLA Quality" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -322,6 +335,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w06_operational_rhythm"]["rhythm_checklist"]) >= 4
     assert len(body["w06_operational_rhythm"]["scheduled_events"]) >= 5
     assert len(body["w06_operational_rhythm"]["rbac_audit_checklist"]) >= 4
+    assert body["w07_sla_quality"]["timeline"]["week"] == 7
+    assert len(body["w07_sla_quality"]["sla_checklist"]) >= 4
+    assert len(body["w07_sla_quality"]["coaching_plays"]) >= 4
+    assert len(body["w07_sla_quality"]["scheduled_events"]) >= 5
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -475,6 +492,36 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w06_rbac.status_code == 200
     assert w06_rbac.json()["public"] is True
     assert len(w06_rbac.json()["items"]) >= 4
+
+    w07 = app_client.get("/api/public/adoption-plan/w07")
+    assert w07.status_code == 200
+    w07_body = w07.json()
+    assert w07_body["public"] is True
+    assert w07_body["timeline"]["focus"] == "SLA quality"
+    assert len(w07_body["sla_checklist"]) >= 4
+    assert len(w07_body["coaching_plays"]) >= 4
+    assert len(w07_body["scheduled_events"]) >= 5
+    assert w07_body["sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
+
+    w07_csv = app_client.get("/api/public/adoption-plan/w07/checklist.csv")
+    assert w07_csv.status_code == 200
+    assert w07_csv.headers["content-type"].startswith("text/csv")
+    assert (
+        "section,id,cadence_or_trigger,control_or_play,owner,target_or_expected_impact,definition_of_done_or_evidence,api_ref"
+        in w07_csv.text
+    )
+    assert "sla_checklist,W07-SLA-01" in w07_csv.text
+
+    w07_ics = app_client.get("/api/public/adoption-plan/w07/schedule.ics")
+    assert w07_ics.status_code == 200
+    assert w07_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w07_ics.text
+    assert "SUMMARY:[W07] W07 kickoff - SLA quality baseline" in w07_ics.text
+
+    w07_playbook = app_client.get("/api/public/adoption-plan/w07/coaching-playbook")
+    assert w07_playbook.status_code == 200
+    assert w07_playbook.json()["public"] is True
+    assert len(w07_playbook.json()["items"]) >= 4
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -2000,6 +2047,130 @@ def test_w06_operational_rhythm_snapshot_flow(app_client: TestClient) -> None:
 
     forbidden = app_client.get(
         "/api/ops/adoption/w06/rhythm?site=Outside+W06+Site&days=14",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w07_manager_ci",
+            "display_name": "W07 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W07 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w07-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_token = issued.json()["token"]
+    manager_headers = {"X-Admin-Token": manager_token}
+
+    fast_work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W07 fast response",
+            "description": "ack and complete quickly",
+            "site": "W07 Site",
+            "location": "E1",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert fast_work_order.status_code == 201
+    fast_work_order_id = fast_work_order.json()["id"]
+
+    acked = app_client.patch(
+        f"/api/work-orders/{fast_work_order_id}/ack",
+        headers=manager_headers,
+        json={"assignee": "w07_manager_ci"},
+    )
+    assert acked.status_code == 200
+    assert acked.json()["status"] == "acked"
+
+    completed = app_client.patch(
+        f"/api/work-orders/{fast_work_order_id}/complete",
+        headers=manager_headers,
+        json={"resolution_notes": "done"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+
+    overdue_work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W07 overdue escalation",
+            "description": "should escalate",
+            "site": "W07 Site",
+            "location": "E2",
+            "priority": "critical",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=4)).isoformat(),
+        },
+    )
+    assert overdue_work_order.status_code == 201
+
+    escalation_run = app_client.post(
+        "/api/work-orders/escalations/run",
+        headers=manager_headers,
+        json={"site": "W07 Site", "dry_run": False, "limit": 100},
+    )
+    assert escalation_run.status_code == 200
+    assert escalation_run.json()["candidate_count"] >= 1
+
+    scoped = app_client.get(
+        "/api/ops/adoption/w07/sla-quality?site=W07+Site&days=14",
+        headers=manager_headers,
+    )
+    assert scoped.status_code == 200
+    scoped_body = scoped.json()
+    assert scoped_body["site"] == "W07 Site"
+    assert scoped_body["window_days"] == 14
+    assert scoped_body["target_response_improvement_percent"] == 10.0
+    assert scoped_body["metrics"]["created_work_orders"] >= 2
+    assert scoped_body["metrics"]["acked_work_orders"] >= 1
+    assert scoped_body["metrics"]["completed_work_orders"] >= 1
+    assert scoped_body["metrics"]["escalated_work_orders"] >= 1
+    assert scoped_body["metrics"]["overdue_open_work_orders"] >= 1
+    assert scoped_body["metrics"]["sla_run_count"] >= 1
+    assert isinstance(scoped_body["top_risk_sites"], list)
+    assert isinstance(scoped_body["recommendations"], list)
+    assert len(scoped_body["recommendations"]) >= 1
+
+    all_visible = app_client.get(
+        "/api/ops/adoption/w07/sla-quality?days=14",
+        headers=manager_headers,
+    )
+    assert all_visible.status_code == 200
+    assert all_visible.json()["site"] is None
+
+    owner_outside = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Outside W07 scope",
+            "description": "outside",
+            "site": "Outside W07 Site",
+            "location": "E9",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert owner_outside.status_code == 201
+
+    forbidden = app_client.get(
+        "/api/ops/adoption/w07/sla-quality?site=Outside+W07+Site&days=14",
         headers=manager_headers,
     )
     assert forbidden.status_code == 403
