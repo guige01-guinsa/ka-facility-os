@@ -13492,6 +13492,25 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     }}
     .card .k {{ color: var(--muted); font-size: 12px; }}
     .card .v {{ margin-top: 4px; font-size: 22px; font-weight: 800; }}
+    .card .sub {{ margin-top: 6px; font-size: 12px; color: #35587f; }}
+    .card.status-ok {{ border-color: #9ed9c3; background: #effaf4; }}
+    .card.status-warning {{ border-color: #f3d59e; background: #fff7ea; }}
+    .card.status-critical {{ border-color: #e8a8aa; background: #fff1f2; }}
+    .card.status-info {{ border-color: #d0ddf0; background: #f5f9ff; }}
+    .status-chip {{
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid #bdd3eb;
+      color: #2a5680;
+      background: #f3f8ff;
+    }}
+    .status-chip.ok {{ border-color: #8ecfb4; color: #0d654f; background: #e8f8f1; }}
+    .status-chip.warning {{ border-color: #e9c786; color: #926016; background: #fff6e6; }}
+    .status-chip.critical {{ border-color: #e09ca0; color: #9a2e36; background: #fff0f1; }}
+    .status-chip.info {{ border-color: #bdd3eb; color: #2a5680; background: #f3f8ff; }}
     .box {{
       border: 1px solid #d8e4f4;
       border-radius: 10px;
@@ -14044,6 +14063,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
             <div id="w07QualityMeta" class="meta">조회 전</div>
             <div id="w07QualitySummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Automation Readiness</h4>
+            <div id="w07AutomationReadiness" class="cards"></div>
             <h4 style="margin:10px 0 6px;">Top Risk Sites</h4>
             <div id="w07QualityTopSites" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">Recommendations</h4>
@@ -14198,6 +14219,61 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
 
       function renderEmpty(text) {{
         return '<div class="empty">' + escapeHtml(text) + "</div>";
+      }}
+
+      function normalizeUiStatus(value) {{
+        const normalized = String(value || "").trim().toLowerCase();
+        if (normalized === "ok" || normalized === "success" || normalized === "ready") {{
+          return "ok";
+        }}
+        if (normalized === "warning" || normalized === "warn") {{
+          return "warning";
+        }}
+        if (normalized === "critical" || normalized === "error" || normalized === "fail") {{
+          return "critical";
+        }}
+        return "info";
+      }}
+
+      function uiStatusLabel(status) {{
+        const tone = normalizeUiStatus(status);
+        if (tone === "ok") return "OK";
+        if (tone === "warning") return "WARNING";
+        if (tone === "critical") return "CRITICAL";
+        return "INFO";
+      }}
+
+      function renderUiStatusChip(status) {{
+        const tone = normalizeUiStatus(status);
+        return '<span class="status-chip ' + tone + '">' + escapeHtml(uiStatusLabel(tone)) + "</span>";
+      }}
+
+      function formatDateLocal(value) {{
+        if (!value) return "-";
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {{
+          return String(value);
+        }}
+        return parsed.toLocaleString("ko-KR", {{
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }});
+      }}
+
+      function renderUiStatusCard(title, status, value, subtext) {{
+        const tone = normalizeUiStatus(status);
+        return (
+          '<div class="card status-' + tone + '">'
+          + '<div class="k">' + escapeHtml(title) + "</div>"
+          + '<div class="v">' + escapeHtml(value) + "</div>"
+          + '<div class="sub">' + renderUiStatusChip(tone) + " " + escapeHtml(subtext || "") + "</div>"
+          + "</div>"
+        );
       }}
 
       function renderTable(rows, columns) {{
@@ -15707,6 +15783,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       async function runW07SlaQuality() {{
         const meta = document.getElementById("w07QualityMeta");
         const summary = document.getElementById("w07QualitySummary");
+        const readinessCards = document.getElementById("w07AutomationReadiness");
         const topSites = document.getElementById("w07QualityTopSites");
         const recommendations = document.getElementById("w07QualityRecommendations");
         const site = (document.getElementById("w07QualitySite").value || "").trim();
@@ -15719,9 +15796,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           params.set("days", daysRaw);
         }}
         const path = "/api/ops/adoption/w07/sla-quality" + (params.toString() ? ("?" + params.toString()) : "");
+        const readinessParams = new URLSearchParams();
+        if (site) {{
+          readinessParams.set("site", site);
+        }}
+        const readinessPath = "/api/ops/adoption/w07/automation-readiness"
+          + (readinessParams.toString() ? ("?" + readinessParams.toString()) : "");
         try {{
           meta.textContent = "조회 중... " + path;
-          const data = await fetchJson(path, true);
+          const [data, readiness] = await Promise.all([
+            fetchJson(path, true),
+            fetchJson(readinessPath, true).catch((err) => ({{ __error: err.message }})),
+          ]);
           const metrics = data.metrics || {{}};
           meta.textContent =
             "성공: site=" + String(data.site || "ALL")
@@ -15750,6 +15836,44 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           summary.innerHTML = summaryItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
+          if (readiness && !readiness.__error) {{
+            const runtime = readiness.runtime || {{}};
+            const integration = readiness.integration || {{}};
+            const overallStatus = normalizeUiStatus(readiness.overall_status || "info");
+            const latestRunStatus = normalizeUiStatus(
+              runtime.latest_run_recent
+                ? "ok"
+                : (runtime.latest_run_at ? "warning" : "critical")
+            );
+            const webhookStatus = normalizeUiStatus(
+              integration.webhook_configured ? "ok" : "warning"
+            );
+            const checkCount = Array.isArray(readiness.checks) ? readiness.checks.length : 0;
+            readinessCards.innerHTML = [
+              renderUiStatusCard(
+                "Overall Status",
+                overallStatus,
+                uiStatusLabel(overallStatus),
+                "자동화 체크 " + String(checkCount) + "개"
+              ),
+              renderUiStatusCard(
+                "최근 실행 시간",
+                latestRunStatus,
+                formatDateLocal(runtime.latest_run_at),
+                runtime.latest_run_recent ? "8일 이내 실행됨" : "8일 초과 또는 실행 이력 없음"
+              ),
+              renderUiStatusCard(
+                "웹훅 구성 상태",
+                webhookStatus,
+                integration.webhook_configured ? "구성됨" : "미구성",
+                "대상 " + String(integration.webhook_target_count || 0) + "개"
+              ),
+            ].join("");
+          }} else {{
+            readinessCards.innerHTML = renderEmpty(
+              "Automation Readiness 조회 실패: " + String(readiness && readiness.__error ? readiness.__error : "unknown")
+            );
+          }}
           topSites.innerHTML = renderTable(
             data.top_risk_sites || [],
             [
@@ -15779,6 +15903,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           summary.innerHTML = "";
+          readinessCards.innerHTML = renderEmpty(err.message);
           topSites.innerHTML = renderEmpty(err.message);
           recommendations.innerHTML = renderEmpty(err.message);
         }}
@@ -16762,10 +16887,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
 
             const w07QualityMeta = document.getElementById("w07QualityMeta");
             const w07QualitySummary = document.getElementById("w07QualitySummary");
+            const w07AutomationReadiness = document.getElementById("w07AutomationReadiness");
             const w07QualityTopSites = document.getElementById("w07QualityTopSites");
             const w07QualityRecommendations = document.getElementById("w07QualityRecommendations");
             w07QualityMeta.textContent = "토큰 저장 후 W07 SLA quality API를 사용할 수 있습니다.";
             w07QualitySummary.innerHTML = "";
+            w07AutomationReadiness.innerHTML = renderEmpty("인증 토큰 필요");
             w07QualityTopSites.innerHTML = renderEmpty("인증 토큰 필요");
             w07QualityRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
           }}
@@ -16809,6 +16936,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w06RhythmRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityMeta").textContent = "실패: " + err.message;
           document.getElementById("w07QualitySummary").innerHTML = "";
+          document.getElementById("w07AutomationReadiness").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityTopSites").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityRecommendations").innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
