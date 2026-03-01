@@ -85,7 +85,8 @@ if ($targetDeploy.status -ne "live") {
   -ChecklistVersion $ChecklistVersion `
   -RunRunbookGate $RunRunbookGate `
   -RecordSmokeRun $true
-if ($LASTEXITCODE -ne 0) {
+$smokeSucceeded = $?
+if (-not $smokeSucceeded) {
   Write-Output "SMOKE_FAILED deploy=$($targetDeploy.id)"
   if ($RollbackOnFailure -and $lastLiveId -ne "") {
     $rollbackTriggered = Try-Rollback -DeployId $lastLiveId
