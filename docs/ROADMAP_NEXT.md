@@ -30,6 +30,10 @@
   - 리메디에이션 항목 동기화(sync) + 담당자/상태/완료체크 추적 API 추가
   - readiness/overview/completion 판정 API 추가
   - 완료 후 재동기화 시 자동 재오픈/자동 해소 로직 반영
+- W22 착수 완료: Governance Remediation SLA Escalation
+  - 리메디에이션 SLA 스냅샷 API(`.../tracker/sla`) 추가
+  - 에스컬레이션 실행/최신조회 API(`.../tracker/escalate/run|latest`) 추가
+  - 시간단위 Cron 잡(`ops_governance_remediation_escalation`) 연동 준비
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -144,6 +148,22 @@
 완료 기준:
 - 항목별 assignee/status/completion_checked 추적 가능
 - readiness 기반 완료 판정(강제 완료 포함) 지원
+- 회귀 테스트 전체 통과
+
+## W22: Governance Remediation SLA Escalation (우선순위 7)
+목표:
+- 리메디에이션 항목의 SLA 위험(기한임박/기한초과)을 상시 감시
+- 경고 상태를 배치/알림으로 자동 확산해 조치 지연을 줄임
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/sla` 스냅샷 API 제공
+2. `POST /api/ops/governance/gate/remediation/tracker/escalate/run` 실행 API 제공
+3. `GET /api/ops/governance/gate/remediation/tracker/escalate/latest` 최신 이력 API 제공
+4. Cron 잡 `python -m app.jobs.ops_governance_remediation_escalation` 추가
+
+완료 기준:
+- dry-run/실행 모드 모두에서 후보/critical 집계가 일관됨
+- 최근 실행 이력(job_run) 조회 가능
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

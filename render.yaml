@@ -75,6 +75,12 @@ services:
         value: "false"
       - key: GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS
         value: "30"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
+        value: "12"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
+        value: "true"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -195,6 +201,44 @@ services:
         value: DATABASE_URL
       - key: PREFLIGHT_FAIL_ON_ERROR
         value: "true"
+  - type: cron
+    name: ka-facility-os-ops-governance-remediation-escalation
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "20 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_governance_remediation_escalation
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
+        value: "12"
+      - key: GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
+        value: "true"
+      - key: ALERT_WEBHOOK_URL
+        sync: false
+      - key: ALERT_WEBHOOK_URLS
+        sync: false
+      - key: ALERT_WEBHOOK_TIMEOUT_SEC
+        value: "5"
+      - key: ALERT_WEBHOOK_RETRIES
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_ENABLED
+        value: "true"
+      - key: ALERT_CHANNEL_GUARD_FAIL_THRESHOLD
+        value: "3"
+      - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
+        value: "30"
+      - key: ALERT_GUARD_RECOVER_MAX_TARGETS
+        value: "30"
   - type: cron
     name: ka-facility-os-ops-quality-weekly
     runtime: python

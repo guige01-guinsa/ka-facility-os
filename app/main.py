@@ -883,6 +883,18 @@ OPS_QUALITY_MONTHLY_JOB_NAME = "ops_quality_report_monthly"
 DR_REHEARSAL_JOB_NAME = "dr_rehearsal"
 OPS_GOVERNANCE_GATE_JOB_NAME = "ops_governance_gate"
 OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS = 30
+OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME = "ops_governance_remediation_escalation"
+OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE = "ops_governance_remediation_escalation"
+GOVERNANCE_REMEDIATION_ESCALATION_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_ESCALATION_ENABLED", True)
+GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS = _env_int(
+    "GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS",
+    12,
+    min_value=0,
+)
+GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED = _env_bool(
+    "GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED",
+    True,
+)
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 6, 12)
@@ -6716,6 +6728,230 @@ def _sync_w21_remediation_tracker(
         active_count=len(active_models),
         items=active_models,
     )
+
+
+def _build_w22_remediation_sla_snapshot(
+    *,
+    due_soon_hours: int = 24,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    checked_at = now or datetime.now(timezone.utc)
+    normalized_due_soon_hours = max(0, min(int(due_soon_hours), 168))
+    due_soon_cutoff = checked_at + timedelta(hours=normalized_due_soon_hours)
+    rows = _load_w21_remediation_items(include_inactive=False)
+
+    pending_count = sum(1 for row in rows if row.status == W21_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W21_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W21_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W21_TRACKER_STATUS_BLOCKED)
+    open_rows = [row for row in rows if row.status != W21_TRACKER_STATUS_DONE]
+
+    overdue_rows = [row for row in open_rows if row.due_at < checked_at]
+    if normalized_due_soon_hours > 0:
+        due_soon_rows = [row for row in open_rows if checked_at <= row.due_at <= due_soon_cutoff]
+    else:
+        due_soon_rows = []
+    critical_open_rows = [row for row in open_rows if row.rule_status == "fail" and bool(row.required)]
+    unassigned_open_rows = [row for row in open_rows if not (row.assignee or "").strip()]
+
+    assignee_open_counts: dict[str, int] = {}
+    for row in open_rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_open_counts[assignee] = assignee_open_counts.get(assignee, 0) + 1
+
+    top_risk_rows = sorted(
+        open_rows,
+        key=lambda row: (int(row.priority), row.due_at, int(row.id)),
+    )[:10]
+    top_risk_items = [
+        {
+            "id": int(row.id),
+            "item_id": row.item_id,
+            "rule_id": row.rule_id,
+            "rule_status": row.rule_status,
+            "required": bool(row.required),
+            "priority": int(row.priority),
+            "assignee": row.assignee,
+            "status": row.status,
+            "due_at": row.due_at.isoformat(),
+            "minutes_until_due": int(round((row.due_at - checked_at).total_seconds() / 60.0)),
+        }
+        for row in top_risk_rows
+    ]
+
+    completion_rate_percent = int(round((done_count / len(rows)) * 100)) if rows else 100
+    return {
+        "generated_at": checked_at.isoformat(),
+        "due_soon_hours": normalized_due_soon_hours,
+        "metrics": {
+            "total_items": len(rows),
+            "open_items": len(open_rows),
+            "pending_count": pending_count,
+            "in_progress_count": in_progress_count,
+            "done_count": done_count,
+            "blocked_count": blocked_count,
+            "completion_rate_percent": completion_rate_percent,
+            "overdue_count": len(overdue_rows),
+            "due_soon_count": len(due_soon_rows),
+            "critical_open_count": len(critical_open_rows),
+            "unassigned_open_count": len(unassigned_open_rows),
+        },
+        "assignee_open_counts": assignee_open_counts,
+        "top_risk_items": top_risk_items,
+    }
+
+
+def run_ops_governance_remediation_escalation_job(
+    *,
+    trigger: str = "manual",
+    dry_run: bool = False,
+    include_due_soon_hours: int | None = None,
+    notify_enabled: bool | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    normalized_due_soon_hours = (
+        GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
+        if include_due_soon_hours is None
+        else max(0, min(int(include_due_soon_hours), 168))
+    )
+    effective_notify_enabled = (
+        GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
+        if notify_enabled is None
+        else bool(notify_enabled)
+    )
+    snapshot = _build_w22_remediation_sla_snapshot(
+        due_soon_hours=normalized_due_soon_hours,
+        now=started_at,
+    )
+
+    rows = _load_w21_remediation_items(include_inactive=False)
+    cutoff = started_at + timedelta(hours=normalized_due_soon_hours)
+    if normalized_due_soon_hours > 0:
+        candidate_rows = [row for row in rows if row.status != W21_TRACKER_STATUS_DONE and row.due_at <= cutoff]
+    else:
+        candidate_rows = [row for row in rows if row.status != W21_TRACKER_STATUS_DONE and row.due_at < started_at]
+
+    candidate_rows.sort(key=lambda row: (int(row.priority), row.due_at, int(row.id)))
+    candidate_count = len(candidate_rows)
+    critical_count = sum(
+        1 for row in candidate_rows if row.rule_status == "fail" and bool(row.required)
+    )
+
+    notify_attempted = False
+    notify_dispatched = False
+    notify_error: str | None = None
+    notify_channels: list[SlaAlertChannelResult] = []
+
+    if (
+        GOVERNANCE_REMEDIATION_ESCALATION_ENABLED
+        and (not dry_run)
+        and effective_notify_enabled
+        and candidate_count > 0
+    ):
+        notify_attempted = True
+        payload = {
+            "event": OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
+            "job_name": OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+            "checked_at": started_at.isoformat(),
+            "dry_run": bool(dry_run),
+            "due_soon_hours": normalized_due_soon_hours,
+            "candidate_count": candidate_count,
+            "critical_count": critical_count,
+            "items": [
+                {
+                    "id": int(row.id),
+                    "item_id": row.item_id,
+                    "rule_id": row.rule_id,
+                    "priority": int(row.priority),
+                    "due_at": row.due_at.isoformat(),
+                    "assignee": row.assignee,
+                    "status": row.status,
+                }
+                for row in candidate_rows[:20]
+            ],
+        }
+        notify_dispatched, notify_error, notify_channels = _dispatch_alert_event(
+            event_type=OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
+            payload=payload,
+        )
+
+    if not GOVERNANCE_REMEDIATION_ESCALATION_ENABLED:
+        status = "warning"
+    elif candidate_count == 0:
+        status = "success"
+    elif critical_count > 0:
+        status = "critical"
+    else:
+        status = "warning"
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "enabled": GOVERNANCE_REMEDIATION_ESCALATION_ENABLED,
+        "due_soon_hours": normalized_due_soon_hours,
+        "notify_enabled": effective_notify_enabled,
+        "dry_run": bool(dry_run),
+        "snapshot": snapshot,
+        "candidate_count": candidate_count,
+        "critical_count": critical_count,
+        "notify_attempted": notify_attempted,
+        "notify_dispatched": notify_dispatched,
+        "notify_error": notify_error,
+        "notify_channels": [item.model_dump() for item in notify_channels],
+        "items": [
+            {
+                "id": int(row.id),
+                "item_id": row.item_id,
+                "rule_id": row.rule_id,
+                "rule_status": row.rule_status,
+                "required": bool(row.required),
+                "priority": int(row.priority),
+                "assignee": row.assignee,
+                "status": row.status,
+                "due_at": row.due_at.isoformat(),
+            }
+            for row in candidate_rows[:50]
+        ],
+    }
+    run_id = _write_job_run(
+        job_name=OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _latest_ops_governance_remediation_escalation_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
 
 
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
@@ -22668,6 +22904,9 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_readiness_api": "/api/ops/governance/gate/remediation/tracker/readiness",
         "ops_governance_remediation_tracker_completion_api": "/api/ops/governance/gate/remediation/tracker/completion",
         "ops_governance_remediation_tracker_complete_api": "/api/ops/governance/gate/remediation/tracker/complete",
+        "ops_governance_remediation_tracker_sla_api": "/api/ops/governance/gate/remediation/tracker/sla",
+        "ops_governance_remediation_tracker_escalate_run_api": "/api/ops/governance/gate/remediation/tracker/escalate/run",
+        "ops_governance_remediation_tracker_escalate_latest_api": "/api/ops/governance/gate/remediation/tracker/escalate/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -44211,6 +44450,84 @@ def complete_ops_governance_gate_remediation_tracker(
         },
     )
     return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/sla")
+def get_ops_governance_gate_remediation_tracker_sla(
+    due_soon_hours: Annotated[int, Query(ge=0, le=168)] = 24,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_w22_remediation_sla_snapshot(due_soon_hours=due_soon_hours)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_sla_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        status="success",
+        detail={
+            "due_soon_hours": int(snapshot.get("due_soon_hours") or due_soon_hours),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return snapshot
+
+
+@ops_router.post("/governance/gate/remediation/tracker/escalate/run")
+def run_ops_governance_gate_remediation_tracker_escalation(
+    dry_run: Annotated[bool, Query()] = False,
+    include_due_soon_hours: Annotated[int, Query(ge=0, le=168)] = GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS,
+    notify: Annotated[bool | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_governance_remediation_escalation_job(
+        trigger="api",
+        dry_run=dry_run,
+        include_due_soon_hours=include_due_soon_hours,
+        notify_enabled=notify,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_escalation_run",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "warning"),
+        detail={
+            "dry_run": bool(result.get("dry_run", dry_run)),
+            "due_soon_hours": int(result.get("due_soon_hours") or include_due_soon_hours),
+            "candidate_count": int(result.get("candidate_count") or 0),
+            "critical_count": int(result.get("critical_count") or 0),
+            "notify_attempted": bool(result.get("notify_attempted", False)),
+            "notify_dispatched": bool(result.get("notify_dispatched", False)),
+            "notify_error": result.get("notify_error"),
+        },
+    )
+    return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/escalate/latest")
+def get_ops_governance_gate_remediation_tracker_escalation_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_ops_governance_remediation_escalation_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No ops_governance_remediation_escalation run found")
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_escalation_latest_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        status=str(payload.get("status") or "warning"),
+        detail={
+            "candidate_count": int(payload.get("candidate_count") or 0),
+            "critical_count": int(payload.get("critical_count") or 0),
+            "notify_attempted": bool(payload.get("notify_attempted", False)),
+            "notify_dispatched": bool(payload.get("notify_dispatched", False)),
+        },
+    )
+    return payload
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

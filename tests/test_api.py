@@ -542,6 +542,18 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_remediation_tracker_complete_api"]
         == "/api/ops/governance/gate/remediation/tracker/complete"
     )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_sla_api"]
+        == "/api/ops/governance/gate/remediation/tracker/sla"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_escalate_run_api"]
+        == "/api/ops/governance/gate/remediation/tracker/escalate/run"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_escalate_latest_api"]
+        == "/api/ops/governance/gate/remediation/tracker/escalate/latest"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -5084,6 +5096,49 @@ def test_ops_governance_gate_remediation_tracker_flow(app_client: TestClient) ->
     completion_body = completion.json()
     assert completion_body["status"] in {"active", "completed", "completed_with_exceptions"}
     assert "readiness" in completion_body
+
+
+def test_ops_governance_remediation_tracker_sla_escalation_endpoints(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+
+    sla = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/sla?due_soon_hours=24",
+        headers=_owner_headers(),
+    )
+    assert sla.status_code == 200
+    sla_body = sla.json()
+    assert int(sla_body["due_soon_hours"]) == 24
+    assert int(sla_body["metrics"]["total_items"]) >= 0
+    assert int(sla_body["metrics"]["open_items"]) >= 0
+    assert int(sla_body["metrics"]["overdue_count"]) >= 0
+    assert isinstance(sla_body["top_risk_items"], list)
+
+    run = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/escalate/run?dry_run=true&include_due_soon_hours=72",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["job_name"] == "ops_governance_remediation_escalation"
+    assert run_body["dry_run"] is True
+    assert int(run_body["due_soon_hours"]) == 72
+    assert int(run_body["candidate_count"]) >= 0
+
+    latest = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/escalate/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_governance_remediation_escalation"
+    assert latest_body["run_id"] == run_body["run_id"]
+    assert int(latest_body["candidate_count"]) >= 0
+
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:
     import app.database as db_module
