@@ -13453,6 +13453,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       background: #e9f8f2;
     }}
     .btn.run:hover {{ background: #e0f5ed; }}
+    .btn.soft {{
+      border-color: #c3d6ea;
+      color: #2f567c;
+      background: #f7fbff;
+    }}
+    .btn.soft:hover {{ background: #eef6ff; }}
     .auth-state {{
       margin-bottom: 12px;
       border: 1px solid #c7d8ee;
@@ -13511,6 +13517,84 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     .status-chip.warning {{ border-color: #e9c786; color: #926016; background: #fff6e6; }}
     .status-chip.critical {{ border-color: #e09ca0; color: #9a2e36; background: #fff0f1; }}
     .status-chip.info {{ border-color: #bdd3eb; color: #2a5680; background: #f3f8ff; }}
+    .w07-readiness-card {{
+      cursor: pointer;
+      transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+    }}
+    .w07-readiness-card:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 8px 16px rgba(28, 62, 102, 0.09);
+    }}
+    .w07-readiness-card.active {{
+      border-color: #5f9dd8;
+      box-shadow: 0 0 0 2px rgba(95, 157, 216, 0.2);
+    }}
+    .w07-track-row {{
+      cursor: pointer;
+    }}
+    .w07-track-row.active {{
+      background: #eaf5ff;
+    }}
+    .w07-track-row td:first-child {{
+      width: 36px;
+    }}
+    .w07-filter-hint {{
+      margin-bottom: 8px;
+      border: 1px solid #c7d8ee;
+      border-radius: 8px;
+      background: #f2f8ff;
+      color: #264b70;
+      font-size: 12px;
+      padding: 6px 8px;
+    }}
+    .dropzone {{
+      border: 1px dashed #8ab5de;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 12px;
+      color: #35587f;
+      background: #f7fbff;
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+    }}
+    .dropzone.dragover {{
+      border-color: #0f6a57;
+      background: #e8f7f1;
+      color: #0f6a57;
+    }}
+    .modal {{
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 9999;
+      background: rgba(9, 21, 37, 0.45);
+    }}
+    .modal.open {{
+      display: flex;
+    }}
+    .modal-card {{
+      width: min(640px, 100%);
+      border: 1px solid #c5d8ed;
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 20px 36px rgba(10, 33, 59, 0.24);
+      padding: 14px;
+    }}
+    .modal-card h4 {{
+      margin: 0 0 8px;
+      font-size: 16px;
+      color: #0c614f;
+    }}
+    .modal-actions {{
+      margin-top: 10px;
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }}
     .box {{
       border: 1px solid #d8e4f4;
       border-radius: 10px;
@@ -14074,7 +14158,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w07TrackItemId" placeholder="tracker_item_id" />
+              <input id="w07TrackItemId" placeholder="tracker_item_id (표에서 자동 선택)" readonly />
               <input id="w07TrackAssignee" placeholder="assignee" />
               <select id="w07TrackStatus">
                 <option value="">status(선택)</option>
@@ -14086,6 +14170,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <button id="w07TrackBootstrapBtn" class="btn run" type="button">W07 항목 생성</button>
             </div>
             <div class="filter-row">
+              <button id="w07TrackNextBtn" class="btn soft" type="button">다음 미완료</button>
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="w07TrackCompleted" type="checkbox" />
                 완료 체크
@@ -14096,14 +14181,38 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <button id="w07TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
-              <input id="w07EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w07EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id (자동 입력)" />
+              <div id="w07EvidenceDropzone" class="dropzone" title="클릭 또는 파일 드래그">파일 드래그/클릭 업로드 준비</div>
               <input id="w07Reserved1" value="token required for write actions" disabled />
               <input id="w07Reserved2" value="site scope enforced" disabled />
               <input id="w07Reserved3" value="max file 5MB" disabled />
               <button id="w07TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
-              <input id="w07CompletionNote" placeholder="completion note (optional)" />
+              <button id="w07SelectVisibleBtn" class="btn soft" type="button">현재 목록 전체 선택</button>
+              <button id="w07ClearSelectionBtn" class="btn soft" type="button">선택 해제</button>
+              <input id="w07BulkAssignee" placeholder="일괄 assignee (optional)" />
+              <select id="w07BulkStatus">
+                <option value="">일괄 status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w07BulkApplyBtn" class="btn run" type="button">선택 항목 일괄 저장</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07BulkChecked" type="checkbox" checked />
+                일괄 완료 체크 적용
+              </label>
+              <input id="w07BulkReserved1" value="multi-select enabled" disabled />
+              <input id="w07BulkReserved2" value="row click fills form" disabled />
+              <input id="w07BulkReserved3" value="blocker card filter supported" disabled />
+              <input id="w07BulkReserved4" value="force complete needs note" disabled />
+            </div>
+            <div class="filter-row">
+              <input id="w07CompletionNote" placeholder="completion note (force 시 필수)" />
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="w07CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
@@ -14113,6 +14222,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <button id="w07CompleteBtn" class="btn" type="button">W07 완료 확정</button>
             </div>
             <div id="w07TrackerMeta" class="meta">조회 전</div>
+            <div id="w07SelectionMeta" class="w07-filter-hint">필터: ALL | 표시: 0/0 | 선택: 0</div>
             <div id="w07TrackerSummary" class="cards"></div>
             <div id="w07TrackerTable" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">W07 완료 판정 결과</h4>
@@ -14121,6 +14231,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w07ReadinessBlockers" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
             <div id="w07EvidenceTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">작업 결과 로그</h4>
+            <div id="w07ActionResults" class="empty">최근 작업 결과 없음</div>
+          </div>
+          <div id="w07CompleteModal" class="modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="w07CompleteModalTitle">
+            <div class="modal-card">
+              <h4 id="w07CompleteModalTitle">W07 완료 확정 전 체크</h4>
+              <div id="w07CompleteModalSummary" class="mono">준비 중...</div>
+              <div class="modal-actions">
+                <button id="w07CompleteModalCancel" class="btn soft" type="button">취소</button>
+                <button id="w07CompleteModalConfirm" class="btn run" type="button">확정 실행</button>
+              </div>
+            </div>
           </div>
           <div class="box">
             <h3>W07 주간 자동화/트렌드</h3>
@@ -14184,6 +14306,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       const authState = document.getElementById("authState");
       const tokenInput = document.getElementById("adminTokenInput");
       let authProfile = null;
+      let w07TrackerItemsCache = [];
+      let w07TrackerFilter = "all";
+      let w07SelectedItemIds = new Set();
+      let w07ActiveItemId = null;
+      let w07LastReadiness = null;
+      let w07LastCompletion = null;
+      let w07ActionResults = [];
+      let w07CompleteModalResolver = null;
 
       function getToken() {{
         return window.localStorage.getItem(TOKEN_KEY) || "";
@@ -14276,6 +14406,339 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         );
       }}
 
+      function asInt(value, fallback = 0) {{
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) return fallback;
+        return Math.trunc(parsed);
+      }}
+
+      function isW07EvidenceRequired(row) {{
+        const itemType = String((row && row.item_type) || "").trim().toLowerCase();
+        return itemType === "sla_checklist" || itemType === "coaching_play";
+      }}
+
+      function isW07MissingAssignee(row) {{
+        return !String((row && row.assignee) || "").trim();
+      }}
+
+      function isW07MissingChecked(row) {{
+        return !Boolean(row && row.completion_checked);
+      }}
+
+      function isW07MissingEvidence(row) {{
+        return isW07EvidenceRequired(row) && asInt(row && row.evidence_count, 0) <= 0;
+      }}
+
+      function isW07IncompleteRow(row) {{
+        const status = String((row && row.status) || "").trim().toLowerCase();
+        return (
+          status !== "done"
+          || isW07MissingAssignee(row)
+          || isW07MissingChecked(row)
+          || isW07MissingEvidence(row)
+        );
+      }}
+
+      function getW07FilterLabel(filterKey) {{
+        const labels = {{
+          all: "ALL",
+          pending: "PENDING",
+          in_progress: "IN PROGRESS",
+          blocked: "BLOCKED",
+          not_done: "NOT DONE",
+          missing_assignee: "MISSING ASSIGNEE",
+          missing_checked: "MISSING CHECKED",
+          missing_evidence: "MISSING EVIDENCE",
+        }};
+        return labels[String(filterKey || "all")] || "ALL";
+      }}
+
+      function getW07FilteredItems(rows) {{
+        const source = Array.isArray(rows) ? rows : w07TrackerItemsCache;
+        const key = String(w07TrackerFilter || "all");
+        return source.filter((row) => {{
+          if (key === "pending") return String(row.status || "") === "pending";
+          if (key === "in_progress") return String(row.status || "") === "in_progress";
+          if (key === "blocked") return String(row.status || "") === "blocked";
+          if (key === "not_done") return String(row.status || "") !== "done";
+          if (key === "missing_assignee") return isW07MissingAssignee(row);
+          if (key === "missing_checked") return isW07MissingChecked(row);
+          if (key === "missing_evidence") return isW07MissingEvidence(row);
+          return true;
+        }});
+      }}
+
+      function getW07ItemById(itemId) {{
+        const targetId = asInt(itemId, -1);
+        if (targetId <= 0) return null;
+        const found = w07TrackerItemsCache.find((row) => asInt(row.id, -1) === targetId);
+        return found || null;
+      }}
+
+      function fillW07FormFromItem(item, options = {{}}) {{
+        if (!item) return;
+        const keepCurrentNote = Boolean(options.keepCurrentNote);
+        const trackerItemId = asInt(item.id, 0);
+        if (trackerItemId <= 0) return;
+        w07ActiveItemId = trackerItemId;
+        document.getElementById("w07TrackItemId").value = String(trackerItemId);
+        document.getElementById("w07TrackAssignee").value = String(item.assignee || "");
+        document.getElementById("w07TrackStatus").value = String(item.status || "");
+        document.getElementById("w07TrackCompleted").checked = Boolean(item.completion_checked);
+        document.getElementById("w07EvidenceListItemId").value = String(trackerItemId);
+        if (!keepCurrentNote) {{
+          document.getElementById("w07TrackNote").value = String(item.completion_note || "");
+        }}
+      }}
+
+      function renderW07SelectionMeta() {{
+        const meta = document.getElementById("w07SelectionMeta");
+        if (!meta) return;
+        const filteredCount = getW07FilteredItems().length;
+        const totalCount = Array.isArray(w07TrackerItemsCache) ? w07TrackerItemsCache.length : 0;
+        meta.textContent =
+          "필터: " + getW07FilterLabel(w07TrackerFilter)
+          + " | 표시: " + String(filteredCount) + "/" + String(totalCount)
+          + " | 선택: " + String(w07SelectedItemIds.size);
+      }}
+
+      function pushW07ActionResult(entry) {{
+        const base = {{
+          at: new Date().toISOString(),
+          action: "action",
+          tracker_item_id: "-",
+          result: "ok",
+          detail: "",
+        }};
+        const row = Object.assign(base, entry || {{}});
+        w07ActionResults = [row].concat(w07ActionResults).slice(0, 80);
+      }}
+
+      function renderW07ActionResultsPanel() {{
+        const panel = document.getElementById("w07ActionResults");
+        if (!panel) return;
+        if (!Array.isArray(w07ActionResults) || w07ActionResults.length === 0) {{
+          panel.innerHTML = renderEmpty("최근 작업 결과 없음");
+          return;
+        }}
+        const rows = w07ActionResults.map((row, idx) => ({{
+          no: idx + 1,
+          at: formatDateLocal(row.at),
+          action: row.action || "-",
+          tracker_item_id: row.tracker_item_id || "-",
+          result: String(row.result || "-").toUpperCase(),
+          detail: row.detail || "",
+        }}));
+        panel.innerHTML = renderTable(
+          rows,
+          [
+            {{ key: "no", label: "#" }},
+            {{ key: "at", label: "At" }},
+            {{ key: "action", label: "Action" }},
+            {{ key: "tracker_item_id", label: "Tracker ID" }},
+            {{ key: "result", label: "Result" }},
+            {{ key: "detail", label: "Detail" }},
+          ]
+        );
+      }}
+
+      function renderW07ReadinessCards(readiness, completion) {{
+        const cards = [
+          {{
+            label: "Readiness Ready",
+            value: readiness && readiness.ready ? "YES" : "NO",
+            status: readiness && readiness.ready ? "ok" : "warning",
+            sub: "클릭하면 전체 보기",
+            filter: "all",
+          }},
+          {{
+            label: "Readiness %",
+            value: String((readiness && readiness.readiness_score_percent) ?? 0),
+            status: (readiness && readiness.ready) ? "ok" : "info",
+            sub: "완료 점수",
+            filter: "all",
+          }},
+          {{
+            label: "Missing Assignee",
+            value: String((readiness && readiness.missing_assignee_count) ?? 0),
+            status: ((readiness && readiness.missing_assignee_count) ?? 0) > 0 ? "warning" : "ok",
+            sub: "클릭하면 미지정 항목만",
+            filter: "missing_assignee",
+          }},
+          {{
+            label: "Missing Checked",
+            value: String((readiness && readiness.missing_completion_checked_count) ?? 0),
+            status: ((readiness && readiness.missing_completion_checked_count) ?? 0) > 0 ? "warning" : "ok",
+            sub: "클릭하면 체크 누락만",
+            filter: "missing_checked",
+          }},
+          {{
+            label: "Missing Evidence",
+            value: String((readiness && readiness.missing_required_evidence_count) ?? 0),
+            status: ((readiness && readiness.missing_required_evidence_count) ?? 0) > 0 ? "critical" : "ok",
+            sub: "클릭하면 증빙 누락만",
+            filter: "missing_evidence",
+          }},
+          {{
+            label: "Pending",
+            value: String((readiness && readiness.pending_count) ?? 0),
+            status: ((readiness && readiness.pending_count) ?? 0) > 0 ? "warning" : "ok",
+            sub: "클릭하면 pending만",
+            filter: "pending",
+          }},
+          {{
+            label: "In Progress",
+            value: String((readiness && readiness.in_progress_count) ?? 0),
+            status: ((readiness && readiness.in_progress_count) ?? 0) > 0 ? "warning" : "ok",
+            sub: "클릭하면 in_progress만",
+            filter: "in_progress",
+          }},
+          {{
+            label: "Blocked",
+            value: String((readiness && readiness.blocked_count) ?? 0),
+            status: ((readiness && readiness.blocked_count) ?? 0) > 0 ? "critical" : "ok",
+            sub: "클릭하면 blocked만",
+            filter: "blocked",
+          }},
+          {{
+            label: "Completion Status",
+            value: String((completion && completion.status) || "active"),
+            status: ((completion && completion.status) || "active").startsWith("completed") ? "ok" : "info",
+            sub: "completed_at=" + String((completion && completion.completed_at) || "-"),
+            filter: "all",
+          }},
+        ];
+        return cards.map((card) => {{
+          const tone = normalizeUiStatus(card.status);
+          const active = String(card.filter || "all") === String(w07TrackerFilter || "all");
+          return (
+            '<div class="card w07-readiness-card status-' + tone + (active ? " active" : "") + '" data-filter="' + escapeHtml(card.filter || "all") + '" tabindex="0" role="button">'
+            + '<div class="k">' + escapeHtml(card.label) + "</div>"
+            + '<div class="v">' + escapeHtml(card.value) + "</div>"
+            + '<div class="sub">' + renderUiStatusChip(tone) + " " + escapeHtml(card.sub || "") + "</div>"
+            + "</div>"
+          );
+        }}).join("");
+      }}
+
+      function renderW07TrackerTableMarkup(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("데이터가 없습니다.");
+        }}
+        const head =
+          "<th></th><th>ID</th><th>Type</th><th>Key</th><th>Name</th><th>Assignee</th><th>Status</th><th>Checked</th><th>Evidence</th><th>Updated At</th>";
+        const body = rows.map((row) => {{
+          const trackerId = asInt(row.id, 0);
+          const selected = w07SelectedItemIds.has(trackerId);
+          const requiredEvidence = isW07EvidenceRequired(row);
+          const evidenceCount = asInt(row.evidence_count, 0);
+          const evidenceChip = requiredEvidence
+            ? (evidenceCount > 0 ? renderUiStatusChip("ok") : renderUiStatusChip("critical"))
+            : renderUiStatusChip("info");
+          const statusValue = String(row.status || "");
+          const statusTone = statusValue === "done"
+            ? "ok"
+            : (statusValue === "blocked" ? "critical" : (statusValue === "in_progress" ? "warning" : "info"));
+          const checkedTone = Boolean(row.completion_checked) ? "ok" : "warning";
+          const rowClass = "w07-track-row" + (trackerId === w07ActiveItemId ? " active" : "");
+          const typeLabel = String(row.item_type || "");
+          const requiredBadge = requiredEvidence
+            ? (' <span class="status-chip ' + (evidenceCount > 0 ? "ok" : "critical") + '">' + (evidenceCount > 0 ? "REQ OK" : "REQ MISS") + "</span>")
+            : "";
+          return (
+            '<tr class="' + rowClass + '" data-item-id="' + escapeHtml(trackerId) + '">'
+              + '<td><input class="w07-select-item" type="checkbox" data-item-id="' + escapeHtml(trackerId) + '"' + (selected ? " checked" : "") + " /></td>"
+              + '<td><button type="button" class="btn soft w07-pick-item" data-item-id="' + escapeHtml(trackerId) + '">' + escapeHtml(trackerId) + "</button></td>"
+              + "<td>" + escapeHtml(typeLabel) + requiredBadge + "</td>"
+              + "<td>" + escapeHtml(row.item_key ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.item_name ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.assignee ?? "") + "</td>"
+              + "<td>" + renderUiStatusChip(statusTone) + " " + escapeHtml(statusValue) + "</td>"
+              + "<td>" + renderUiStatusChip(checkedTone) + " " + escapeHtml(Boolean(row.completion_checked)) + "</td>"
+              + "<td>" + evidenceChip + " " + escapeHtml(evidenceCount) + "</td>"
+              + "<td>" + escapeHtml(row.updated_at ?? "") + "</td>"
+            + "</tr>"
+          );
+        }}).join("");
+        return '<div class="table-wrap"><table><thead><tr>' + head + "</tr></thead><tbody>" + body + "</tbody></table></div>";
+      }}
+
+      function renderW07TrackerTablePanel() {{
+        const table = document.getElementById("w07TrackerTable");
+        const validIds = new Set((Array.isArray(w07TrackerItemsCache) ? w07TrackerItemsCache : []).map((row) => asInt(row.id, -1)));
+        w07SelectedItemIds = new Set(Array.from(w07SelectedItemIds).filter((itemId) => validIds.has(asInt(itemId, -1))));
+        if (w07ActiveItemId !== null && !validIds.has(asInt(w07ActiveItemId, -1))) {{
+          w07ActiveItemId = null;
+        }}
+        const rows = getW07FilteredItems();
+        table.innerHTML = renderW07TrackerTableMarkup(rows);
+        renderW07SelectionMeta();
+      }}
+
+      function setW07TrackerFilter(filterKey, options = {{}}) {{
+        const requested = String(filterKey || "all");
+        const allowed = new Set(["all", "pending", "in_progress", "blocked", "not_done", "missing_assignee", "missing_checked", "missing_evidence"]);
+        w07TrackerFilter = allowed.has(requested) ? requested : "all";
+        renderW07TrackerTablePanel();
+        if (w07LastReadiness && w07LastCompletion) {{
+          const readinessCards = document.getElementById("w07ReadinessCards");
+          readinessCards.innerHTML = renderW07ReadinessCards(w07LastReadiness, w07LastCompletion);
+        }}
+        const autoPick = Boolean(options.autoPick);
+        if (autoPick) {{
+          const rows = getW07FilteredItems();
+          if (rows.length > 0) {{
+            fillW07FormFromItem(rows[0], {{ keepCurrentNote: true }});
+            renderW07TrackerTablePanel();
+          }}
+        }}
+      }}
+
+      function pickW07NextIncompleteItem() {{
+        const source = getW07FilteredItems();
+        const target = source.find((row) => isW07IncompleteRow(row));
+        if (!target) return null;
+        fillW07FormFromItem(target, {{ keepCurrentNote: true }});
+        renderW07TrackerTablePanel();
+        return target;
+      }}
+
+      function openW07CompleteModal(summaryText) {{
+        const modal = document.getElementById("w07CompleteModal");
+        const summary = document.getElementById("w07CompleteModalSummary");
+        summary.textContent = summaryText;
+        modal.classList.add("open");
+        modal.setAttribute("aria-hidden", "false");
+        return new Promise((resolve) => {{
+          w07CompleteModalResolver = resolve;
+        }});
+      }}
+
+      function closeW07CompleteModal(confirmed) {{
+        const modal = document.getElementById("w07CompleteModal");
+        modal.classList.remove("open");
+        modal.setAttribute("aria-hidden", "true");
+        const resolver = w07CompleteModalResolver;
+        w07CompleteModalResolver = null;
+        if (resolver) {{
+          resolver(Boolean(confirmed));
+        }}
+      }}
+
+      function assignW07EvidenceFile(file) {{
+        const input = document.getElementById("w07EvidenceFile");
+        if (!file) return;
+        try {{
+          const transfer = new DataTransfer();
+          transfer.items.add(file);
+          input.files = transfer.files;
+        }} catch (err) {{
+          // Some browsers restrict programmatic assignment; fallback to manual selection.
+        }}
+        document.getElementById("w07TrackerMeta").textContent =
+          "증빙 파일 선택: " + String(file.name || "unknown") + " (" + String(asInt(file.size, 0)) + " bytes)";
+      }}
+
       function renderTable(rows, columns) {{
         if (!Array.isArray(rows) || rows.length === 0) {{
           return renderEmpty("데이터가 없습니다.");
@@ -14296,7 +14759,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (!Array.isArray(rows) || rows.length === 0) {{
           return renderEmpty("증빙 파일이 없습니다.");
         }}
-        const phase = trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02");
+        const phase = trackerPhase === "w07"
+          ? "w07"
+          : (trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02"));
         const body = rows.map((row) => {{
           const downloadHref = "/api/adoption/" + phase + "/tracker/evidence/" + encodeURIComponent(String(row.id || "")) + "/download";
           return (
@@ -15919,6 +16384,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const evidenceTable = document.getElementById("w07EvidenceTable");
         const site = (document.getElementById("w07TrackSite").value || "").trim();
         if (!site) {{
+          w07TrackerItemsCache = [];
+          w07SelectedItemIds = new Set();
+          w07ActiveItemId = null;
+          w07LastReadiness = null;
+          w07LastCompletion = null;
           meta.textContent = "site 값을 입력하세요.";
           summary.innerHTML = "";
           table.innerHTML = renderEmpty("site 입력이 필요합니다.");
@@ -15926,6 +16396,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           readinessCards.innerHTML = "";
           readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
           evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          renderW07SelectionMeta();
+          renderW07ActionResultsPanel();
           return;
         }}
         try {{
@@ -15937,11 +16409,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             fetchJson("/api/adoption/w07/tracker/readiness?site=" + encodeURIComponent(site), true),
             fetchJson("/api/adoption/w07/tracker/completion?site=" + encodeURIComponent(site), true),
           ]);
+          w07TrackerItemsCache = Array.isArray(trackerItems) ? trackerItems : [];
+          w07LastReadiness = readiness;
+          w07LastCompletion = completion;
           meta.textContent = "성공: W07 tracker (" + site + ")";
           readinessMeta.textContent =
             "상태: " + String(completion.status || "active")
             + " | ready=" + (readiness.ready ? "YES" : "NO")
-            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+            + " | 마지막 판정=" + String(readiness.checked_at || "-")
+            + " | filter=" + getW07FilterLabel(w07TrackerFilter);
           const summaryItems = [
             ["Total", trackerOverview.total_items || 0],
             ["Pending", trackerOverview.pending_count || 0],
@@ -15954,19 +16430,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           summary.innerHTML = summaryItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
-          const readinessItems = [
-            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
-            ["Readiness %", readiness.readiness_score_percent || 0],
-            ["Missing Assignee", readiness.missing_assignee_count || 0],
-            ["Missing Checked", readiness.missing_completion_checked_count || 0],
-            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
-            ["Completion Status", completion.status || "active"],
-            ["Completed At", completion.completed_at || "-"],
-            ["Completed By", completion.completed_by || "-"],
-          ];
-          readinessCards.innerHTML = readinessItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
+          readinessCards.innerHTML = renderW07ReadinessCards(readiness, completion);
           const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
           if (blockers.length > 0) {{
             readinessBlockers.innerHTML = (
@@ -15979,20 +16443,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           }} else {{
             readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
           }}
-          table.innerHTML = renderTable(
-            trackerItems || [],
-            [
-              {{ key: "id", label: "ID" }},
-              {{ key: "item_type", label: "Type" }},
-              {{ key: "item_key", label: "Key" }},
-              {{ key: "item_name", label: "Name" }},
-              {{ key: "assignee", label: "Assignee" }},
-              {{ key: "status", label: "Status" }},
-              {{ key: "completion_checked", label: "Checked" }},
-              {{ key: "evidence_count", label: "Evidence" }},
-              {{ key: "updated_at", label: "Updated At" }},
-            ]
-          );
+          if (w07ActiveItemId === null) {{
+            const firstIncomplete = w07TrackerItemsCache.find((row) => isW07IncompleteRow(row));
+            if (firstIncomplete) {{
+              fillW07FormFromItem(firstIncomplete, {{ keepCurrentNote: true }});
+            }}
+          }} else {{
+            const activeItem = getW07ItemById(w07ActiveItemId);
+            if (activeItem) {{
+              fillW07FormFromItem(activeItem, {{ keepCurrentNote: true }});
+            }} else {{
+              w07ActiveItemId = null;
+            }}
+          }}
+          renderW07TrackerTablePanel();
 
           let evidenceItemId = (document.getElementById("w07EvidenceListItemId").value || "").trim();
           if (!evidenceItemId) {{
@@ -16005,8 +16469,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             );
             evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w07");
           }} else {{
-            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+            evidenceTable.innerHTML = renderEmpty("행 선택 또는 다음 미완료 버튼으로 tracker_item_id를 자동 선택하세요.");
           }}
+          renderW07ActionResultsPanel();
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           summary.innerHTML = "";
@@ -16015,6 +16480,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           readinessCards.innerHTML = "";
           readinessBlockers.innerHTML = renderEmpty(err.message);
           evidenceTable.innerHTML = renderEmpty(err.message);
+          renderW07SelectionMeta();
+          renderW07ActionResultsPanel();
         }}
       }}
 
@@ -16041,10 +16508,115 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             }}
           );
           meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          pushW07ActionResult({{
+            action: "bootstrap",
+            tracker_item_id: "-",
+            result: "ok",
+            detail: "created=" + String(data.created_count || 0),
+          }});
+          renderW07ActionResultsPanel();
           await runW07Tracker();
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
+          pushW07ActionResult({{
+            action: "bootstrap",
+            tracker_item_id: "-",
+            result: "failed",
+            detail: err.message,
+          }});
+          renderW07ActionResultsPanel();
         }}
+      }}
+
+      function runW07SelectVisible() {{
+        const rows = getW07FilteredItems();
+        rows.forEach((row) => {{
+          const itemId = asInt(row.id, -1);
+          if (itemId > 0) {{
+            w07SelectedItemIds.add(itemId);
+          }}
+        }});
+        renderW07TrackerTablePanel();
+        document.getElementById("w07TrackerMeta").textContent =
+          "성공: 현재 목록 " + String(rows.length) + "건 선택";
+      }}
+
+      function runW07ClearSelection() {{
+        w07SelectedItemIds = new Set();
+        renderW07TrackerTablePanel();
+        document.getElementById("w07TrackerMeta").textContent = "선택 항목을 모두 해제했습니다.";
+      }}
+
+      function runW07NextIncomplete() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const picked = pickW07NextIncompleteItem();
+        if (!picked) {{
+          meta.textContent = "현재 필터에서 미완료 항목이 없습니다.";
+          return;
+        }}
+        meta.textContent =
+          "선택됨: tracker_item_id=" + String(picked.id || "-")
+          + " | status=" + String(picked.status || "-")
+          + " | assignee=" + String(picked.assignee || "-");
+      }}
+
+      async function runW07BulkApply() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const selectedIds = Array.from(w07SelectedItemIds);
+        if (selectedIds.length === 0) {{
+          meta.textContent = "일괄 저장할 항목을 먼저 선택하세요.";
+          return;
+        }}
+        const assignee = (document.getElementById("w07BulkAssignee").value || "").trim();
+        const status = (document.getElementById("w07BulkStatus").value || "").trim();
+        const bulkChecked = !!document.getElementById("w07BulkChecked").checked;
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (bulkChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (Object.keys(payload).length === 0) {{
+          meta.textContent = "일괄 저장할 값이 없습니다. assignee/status/완료체크를 지정하세요.";
+          return;
+        }}
+        let successCount = 0;
+        let failedCount = 0;
+        meta.textContent = "일괄 저장 중... " + String(selectedIds.length) + "건";
+        for (const itemId of selectedIds) {{
+          try {{
+            await fetchJson(
+              "/api/adoption/w07/tracker/items/" + encodeURIComponent(String(itemId)),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+            successCount += 1;
+            pushW07ActionResult({{
+              action: "bulk_patch",
+              tracker_item_id: String(itemId),
+              result: "ok",
+              detail: "saved",
+            }});
+          }} catch (err) {{
+            failedCount += 1;
+            pushW07ActionResult({{
+              action: "bulk_patch",
+              tracker_item_id: String(itemId),
+              result: "failed",
+              detail: err.message,
+            }});
+          }}
+        }}
+        renderW07ActionResultsPanel();
+        meta.textContent =
+          "일괄 저장 완료: success=" + String(successCount) + " | failed=" + String(failedCount);
+        await runW07Tracker();
       }}
 
       async function runW07Complete() {{
@@ -16056,6 +16628,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
         const completionNote = (document.getElementById("w07CompletionNote").value || "").trim();
         const force = !!document.getElementById("w07CompletionForce").checked;
+        if (force && !completionNote) {{
+          meta.textContent = "강제 완료(force) 시 completion note를 반드시 입력하세요.";
+          return;
+        }}
+        if (!w07LastReadiness || String(w07LastReadiness.site || "") !== site) {{
+          await runW07Tracker();
+        }}
+        const readiness = w07LastReadiness || {{}};
+        const completion = w07LastCompletion || {{}};
+        const summaryLines = [
+          "Site: " + site,
+          "현재 상태: " + String(completion.status || "active"),
+          "Ready: " + String(readiness.ready ? "YES" : "NO"),
+          "Pending/InProgress/Blocked: "
+            + String(readiness.pending_count || 0) + "/"
+            + String(readiness.in_progress_count || 0) + "/"
+            + String(readiness.blocked_count || 0),
+          "Missing Assignee/Checked/Evidence: "
+            + String(readiness.missing_assignee_count || 0) + "/"
+            + String(readiness.missing_completion_checked_count || 0) + "/"
+            + String(readiness.missing_required_evidence_count || 0),
+          "Completion Note: " + (completionNote || "-"),
+          "Force: " + String(force),
+        ];
+        const confirmed = await openW07CompleteModal(summaryLines.join("\\n"));
+        if (!confirmed) {{
+          meta.textContent = "취소됨: W07 완료 확정을 중단했습니다.";
+          return;
+        }}
         const payload = {{
           site: site,
           force: force,
@@ -16078,9 +16679,23 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             "성공: status=" + String(result.status || "-")
             + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
             + " | completed_at=" + String(result.completed_at || "-");
+          pushW07ActionResult({{
+            action: "complete_site",
+            tracker_item_id: "-",
+            result: "ok",
+            detail: "status=" + String(result.status || "-"),
+          }});
+          renderW07ActionResultsPanel();
           await runW07Tracker();
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
+          pushW07ActionResult({{
+            action: "complete_site",
+            tracker_item_id: "-",
+            result: "failed",
+            detail: err.message,
+          }});
+          renderW07ActionResultsPanel();
           await runW07Tracker().catch(() => null);
         }}
       }}
@@ -16090,7 +16705,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const trackerItemIdRaw = (document.getElementById("w07TrackItemId").value || "").trim();
         const trackerItemId = Number(trackerItemIdRaw);
         if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
-          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          meta.textContent = "표에서 tracker 항목을 선택하세요. (ID 자동 입력)";
           return;
         }}
 
@@ -16115,9 +16730,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           return;
         }}
 
-        try {{
-          meta.textContent = "저장 중... tracker update";
-          if (hasTrackerUpdate) {{
+        let successCount = 0;
+        let failedCount = 0;
+        meta.textContent = "저장 중... tracker update";
+
+        if (hasTrackerUpdate) {{
+          try {{
             await fetchJson(
               "/api/adoption/w07/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
               true,
@@ -16127,9 +16745,26 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 body: JSON.stringify(payload),
               }}
             );
+            successCount += 1;
+            pushW07ActionResult({{
+              action: "single_patch",
+              tracker_item_id: trackerItemIdRaw,
+              result: "ok",
+              detail: "saved",
+            }});
+          }} catch (err) {{
+            failedCount += 1;
+            pushW07ActionResult({{
+              action: "single_patch",
+              tracker_item_id: trackerItemIdRaw,
+              result: "failed",
+              detail: err.message,
+            }});
           }}
+        }}
 
-          if (file) {{
+        if (file) {{
+          try {{
             const formData = new FormData();
             formData.append("file", file);
             const evidenceNote = (document.getElementById("w07EvidenceNote").value || "").trim();
@@ -16154,13 +16789,28 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
             }}
             document.getElementById("w07EvidenceFile").value = "";
+            successCount += 1;
+            pushW07ActionResult({{
+              action: "evidence_upload",
+              tracker_item_id: trackerItemIdRaw,
+              result: "ok",
+              detail: String(file.name || "uploaded"),
+            }});
+          }} catch (err) {{
+            failedCount += 1;
+            pushW07ActionResult({{
+              action: "evidence_upload",
+              tracker_item_id: trackerItemIdRaw,
+              result: "failed",
+              detail: err.message,
+            }});
           }}
-
-          meta.textContent = "성공: tracker 저장 완료";
-          await runW07Tracker();
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
         }}
+
+        renderW07ActionResultsPanel();
+        meta.textContent =
+          "저장 완료: success=" + String(successCount) + " | failed=" + String(failedCount);
+        await runW07Tracker();
       }}
 
       async function runW07WeeklyJob() {{
@@ -16895,6 +17545,21 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w07AutomationReadiness.innerHTML = renderEmpty("인증 토큰 필요");
             w07QualityTopSites.innerHTML = renderEmpty("인증 토큰 필요");
             w07QualityRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+
+            w07TrackerItemsCache = [];
+            w07SelectedItemIds = new Set();
+            w07ActiveItemId = null;
+            w07LastReadiness = null;
+            w07LastCompletion = null;
+            document.getElementById("w07TrackerMeta").textContent = "토큰 저장 후 W07 tracker API를 사용할 수 있습니다.";
+            document.getElementById("w07SelectionMeta").textContent = "필터: ALL | 표시: 0/0 | 선택: 0";
+            document.getElementById("w07TrackerSummary").innerHTML = "";
+            document.getElementById("w07TrackerTable").innerHTML = renderEmpty("인증 토큰 필요");
+            document.getElementById("w07ReadinessMeta").textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            document.getElementById("w07ReadinessCards").innerHTML = "";
+            document.getElementById("w07ReadinessBlockers").innerHTML = renderEmpty("인증 토큰 필요");
+            document.getElementById("w07EvidenceTable").innerHTML = renderEmpty("인증 토큰 필요");
+            renderW07ActionResultsPanel();
           }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
@@ -16939,6 +17604,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w07AutomationReadiness").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityTopSites").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
+          document.getElementById("w07TrackerSummary").innerHTML = "";
+          document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07ReadinessMeta").textContent = "실패: " + err.message;
+          document.getElementById("w07ReadinessCards").innerHTML = "";
+          document.getElementById("w07ReadinessBlockers").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07EvidenceTable").innerHTML = renderEmpty(err.message);
+          document.getElementById("w07SelectionMeta").textContent = "필터: ALL | 표시: 0/0 | 선택: 0";
+          renderW07ActionResultsPanel();
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -16984,6 +17658,108 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }});
 
+      const w07TrackerTableContainer = document.getElementById("w07TrackerTable");
+      if (w07TrackerTableContainer) {{
+        w07TrackerTableContainer.addEventListener("click", (event) => {{
+          const pickBtn = event.target.closest(".w07-pick-item");
+          if (pickBtn) {{
+            const item = getW07ItemById(pickBtn.getAttribute("data-item-id"));
+            if (item) {{
+              fillW07FormFromItem(item, {{ keepCurrentNote: true }});
+              renderW07TrackerTablePanel();
+            }}
+            return;
+          }}
+          if (event.target.closest("input,button,a,label")) {{
+            return;
+          }}
+          const rowEl = event.target.closest("tr.w07-track-row");
+          if (!rowEl) return;
+          const item = getW07ItemById(rowEl.getAttribute("data-item-id"));
+          if (!item) return;
+          fillW07FormFromItem(item, {{ keepCurrentNote: true }});
+          renderW07TrackerTablePanel();
+        }});
+        w07TrackerTableContainer.addEventListener("change", (event) => {{
+          const checkbox = event.target.closest(".w07-select-item");
+          if (!checkbox) return;
+          const itemId = asInt(checkbox.getAttribute("data-item-id"), -1);
+          if (itemId <= 0) return;
+          if (checkbox.checked) {{
+            w07SelectedItemIds.add(itemId);
+          }} else {{
+            w07SelectedItemIds.delete(itemId);
+          }}
+          renderW07SelectionMeta();
+        }});
+      }}
+
+      const w07ReadinessCardsPanel = document.getElementById("w07ReadinessCards");
+      if (w07ReadinessCardsPanel) {{
+        w07ReadinessCardsPanel.addEventListener("click", (event) => {{
+          const card = event.target.closest(".w07-readiness-card");
+          if (!card) return;
+          const filterKey = card.getAttribute("data-filter") || "all";
+          setW07TrackerFilter(filterKey, {{ autoPick: true }});
+          const readinessMeta = document.getElementById("w07ReadinessMeta");
+          readinessMeta.textContent =
+            "상태: " + String((w07LastCompletion && w07LastCompletion.status) || "active")
+            + " | ready=" + String(w07LastReadiness && w07LastReadiness.ready ? "YES" : "NO")
+            + " | filter=" + getW07FilterLabel(filterKey);
+        }});
+        w07ReadinessCardsPanel.addEventListener("keydown", (event) => {{
+          if (!(event.key === "Enter" || event.key === " ")) return;
+          const card = event.target.closest(".w07-readiness-card");
+          if (!card) return;
+          event.preventDefault();
+          const filterKey = card.getAttribute("data-filter") || "all";
+          setW07TrackerFilter(filterKey, {{ autoPick: true }});
+        }});
+      }}
+
+      const w07EvidenceFileInput = document.getElementById("w07EvidenceFile");
+      const w07EvidenceDropzone = document.getElementById("w07EvidenceDropzone");
+      if (w07EvidenceDropzone && w07EvidenceFileInput) {{
+        w07EvidenceDropzone.addEventListener("click", () => w07EvidenceFileInput.click());
+        w07EvidenceFileInput.addEventListener("change", () => {{
+          const file = (w07EvidenceFileInput.files && w07EvidenceFileInput.files[0]) || null;
+          if (file) {{
+            assignW07EvidenceFile(file);
+          }}
+        }});
+        w07EvidenceDropzone.addEventListener("dragover", (event) => {{
+          event.preventDefault();
+          w07EvidenceDropzone.classList.add("dragover");
+        }});
+        w07EvidenceDropzone.addEventListener("dragleave", () => {{
+          w07EvidenceDropzone.classList.remove("dragover");
+        }});
+        w07EvidenceDropzone.addEventListener("drop", (event) => {{
+          event.preventDefault();
+          w07EvidenceDropzone.classList.remove("dragover");
+          const files = event.dataTransfer && event.dataTransfer.files ? event.dataTransfer.files : null;
+          const file = files && files.length > 0 ? files[0] : null;
+          if (!file) return;
+          assignW07EvidenceFile(file);
+        }});
+      }}
+
+      const w07CompleteModal = document.getElementById("w07CompleteModal");
+      document.getElementById("w07CompleteModalCancel").addEventListener("click", () => closeW07CompleteModal(false));
+      document.getElementById("w07CompleteModalConfirm").addEventListener("click", () => closeW07CompleteModal(true));
+      if (w07CompleteModal) {{
+        w07CompleteModal.addEventListener("click", (event) => {{
+          if (event.target === w07CompleteModal) {{
+            closeW07CompleteModal(false);
+          }}
+        }});
+      }}
+      window.addEventListener("keydown", (event) => {{
+        if (event.key === "Escape" && w07CompleteModal && w07CompleteModal.classList.contains("open")) {{
+          closeW07CompleteModal(false);
+        }}
+      }});
+
       document.getElementById("runOverviewBtn").addEventListener("click", runOverview);
       document.getElementById("runOverviewGuardRecoverDryBtn").addEventListener("click", () => runOverviewGuardRecover(true));
       document.getElementById("runOverviewGuardRecoverRunBtn").addEventListener("click", () => runOverviewGuardRecover(false));
@@ -17012,6 +17788,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w06RhythmRefreshBtn").addEventListener("click", runW06Rhythm);
       document.getElementById("w07QualityRefreshBtn").addEventListener("click", runW07SlaQuality);
       document.getElementById("w07TrackBootstrapBtn").addEventListener("click", runW07TrackerBootstrap);
+      document.getElementById("w07TrackNextBtn").addEventListener("click", runW07NextIncomplete);
+      document.getElementById("w07SelectVisibleBtn").addEventListener("click", runW07SelectVisible);
+      document.getElementById("w07ClearSelectionBtn").addEventListener("click", runW07ClearSelection);
+      document.getElementById("w07BulkApplyBtn").addEventListener("click", runW07BulkApply);
       document.getElementById("w07TrackRefreshBtn").addEventListener("click", runW07Tracker);
       document.getElementById("w07ReadinessBtn").addEventListener("click", runW07Readiness);
       document.getElementById("w07CompleteBtn").addEventListener("click", runW07Complete);
@@ -17057,6 +17837,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       if (!document.getElementById("w07WeeklySite").value) {{
         document.getElementById("w07WeeklySite").value = "HQ";
       }}
+      renderW07SelectionMeta();
+      renderW07ActionResultsPanel();
       activate("{selected_tab}", false);
 
       runAdoption();
