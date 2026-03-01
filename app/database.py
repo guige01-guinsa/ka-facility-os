@@ -1,5 +1,8 @@
 import os
+import sqlite3
 from contextlib import contextmanager
+from datetime import date as dt_date
+from datetime import datetime as dt_datetime
 from pathlib import Path
 from typing import Iterator
 
@@ -21,6 +24,17 @@ def _normalize_database_url(url: str) -> str:
 
 DATABASE_URL = _normalize_database_url(os.getenv("DATABASE_URL", DEFAULT_SQLITE_URL))
 IS_SQLITE = DATABASE_URL.startswith("sqlite")
+
+
+def _register_sqlite_datetime_adapters() -> None:
+    """Avoid Python 3.12 deprecated default sqlite datetime adapters."""
+    if not IS_SQLITE:
+        return
+    sqlite3.register_adapter(dt_datetime, lambda value: value.isoformat(sep=" "))
+    sqlite3.register_adapter(dt_date, lambda value: value.isoformat())
+
+
+_register_sqlite_datetime_adapters()
 
 connect_args = {"check_same_thread": False} if IS_SQLITE else {}
 engine = create_engine(
