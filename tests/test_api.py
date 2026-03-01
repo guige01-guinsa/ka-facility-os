@@ -188,6 +188,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_w11_api" in root_json.json()
     assert "public_adoption_w12_api" in root_json.json()
     assert "public_adoption_w13_api" in root_json.json()
+    assert "public_adoption_w14_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
@@ -210,6 +211,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w13_closure_handoff_api" in root_json.json()
     assert "adoption_w13_handoff_policy_api" in root_json.json()
     assert "adoption_w13_tracker_items_api" in root_json.json()
+    assert "adoption_w14_stability_sprint_api" in root_json.json()
+    assert "adoption_w14_stability_policy_api" in root_json.json()
+    assert "adoption_w14_tracker_items_api" in root_json.json()
     assert "adoption_w07_tracker_items_api" in root_json.json()
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
@@ -342,9 +346,15 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     )
     assert service_info.json()["public_adoption_w12_api"] == "/api/public/adoption-plan/w12"
     assert service_info.json()["public_adoption_w13_api"] == "/api/public/adoption-plan/w13"
+    assert service_info.json()["public_adoption_w14_api"] == "/api/public/adoption-plan/w14"
+    assert service_info.json()["public_adoption_w14_checklist_csv_api"] == "/api/public/adoption-plan/w14/checklist.csv"
+    assert service_info.json()["public_adoption_w14_schedule_ics_api"] == "/api/public/adoption-plan/w14/schedule.ics"
     assert service_info.json()["adoption_w13_tracker_items_api"] == "/api/adoption/w13/tracker/items"
     assert service_info.json()["adoption_w13_closure_handoff_api"] == "/api/ops/adoption/w13/closure-handoff"
     assert service_info.json()["adoption_w13_handoff_policy_api"] == "/api/ops/adoption/w13/handoff-policy"
+    assert service_info.json()["adoption_w14_tracker_items_api"] == "/api/adoption/w14/tracker/items"
+    assert service_info.json()["adoption_w14_stability_sprint_api"] == "/api/ops/adoption/w14/stability-sprint"
+    assert service_info.json()["adoption_w14_stability_policy_api"] == "/api/ops/adoption/w14/stability-policy"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -465,6 +475,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W09 KPI Operation" in adoption_html.text
     assert "W10 Self-serve Support" in adoption_html.text
     assert "W11 Scale Readiness" in adoption_html.text
+    assert "W14 Stability Sprint" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -491,8 +502,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     body = public_plan.json()
     assert body["public"] is True
     assert body["timeline"]["start_date"] == "2026-03-02"
-    assert body["timeline"]["end_date"] == "2026-05-29"
-    assert len(body["weekly_execution"]) == 13
+    assert body["timeline"]["end_date"] == "2026-06-05"
+    assert len(body["weekly_execution"]) == 14
     assert body["workflow_lock_matrix"]["states"] == ["DRAFT", "REVIEW", "APPROVED", "LOCKED"]
     assert len(body["workflow_lock_matrix"]["rows"]) == 4
     assert body["w02_sop_sandbox"]["timeline"]["week"] == 2
@@ -537,6 +548,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w11_scale_readiness"]["self_serve_guides"]) >= 5
     assert len(body["w11_scale_readiness"]["troubleshooting_runbook"]) >= 4
     assert len(body["w11_scale_readiness"]["scheduled_events"]) >= 5
+    assert body["w14_stability_sprint"]["timeline"]["week"] == 14
+    assert len(body["w14_stability_sprint"]["self_serve_guides"]) >= 5
+    assert len(body["w14_stability_sprint"]["troubleshooting_runbook"]) >= 4
+    assert len(body["w14_stability_sprint"]["scheduled_events"]) >= 5
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -922,6 +937,36 @@ def test_w13_public_and_tracker_flow(app_client: TestClient) -> None:
     assert snapshot.json()["site"] == "HQ"
     assert "metrics" in snapshot.json()
 
+
+def test_w14_public_and_tracker_flow(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    public_pack = app_client.get("/api/public/adoption-plan/w14")
+    assert public_pack.status_code == 200
+    assert public_pack.json()["title"] == "W14 Stability Sprint Pack"
+
+    checklist = app_client.get("/api/public/adoption-plan/w14/checklist.csv")
+    assert checklist.status_code == 200
+    assert checklist.headers.get("content-type", "").startswith("text/csv")
+
+    schedule = app_client.get("/api/public/adoption-plan/w14/schedule.ics")
+    assert schedule.status_code == 200
+    assert schedule.headers.get("content-type", "").startswith("text/calendar")
+
+    bootstrap = app_client.post("/api/adoption/w14/tracker/bootstrap", json={"site": "HQ"}, headers=headers)
+    assert bootstrap.status_code == 200
+    assert bootstrap.json()["site"] == "HQ"
+    assert bootstrap.json()["total_count"] >= 1
+
+    overview = app_client.get("/api/adoption/w14/tracker/overview", params={"site": "HQ"}, headers=headers)
+    assert overview.status_code == 200
+    assert overview.json()["site"] == "HQ"
+    assert overview.json()["total_items"] >= 1
+
+    snapshot = app_client.get("/api/ops/adoption/w14/stability-sprint", params={"site": "HQ"}, headers=headers)
+    assert snapshot.status_code == 200
+    assert snapshot.json()["site"] == "HQ"
+    assert "metrics" in snapshot.json()
 
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())

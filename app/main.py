@@ -62,6 +62,9 @@ from app.database import (
     adoption_w13_evidence_files,
     adoption_w13_site_runs,
     adoption_w13_tracker_items,
+    adoption_w14_evidence_files,
+    adoption_w14_site_runs,
+    adoption_w14_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -192,6 +195,15 @@ from app.schemas import (
     W13TrackerItemUpdate,
     W13TrackerOverviewRead,
     W13TrackerReadinessRead,
+    W14EvidenceRead,
+    W14TrackerBootstrapRequest,
+    W14TrackerBootstrapResponse,
+    W14TrackerCompletionRead,
+    W14TrackerCompletionRequest,
+    W14TrackerItemRead,
+    W14TrackerItemUpdate,
+    W14TrackerOverviewRead,
+    W14TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -356,6 +368,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w12:write",
         "adoption_w13:read",
         "adoption_w13:write",
+        "adoption_w14:read",
+        "adoption_w14:write",
     },
     "operator": {
         "inspections:read",
@@ -388,6 +402,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w12:write",
         "adoption_w13:read",
         "adoption_w13:write",
+        "adoption_w14:read",
+        "adoption_w14:write",
     },
     "auditor": {
         "inspections:read",
@@ -407,6 +423,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w11:read",
         "adoption_w12:read",
         "adoption_w13:read",
+        "adoption_w14:read",
     },
 }
 
@@ -445,6 +462,11 @@ W13_HANDOFF_POLICY_KEY_SITE_PREFIX = "adoption_w13_handoff_policy:site:"
 W13_HANDOFF_STATUS_GREEN = "green"
 W13_HANDOFF_STATUS_YELLOW = "yellow"
 W13_HANDOFF_STATUS_RED = "red"
+W14_STABILITY_POLICY_KEY_DEFAULT = "adoption_w14_stability_policy:default"
+W14_STABILITY_POLICY_KEY_SITE_PREFIX = "adoption_w14_stability_policy:site:"
+W14_STABILITY_STATUS_GREEN = "green"
+W14_STABILITY_STATUS_YELLOW = "yellow"
+W14_STABILITY_STATUS_RED = "red"
 SITE_SCOPE_ALL = "*"
 WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
     "open": {"acked", "completed", "canceled"},
@@ -645,6 +667,26 @@ W13_SITE_COMPLETION_STATUS_SET = {
 }
 W13_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
 W13_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W14_TRACKER_STATUS_PENDING = "pending"
+W14_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W14_TRACKER_STATUS_DONE = "done"
+W14_TRACKER_STATUS_BLOCKED = "blocked"
+W14_TRACKER_STATUS_SET = {
+    W14_TRACKER_STATUS_PENDING,
+    W14_TRACKER_STATUS_IN_PROGRESS,
+    W14_TRACKER_STATUS_DONE,
+    W14_TRACKER_STATUS_BLOCKED,
+}
+W14_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W14_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W14_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W14_SITE_COMPLETION_STATUS_SET = {
+    W14_SITE_COMPLETION_STATUS_ACTIVE,
+    W14_SITE_COMPLETION_STATUS_COMPLETED,
+    W14_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W14_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
+W14_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -659,7 +701,7 @@ W07_WEEKLY_JOB_NAME = "adoption_w07_sla_quality_weekly"
 W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
-ADOPTION_PLAN_END = date(2026, 5, 29)
+ADOPTION_PLAN_END = date(2026, 6, 5)
 
 ADOPTION_WEEKLY_EXECUTION: list[dict[str, Any]] = [
     {
@@ -856,6 +898,21 @@ ADOPTION_WEEKLY_EXECUTION: list[dict[str, Any]] = [
         "deliverables": ["Improvement backlog v1", "Owner action board", "Quarterly governance calendar"],
         "owner": "Ops Director + PMO",
         "success_metric": "Improvement action closure >= 85%",
+    },
+    {
+        "week": 14,
+        "start_date": "2026-06-01",
+        "end_date": "2026-06-05",
+        "phase": "Stabilize",
+        "focus": "Stability sprint",
+        "actions": [
+            "Measure P95 latency for critical APIs and confirm alert threshold.",
+            "Run post-deploy smoke and rollback checklist as standard operation.",
+            "Validate evidence/audit archive integrity batch and close findings.",
+        ],
+        "deliverables": ["Latency baseline v1", "Smoke/rollback checklist v1", "Archive integrity report v1"],
+        "owner": "SRE + Ops QA",
+        "success_metric": "Stability readiness score >= 85%",
     },
 ]
 
@@ -2911,6 +2968,132 @@ ADOPTION_W13_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W14_SELF_SERVE_GUIDES: list[dict[str, Any]] = [
+    {
+        "id": "W14-ST-01",
+        "title": "Critical API Latency Baseline",
+        "problem_cluster": "핵심 API 성능 기준 불명확",
+        "owner_role": "SRE",
+        "target": "P95 latency threshold 확정 100%",
+        "source_api": "/api/ops/adoption/w14/stability-sprint",
+    },
+    {
+        "id": "W14-ST-02",
+        "title": "Post-deploy Smoke Standard",
+        "problem_cluster": "배포 후 검증 누락",
+        "owner_role": "Ops QA",
+        "target": "배포 후 smoke 체크 100%",
+        "source_api": "/api/ops/adoption/w14/stability-policy",
+    },
+    {
+        "id": "W14-ST-03",
+        "title": "Rollback Decision Checklist",
+        "problem_cluster": "롤백 판단 지연",
+        "owner_role": "Release Manager",
+        "target": "롤백 결정 SLA <= 10분",
+        "source_api": "/api/public/adoption-plan/w14",
+    },
+    {
+        "id": "W14-ST-04",
+        "title": "Evidence and Audit Integrity Validation",
+        "problem_cluster": "증빙/감사 무결성 점검 공백",
+        "owner_role": "Audit Lead",
+        "target": "무결성 검증 성공률 >= 99%",
+        "source_api": "/api/admin/audit-integrity",
+    },
+    {
+        "id": "W14-ST-05",
+        "title": "Weekly Stability Exception Triage",
+        "problem_cluster": "예외 항목 누적",
+        "owner_role": "Ops Director",
+        "target": "예외 backlog 7일 이내 해소율 >= 90%",
+        "source_api": "/api/ops/handover/brief",
+    },
+]
+
+ADOPTION_W14_TROUBLESHOOTING_RUNBOOK: list[dict[str, Any]] = [
+    {
+        "id": "W14-RB-01",
+        "module": "API Performance",
+        "symptom": "핵심 API 지연시간 급증",
+        "owner_role": "SRE",
+        "definition_of_done": "지연 구간 식별/원인/완화/재측정 완료",
+        "api_ref": "/api/ops/dashboard/trends",
+    },
+    {
+        "id": "W14-RB-02",
+        "module": "Deployment Verification",
+        "symptom": "배포 후 기능 이상 미감지",
+        "owner_role": "Ops QA",
+        "definition_of_done": "스모크 결과/실패원인/복구로그 확보",
+        "api_ref": "/api/ops/job-runs",
+    },
+    {
+        "id": "W14-RB-03",
+        "module": "Rollback Control",
+        "symptom": "롤백 기준 미충족 상태에서 서비스 지속",
+        "owner_role": "Release Manager",
+        "definition_of_done": "롤백 기준, 승인자, 실행 로그 확정",
+        "api_ref": "/api/work-orders/escalations/run",
+    },
+    {
+        "id": "W14-RB-04",
+        "module": "Archive Integrity",
+        "symptom": "증빙/감사 아카이브 검증 실패",
+        "owner_role": "Audit Lead",
+        "definition_of_done": "무결성 오류 0건 + 재검증 통과",
+        "api_ref": "/api/admin/audit-archive/monthly",
+    },
+]
+
+ADOPTION_W14_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W14-E01",
+        "date": "2026-06-01",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W14 kickoff - stability baseline",
+        "owner": "SRE Lead + Ops Director",
+        "output": "성능/신뢰성/데이터 무결성 기준선 확정",
+    },
+    {
+        "id": "W14-E02",
+        "date": "2026-06-02",
+        "start_time": "14:00",
+        "end_time": "14:40",
+        "title": "Critical API latency drill",
+        "owner": "SRE",
+        "output": "핵심 API P95 측정 및 임계값 제안",
+    },
+    {
+        "id": "W14-E03",
+        "date": "2026-06-03",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Smoke and rollback simulation",
+        "owner": "Release Manager + Ops QA",
+        "output": "배포 검증/롤백 체크리스트 시뮬레이션 통과",
+    },
+    {
+        "id": "W14-E04",
+        "date": "2026-06-04",
+        "start_time": "15:00",
+        "end_time": "15:30",
+        "title": "Archive integrity batch review",
+        "owner": "Audit Lead",
+        "output": "아카이브 무결성 점검 결과 및 개선 항목",
+    },
+    {
+        "id": "W14-E05",
+        "date": "2026-06-05",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W14 stability sign-off",
+        "owner": "Ops Director + Security Admin",
+        "output": "안정화 스프린트 완료 판정",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -3060,6 +3243,19 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "W13 Closure Handoff", "href": "/api/ops/adoption/w13/closure-handoff"},
             {"label": "W13 Handoff Policy", "href": "/api/ops/adoption/w13/handoff-policy"},
             {"label": "W13 Tracker", "href": "/api/adoption/w13/tracker/items"},
+        ],
+    },
+    {
+        "id": "stability-sprint",
+        "name": "Stability Sprint",
+        "name_ko": "안정화 스프린트",
+        "description": "W14 기준으로 성능/신뢰성/아카이브 무결성을 점검하고 운영 표준을 마감합니다.",
+        "kpi_hint": "Stability readiness score >= 85%",
+        "links": [
+            {"label": "W14 Pack", "href": "/api/public/adoption-plan/w14"},
+            {"label": "W14 Stability Sprint", "href": "/api/ops/adoption/w14/stability-sprint"},
+            {"label": "W14 Stability Policy", "href": "/api/ops/adoption/w14/stability-policy"},
+            {"label": "W14 Tracker", "href": "/api/adoption/w14/tracker/items"},
         ],
     },
     {
@@ -10181,6 +10377,403 @@ def _build_w13_closure_handoff_snapshot(
         "simulation_runbook": ADOPTION_W13_TROUBLESHOOTING_RUNBOOK,
         "recommendations": recommendations,
     }
+def _w14_stability_policy_key(site: str | None) -> tuple[str, str | None]:
+    normalized_site = _normalize_site_name(site)
+    if normalized_site is None:
+        return W14_STABILITY_POLICY_KEY_DEFAULT, None
+    return f"{W14_STABILITY_POLICY_KEY_SITE_PREFIX}{normalized_site}", normalized_site
+
+
+def _default_w14_stability_policy() -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "risk_rate_green_threshold": 20.0,
+        "risk_rate_yellow_threshold": 30.0,
+        "checklist_completion_green_threshold": 80.0,
+        "checklist_completion_yellow_threshold": 60.0,
+        "simulation_success_green_threshold": 80.0,
+        "simulation_success_yellow_threshold": 60.0,
+        "readiness_target": 75.0,
+    }
+
+
+def _normalize_w14_stability_policy(value: Any) -> dict[str, Any]:
+    source = value if isinstance(value, dict) else {}
+    defaults = _default_w14_stability_policy()
+
+    def _float_value(key: str, fallback: float, min_value: float, max_value: float) -> float:
+        try:
+            raw = float(source.get(key, fallback))
+        except (TypeError, ValueError):
+            raw = fallback
+        return round(max(min_value, min(raw, max_value)), 2)
+
+    repeat_green = _float_value(
+        "risk_rate_green_threshold",
+        float(defaults["risk_rate_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    repeat_yellow = _float_value(
+        "risk_rate_yellow_threshold",
+        float(defaults["risk_rate_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if repeat_yellow < repeat_green:
+        repeat_yellow = repeat_green
+
+    guide_green = _float_value(
+        "checklist_completion_green_threshold",
+        float(defaults["checklist_completion_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    guide_yellow = _float_value(
+        "checklist_completion_yellow_threshold",
+        float(defaults["checklist_completion_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if guide_yellow > guide_green:
+        guide_yellow = guide_green
+
+    runbook_green = _float_value(
+        "simulation_success_green_threshold",
+        float(defaults["simulation_success_green_threshold"]),
+        0.0,
+        100.0,
+    )
+    runbook_yellow = _float_value(
+        "simulation_success_yellow_threshold",
+        float(defaults["simulation_success_yellow_threshold"]),
+        0.0,
+        100.0,
+    )
+    if runbook_yellow > runbook_green:
+        runbook_yellow = runbook_green
+
+    readiness_target = _float_value(
+        "readiness_target",
+        float(defaults["readiness_target"]),
+        0.0,
+        100.0,
+    )
+
+    return {
+        "enabled": bool(source.get("enabled", defaults.get("enabled", True))),
+        "risk_rate_green_threshold": repeat_green,
+        "risk_rate_yellow_threshold": repeat_yellow,
+        "checklist_completion_green_threshold": guide_green,
+        "checklist_completion_yellow_threshold": guide_yellow,
+        "simulation_success_green_threshold": runbook_green,
+        "simulation_success_yellow_threshold": runbook_yellow,
+        "readiness_target": readiness_target,
+    }
+
+
+def _parse_w14_stability_policy_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    return _normalize_w14_stability_policy(loaded)
+
+
+def _ensure_w14_stability_policy(site: str | None) -> tuple[dict[str, Any], datetime, str, str | None]:
+    policy_key, normalized_site = _w14_stability_policy_key(site)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(sla_policies).where(sla_policies.c.policy_key == policy_key).limit(1)
+        ).mappings().first()
+        if row is None:
+            policy = _default_w14_stability_policy()
+            conn.execute(
+                insert(sla_policies).values(
+                    policy_key=policy_key,
+                    policy_json=_to_json_text(policy),
+                    updated_at=now,
+                )
+            )
+            return policy, now, policy_key, normalized_site
+    policy = _parse_w14_stability_policy_json(row["policy_json"])
+    updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
+    return policy, updated_at, policy_key, normalized_site
+
+
+def _upsert_w14_stability_policy(site: str | None, payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str, str | None]:
+    current_policy, _, policy_key, normalized_site = _ensure_w14_stability_policy(site)
+    incoming = payload if isinstance(payload, dict) else {}
+    merged: dict[str, Any] = {**current_policy}
+    for key in [
+        "enabled",
+        "risk_rate_green_threshold",
+        "risk_rate_yellow_threshold",
+        "checklist_completion_green_threshold",
+        "checklist_completion_yellow_threshold",
+        "simulation_success_green_threshold",
+        "simulation_success_yellow_threshold",
+        "readiness_target",
+    ]:
+        if key in incoming:
+            merged[key] = incoming[key]
+    normalized = _normalize_w14_stability_policy(merged)
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        conn.execute(
+            update(sla_policies)
+            .where(sla_policies.c.policy_key == policy_key)
+            .values(
+                policy_json=_to_json_text(normalized),
+                updated_at=now,
+            )
+        )
+    return normalized, now, policy_key, normalized_site
+
+
+def _build_w14_stability_sprint_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    window_start = now - timedelta(days=window_days)
+    policy, policy_updated_at, policy_key, policy_site = _ensure_w14_stability_policy(site)
+
+    effective_site = policy_site if policy_site is not None else _normalize_site_name(site)
+    effective_allowed_sites = allowed_sites if effective_site is None else None
+
+    stmt = select(work_orders).where(work_orders.c.created_at >= window_start)
+    if effective_site is not None:
+        stmt = stmt.where(work_orders.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        if not effective_allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": None,
+                "window_days": window_days,
+                "policy": {
+                    "policy_key": policy_key,
+                    "updated_at": policy_updated_at.isoformat(),
+                    "enabled": bool(policy.get("enabled", True)),
+                },
+                "metrics": {
+                    "incidents_count": 0,
+                    "unique_titles": 0,
+                    "repeated_incidents_count": 0,
+                    "incident_repeat_rate_percent": 0.0,
+                    "guide_total_count": len(ADOPTION_W14_SELF_SERVE_GUIDES),
+                    "guide_done_count": 0,
+                    "checklist_completion_rate_percent": 0.0,
+                    "runbook_total_count": len(ADOPTION_W14_TROUBLESHOOTING_RUNBOOK),
+                    "runbook_done_count": 0,
+                    "simulation_success_rate_percent": 0.0,
+                    "stability_sprint_readiness_score": 0.0,
+                    "overall_status": W14_STABILITY_STATUS_RED,
+                    "target_met": False,
+                },
+                "kpis": [],
+                "top_repeat_incidents": [],
+                "scale_checklist": ADOPTION_W14_SELF_SERVE_GUIDES,
+                "simulation_runbook": ADOPTION_W14_TROUBLESHOOTING_RUNBOOK,
+                "recommendations": ["접근 가능한 site 범위가 비어 있습니다. site_scope를 확인하세요."],
+            }
+        stmt = stmt.where(work_orders.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        wo_rows = conn.execute(stmt).mappings().all()
+
+    title_counts: dict[str, int] = {}
+    title_label: dict[str, str] = {}
+    for row in wo_rows:
+        title_raw = str(row.get("title") or "").strip()
+        normalized = title_raw.lower() if title_raw else "(untitled)"
+        title_counts[normalized] = title_counts.get(normalized, 0) + 1
+        if normalized not in title_label:
+            title_label[normalized] = title_raw or "(untitled)"
+
+    total_work_orders = len(wo_rows)
+    repeated_orders_count = sum(count for count in title_counts.values() if count >= 2)
+    unique_titles = len(title_counts)
+    incident_repeat_rate_percent = round((repeated_orders_count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0
+    top_repeat_incidents = sorted(
+        [
+            {
+                "title": title_label.get(key, key),
+                "count": count,
+                "share_percent": round((count / total_work_orders) * 100.0, 2) if total_work_orders > 0 else 0.0,
+            }
+            for key, count in title_counts.items()
+            if count >= 2
+        ],
+        key=lambda item: int(item.get("count") or 0),
+        reverse=True,
+    )[:10]
+
+    tracker_stmt = select(adoption_w14_tracker_items)
+    if effective_site is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w14_tracker_items.c.site == effective_site)
+    elif effective_allowed_sites is not None:
+        tracker_stmt = tracker_stmt.where(adoption_w14_tracker_items.c.site.in_(effective_allowed_sites))
+    with get_conn() as conn:
+        tracker_rows = conn.execute(tracker_stmt).mappings().all()
+
+    guide_total_count = max(
+        len(ADOPTION_W14_SELF_SERVE_GUIDES),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "self_serve_guide"),
+    )
+    runbook_total_count = max(
+        len(ADOPTION_W14_TROUBLESHOOTING_RUNBOOK),
+        sum(1 for row in tracker_rows if str(row.get("item_type") or "") == "troubleshooting_runbook"),
+    )
+    guide_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "self_serve_guide" and str(row.get("status") or "") == W14_TRACKER_STATUS_DONE
+    )
+    runbook_done_count = sum(
+        1
+        for row in tracker_rows
+        if str(row.get("item_type") or "") == "troubleshooting_runbook" and str(row.get("status") or "") == W14_TRACKER_STATUS_DONE
+    )
+    checklist_completion_rate_percent = round((guide_done_count / guide_total_count) * 100.0, 2) if guide_total_count > 0 else 0.0
+    simulation_success_rate_percent = (
+        round((runbook_done_count / runbook_total_count) * 100.0, 2) if runbook_total_count > 0 else 0.0
+    )
+
+    repeat_status = _evaluate_w09_kpi_status(
+        actual=incident_repeat_rate_percent,
+        direction="lower_better",
+        green_threshold=float(policy.get("risk_rate_green_threshold") or 20.0),
+        yellow_threshold=float(policy.get("risk_rate_yellow_threshold") or 30.0),
+    )
+    guide_status = _evaluate_w09_kpi_status(
+        actual=checklist_completion_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("checklist_completion_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+    )
+    runbook_status = _evaluate_w09_kpi_status(
+        actual=simulation_success_rate_percent,
+        direction="higher_better",
+        green_threshold=float(policy.get("simulation_success_green_threshold") or 80.0),
+        yellow_threshold=float(policy.get("simulation_success_yellow_threshold") or 60.0),
+    )
+
+    status_points = {
+        W09_KPI_STATUS_RED: 0.0,
+        W09_KPI_STATUS_YELLOW: 50.0,
+        W09_KPI_STATUS_GREEN: 100.0,
+    }
+    stability_sprint_readiness_score = round(
+        (status_points.get(repeat_status, 0.0) + status_points.get(guide_status, 0.0) + status_points.get(runbook_status, 0.0))
+        / 3.0,
+        2,
+    )
+
+    status_set = {repeat_status, guide_status, runbook_status}
+    overall_status = W14_STABILITY_STATUS_GREEN
+    if W09_KPI_STATUS_RED in status_set:
+        overall_status = W14_STABILITY_STATUS_RED
+    elif W09_KPI_STATUS_YELLOW in status_set:
+        overall_status = W14_STABILITY_STATUS_YELLOW
+
+    readiness_target = float(policy.get("readiness_target") or 75.0)
+    target_met = stability_sprint_readiness_score >= readiness_target and overall_status != W14_STABILITY_STATUS_RED
+
+    kpis = [
+        {
+            "kpi_key": "repeat_ticket_rate_percent",
+            "kpi_name": "Repeat ticket rate",
+            "direction": "lower_better",
+            "actual_value": incident_repeat_rate_percent,
+            "green_threshold": float(policy.get("risk_rate_green_threshold") or 20.0),
+            "yellow_threshold": float(policy.get("risk_rate_yellow_threshold") or 30.0),
+            "status": repeat_status,
+            "target": f"<= {policy.get('risk_rate_green_threshold', 20.0)}%",
+        },
+        {
+            "kpi_key": "checklist_completion_rate_percent",
+            "kpi_name": "Scale readiness guide publish rate",
+            "direction": "higher_better",
+            "actual_value": checklist_completion_rate_percent,
+            "green_threshold": float(policy.get("checklist_completion_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("checklist_completion_yellow_threshold") or 60.0),
+            "status": guide_status,
+            "target": f">= {policy.get('checklist_completion_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "simulation_success_rate_percent",
+            "kpi_name": "Runbook completion rate",
+            "direction": "higher_better",
+            "actual_value": simulation_success_rate_percent,
+            "green_threshold": float(policy.get("simulation_success_green_threshold") or 80.0),
+            "yellow_threshold": float(policy.get("simulation_success_yellow_threshold") or 60.0),
+            "status": runbook_status,
+            "target": f">= {policy.get('simulation_success_green_threshold', 80.0)}%",
+        },
+        {
+            "kpi_key": "stability_sprint_readiness_score",
+            "kpi_name": "Scale readiness readiness score",
+            "direction": "higher_better",
+            "actual_value": stability_sprint_readiness_score,
+            "green_threshold": readiness_target,
+            "yellow_threshold": max(0.0, readiness_target - 15.0),
+            "status": _evaluate_w09_kpi_status(
+                actual=stability_sprint_readiness_score,
+                direction="higher_better",
+                green_threshold=readiness_target,
+                yellow_threshold=max(0.0, readiness_target - 15.0),
+            ),
+            "target": f">= {readiness_target}",
+        },
+    ]
+
+    recommendations: list[str] = []
+    if repeat_status == W09_KPI_STATUS_RED:
+        recommendations.append("반복 티켓 비율이 높습니다. Top 반복 제목 3개를 FAQ/가이드로 우선 전환하세요.")
+    if guide_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Scale readiness guide 게시율이 낮습니다. 담당자와 마감일을 지정해 게시를 완료하세요.")
+    if runbook_status != W09_KPI_STATUS_GREEN:
+        recommendations.append("Runbook 완료율이 낮습니다. 모듈별 실습 드릴과 증빙 업로드를 마감하세요.")
+    if not recommendations:
+        recommendations.append("W14 안정화 스프린트 상태가 안정적입니다. 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": effective_site,
+        "window_days": window_days,
+        "policy": {
+            "policy_key": policy_key,
+            "updated_at": policy_updated_at.isoformat(),
+            "enabled": bool(policy.get("enabled", True)),
+            "readiness_target": readiness_target,
+        },
+        "metrics": {
+            "incidents_count": total_work_orders,
+            "unique_titles": unique_titles,
+            "repeated_incidents_count": repeated_orders_count,
+            "incident_repeat_rate_percent": incident_repeat_rate_percent,
+            "guide_total_count": guide_total_count,
+            "guide_done_count": guide_done_count,
+            "checklist_completion_rate_percent": checklist_completion_rate_percent,
+            "runbook_total_count": runbook_total_count,
+            "runbook_done_count": runbook_done_count,
+            "simulation_success_rate_percent": simulation_success_rate_percent,
+            "stability_sprint_readiness_score": stability_sprint_readiness_score,
+            "overall_status": overall_status,
+            "target_met": target_met,
+        },
+        "kpis": kpis,
+        "top_repeat_incidents": top_repeat_incidents,
+        "scale_checklist": ADOPTION_W14_SELF_SERVE_GUIDES,
+        "simulation_runbook": ADOPTION_W14_TROUBLESHOOTING_RUNBOOK,
+        "recommendations": recommendations,
+    }
+
+
 def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
     with get_conn() as conn:
         rows = conn.execute(
@@ -13813,6 +14406,299 @@ def _reset_w13_completion_if_closed(
             updated_at=checked_at,
         )
     )
+def _row_to_w14_tracker_item_model(row: dict[str, Any]) -> W14TrackerItemRead:
+    return W14TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row.get("status") or W14_TRACKER_STATUS_PENDING),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w14_evidence_model(row: dict[str, Any]) -> W14EvidenceRead:
+    return W14EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w14_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w14_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W14_SELF_SERVE_GUIDES:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "self_serve_guide",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W14_TROUBLESHOOTING_RUNBOOK:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "troubleshooting_runbook",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("symptom", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W14_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w14_tracker_overview(site: str, rows: list[W14TrackerItemRead]) -> W14TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W14TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w14_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W14TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W14TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W14_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W14_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(
+            f"필수 증빙 미업로드(self_serve_guide/troubleshooting_runbook) 항목 {missing_required_evidence_count}건이 있습니다."
+        )
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W14TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w14_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W14_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W14_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w14_completion_model(
+    *,
+    site: str,
+    readiness: W14TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W14TrackerCompletionRead:
+    if row is None:
+        return W14TrackerCompletionRead(
+            site=site,
+            status=W14_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w14_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W14TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w14_tracker_items_for_site(site: str) -> list[W14TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w14_tracker_items)
+            .where(adoption_w14_tracker_items.c.site == site)
+            .order_by(
+                adoption_w14_tracker_items.c.item_type.asc(),
+                adoption_w14_tracker_items.c.item_key.asc(),
+                adoption_w14_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w14_tracker_item_model(row) for row in rows]
+
+
+def _reset_w14_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w14_site_runs.c.status)
+        .where(adoption_w14_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w14_site_completion_status(row.get("status"))
+    if status == W14_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w14_site_runs)
+        .where(adoption_w14_site_runs.c.site == site)
+        .values(
+            status=W14_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
 def _median_minutes(values: list[float]) -> float | None:
     if not values:
         return None
@@ -17869,6 +18755,9 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w13_api": "/api/public/adoption-plan/w13",
         "public_adoption_w13_checklist_csv_api": "/api/public/adoption-plan/w13/checklist.csv",
         "public_adoption_w13_schedule_ics_api": "/api/public/adoption-plan/w13/schedule.ics",
+        "public_adoption_w14_api": "/api/public/adoption-plan/w14",
+        "public_adoption_w14_checklist_csv_api": "/api/public/adoption-plan/w14/checklist.csv",
+        "public_adoption_w14_schedule_ics_api": "/api/public/adoption-plan/w14/schedule.ics",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -17926,6 +18815,12 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w13_tracker_readiness_api": "/api/adoption/w13/tracker/readiness",
         "adoption_w13_tracker_completion_api": "/api/adoption/w13/tracker/completion",
         "adoption_w13_tracker_complete_api": "/api/adoption/w13/tracker/complete",
+        "adoption_w14_tracker_items_api": "/api/adoption/w14/tracker/items",
+        "adoption_w14_tracker_overview_api": "/api/adoption/w14/tracker/overview",
+        "adoption_w14_tracker_bootstrap_api": "/api/adoption/w14/tracker/bootstrap",
+        "adoption_w14_tracker_readiness_api": "/api/adoption/w14/tracker/readiness",
+        "adoption_w14_tracker_completion_api": "/api/adoption/w14/tracker/completion",
+        "adoption_w14_tracker_complete_api": "/api/adoption/w14/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
@@ -17946,6 +18841,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w12_handoff_policy_api": "/api/ops/adoption/w12/handoff-policy",
         "adoption_w13_closure_handoff_api": "/api/ops/adoption/w13/closure-handoff",
         "adoption_w13_handoff_policy_api": "/api/ops/adoption/w13/handoff-policy",
+        "adoption_w14_stability_sprint_api": "/api/ops/adoption/w14/stability-sprint",
+        "adoption_w14_stability_policy_api": "/api/ops/adoption/w14/stability-policy",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -18008,6 +18905,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w11_scale_readiness": _adoption_w11_payload(),
         "w12_closure_handoff": _adoption_w12_payload(),
         "w13_continuous_improvement": _adoption_w13_payload(),
+        "w14_stability_sprint": _adoption_w14_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -18066,6 +18964,9 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w13_json": "/api/public/adoption-plan/w13",
                 "w13_checklist_csv": "/api/public/adoption-plan/w13/checklist.csv",
                 "w13_schedule_ics": "/api/public/adoption-plan/w13/schedule.ics",
+                "w14_json": "/api/public/adoption-plan/w14",
+                "w14_checklist_csv": "/api/public/adoption-plan/w14/checklist.csv",
+                "w14_schedule_ics": "/api/public/adoption-plan/w14/schedule.ics",
             },
             "next_review_date": next_review_date,
         },
@@ -19683,6 +20584,153 @@ def _build_adoption_w13_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w14_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 14),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 14,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Stabilize",
+            "focus": "Stability sprint",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 14)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W14 Stability Sprint Pack",
+        "public": True,
+        "timeline": timeline,
+        "self_serve_guides": ADOPTION_W14_SELF_SERVE_GUIDES,
+        "troubleshooting_runbook": ADOPTION_W14_TROUBLESHOOTING_RUNBOOK,
+        "scheduled_events": ADOPTION_W14_SCHEDULED_EVENTS,
+        "stability_sprint_api": "/api/ops/adoption/w14/stability-sprint",
+        "stability_policy_api": "/api/ops/adoption/w14/stability-policy",
+        "tracker_items_api": "/api/adoption/w14/tracker/items",
+        "tracker_overview_api": "/api/adoption/w14/tracker/overview",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w14",
+            "checklist_csv": "/api/public/adoption-plan/w14/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w14/schedule.ics",
+        },
+    }
+
+
+def _build_adoption_w14_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "key_or_module",
+            "name_or_symptom",
+            "owner_role",
+            "objective_or_target",
+            "definition_or_output",
+            "api_or_time",
+        ]
+    )
+    for item in payload.get("self_serve_guides", []):
+        writer.writerow(
+            [
+                "self_serve_guide",
+                item.get("id", ""),
+                item.get("problem_cluster", ""),
+                item.get("title", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                "",
+                item.get("source_api", ""),
+            ]
+        )
+    for item in payload.get("troubleshooting_runbook", []):
+        writer.writerow(
+            [
+                "troubleshooting_runbook",
+                item.get("id", ""),
+                item.get("module", ""),
+                item.get("symptom", ""),
+                item.get("owner_role", ""),
+                "",
+                item.get("definition_of_done", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                "",
+                item.get("output", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w14_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w14-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W14] {str(item.get('title', 'Stability Sprint Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W14 Stability Sprint//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -20059,6 +21107,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w11_pack = plan.get("w11_scale_readiness", {})
     w12_pack = plan.get("w12_closure_handoff", {})
     w13_pack = plan.get("w13_continuous_improvement", {})
+    w14_pack = plan.get("w14_stability_sprint", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -20659,6 +21708,50 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w13_schedule_rows: list[str] = []
     for item in w13_pack.get("scheduled_events", []):
         w13_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w14_guide_rows: list[str] = []
+    for item in w14_pack.get("self_serve_guides", []):
+        w14_guide_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("problem_cluster", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("source_api", "")))}</td>
+            </tr>
+            """
+        )
+
+    w14_runbook_rows: list[str] = []
+    for item in w14_pack.get("troubleshooting_runbook", []):
+        w14_runbook_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("module", "")))}</td>
+              <td>{html.escape(str(item.get("symptom", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w14_schedule_rows: list[str] = []
+    for item in w14_pack.get("scheduled_events", []):
+        w14_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -22152,6 +23245,70 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w13_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W14 Stability Sprint</h2>
+      <p class="sub">W13 이후 안정화 스프린트로 전환하여 API 성능 기준, 배포 신뢰성, 아카이브 무결성 운영을 표준화합니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w14">W14 JSON</a>
+        <a href="/api/public/adoption-plan/w14/checklist.csv">W14 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w14/schedule.ics">W14 Schedule ICS</a>
+        <a href="/api/ops/adoption/w14/stability-sprint">W14 Stability Sprint API (Token)</a>
+        <a href="/api/ops/adoption/w14/stability-policy">W14 Stability Policy API (Token)</a>
+        <a href="/api/adoption/w14/tracker/items">W14 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w14/tracker/overview?site=HQ">W14 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Title</th>
+              <th>Stability Cluster</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Source API</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w14_guide_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Runbook ID</th>
+              <th>Module</th>
+              <th>Symptom</th>
+              <th>Owner Role</th>
+              <th>Definition of Done</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w14_runbook_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w14_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -30145,6 +31302,12 @@ def get_public_adoption_w13() -> dict[str, Any]:
     return _adoption_w13_payload()
 
 
+@app.get("/api/public/adoption-plan/w14")
+def get_public_adoption_w14() -> dict[str, Any]:
+    return _adoption_w14_payload()
+
+
+
 @app.get("/api/public/modules", response_model=None)
 def get_public_modules(request: Request) -> Any:
     payload = _facility_modules_payload()
@@ -30514,6 +31677,31 @@ def get_public_adoption_w13_schedule_ics() -> Response:
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@app.get("/api/public/adoption-plan/w14/checklist.csv")
+def get_public_adoption_w14_checklist_csv() -> Response:
+    payload = _adoption_w14_payload()
+    csv_text = _build_adoption_w14_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w14-stability-sprint-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w14/schedule.ics")
+def get_public_adoption_w14_schedule_ics() -> Response:
+    payload = _adoption_w14_payload()
+    ics_text = _build_adoption_w14_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w14-stability-sprint.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
 
 
 @app.get("/api/public/adoption-plan/w08/reporting-sop")
@@ -35382,6 +36570,531 @@ def download_w13_tracker_evidence(
         },
     )
 
+@app.post("/api/adoption/w14/tracker/bootstrap", response_model=W14TrackerBootstrapResponse)
+def bootstrap_w14_tracker_items(
+    payload: W14TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
+) -> W14TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w14_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w14_tracker_items.c.item_type,
+                adoption_w14_tracker_items.c.item_key,
+            ).where(adoption_w14_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w14_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W14_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w14_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w14_tracker_items)
+            .where(adoption_w14_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w14_tracker_items.c.item_type.asc(),
+                adoption_w14_tracker_items.c.item_key.asc(),
+                adoption_w14_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w14_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w14_tracker_bootstrap",
+        resource_type="adoption_w14_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W14TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w14/tracker/items", response_model=list[W14TrackerItemRead])
+def list_w14_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> list[W14TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W14_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W14 tracker status")
+
+    stmt = select(adoption_w14_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w14_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w14_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w14_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w14_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w14_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w14_tracker_items.c.updated_at.desc(),
+        adoption_w14_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w14_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w14/tracker/overview", response_model=W14TrackerOverviewRead)
+def get_w14_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> W14TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w14_tracker_items).where(adoption_w14_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w14_tracker_item_model(row) for row in rows]
+    return _compute_w14_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w14/tracker/readiness", response_model=W14TrackerReadinessRead)
+def get_w14_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> W14TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w14_tracker_items_for_site(site)
+    return _compute_w14_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w14/tracker/completion", response_model=W14TrackerCompletionRead)
+def get_w14_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> W14TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w14_tracker_items_for_site(site)
+    readiness = _compute_w14_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w14_site_runs).where(adoption_w14_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w14_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w14/tracker/complete", response_model=W14TrackerCompletionRead)
+def complete_w14_tracker(
+    payload: W14TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
+) -> W14TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w14_tracker_items_for_site(payload.site)
+    readiness = _compute_w14_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W14 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W14_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W14_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w14_site_runs).where(adoption_w14_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w14_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w14_site_runs)
+                .where(adoption_w14_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w14_site_runs).where(adoption_w14_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w14_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w14_tracker_complete",
+        resource_type="adoption_w14_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w14/tracker/items/{tracker_item_id}", response_model=W14TrackerItemRead)
+def update_w14_tracker_item(
+    tracker_item_id: int,
+    payload: W14TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
+) -> W14TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w14_tracker_items).where(adoption_w14_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W14 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W14_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W14_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W14_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W14_TRACKER_STATUS_DONE:
+            next_status = W14_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W14_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W14 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w14_tracker_items)
+            .where(adoption_w14_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w14_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w14_tracker_items).where(adoption_w14_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W14 tracker item")
+    model = _row_to_w14_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w14_tracker_item_update",
+        resource_type="adoption_w14_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w14/tracker/items/{tracker_item_id}/evidence", response_model=W14EvidenceRead, status_code=201)
+async def upload_w14_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
+) -> W14EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+    file_bytes = await file.read(W14_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W14_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W14_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w14_tracker_items).where(adoption_w14_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W14 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w14_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        conn.execute(
+            update(adoption_w14_tracker_items)
+            .where(adoption_w14_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=adoption_w14_tracker_items.c.evidence_count + 1,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w14_completion_if_closed(
+            conn=conn,
+            site=site,
+            actor_username=actor_username,
+            checked_at=now,
+            reason="evidence_uploaded",
+        )
+        evidence_row = conn.execute(
+            select(adoption_w14_evidence_files).where(adoption_w14_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w14_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w14_tracker_evidence_upload",
+        resource_type="adoption_w14_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w14/tracker/items/{tracker_item_id}/evidence", response_model=list[W14EvidenceRead])
+def list_w14_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> list[W14EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w14_tracker_items).where(adoption_w14_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W14 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w14_evidence_files)
+            .where(adoption_w14_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w14_evidence_files.c.uploaded_at.desc(), adoption_w14_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w14_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w14/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w14_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w14_evidence_files).where(adoption_w14_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W14 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w14_tracker_evidence_download",
+        resource_type="adoption_w14_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -37120,6 +38833,95 @@ def set_ops_adoption_w13_handoff_policy(
         "updated_at": updated_at.isoformat(),
         "policy": policy,
     }
+
+@app.get("/api/ops/adoption/w14/stability-sprint")
+def get_ops_adoption_w14_stability_sprint(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    snapshot = _build_w14_stability_sprint_snapshot(site=normalized_site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w14_stability_sprint_view",
+        resource_type="adoption_w14_stability_sprint",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "overall_status": metrics.get("overall_status"),
+            "incident_repeat_rate_percent": metrics.get("incident_repeat_rate_percent"),
+            "readiness_score": metrics.get("stability_sprint_readiness_score"),
+            "target_met": metrics.get("target_met"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w14/stability-policy")
+def get_ops_adoption_w14_stability_policy(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+    policy, updated_at, policy_key, policy_site = _ensure_w14_stability_policy(normalized_site)
+    _write_audit_log(
+        principal=principal,
+        action="w14_stability_policy_view",
+        resource_type="adoption_w14_stability_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
+
+@app.put("/api/ops/adoption/w14/stability-policy")
+def set_ops_adoption_w14_stability_policy(
+    payload: dict[str, Any],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
+) -> dict[str, Any]:
+    normalized_site = _normalize_site_name(site)
+    _require_site_access(principal, normalized_site)
+    if normalized_site is None:
+        _require_global_site_scope(principal)
+        if not _has_permission(principal, "admins:manage"):
+            raise HTTPException(status_code=403, detail="Global W14 policy update requires admins:manage")
+    policy, updated_at, policy_key, policy_site = _upsert_w14_stability_policy(normalized_site, payload)
+    _write_audit_log(
+        principal=principal,
+        action="w14_stability_policy_update",
+        resource_type="adoption_w14_stability_policy",
+        resource_id=policy_key,
+        detail={
+            "site": policy_site,
+            "policy_key": policy_key,
+            "enabled": bool(policy.get("enabled", True)),
+        },
+    )
+    return {
+        "site": policy_site,
+        "policy_key": policy_key,
+        "updated_at": updated_at.isoformat(),
+        "policy": policy,
+    }
+
 
 @app.get("/api/ops/adoption/w07/automation-readiness")
 def get_ops_adoption_w07_automation_readiness(
@@ -40005,6 +41807,13 @@ def print_monthly_report(
 </body>
 </html>
 """
+
+
+
+
+
+
+
 
 
 
