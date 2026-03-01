@@ -257,6 +257,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w03:write",
         "adoption_w04:read",
         "adoption_w04:write",
+        "adoption_w05:read",
+        "adoption_w05:write",
     },
     "operator": {
         "inspections:read",
@@ -271,6 +273,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w03:write",
         "adoption_w04:read",
         "adoption_w04:write",
+        "adoption_w05:read",
+        "adoption_w05:write",
     },
     "auditor": {
         "inspections:read",
@@ -281,6 +285,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w02:read",
         "adoption_w03:read",
         "adoption_w04:read",
+        "adoption_w05:read",
     },
 }
 
@@ -1433,6 +1438,144 @@ W04_COMMON_MISTAKE_FIX_CATALOG: list[dict[str, str]] = [
         "symptom": "failed alert delivery 증가, 에스컬레이션 응답 지연",
         "quick_fix": "실패 타겟 재시도 배치 실행 + 채널 가드 확인",
         "where_to_check": "Alert deliveries / retries / guard",
+    },
+]
+
+ADOPTION_W05_ROLE_MISSIONS: list[dict[str, Any]] = [
+    {
+        "id": "W05-M-01",
+        "role": "Operator",
+        "mission": "Daily first action within 15 minutes for assigned queue",
+        "weekly_target": "5/5 weekdays",
+        "owner": "Site Champion",
+        "evidence_required": True,
+        "evidence_hint": "Tracker screenshot + first action timestamp",
+    },
+    {
+        "id": "W05-M-02",
+        "role": "Manager",
+        "mission": "Overdue backlog review and reassignment",
+        "weekly_target": "2 review sessions",
+        "owner": "Ops Manager",
+        "evidence_required": True,
+        "evidence_hint": "Before/after overdue list",
+    },
+    {
+        "id": "W05-M-03",
+        "role": "Auditor",
+        "mission": "Data consistency spot-check (status and due_at)",
+        "weekly_target": "10 sampled records",
+        "owner": "Audit Lead",
+        "evidence_required": True,
+        "evidence_hint": "Spot-check sheet + issue notes",
+    },
+    {
+        "id": "W05-M-04",
+        "role": "Site Champion",
+        "mission": "Weekly mission coaching and blocker follow-up",
+        "weekly_target": "Top 3 blockers closed",
+        "owner": "Ops PM",
+        "evidence_required": True,
+        "evidence_hint": "Coaching log + closure proof",
+    },
+    {
+        "id": "W05-M-05",
+        "role": "Owner",
+        "mission": "Retention and overdue trend review sign-off",
+        "weekly_target": "1 sign-off",
+        "owner": "Owner + PM",
+        "evidence_required": False,
+        "evidence_hint": "Weekly decision memo",
+    },
+]
+
+ADOPTION_W05_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W05-E01",
+        "date": "2026-03-30",
+        "start_time": "10:00",
+        "end_time": "10:30",
+        "title": "W05 kickoff - weekly mission board launch",
+        "owner": "Ops PM + Site Champions",
+        "output": "Mission board v1",
+    },
+    {
+        "id": "W05-E02",
+        "date": "2026-03-31",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Overdue behavior review by site",
+        "owner": "Ops Manager",
+        "output": "Site overdue action list",
+    },
+    {
+        "id": "W05-E03",
+        "date": "2026-04-01",
+        "start_time": "15:30",
+        "end_time": "16:00",
+        "title": "Help docs tuning workshop",
+        "owner": "QA + Training Lead",
+        "output": "Help docs v2 draft",
+    },
+    {
+        "id": "W05-E04",
+        "date": "2026-04-02",
+        "start_time": "16:30",
+        "end_time": "17:00",
+        "title": "Retention checkpoint",
+        "owner": "CS + Ops Lead",
+        "output": "2-week retention interim report",
+    },
+    {
+        "id": "W05-E05",
+        "date": "2026-04-03",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W05 close review",
+        "owner": "Owner + PM",
+        "output": "W05 consistency close memo",
+    },
+]
+
+ADOPTION_W05_HELP_DOCS: list[dict[str, Any]] = [
+    {
+        "doc_id": "W05-HD-01",
+        "title": "작업지시 overdue 빠른 정리 가이드",
+        "audience": "Manager/Operator",
+        "problem": "overdue 건이 누적되어 우선순위가 흐려짐",
+        "quick_steps": [
+            "overdue 목록을 priority + due_at 기준으로 정렬",
+            "담당자 없는 건은 즉시 reassignment",
+            "48시간 내 처리 계획이 없는 건 escalated 태깅",
+        ],
+        "api_refs": ["/api/work-orders", "/api/work-orders/escalations/run"],
+    },
+    {
+        "doc_id": "W05-HD-02",
+        "title": "첫 액션 지연 줄이기 가이드",
+        "audience": "Operator/Site Champion",
+        "problem": "첫 점검/작업지시 진입이 늦어 TTV가 증가",
+        "quick_steps": [
+            "근무 시작 15분 내 첫 점검 1건 생성",
+            "ACK 템플릿 사용으로 첫 반응 시간 단축",
+            "당일 미완료 건은 종료 전 상태 업데이트",
+        ],
+        "api_refs": ["/api/inspections", "/api/work-orders"],
+    },
+    {
+        "doc_id": "W05-HD-03",
+        "title": "상태값 일관성 점검 가이드",
+        "audience": "Auditor/Manager",
+        "problem": "status와 완료 체크가 불일치하여 보고 왜곡",
+        "quick_steps": [
+            "done 상태 항목의 completion_checked 확인",
+            "in_progress 장기 체류 항목 사유 기록",
+            "미완료 증빙 누락 항목은 당일 보완",
+        ],
+        "api_refs": [
+            "/api/adoption/w04/tracker/items",
+            "/api/adoption/w04/tracker/readiness",
+        ],
     },
 ]
 
@@ -6092,6 +6235,168 @@ def _build_w04_common_mistakes_html(payload: dict[str, Any]) -> str:
 """
 
 
+def _build_w05_usage_consistency_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 90))
+    start = now - timedelta(days=window_days)
+    midpoint = start + timedelta(days=max(1, window_days // 2))
+
+    event_stmt = (
+        select(work_order_events.c.actor_username, work_orders.c.site, work_order_events.c.created_at)
+        .select_from(work_order_events.join(work_orders, work_order_events.c.work_order_id == work_orders.c.id))
+        .where(work_order_events.c.created_at >= start)
+    )
+    inspection_stmt = (
+        select(inspections.c.inspector, inspections.c.site, inspections.c.created_at)
+        .where(inspections.c.created_at >= start)
+    )
+    open_work_orders_stmt = select(work_orders.c.site, work_orders.c.status, work_orders.c.due_at).where(
+        work_orders.c.status.in_(["open", "acked"])
+    )
+
+    if site is not None:
+        event_stmt = event_stmt.where(work_orders.c.site == site)
+        inspection_stmt = inspection_stmt.where(inspections.c.site == site)
+        open_work_orders_stmt = open_work_orders_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "target_retention_percent": 65.0,
+                "metrics": {
+                    "active_users": 0,
+                    "early_period_users": 0,
+                    "retained_users": 0,
+                    "two_week_retention_percent": 0.0,
+                    "target_met": False,
+                    "inspection_activity_users": 0,
+                    "open_work_orders": 0,
+                    "overdue_open_work_orders": 0,
+                    "overdue_ratio_percent": 0.0,
+                },
+                "top_sites_by_overdue": [],
+                "mission_recommendations": [],
+            }
+        event_stmt = event_stmt.where(work_orders.c.site.in_(allowed_sites))
+        inspection_stmt = inspection_stmt.where(inspections.c.site.in_(allowed_sites))
+        open_work_orders_stmt = open_work_orders_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        event_rows = conn.execute(event_stmt).mappings().all()
+        inspection_rows = conn.execute(inspection_stmt).mappings().all()
+        open_work_order_rows = conn.execute(open_work_orders_stmt).mappings().all()
+
+    early_users: set[str] = set()
+    late_users: set[str] = set()
+    active_users: set[str] = set()
+    for row in event_rows:
+        actor = str(row.get("actor_username") or "").strip()
+        if not actor or actor == "system":
+            continue
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is None:
+            continue
+        active_users.add(actor)
+        if created_at < midpoint:
+            early_users.add(actor)
+        else:
+            late_users.add(actor)
+
+    inspection_users: set[str] = set()
+    for row in inspection_rows:
+        actor = str(row.get("inspector") or "").strip()
+        if actor:
+            inspection_users.add(actor)
+
+    retained_users = early_users.intersection(late_users)
+    early_count = len(early_users)
+    retained_count = len(retained_users)
+    retention_percent = round((retained_count / early_count) * 100, 2) if early_count > 0 else 0.0
+    target_retention_percent = 65.0
+
+    open_total = 0
+    overdue_total = 0
+    site_open: dict[str, int] = {}
+    site_overdue: dict[str, int] = {}
+    for row in open_work_order_rows:
+        row_site = str(row.get("site") or "").strip()
+        if not row_site:
+            continue
+        open_total += 1
+        site_open[row_site] = int(site_open.get(row_site, 0)) + 1
+        due_at = _as_optional_datetime(row.get("due_at"))
+        if due_at is not None and due_at < now:
+            overdue_total += 1
+            site_overdue[row_site] = int(site_overdue.get(row_site, 0)) + 1
+
+    overdue_ratio_percent = round((overdue_total / open_total) * 100, 2) if open_total > 0 else 0.0
+
+    top_sites_by_overdue: list[dict[str, Any]] = []
+    if site is None:
+        for site_name, total in site_open.items():
+            overdue = int(site_overdue.get(site_name, 0))
+            ratio = round((overdue / total) * 100, 2) if total > 0 else 0.0
+            top_sites_by_overdue.append(
+                {
+                    "site": site_name,
+                    "open_work_orders": total,
+                    "overdue_open_work_orders": overdue,
+                    "overdue_ratio_percent": ratio,
+                }
+            )
+        top_sites_by_overdue = sorted(
+            top_sites_by_overdue,
+            key=lambda item: (float(item.get("overdue_ratio_percent") or 0.0), int(item.get("overdue_open_work_orders") or 0)),
+            reverse=True,
+        )[:5]
+    else:
+        top_sites_by_overdue = [
+            {
+                "site": site,
+                "open_work_orders": open_total,
+                "overdue_open_work_orders": overdue_total,
+                "overdue_ratio_percent": overdue_ratio_percent,
+            }
+        ]
+
+    mission_recommendations: list[str] = []
+    if retention_percent < target_retention_percent:
+        mission_recommendations.append("역할별 주간 미션을 재지정하고 Site Champion 1:1 코칭을 배정하세요.")
+    if overdue_ratio_percent >= 25.0:
+        mission_recommendations.append("overdue 비율이 높습니다. 담당자 재할당과 ETA 재설정을 우선 수행하세요.")
+    if len(inspection_users) < max(3, len(active_users) // 2):
+        mission_recommendations.append("점검 생성 참여가 낮습니다. 첫 점검 미션과 빠른 가이드를 강화하세요.")
+    if not mission_recommendations:
+        mission_recommendations.append("사용 일관성 지표가 목표 범위입니다. 현재 미션 운영 방식을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "target_retention_percent": target_retention_percent,
+        "metrics": {
+            "active_users": len(active_users),
+            "early_period_users": early_count,
+            "retained_users": retained_count,
+            "two_week_retention_percent": retention_percent,
+            "target_met": retention_percent >= target_retention_percent,
+            "inspection_activity_users": len(inspection_users),
+            "open_work_orders": open_total,
+            "overdue_open_work_orders": overdue_total,
+            "overdue_ratio_percent": overdue_ratio_percent,
+        },
+        "top_sites_by_overdue": top_sites_by_overdue,
+        "mission_recommendations": mission_recommendations,
+    }
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -7474,6 +7779,10 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w04_schedule_ics_api": "/api/public/adoption-plan/w04/schedule.ics",
         "public_adoption_w04_common_mistakes_api": "/api/public/adoption-plan/w04/common-mistakes",
         "public_adoption_w04_common_mistakes_html": "/web/adoption/w04/common-mistakes",
+        "public_adoption_w05_api": "/api/public/adoption-plan/w05",
+        "public_adoption_w05_missions_csv_api": "/api/public/adoption-plan/w05/missions.csv",
+        "public_adoption_w05_schedule_ics_api": "/api/public/adoption-plan/w05/schedule.ics",
+        "public_adoption_w05_help_docs_api": "/api/public/adoption-plan/w05/help-docs",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -7494,6 +7803,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w04_tracker_readiness_api": "/api/adoption/w04/tracker/readiness",
         "adoption_w04_tracker_completion_api": "/api/adoption/w04/tracker/completion",
         "adoption_w04_tracker_complete_api": "/api/adoption/w04/tracker/complete",
+        "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -7547,6 +7857,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w02_sop_sandbox": _adoption_w02_payload(),
         "w03_go_live_onboarding": _adoption_w03_payload(),
         "w04_first_success_acceleration": _adoption_w04_payload(),
+        "w05_usage_consistency": _adoption_w05_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -7574,6 +7885,10 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w04_checklist_csv": "/api/public/adoption-plan/w04/checklist.csv",
                 "w04_schedule_ics": "/api/public/adoption-plan/w04/schedule.ics",
                 "w04_common_mistakes": "/api/public/adoption-plan/w04/common-mistakes",
+                "w05_json": "/api/public/adoption-plan/w05",
+                "w05_missions_csv": "/api/public/adoption-plan/w05/missions.csv",
+                "w05_schedule_ics": "/api/public/adoption-plan/w05/schedule.ics",
+                "w05_help_docs": "/api/public/adoption-plan/w05/help-docs",
             },
             "next_review_date": next_review_date,
         },
@@ -7892,6 +8207,136 @@ def _build_adoption_w03_schedule_ics(payload: dict[str, Any]) -> str:
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//KA Facility OS//W03 Go-live Onboarding//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
+def _adoption_w05_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 5),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 5,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Adaptation",
+            "focus": "Usage consistency",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 5)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W05 Usage Consistency Pack",
+        "public": True,
+        "timeline": timeline,
+        "role_missions": ADOPTION_W05_ROLE_MISSIONS,
+        "scheduled_events": ADOPTION_W05_SCHEDULED_EVENTS,
+        "help_docs": ADOPTION_W05_HELP_DOCS,
+        "usage_consistency_api": "/api/ops/adoption/w05/consistency",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w05",
+            "missions_csv": "/api/public/adoption-plan/w05/missions.csv",
+            "schedule_ics": "/api/public/adoption-plan/w05/schedule.ics",
+            "help_docs": "/api/public/adoption-plan/w05/help-docs",
+        },
+    }
+
+
+def _build_adoption_w05_missions_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "role",
+            "mission",
+            "weekly_target",
+            "owner",
+            "evidence_required",
+            "evidence_hint",
+        ]
+    )
+    for item in payload.get("role_missions", []):
+        writer.writerow(
+            [
+                "role_mission",
+                item.get("id", ""),
+                item.get("role", ""),
+                item.get("mission", ""),
+                item.get("weekly_target", ""),
+                item.get("owner", ""),
+                item.get("evidence_required", False),
+                item.get("evidence_hint", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+                item.get("owner", ""),
+                "",
+                item.get("output", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w05_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w05-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W05] {str(item.get('title', 'Usage Consistency Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W05 Usage Consistency//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
     ]
@@ -8267,6 +8712,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w02_pack = plan.get("w02_sop_sandbox", {})
     w03_pack = plan.get("w03_go_live_onboarding", {})
     w04_pack = plan.get("w04_first_success_acceleration", {})
+    w05_pack = plan.get("w05_usage_consistency", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -8470,6 +8916,53 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
               <td>{html.escape(str(item.get("title", "")))}</td>
               <td>{html.escape(str(item.get("owner", "")))}</td>
               <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w05_mission_rows: list[str] = []
+    for item in w05_pack.get("role_missions", []):
+        w05_mission_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("role", "")))}</td>
+              <td>{html.escape(str(item.get("mission", "")))}</td>
+              <td>{html.escape(str(item.get("weekly_target", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_required", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_hint", "")))}</td>
+            </tr>
+            """
+        )
+
+    w05_schedule_rows: list[str] = []
+    for item in w05_pack.get("scheduled_events", []):
+        w05_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w05_help_rows: list[str] = []
+    for item in w05_pack.get("help_docs", []):
+        quick_steps = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("quick_steps", []))
+        api_refs = "<br>".join(f"&middot; {html.escape(str(x))}" for x in item.get("api_refs", []))
+        w05_help_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("doc_id", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("audience", "")))}</td>
+              <td>{html.escape(str(item.get("problem", "")))}</td>
+              <td>{quick_steps}</td>
+              <td>{api_refs}</td>
             </tr>
             """
         )
@@ -9128,6 +9621,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
+        <a href="/api/public/adoption-plan/w05">W05 JSON</a>
+        <a href="/api/public/adoption-plan/w05/missions.csv">W05 Missions CSV</a>
+        <a href="/api/public/adoption-plan/w05/schedule.ics">W05 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w05/help-docs">W05 Help Docs</a>
         <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
@@ -9358,6 +9855,69 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w04_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W05 Usage Consistency</h2>
+      <p class="sub">역할별 주간 미션과 overdue 행동 교정을 통해 2주 유지율을 높이는 실행 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w05">W05 JSON</a>
+        <a href="/api/public/adoption-plan/w05/missions.csv">W05 Missions CSV</a>
+        <a href="/api/public/adoption-plan/w05/schedule.ics">W05 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w05/help-docs">W05 Help Docs</a>
+        <a href="/api/ops/adoption/w05/consistency">W05 Consistency API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Mission ID</th>
+              <th>Role</th>
+              <th>Mission</th>
+              <th>Weekly Target</th>
+              <th>Owner</th>
+              <th>Evidence Required</th>
+              <th>Evidence Hint</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w05_mission_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w05_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Doc ID</th>
+              <th>Title</th>
+              <th>Audience</th>
+              <th>Problem</th>
+              <th>Quick Steps</th>
+              <th>API Refs</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w05_help_rows)}
           </tbody>
         </table>
       </div>
@@ -11096,6 +11656,36 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w04EvidenceTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W05 Usage Consistency</h3>
+            <div id="adoptionW05Top" class="cards"></div>
+            <div id="adoptionW05Missions" class="empty">데이터 없음</div>
+            <div id="adoptionW05Schedule" class="empty">데이터 없음</div>
+            <div id="adoptionW05HelpDocs" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW05Json" href="/api/public/adoption-plan/w05">W05 JSON</a>
+              <a id="adoptW05MissionsCsv" href="/api/public/adoption-plan/w05/missions.csv">W05 Missions CSV</a>
+              <a id="adoptW05ScheduleIcs" href="/api/public/adoption-plan/w05/schedule.ics">W05 Schedule ICS</a>
+              <a id="adoptW05HelpDocs" href="/api/public/adoption-plan/w05/help-docs">W05 Help Docs</a>
+              <a id="adoptW05ConsistencyApi" href="/api/ops/adoption/w05/consistency">W05 Consistency API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W05 Usage Consistency Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w05ConsistencySite" placeholder="site (optional, 빈 값이면 전체)" />
+              <input id="w05ConsistencyDays" value="28" placeholder="window days (14-90)" />
+              <input id="w05ConsistencyReserved1" value="token required" disabled />
+              <input id="w05ConsistencyReserved2" value="site scope enforced" disabled />
+              <button id="w05ConsistencyRefreshBtn" class="btn run" type="button">W05 지표 새로고침</button>
+            </div>
+            <div id="w05ConsistencyMeta" class="meta">조회 전</div>
+            <div id="w05ConsistencySummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Site Overdue Top</h4>
+            <div id="w05ConsistencyTopSites" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Mission Recommendations</h4>
+            <div id="w05ConsistencyRecommendations" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -12525,6 +13115,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW05Consistency() {{
+        const meta = document.getElementById("w05ConsistencyMeta");
+        const summary = document.getElementById("w05ConsistencySummary");
+        const topSites = document.getElementById("w05ConsistencyTopSites");
+        const recommendations = document.getElementById("w05ConsistencyRecommendations");
+        const site = (document.getElementById("w05ConsistencySite").value || "").trim();
+        const daysRaw = (document.getElementById("w05ConsistencyDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w05/consistency" + (params.toString() ? ("?" + params.toString()) : "");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | retention=" + String(metrics.two_week_retention_percent ?? 0) + "%"
+            + " | target=" + String(data.target_retention_percent ?? 65) + "%";
+          const summaryItems = [
+            ["Active Users", metrics.active_users ?? 0],
+            ["Early Period Users", metrics.early_period_users ?? 0],
+            ["Retained Users", metrics.retained_users ?? 0],
+            ["2-week Retention %", metrics.two_week_retention_percent ?? 0],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+            ["Inspection Activity Users", metrics.inspection_activity_users ?? 0],
+            ["Open Work Orders", metrics.open_work_orders ?? 0],
+            ["Overdue Open", metrics.overdue_open_work_orders ?? 0],
+            ["Overdue Ratio %", metrics.overdue_ratio_percent ?? 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          topSites.innerHTML = renderTable(
+            data.top_sites_by_overdue || [],
+            [
+              {{ key: "site", label: "Site" }},
+              {{ key: "open_work_orders", label: "Open Work Orders" }},
+              {{ key: "overdue_open_work_orders", label: "Overdue Open" }},
+              {{ key: "overdue_ratio_percent", label: "Overdue Ratio %" }},
+            ]
+          );
+          const recRows = Array.isArray(data.mission_recommendations)
+            ? data.mission_recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          topSites.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
@@ -12542,6 +13200,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w04Actions = document.getElementById("adoptionW04Actions");
         const w04Schedule = document.getElementById("adoptionW04Schedule");
         const w04Mistakes = document.getElementById("adoptionW04Mistakes");
+        const w05Top = document.getElementById("adoptionW05Top");
+        const w05Missions = document.getElementById("adoptionW05Missions");
+        const w05Schedule = document.getElementById("adoptionW05Schedule");
+        const w05HelpDocs = document.getElementById("adoptionW05HelpDocs");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -12793,6 +13455,76 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w05 = data.w05_usage_consistency || {{}};
+          const w05TopItems = [
+            ["Week", "W" + String(w05.timeline?.week || 5).padStart(2, "0")],
+            ["Focus", w05.timeline?.focus || "Usage consistency"],
+            ["Role Missions", (w05.role_missions || []).length],
+            ["Sessions", (w05.scheduled_events || []).length],
+            ["Help Docs", (w05.help_docs || []).length],
+            ["Metric", w05.timeline?.success_metric || "2-week retention >= 65%"],
+          ];
+          w05Top.innerHTML = w05TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w05Missions.innerHTML = renderTable(
+            (w05.role_missions || []).map((row) => ({{
+              id: row.id || "",
+              role: row.role || "",
+              mission: row.mission || "",
+              weekly_target: row.weekly_target || "",
+              owner: row.owner || "",
+              evidence_required: String(Boolean(row.evidence_required)),
+              evidence_hint: row.evidence_hint || "",
+            }})),
+            [
+              {{ key: "id", label: "Mission ID" }},
+              {{ key: "role", label: "Role" }},
+              {{ key: "mission", label: "Mission" }},
+              {{ key: "weekly_target", label: "Weekly Target" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "evidence_required", label: "Evidence Required" }},
+              {{ key: "evidence_hint", label: "Evidence Hint" }},
+            ]
+          );
+
+          w05Schedule.innerHTML = renderTable(
+            (w05.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
+          w05HelpDocs.innerHTML = renderTable(
+            (w05.help_docs || []).map((row) => ({{
+              doc_id: row.doc_id || "",
+              title: row.title || "",
+              audience: row.audience || "",
+              problem: row.problem || "",
+              quick_steps: Array.isArray(row.quick_steps) ? row.quick_steps.join(" | ") : "",
+              api_refs: Array.isArray(row.api_refs) ? row.api_refs.join(", ") : "",
+            }})),
+            [
+              {{ key: "doc_id", label: "Doc ID" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "audience", label: "Audience" }},
+              {{ key: "problem", label: "Problem" }},
+              {{ key: "quick_steps", label: "Quick Steps" }},
+              {{ key: "api_refs", label: "API Refs" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -12826,6 +13558,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW03Tracker().catch(() => null);
             runW04Tracker().catch(() => null);
             runW04FunnelBlockers().catch(() => null);
+            runW05Consistency().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -12880,6 +13613,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w04ReadinessCards.innerHTML = "";
             w04ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
             w04EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+
+            const w05ConsistencyMeta = document.getElementById("w05ConsistencyMeta");
+            const w05ConsistencySummary = document.getElementById("w05ConsistencySummary");
+            const w05ConsistencyTopSites = document.getElementById("w05ConsistencyTopSites");
+            const w05ConsistencyRecommendations = document.getElementById("w05ConsistencyRecommendations");
+            w05ConsistencyMeta.textContent = "토큰 저장 후 W05 consistency API를 사용할 수 있습니다.";
+            w05ConsistencySummary.innerHTML = "";
+            w05ConsistencyTopSites.innerHTML = renderEmpty("인증 토큰 필요");
+            w05ConsistencyRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
           }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
@@ -12898,6 +13640,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w04Actions.innerHTML = renderEmpty(err.message);
           w04Schedule.innerHTML = renderEmpty(err.message);
           w04Mistakes.innerHTML = renderEmpty(err.message);
+          w05Top.innerHTML = "";
+          w05Missions.innerHTML = renderEmpty(err.message);
+          w05Schedule.innerHTML = renderEmpty(err.message);
+          w05HelpDocs.innerHTML = renderEmpty(err.message);
+          document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
+          document.getElementById("w05ConsistencySummary").innerHTML = "";
+          document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
+          document.getElementById("w05ConsistencyRecommendations").innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -12967,6 +13717,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w04ReadinessBtn").addEventListener("click", runW04Readiness);
       document.getElementById("w04CompleteBtn").addEventListener("click", runW04Complete);
       document.getElementById("w04TrackUpdateBtn").addEventListener("click", runW04TrackerUpdateAndUpload);
+      document.getElementById("w05ConsistencyRefreshBtn").addEventListener("click", runW05Consistency);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -12989,6 +13740,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w04FunnelSite").value) {{
         document.getElementById("w04FunnelSite").value = "HQ";
+      }}
+      if (!document.getElementById("w05ConsistencySite").value) {{
+        document.getElementById("w05ConsistencySite").value = "HQ";
       }}
       activate("{selected_tab}", false);
 
@@ -13057,6 +13811,11 @@ def get_public_adoption_w03() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w04")
 def get_public_adoption_w04() -> dict[str, Any]:
     return _adoption_w04_payload()
+
+
+@app.get("/api/public/adoption-plan/w05")
+def get_public_adoption_w05() -> dict[str, Any]:
+    return _adoption_w05_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -13179,6 +13938,41 @@ def get_public_adoption_w04_common_mistakes_html(
 ) -> HTMLResponse:
     payload = _build_w04_common_mistakes_payload(site=site, days=days, allowed_sites=None)
     return HTMLResponse(_build_w04_common_mistakes_html(payload))
+
+
+@app.get("/api/public/adoption-plan/w05/missions.csv")
+def get_public_adoption_w05_missions_csv() -> Response:
+    payload = _adoption_w05_payload()
+    csv_text = _build_adoption_w05_missions_csv(payload)
+    file_name = "ka-facility-os-adoption-w05-usage-consistency-missions.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w05/schedule.ics")
+def get_public_adoption_w05_schedule_ics() -> Response:
+    payload = _adoption_w05_payload()
+    ics_text = _build_adoption_w05_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w05-usage-consistency.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w05/help-docs")
+def get_public_adoption_w05_help_docs() -> dict[str, Any]:
+    payload = _adoption_w05_payload()
+    return {
+        "title": "W05 Help Docs v2",
+        "public": True,
+        "timeline": payload.get("timeline", {}),
+        "items": payload.get("help_docs", []),
+    }
 
 
 @app.get("/api/public/adoption-plan/w02/sample-files")
@@ -15885,6 +16679,30 @@ def get_dashboard_trends(
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
     return build_dashboard_trends(site=site, days=days, allowed_sites=allowed_sites)
+
+
+@app.get("/api/ops/adoption/w05/consistency")
+def get_ops_adoption_w05_consistency(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=90)] = 28,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w05:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w05_usage_consistency_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    _write_audit_log(
+        principal=principal,
+        action="w05_usage_consistency_view",
+        resource_type="adoption_w05_consistency",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "two_week_retention_percent": snapshot.get("metrics", {}).get("two_week_retention_percent"),
+            "overdue_ratio_percent": snapshot.get("metrics", {}).get("overdue_ratio_percent"),
+        },
+    )
+    return snapshot
 
 
 @app.get("/api/ops/adoption/w04/funnel")

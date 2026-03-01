@@ -138,9 +138,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_plan_api" in root_json.json()
     assert "public_adoption_campaign_api" in root_json.json()
     assert "public_adoption_w02_api" in root_json.json()
+    assert "public_adoption_w05_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
+    assert "adoption_w05_consistency_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -163,8 +165,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W02 Scheduled SOP and Sandbox" in root_html.text
     assert "W03 Go-live Onboarding" in root_html.text
     assert "W04 First Success Acceleration" in root_html.text
+    assert "W05 Usage Consistency" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
+    assert "W05 지표 새로고침" in root_html.text
     assert "완료 판정" in root_html.text
     assert "W02 완료 확정" in root_html.text
     assert "W04 완료 확정" in root_html.text
@@ -196,6 +200,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w04_schedule_ics_api"] == "/api/public/adoption-plan/w04/schedule.ics"
     assert service_info.json()["public_adoption_w04_common_mistakes_api"] == "/api/public/adoption-plan/w04/common-mistakes"
     assert service_info.json()["public_adoption_w04_common_mistakes_html"] == "/web/adoption/w04/common-mistakes"
+    assert service_info.json()["public_adoption_w05_api"] == "/api/public/adoption-plan/w05"
+    assert service_info.json()["public_adoption_w05_missions_csv_api"] == "/api/public/adoption-plan/w05/missions.csv"
+    assert service_info.json()["public_adoption_w05_schedule_ics_api"] == "/api/public/adoption-plan/w05/schedule.ics"
+    assert service_info.json()["public_adoption_w05_help_docs_api"] == "/api/public/adoption-plan/w05/help-docs"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -213,6 +221,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w04_tracker_readiness_api"] == "/api/adoption/w04/tracker/readiness"
     assert service_info.json()["adoption_w04_tracker_completion_api"] == "/api/adoption/w04/tracker/completion"
     assert service_info.json()["adoption_w04_tracker_complete_api"] == "/api/adoption/w04/tracker/complete"
+    assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
@@ -251,6 +260,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W02 Scheduled SOP and Sandbox" in adoption_html.text
     assert "W03 Go-live Onboarding" in adoption_html.text
     assert "W04 First Success Acceleration" in adoption_html.text
+    assert "W05 Usage Consistency" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -294,6 +304,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w04_first_success_acceleration"]["coaching_actions"]) >= 6
     assert len(body["w04_first_success_acceleration"]["scheduled_events"]) >= 6
     assert body["w04_first_success_acceleration"]["common_mistakes_reference"] == "/api/public/adoption-plan/w04/common-mistakes"
+    assert body["w05_usage_consistency"]["timeline"]["week"] == 5
+    assert len(body["w05_usage_consistency"]["role_missions"]) >= 5
+    assert len(body["w05_usage_consistency"]["scheduled_events"]) >= 5
+    assert len(body["w05_usage_consistency"]["help_docs"]) >= 3
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -393,6 +407,33 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w04_mistakes_html.status_code == 200
     assert w04_mistakes_html.headers["content-type"].startswith("text/html")
     assert "W04 Common Mistakes and Quick Fix Guide" in w04_mistakes_html.text
+
+    w05 = app_client.get("/api/public/adoption-plan/w05")
+    assert w05.status_code == 200
+    w05_body = w05.json()
+    assert w05_body["public"] is True
+    assert w05_body["timeline"]["focus"] == "Usage consistency"
+    assert len(w05_body["role_missions"]) >= 5
+    assert len(w05_body["scheduled_events"]) >= 5
+    assert len(w05_body["help_docs"]) >= 3
+    assert w05_body["usage_consistency_api"] == "/api/ops/adoption/w05/consistency"
+
+    w05_csv = app_client.get("/api/public/adoption-plan/w05/missions.csv")
+    assert w05_csv.status_code == 200
+    assert w05_csv.headers["content-type"].startswith("text/csv")
+    assert "section,id,role,mission,weekly_target,owner,evidence_required,evidence_hint" in w05_csv.text
+    assert "role_mission,W05-M-01" in w05_csv.text
+
+    w05_ics = app_client.get("/api/public/adoption-plan/w05/schedule.ics")
+    assert w05_ics.status_code == 200
+    assert w05_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w05_ics.text
+    assert "SUMMARY:[W05] W05 kickoff - weekly mission board launch" in w05_ics.text
+
+    w05_help_docs = app_client.get("/api/public/adoption-plan/w05/help-docs")
+    assert w05_help_docs.status_code == 200
+    assert w05_help_docs.json()["public"] is True
+    assert len(w05_help_docs.json()["items"]) >= 3
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -1721,6 +1762,103 @@ def test_w04_tracker_funnel_and_blockers_flow(app_client: TestClient) -> None:
         headers=manager_headers,
     )
     assert forbidden_other_site_funnel.status_code == 403
+
+
+def test_w05_usage_consistency_snapshot_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w05_manager_ci",
+            "display_name": "W05 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W05 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w05-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    overdue_due_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    created_overdue = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W05 overdue work",
+            "description": "for consistency snapshot",
+            "site": "W05 Site",
+            "location": "C1",
+            "priority": "high",
+            "due_at": overdue_due_at,
+        },
+    )
+    assert created_overdue.status_code == 201
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W05 Site",
+            "location": "C1",
+            "cycle": "daily",
+            "inspector": "w05_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    scoped = app_client.get(
+        "/api/ops/adoption/w05/consistency?site=W05+Site&days=28",
+        headers=manager_headers,
+    )
+    assert scoped.status_code == 200
+    scoped_body = scoped.json()
+    assert scoped_body["site"] == "W05 Site"
+    assert scoped_body["window_days"] == 28
+    assert scoped_body["target_retention_percent"] == 65.0
+    assert "metrics" in scoped_body
+    assert scoped_body["metrics"]["open_work_orders"] >= 1
+    assert scoped_body["metrics"]["overdue_open_work_orders"] >= 1
+    assert isinstance(scoped_body["mission_recommendations"], list)
+    assert len(scoped_body["mission_recommendations"]) >= 1
+
+    all_visible = app_client.get(
+        "/api/ops/adoption/w05/consistency?days=28",
+        headers=manager_headers,
+    )
+    assert all_visible.status_code == 200
+    all_body = all_visible.json()
+    assert all_body["site"] is None
+    assert isinstance(all_body["top_sites_by_overdue"], list)
+    assert any(row["site"] == "W05 Site" for row in all_body["top_sites_by_overdue"])
+
+    owner_outside = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Outside W05 scope",
+            "description": "outside",
+            "site": "Outside W05 Site",
+            "location": "X1",
+            "priority": "high",
+            "due_at": overdue_due_at,
+        },
+    )
+    assert owner_outside.status_code == 201
+
+    forbidden = app_client.get(
+        "/api/ops/adoption/w05/consistency?site=Outside+W05+Site&days=28",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
 
 
 def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
