@@ -259,6 +259,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w04:write",
         "adoption_w05:read",
         "adoption_w05:write",
+        "adoption_w06:read",
+        "adoption_w06:write",
     },
     "operator": {
         "inspections:read",
@@ -275,6 +277,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w04:write",
         "adoption_w05:read",
         "adoption_w05:write",
+        "adoption_w06:read",
+        "adoption_w06:write",
     },
     "auditor": {
         "inspections:read",
@@ -286,6 +290,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w03:read",
         "adoption_w04:read",
         "adoption_w05:read",
+        "adoption_w06:read",
     },
 }
 
@@ -1576,6 +1581,120 @@ ADOPTION_W05_HELP_DOCS: list[dict[str, Any]] = [
             "/api/adoption/w04/tracker/items",
             "/api/adoption/w04/tracker/readiness",
         ],
+    },
+]
+
+ADOPTION_W06_RHYTHM_CHECKLIST: list[dict[str, Any]] = [
+    {
+        "id": "W06-RC-01",
+        "day": "Monday",
+        "routine": "Weekly planning board setup (site priorities + owners)",
+        "owner_role": "Manager",
+        "definition_of_done": "이번 주 우선순위 5개와 담당자 지정 완료",
+        "evidence_hint": "Planning board snapshot + owner assignment",
+    },
+    {
+        "id": "W06-RC-02",
+        "day": "Daily",
+        "routine": "Daily operation meeting with handover brief",
+        "owner_role": "Manager/Operator",
+        "definition_of_done": "handover 기반 action item 최소 3건 기록",
+        "evidence_hint": "Handover brief export + action notes",
+    },
+    {
+        "id": "W06-RC-03",
+        "day": "Wednesday",
+        "routine": "Mid-week cadence check and backlog rebalance",
+        "owner_role": "Ops Lead",
+        "definition_of_done": "overdue 상위 항목 재할당 또는 ETA 수정",
+        "evidence_hint": "Before/after overdue list",
+    },
+    {
+        "id": "W06-RC-04",
+        "day": "Friday",
+        "routine": "Weekly review and next-week carry-over triage",
+        "owner_role": "Owner/Manager",
+        "definition_of_done": "주간 회고 + 다음 주 carry-over 승인",
+        "evidence_hint": "Weekly review memo",
+    },
+]
+
+ADOPTION_W06_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W06-E01",
+        "date": "2026-04-06",
+        "start_time": "09:30",
+        "end_time": "10:00",
+        "title": "W06 kickoff - operational rhythm launch",
+        "owner": "Ops Manager",
+        "output": "Cadence board v1",
+    },
+    {
+        "id": "W06-E02",
+        "date": "2026-04-07",
+        "start_time": "10:00",
+        "end_time": "10:20",
+        "title": "Daily handover brief drill",
+        "owner": "Shift Lead",
+        "output": "Handover action list",
+    },
+    {
+        "id": "W06-E03",
+        "date": "2026-04-08",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Mid-week backlog rebalance",
+        "owner": "Ops Lead + QA",
+        "output": "Reassigned overdue items",
+    },
+    {
+        "id": "W06-E04",
+        "date": "2026-04-09",
+        "start_time": "15:30",
+        "end_time": "16:00",
+        "title": "RBAC/token audit checkpoint",
+        "owner": "Owner + Security",
+        "output": "RBAC audit delta list",
+    },
+    {
+        "id": "W06-E05",
+        "date": "2026-04-10",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W06 close review",
+        "owner": "Ops Manager + Owner",
+        "output": "Operational rhythm close report",
+    },
+]
+
+ADOPTION_W06_RBAC_AUDIT_CHECKLIST: list[dict[str, Any]] = [
+    {
+        "id": "W06-RBAC-01",
+        "control": "Role coverage by site",
+        "objective": "operator/manager 최소 1명 이상 배치 확인",
+        "api_ref": "/api/admin/users",
+        "pass_criteria": "site별 필수 역할 공석 없음",
+    },
+    {
+        "id": "W06-RBAC-02",
+        "control": "Token expiry hygiene",
+        "objective": "임박 만료 토큰과 비활성 토큰 정리",
+        "api_ref": "/api/admin/tokens",
+        "pass_criteria": "7일 내 만료 토큰 대응 계획 100%",
+    },
+    {
+        "id": "W06-RBAC-03",
+        "control": "Site scope correctness",
+        "objective": "사용자/토큰 site_scope 일치 검증",
+        "api_ref": "/api/auth/me",
+        "pass_criteria": "scope mismatch 0건",
+    },
+    {
+        "id": "W06-RBAC-04",
+        "control": "Audit traceability",
+        "objective": "주간 주요 운영 행위 감사 로그 추적 가능",
+        "api_ref": "/api/admin/audit-logs",
+        "pass_criteria": "핵심 운영 action 감사 누락 0건",
     },
 ]
 
@@ -6397,6 +6516,261 @@ def _build_w05_usage_consistency_snapshot(
     }
 
 
+def _build_w06_operational_rhythm_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(7, min(int(days), 90))
+    start = now - timedelta(days=window_days)
+
+    def _scope_matches(scope_values: list[str], *, site_name: str | None, allowed: list[str] | None) -> bool:
+        normalized = _site_scope_text_to_list(scope_values, default_all=True)
+        if SITE_SCOPE_ALL in normalized:
+            if site_name is not None:
+                return True
+            return not (allowed is not None and len(allowed) == 0)
+        if site_name is not None:
+            return site_name in normalized
+        if allowed is not None:
+            return any(item in allowed for item in normalized)
+        return True
+
+    event_stmt = (
+        select(work_order_events.c.actor_username, work_orders.c.site, work_order_events.c.created_at)
+        .select_from(work_order_events.join(work_orders, work_order_events.c.work_order_id == work_orders.c.id))
+        .where(work_order_events.c.created_at >= start)
+    )
+    inspection_stmt = select(inspections.c.inspector, inspections.c.site, inspections.c.created_at).where(
+        inspections.c.created_at >= start
+    )
+    handover_stmt = (
+        select(admin_audit_logs.c.actor_username, admin_audit_logs.c.resource_id, admin_audit_logs.c.created_at)
+        .where(admin_audit_logs.c.action == "ops_handover_brief_view")
+        .where(admin_audit_logs.c.created_at >= start)
+    )
+    overdue_stmt = select(work_orders.c.id).where(work_orders.c.status.in_(["open", "acked"])).where(
+        work_orders.c.due_at.is_not(None)
+    ).where(work_orders.c.due_at < now)
+
+    if site is not None:
+        event_stmt = event_stmt.where(work_orders.c.site == site)
+        inspection_stmt = inspection_stmt.where(inspections.c.site == site)
+        overdue_stmt = overdue_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "target_weekly_active_rate_percent": 75.0,
+                "metrics": {
+                    "eligible_users": 0,
+                    "active_users": 0,
+                    "weekly_active_rate_percent": 0.0,
+                    "target_met": False,
+                    "handover_brief_views": 0,
+                    "handover_days_covered": 0,
+                    "cadence_adherence_percent": 0.0,
+                    "overdue_open_work_orders": 0,
+                    "active_tokens": 0,
+                    "tokens_expiring_7d": 0,
+                    "tokens_stale_14d": 0,
+                    "users_without_active_token": 0,
+                },
+                "role_coverage": [],
+                "site_activity": [],
+                "recommendations": [],
+            }
+        event_stmt = event_stmt.where(work_orders.c.site.in_(allowed_sites))
+        inspection_stmt = inspection_stmt.where(inspections.c.site.in_(allowed_sites))
+        overdue_stmt = overdue_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        event_rows = conn.execute(event_stmt).mappings().all()
+        inspection_rows = conn.execute(inspection_stmt).mappings().all()
+        handover_rows = conn.execute(handover_stmt).mappings().all()
+        overdue_rows = conn.execute(overdue_stmt).all()
+        user_rows = conn.execute(
+            select(
+                admin_users.c.id,
+                admin_users.c.username,
+                admin_users.c.role,
+                admin_users.c.site_scope,
+            ).where(admin_users.c.is_active.is_(True))
+        ).mappings().all()
+        token_rows = conn.execute(
+            select(
+                admin_tokens.c.user_id,
+                admin_tokens.c.expires_at,
+                admin_tokens.c.last_used_at,
+                admin_tokens.c.site_scope,
+            ).where(admin_tokens.c.is_active.is_(True))
+        ).mappings().all()
+
+    eligible_roles = {"owner", "manager", "operator"}
+    eligible_by_id: dict[int, dict[str, Any]] = {}
+    for row in user_rows:
+        role = str(row.get("role") or "").strip().lower()
+        if role not in eligible_roles:
+            continue
+        scope_values = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        if not _scope_matches(scope_values, site_name=site, allowed=allowed_sites):
+            continue
+        user_id = int(row.get("id") or 0)
+        if user_id <= 0:
+            continue
+        eligible_by_id[user_id] = {
+            "username": str(row.get("username") or "").strip(),
+            "role": role,
+            "scope": scope_values,
+        }
+
+    eligible_users = {
+        str(info.get("username") or "").strip()
+        for info in eligible_by_id.values()
+        if str(info.get("username") or "").strip()
+    }
+
+    active_users: set[str] = set()
+    site_activity_counter: dict[str, int] = {}
+    for row in event_rows:
+        actor = str(row.get("actor_username") or "").strip()
+        row_site = str(row.get("site") or "").strip()
+        if not actor or actor == "system":
+            continue
+        active_users.add(actor)
+        if row_site:
+            site_activity_counter[row_site] = int(site_activity_counter.get(row_site, 0)) + 1
+    for row in inspection_rows:
+        actor = str(row.get("inspector") or "").strip()
+        row_site = str(row.get("site") or "").strip()
+        if not actor:
+            continue
+        active_users.add(actor)
+        if row_site:
+            site_activity_counter[row_site] = int(site_activity_counter.get(row_site, 0)) + 1
+
+    active_eligible_users = active_users.intersection(eligible_users)
+    eligible_count = len(eligible_users)
+    active_count = len(active_eligible_users)
+    weekly_active_rate_percent = round((active_count / eligible_count) * 100, 2) if eligible_count > 0 else 0.0
+    target_weekly_active_rate_percent = 75.0
+
+    handover_view_count = 0
+    handover_days: set[str] = set()
+    for row in handover_rows:
+        resource_id = str(row.get("resource_id") or "").strip()
+        if site is not None:
+            if resource_id not in {site, "all"}:
+                continue
+        elif allowed_sites is not None:
+            if resource_id != "all" and resource_id not in allowed_sites:
+                continue
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is None:
+            continue
+        handover_view_count += 1
+        handover_days.add(created_at.date().isoformat())
+
+    expected_handover_days = max(1, min(window_days, 5))
+    cadence_adherence_percent = round((len(handover_days) / expected_handover_days) * 100, 2)
+    if cadence_adherence_percent > 100.0:
+        cadence_adherence_percent = 100.0
+
+    now_plus_7d = now + timedelta(days=7)
+    stale_cutoff = now - timedelta(days=14)
+    active_token_count = 0
+    tokens_expiring_7d = 0
+    tokens_stale_14d = 0
+    users_with_active_token: set[int] = set()
+    for row in token_rows:
+        user_id = int(row.get("user_id") or 0)
+        if user_id not in eligible_by_id:
+            continue
+        user_scope = eligible_by_id[user_id]["scope"]
+        token_scope_raw = row.get("site_scope")
+        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True) if token_scope_raw is not None else None
+        effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
+        if not _scope_matches(effective_scope, site_name=site, allowed=allowed_sites):
+            continue
+        active_token_count += 1
+        users_with_active_token.add(user_id)
+        expires_at = _as_optional_datetime(row.get("expires_at"))
+        if expires_at is not None and expires_at <= now_plus_7d:
+            tokens_expiring_7d += 1
+        last_used_at = _as_optional_datetime(row.get("last_used_at"))
+        if last_used_at is None or last_used_at < stale_cutoff:
+            tokens_stale_14d += 1
+
+    users_without_active_token = max(0, len(eligible_by_id) - len(users_with_active_token))
+    overdue_open_work_orders = len(overdue_rows)
+
+    role_to_users: dict[str, set[str]] = {"owner": set(), "manager": set(), "operator": set()}
+    for info in eligible_by_id.values():
+        role = str(info.get("role") or "").strip().lower()
+        username = str(info.get("username") or "").strip()
+        if role in role_to_users and username:
+            role_to_users[role].add(username)
+
+    role_coverage = [
+        {
+            "role": role,
+            "user_count": len(users),
+            "active_user_count": len(users.intersection(active_eligible_users)),
+        }
+        for role, users in role_to_users.items()
+    ]
+
+    site_activity: list[dict[str, Any]] = []
+    if site is None:
+        for site_name, count in site_activity_counter.items():
+            site_activity.append({"site": site_name, "activity_events": int(count)})
+        site_activity = sorted(site_activity, key=lambda item: int(item.get("activity_events", 0)), reverse=True)[:8]
+    else:
+        site_activity = [{"site": site, "activity_events": int(site_activity_counter.get(site, 0))}]
+
+    recommendations: list[str] = []
+    if weekly_active_rate_percent < target_weekly_active_rate_percent:
+        recommendations.append("주간 활성률이 낮습니다. 월요일 계획보드에서 역할별 최소 미션을 재지정하세요.")
+    if cadence_adherence_percent < 80.0:
+        recommendations.append("handover 회의 리듬이 약합니다. 매일 브리프 조회와 action 기록을 고정하세요.")
+    if users_without_active_token > 0:
+        recommendations.append("활성 토큰이 없는 운영 인원이 있습니다. RBAC/토큰 발급 상태를 점검하세요.")
+    if tokens_expiring_7d > 0 or tokens_stale_14d > 0:
+        recommendations.append("만료 임박/장기 미사용 토큰 정리를 수행해 보안/운영 리듬을 맞추세요.")
+    if overdue_open_work_orders > 0:
+        recommendations.append("overdue 작업이 남아 있습니다. 주중 재할당/ETA 업데이트를 우선 수행하세요.")
+    if not recommendations:
+        recommendations.append("운영 리듬 지표가 목표 범위입니다. 현재 cadence를 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "target_weekly_active_rate_percent": target_weekly_active_rate_percent,
+        "metrics": {
+            "eligible_users": eligible_count,
+            "active_users": active_count,
+            "weekly_active_rate_percent": weekly_active_rate_percent,
+            "target_met": weekly_active_rate_percent >= target_weekly_active_rate_percent,
+            "handover_brief_views": handover_view_count,
+            "handover_days_covered": len(handover_days),
+            "cadence_adherence_percent": cadence_adherence_percent,
+            "overdue_open_work_orders": overdue_open_work_orders,
+            "active_tokens": active_token_count,
+            "tokens_expiring_7d": tokens_expiring_7d,
+            "tokens_stale_14d": tokens_stale_14d,
+            "users_without_active_token": users_without_active_token,
+        },
+        "role_coverage": role_coverage,
+        "site_activity": site_activity,
+        "recommendations": recommendations,
+    }
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -7783,6 +8157,10 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w05_missions_csv_api": "/api/public/adoption-plan/w05/missions.csv",
         "public_adoption_w05_schedule_ics_api": "/api/public/adoption-plan/w05/schedule.ics",
         "public_adoption_w05_help_docs_api": "/api/public/adoption-plan/w05/help-docs",
+        "public_adoption_w06_api": "/api/public/adoption-plan/w06",
+        "public_adoption_w06_checklist_csv_api": "/api/public/adoption-plan/w06/checklist.csv",
+        "public_adoption_w06_schedule_ics_api": "/api/public/adoption-plan/w06/schedule.ics",
+        "public_adoption_w06_rbac_audit_template_api": "/api/public/adoption-plan/w06/rbac-audit-template",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -7804,6 +8182,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w04_tracker_completion_api": "/api/adoption/w04/tracker/completion",
         "adoption_w04_tracker_complete_api": "/api/adoption/w04/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
+        "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -7858,6 +8237,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w03_go_live_onboarding": _adoption_w03_payload(),
         "w04_first_success_acceleration": _adoption_w04_payload(),
         "w05_usage_consistency": _adoption_w05_payload(),
+        "w06_operational_rhythm": _adoption_w06_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -7889,6 +8269,10 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w05_missions_csv": "/api/public/adoption-plan/w05/missions.csv",
                 "w05_schedule_ics": "/api/public/adoption-plan/w05/schedule.ics",
                 "w05_help_docs": "/api/public/adoption-plan/w05/help-docs",
+                "w06_json": "/api/public/adoption-plan/w06",
+                "w06_checklist_csv": "/api/public/adoption-plan/w06/checklist.csv",
+                "w06_schedule_ics": "/api/public/adoption-plan/w06/schedule.ics",
+                "w06_rbac_audit_template": "/api/public/adoption-plan/w06/rbac-audit-template",
             },
             "next_review_date": next_review_date,
         },
@@ -8345,6 +8729,145 @@ def _build_adoption_w05_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w06_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 6),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 6,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Habit",
+            "focus": "Operational rhythm",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 6)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W06 Operational Rhythm Pack",
+        "public": True,
+        "timeline": timeline,
+        "rhythm_checklist": ADOPTION_W06_RHYTHM_CHECKLIST,
+        "scheduled_events": ADOPTION_W06_SCHEDULED_EVENTS,
+        "rbac_audit_checklist": ADOPTION_W06_RBAC_AUDIT_CHECKLIST,
+        "rhythm_api": "/api/ops/adoption/w06/rhythm",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w06",
+            "checklist_csv": "/api/public/adoption-plan/w06/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w06/schedule.ics",
+            "rbac_audit_template": "/api/public/adoption-plan/w06/rbac-audit-template",
+        },
+    }
+
+
+def _build_adoption_w06_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "day_or_control",
+            "routine_or_objective",
+            "owner_or_api_ref",
+            "definition_of_done_or_pass_criteria",
+            "evidence_hint",
+        ]
+    )
+    for item in payload.get("rhythm_checklist", []):
+        writer.writerow(
+            [
+                "rhythm_checklist",
+                item.get("id", ""),
+                item.get("day", ""),
+                item.get("routine", ""),
+                item.get("owner_role", ""),
+                item.get("definition_of_done", ""),
+                item.get("evidence_hint", ""),
+            ]
+        )
+    for item in payload.get("rbac_audit_checklist", []):
+        writer.writerow(
+            [
+                "rbac_audit",
+                item.get("id", ""),
+                item.get("control", ""),
+                item.get("objective", ""),
+                item.get("api_ref", ""),
+                item.get("pass_criteria", ""),
+                "",
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                item.get("date", ""),
+                item.get("title", ""),
+                item.get("owner", ""),
+                item.get("output", ""),
+                f"{item.get('start_time', '')}-{item.get('end_time', '')}",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w06_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w06-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W06] {str(item.get('title', 'Operational Rhythm Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W06 Operational Rhythm//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -8713,6 +9236,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w03_pack = plan.get("w03_go_live_onboarding", {})
     w04_pack = plan.get("w04_first_success_acceleration", {})
     w05_pack = plan.get("w05_usage_consistency", {})
+    w06_pack = plan.get("w06_operational_rhythm", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -8963,6 +9487,49 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
               <td>{html.escape(str(item.get("problem", "")))}</td>
               <td>{quick_steps}</td>
               <td>{api_refs}</td>
+            </tr>
+            """
+        )
+
+    w06_rhythm_rows: list[str] = []
+    for item in w06_pack.get("rhythm_checklist", []):
+        w06_rhythm_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("day", "")))}</td>
+              <td>{html.escape(str(item.get("routine", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_hint", "")))}</td>
+            </tr>
+            """
+        )
+
+    w06_schedule_rows: list[str] = []
+    for item in w06_pack.get("scheduled_events", []):
+        w06_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w06_rbac_rows: list[str] = []
+    for item in w06_pack.get("rbac_audit_checklist", []):
+        w06_rbac_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("control", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+              <td>{html.escape(str(item.get("pass_criteria", "")))}</td>
             </tr>
             """
         )
@@ -9625,6 +10192,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w05/missions.csv">W05 Missions CSV</a>
         <a href="/api/public/adoption-plan/w05/schedule.ics">W05 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w05/help-docs">W05 Help Docs</a>
+        <a href="/api/public/adoption-plan/w06">W06 JSON</a>
+        <a href="/api/public/adoption-plan/w06/checklist.csv">W06 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w06/schedule.ics">W06 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w06/rbac-audit-template">W06 RBAC Audit Template</a>
         <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
@@ -9918,6 +10489,67 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w05_help_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W06 Operational Rhythm</h2>
+      <p class="sub">주간 운영 리듬(월요일 계획, 일일 handover, 금요일 리뷰)과 RBAC 점검을 정례화하는 실행 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w06">W06 JSON</a>
+        <a href="/api/public/adoption-plan/w06/checklist.csv">W06 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w06/schedule.ics">W06 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w06/rbac-audit-template">W06 RBAC Audit Template</a>
+        <a href="/api/ops/adoption/w06/rhythm">W06 Rhythm API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Day</th>
+              <th>Routine</th>
+              <th>Owner Role</th>
+              <th>Definition of Done</th>
+              <th>Evidence Hint</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w06_rhythm_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w06_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Control ID</th>
+              <th>Control</th>
+              <th>Objective</th>
+              <th>API Ref</th>
+              <th>Pass Criteria</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w06_rbac_rows)}
           </tbody>
         </table>
       </div>
@@ -11686,6 +12318,38 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w05ConsistencyRecommendations" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W06 Operational Rhythm</h3>
+            <div id="adoptionW06Top" class="cards"></div>
+            <div id="adoptionW06Checklist" class="empty">데이터 없음</div>
+            <div id="adoptionW06Schedule" class="empty">데이터 없음</div>
+            <div id="adoptionW06RbacAudit" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW06Json" href="/api/public/adoption-plan/w06">W06 JSON</a>
+              <a id="adoptW06ChecklistCsv" href="/api/public/adoption-plan/w06/checklist.csv">W06 Checklist CSV</a>
+              <a id="adoptW06ScheduleIcs" href="/api/public/adoption-plan/w06/schedule.ics">W06 Schedule ICS</a>
+              <a id="adoptW06RbacAuditTemplate" href="/api/public/adoption-plan/w06/rbac-audit-template">W06 RBAC Audit Template</a>
+              <a id="adoptW06RhythmApi" href="/api/ops/adoption/w06/rhythm">W06 Rhythm API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W06 Operational Rhythm Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w06RhythmSite" placeholder="site (optional, 빈 값이면 전체)" />
+              <input id="w06RhythmDays" value="14" placeholder="window days (7-90)" />
+              <input id="w06RhythmReserved1" value="token required" disabled />
+              <input id="w06RhythmReserved2" value="site scope enforced" disabled />
+              <button id="w06RhythmRefreshBtn" class="btn run" type="button">W06 리듬 새로고침</button>
+            </div>
+            <div id="w06RhythmMeta" class="meta">조회 전</div>
+            <div id="w06RhythmSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Role Coverage</h4>
+            <div id="w06RhythmRoleCoverage" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Site Activity</h4>
+            <div id="w06RhythmSiteActivity" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w06RhythmRecommendations" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -13183,6 +13847,85 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW06Rhythm() {{
+        const meta = document.getElementById("w06RhythmMeta");
+        const summary = document.getElementById("w06RhythmSummary");
+        const roleCoverage = document.getElementById("w06RhythmRoleCoverage");
+        const siteActivity = document.getElementById("w06RhythmSiteActivity");
+        const recommendations = document.getElementById("w06RhythmRecommendations");
+        const site = (document.getElementById("w06RhythmSite").value || "").trim();
+        const daysRaw = (document.getElementById("w06RhythmDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w06/rhythm" + (params.toString() ? ("?" + params.toString()) : "");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | weekly_active_rate=" + String(metrics.weekly_active_rate_percent ?? 0) + "%"
+            + " | target=" + String(data.target_weekly_active_rate_percent ?? 75) + "%";
+          const summaryItems = [
+            ["Eligible Users", metrics.eligible_users ?? 0],
+            ["Active Users", metrics.active_users ?? 0],
+            ["Weekly Active Rate %", metrics.weekly_active_rate_percent ?? 0],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+            ["Handover Views", metrics.handover_brief_views ?? 0],
+            ["Handover Days", metrics.handover_days_covered ?? 0],
+            ["Cadence Adherence %", metrics.cadence_adherence_percent ?? 0],
+            ["Overdue Open WOs", metrics.overdue_open_work_orders ?? 0],
+            ["Active Tokens", metrics.active_tokens ?? 0],
+            ["Expiring Tokens(7d)", metrics.tokens_expiring_7d ?? 0],
+            ["Stale Tokens(14d)", metrics.tokens_stale_14d ?? 0],
+            ["Users Without Token", metrics.users_without_active_token ?? 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          roleCoverage.innerHTML = renderTable(
+            data.role_coverage || [],
+            [
+              {{ key: "role", label: "Role" }},
+              {{ key: "user_count", label: "Users" }},
+              {{ key: "active_user_count", label: "Active Users" }},
+            ]
+          );
+          siteActivity.innerHTML = renderTable(
+            data.site_activity || [],
+            [
+              {{ key: "site", label: "Site" }},
+              {{ key: "activity_events", label: "Activity Events" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          roleCoverage.innerHTML = renderEmpty(err.message);
+          siteActivity.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
@@ -13204,6 +13947,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w05Missions = document.getElementById("adoptionW05Missions");
         const w05Schedule = document.getElementById("adoptionW05Schedule");
         const w05HelpDocs = document.getElementById("adoptionW05HelpDocs");
+        const w06Top = document.getElementById("adoptionW06Top");
+        const w06Checklist = document.getElementById("adoptionW06Checklist");
+        const w06Schedule = document.getElementById("adoptionW06Schedule");
+        const w06RbacAudit = document.getElementById("adoptionW06RbacAudit");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -13525,6 +14272,72 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w06 = data.w06_operational_rhythm || {{}};
+          const w06TopItems = [
+            ["Week", "W" + String(w06.timeline?.week || 6).padStart(2, "0")],
+            ["Focus", w06.timeline?.focus || "Operational rhythm"],
+            ["Rhythm Checklist", (w06.rhythm_checklist || []).length],
+            ["Sessions", (w06.scheduled_events || []).length],
+            ["RBAC Audit Controls", (w06.rbac_audit_checklist || []).length],
+            ["Metric", w06.timeline?.success_metric || "Weekly active rate >= 75%"],
+          ];
+          w06Top.innerHTML = w06TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w06Checklist.innerHTML = renderTable(
+            (w06.rhythm_checklist || []).map((row) => ({{
+              id: row.id || "",
+              day: row.day || "",
+              routine: row.routine || "",
+              owner_role: row.owner_role || "",
+              definition_of_done: row.definition_of_done || "",
+              evidence_hint: row.evidence_hint || "",
+            }})),
+            [
+              {{ key: "id", label: "Checklist ID" }},
+              {{ key: "day", label: "Day" }},
+              {{ key: "routine", label: "Routine" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "evidence_hint", label: "Evidence Hint" }},
+            ]
+          );
+
+          w06Schedule.innerHTML = renderTable(
+            (w06.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
+          w06RbacAudit.innerHTML = renderTable(
+            (w06.rbac_audit_checklist || []).map((row) => ({{
+              id: row.id || "",
+              control: row.control || "",
+              objective: row.objective || "",
+              api_ref: row.api_ref || "",
+              pass_criteria: row.pass_criteria || "",
+            }})),
+            [
+              {{ key: "id", label: "Control ID" }},
+              {{ key: "control", label: "Control" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "api_ref", label: "API Ref" }},
+              {{ key: "pass_criteria", label: "Pass Criteria" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -13559,6 +14372,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW04Tracker().catch(() => null);
             runW04FunnelBlockers().catch(() => null);
             runW05Consistency().catch(() => null);
+            runW06Rhythm().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -13622,6 +14436,17 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w05ConsistencySummary.innerHTML = "";
             w05ConsistencyTopSites.innerHTML = renderEmpty("인증 토큰 필요");
             w05ConsistencyRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+
+            const w06RhythmMeta = document.getElementById("w06RhythmMeta");
+            const w06RhythmSummary = document.getElementById("w06RhythmSummary");
+            const w06RhythmRoleCoverage = document.getElementById("w06RhythmRoleCoverage");
+            const w06RhythmSiteActivity = document.getElementById("w06RhythmSiteActivity");
+            const w06RhythmRecommendations = document.getElementById("w06RhythmRecommendations");
+            w06RhythmMeta.textContent = "토큰 저장 후 W06 rhythm API를 사용할 수 있습니다.";
+            w06RhythmSummary.innerHTML = "";
+            w06RhythmRoleCoverage.innerHTML = renderEmpty("인증 토큰 필요");
+            w06RhythmSiteActivity.innerHTML = renderEmpty("인증 토큰 필요");
+            w06RhythmRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
           }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
@@ -13644,10 +14469,19 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w05Missions.innerHTML = renderEmpty(err.message);
           w05Schedule.innerHTML = renderEmpty(err.message);
           w05HelpDocs.innerHTML = renderEmpty(err.message);
+          w06Top.innerHTML = "";
+          w06Checklist.innerHTML = renderEmpty(err.message);
+          w06Schedule.innerHTML = renderEmpty(err.message);
+          w06RbacAudit.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w06RhythmMeta").textContent = "실패: " + err.message;
+          document.getElementById("w06RhythmSummary").innerHTML = "";
+          document.getElementById("w06RhythmRoleCoverage").innerHTML = renderEmpty(err.message);
+          document.getElementById("w06RhythmSiteActivity").innerHTML = renderEmpty(err.message);
+          document.getElementById("w06RhythmRecommendations").innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -13718,6 +14552,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w04CompleteBtn").addEventListener("click", runW04Complete);
       document.getElementById("w04TrackUpdateBtn").addEventListener("click", runW04TrackerUpdateAndUpload);
       document.getElementById("w05ConsistencyRefreshBtn").addEventListener("click", runW05Consistency);
+      document.getElementById("w06RhythmRefreshBtn").addEventListener("click", runW06Rhythm);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -13743,6 +14578,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w05ConsistencySite").value) {{
         document.getElementById("w05ConsistencySite").value = "HQ";
+      }}
+      if (!document.getElementById("w06RhythmSite").value) {{
+        document.getElementById("w06RhythmSite").value = "HQ";
       }}
       activate("{selected_tab}", false);
 
@@ -13816,6 +14654,11 @@ def get_public_adoption_w04() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w05")
 def get_public_adoption_w05() -> dict[str, Any]:
     return _adoption_w05_payload()
+
+
+@app.get("/api/public/adoption-plan/w06")
+def get_public_adoption_w06() -> dict[str, Any]:
+    return _adoption_w06_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -13972,6 +14815,41 @@ def get_public_adoption_w05_help_docs() -> dict[str, Any]:
         "public": True,
         "timeline": payload.get("timeline", {}),
         "items": payload.get("help_docs", []),
+    }
+
+
+@app.get("/api/public/adoption-plan/w06/checklist.csv")
+def get_public_adoption_w06_checklist_csv() -> Response:
+    payload = _adoption_w06_payload()
+    csv_text = _build_adoption_w06_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w06-operational-rhythm-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w06/schedule.ics")
+def get_public_adoption_w06_schedule_ics() -> Response:
+    payload = _adoption_w06_payload()
+    ics_text = _build_adoption_w06_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w06-operational-rhythm.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w06/rbac-audit-template")
+def get_public_adoption_w06_rbac_audit_template() -> dict[str, Any]:
+    payload = _adoption_w06_payload()
+    return {
+        "title": "W06 RBAC Audit Template",
+        "public": True,
+        "timeline": payload.get("timeline", {}),
+        "items": payload.get("rbac_audit_checklist", []),
     }
 
 
@@ -16700,6 +17578,31 @@ def get_ops_adoption_w05_consistency(
             "window_days": int(snapshot.get("window_days") or days),
             "two_week_retention_percent": snapshot.get("metrics", {}).get("two_week_retention_percent"),
             "overdue_ratio_percent": snapshot.get("metrics", {}).get("overdue_ratio_percent"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w06/rhythm")
+def get_ops_adoption_w06_rhythm(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=7, le=90)] = 14,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w06:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w06_operational_rhythm_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    _write_audit_log(
+        principal=principal,
+        action="w06_operational_rhythm_view",
+        resource_type="adoption_w06_rhythm",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "weekly_active_rate_percent": snapshot.get("metrics", {}).get("weekly_active_rate_percent"),
+            "cadence_adherence_percent": snapshot.get("metrics", {}).get("cadence_adherence_percent"),
+            "users_without_active_token": snapshot.get("metrics", {}).get("users_without_active_token"),
         },
     )
     return snapshot

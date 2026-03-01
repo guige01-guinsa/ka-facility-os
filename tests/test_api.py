@@ -139,10 +139,12 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_campaign_api" in root_json.json()
     assert "public_adoption_w02_api" in root_json.json()
     assert "public_adoption_w05_api" in root_json.json()
+    assert "public_adoption_w06_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
     assert "adoption_w05_consistency_api" in root_json.json()
+    assert "adoption_w06_rhythm_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -166,9 +168,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W03 Go-live Onboarding" in root_html.text
     assert "W04 First Success Acceleration" in root_html.text
     assert "W05 Usage Consistency" in root_html.text
+    assert "W06 Operational Rhythm" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
+    assert "W06 리듬 새로고침" in root_html.text
     assert "완료 판정" in root_html.text
     assert "W02 완료 확정" in root_html.text
     assert "W04 완료 확정" in root_html.text
@@ -204,6 +208,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_adoption_w05_missions_csv_api"] == "/api/public/adoption-plan/w05/missions.csv"
     assert service_info.json()["public_adoption_w05_schedule_ics_api"] == "/api/public/adoption-plan/w05/schedule.ics"
     assert service_info.json()["public_adoption_w05_help_docs_api"] == "/api/public/adoption-plan/w05/help-docs"
+    assert service_info.json()["public_adoption_w06_api"] == "/api/public/adoption-plan/w06"
+    assert service_info.json()["public_adoption_w06_checklist_csv_api"] == "/api/public/adoption-plan/w06/checklist.csv"
+    assert service_info.json()["public_adoption_w06_schedule_ics_api"] == "/api/public/adoption-plan/w06/schedule.ics"
+    assert service_info.json()["public_adoption_w06_rbac_audit_template_api"] == "/api/public/adoption-plan/w06/rbac-audit-template"
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -222,6 +230,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w04_tracker_completion_api"] == "/api/adoption/w04/tracker/completion"
     assert service_info.json()["adoption_w04_tracker_complete_api"] == "/api/adoption/w04/tracker/complete"
     assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
+    assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
@@ -261,6 +270,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W03 Go-live Onboarding" in adoption_html.text
     assert "W04 First Success Acceleration" in adoption_html.text
     assert "W05 Usage Consistency" in adoption_html.text
+    assert "W06 Operational Rhythm" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -308,6 +318,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w05_usage_consistency"]["role_missions"]) >= 5
     assert len(body["w05_usage_consistency"]["scheduled_events"]) >= 5
     assert len(body["w05_usage_consistency"]["help_docs"]) >= 3
+    assert body["w06_operational_rhythm"]["timeline"]["week"] == 6
+    assert len(body["w06_operational_rhythm"]["rhythm_checklist"]) >= 4
+    assert len(body["w06_operational_rhythm"]["scheduled_events"]) >= 5
+    assert len(body["w06_operational_rhythm"]["rbac_audit_checklist"]) >= 4
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -434,6 +448,33 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w05_help_docs.status_code == 200
     assert w05_help_docs.json()["public"] is True
     assert len(w05_help_docs.json()["items"]) >= 3
+
+    w06 = app_client.get("/api/public/adoption-plan/w06")
+    assert w06.status_code == 200
+    w06_body = w06.json()
+    assert w06_body["public"] is True
+    assert w06_body["timeline"]["focus"] == "Operational rhythm"
+    assert len(w06_body["rhythm_checklist"]) >= 4
+    assert len(w06_body["scheduled_events"]) >= 5
+    assert len(w06_body["rbac_audit_checklist"]) >= 4
+    assert w06_body["rhythm_api"] == "/api/ops/adoption/w06/rhythm"
+
+    w06_csv = app_client.get("/api/public/adoption-plan/w06/checklist.csv")
+    assert w06_csv.status_code == 200
+    assert w06_csv.headers["content-type"].startswith("text/csv")
+    assert "section,id,day_or_control,routine_or_objective,owner_or_api_ref,definition_of_done_or_pass_criteria,evidence_hint" in w06_csv.text
+    assert "rhythm_checklist,W06-RC-01" in w06_csv.text
+
+    w06_ics = app_client.get("/api/public/adoption-plan/w06/schedule.ics")
+    assert w06_ics.status_code == 200
+    assert w06_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w06_ics.text
+    assert "SUMMARY:[W06] W06 kickoff - operational rhythm launch" in w06_ics.text
+
+    w06_rbac = app_client.get("/api/public/adoption-plan/w06/rbac-audit-template")
+    assert w06_rbac.status_code == 200
+    assert w06_rbac.json()["public"] is True
+    assert len(w06_rbac.json()["items"]) >= 4
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -1856,6 +1897,109 @@ def test_w05_usage_consistency_snapshot_flow(app_client: TestClient) -> None:
 
     forbidden = app_client.get(
         "/api/ops/adoption/w05/consistency?site=Outside+W05+Site&days=28",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_w06_operational_rhythm_snapshot_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w06_manager_ci",
+            "display_name": "W06 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W06 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w06-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_token = issued.json()["token"]
+    manager_headers = {"X-Admin-Token": manager_token}
+
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W06 cadence work",
+            "description": "for rhythm snapshot",
+            "site": "W06 Site",
+            "location": "D1",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+        },
+    )
+    assert work_order.status_code == 201
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W06 Site",
+            "location": "D1",
+            "cycle": "daily",
+            "inspector": "w06_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    handover = app_client.get(
+        "/api/ops/handover/brief?site=W06+Site&window_hours=12&due_soon_hours=6&max_items=10",
+        headers=_owner_headers(),
+    )
+    assert handover.status_code == 200
+
+    scoped = app_client.get(
+        "/api/ops/adoption/w06/rhythm?site=W06+Site&days=14",
+        headers=manager_headers,
+    )
+    assert scoped.status_code == 200
+    scoped_body = scoped.json()
+    assert scoped_body["site"] == "W06 Site"
+    assert scoped_body["window_days"] == 14
+    assert scoped_body["target_weekly_active_rate_percent"] == 75.0
+    assert scoped_body["metrics"]["eligible_users"] >= 1
+    assert scoped_body["metrics"]["active_users"] >= 1
+    assert scoped_body["metrics"]["active_tokens"] >= 1
+    assert scoped_body["metrics"]["overdue_open_work_orders"] >= 1
+    assert isinstance(scoped_body["role_coverage"], list)
+    assert isinstance(scoped_body["site_activity"], list)
+    assert isinstance(scoped_body["recommendations"], list)
+    assert len(scoped_body["recommendations"]) >= 1
+
+    all_visible = app_client.get(
+        "/api/ops/adoption/w06/rhythm?days=14",
+        headers=manager_headers,
+    )
+    assert all_visible.status_code == 200
+    assert all_visible.json()["site"] is None
+
+    owner_outside = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Outside W06 scope",
+            "description": "outside",
+            "site": "Outside W06 Site",
+            "location": "D9",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert owner_outside.status_code == 201
+
+    forbidden = app_client.get(
+        "/api/ops/adoption/w06/rhythm?site=Outside+W06+Site&days=14",
         headers=manager_headers,
     )
     assert forbidden.status_code == 403
