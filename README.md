@@ -112,6 +112,7 @@ Open:
   - `GET /api/adoption/w07/tracker/overview?site=...` (`adoption_w07:read`)
   - `GET /api/adoption/w07/tracker/readiness?site=...` (`adoption_w07:read`)
   - `GET /api/adoption/w07/tracker/completion?site=...` (`adoption_w07:read`)
+  - `GET /api/adoption/w07/tracker/completion-package?site=...` (`adoption_w07:read`, ZIP download)
   - `POST /api/adoption/w07/tracker/complete` (`adoption_w07:write`)
   - `PATCH /api/adoption/w07/tracker/items/{id}` (`adoption_w07:write`)
   - `POST /api/adoption/w07/tracker/items/{id}/evidence` (`adoption_w07:write`, multipart upload, max 5MB)

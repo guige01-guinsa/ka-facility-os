@@ -9,6 +9,7 @@ import secrets
 import statistics
 import string
 import time
+import zipfile
 from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -8035,6 +8036,285 @@ def _build_w07_weekly_archive_csv(points: list[dict[str, Any]]) -> str:
     return buffer.getvalue()
 
 
+def _build_w07_tracker_items_csv(rows: list[W07TrackerItemRead]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "site",
+            "item_type",
+            "item_key",
+            "item_name",
+            "assignee",
+            "status",
+            "completion_checked",
+            "completion_note",
+            "due_at",
+            "completed_at",
+            "evidence_count",
+            "updated_at",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row.id,
+                row.site,
+                row.item_type,
+                row.item_key,
+                row.item_name,
+                row.assignee or "",
+                row.status,
+                bool(row.completion_checked),
+                row.completion_note or "",
+                row.due_at.isoformat() if row.due_at is not None else "",
+                row.completed_at.isoformat() if row.completed_at is not None else "",
+                int(row.evidence_count),
+                row.updated_at.isoformat(),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _build_w07_evidence_index_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "evidence_id",
+            "tracker_item_id",
+            "item_key",
+            "item_type",
+            "file_name",
+            "content_type",
+            "file_size",
+            "sha256",
+            "uploaded_by",
+            "uploaded_at",
+            "archive_path",
+            "blob_included",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row.get("evidence_id"),
+                row.get("tracker_item_id"),
+                row.get("item_key"),
+                row.get("item_type"),
+                row.get("file_name"),
+                row.get("content_type"),
+                row.get("file_size"),
+                row.get("sha256"),
+                row.get("uploaded_by"),
+                row.get("uploaded_at"),
+                row.get("archive_path"),
+                bool(row.get("blob_included", False)),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _build_w07_completion_package_zip(
+    *,
+    site: str,
+    completion: W07TrackerCompletionRead,
+    rows: list[W07TrackerItemRead],
+    include_evidence: bool,
+    include_weekly: bool,
+    weekly_limit: int,
+    principal: dict[str, Any] | None,
+) -> tuple[bytes, dict[str, Any]]:
+    generated_at = datetime.now(timezone.utc)
+    actor = str((principal or {}).get("username") or "system")
+    tracker_csv = _build_w07_tracker_items_csv(rows)
+    tracker_json = [row.model_dump(mode="json") for row in rows]
+
+    item_by_id: dict[int, W07TrackerItemRead] = {int(row.id): row for row in rows}
+    evidence_index_rows: list[dict[str, Any]] = []
+    evidence_file_count = 0
+    evidence_missing_blob_count = 0
+    weekly_payload: dict[str, Any] | None = None
+    weekly_latest_payload: dict[str, Any] | None = None
+    weekly_csv: str | None = None
+
+    if include_weekly:
+        weekly_payload = _build_w07_weekly_trends_payload(
+            site=site,
+            allowed_sites=None,
+            limit=max(1, min(int(weekly_limit), 104)),
+        )
+        weekly_csv = _build_w07_weekly_archive_csv(weekly_payload.get("points", []))
+        latest_runs = _read_w07_weekly_job_runs(site=site, allowed_sites=None, limit=1)
+        if latest_runs:
+            latest_model, latest_detail = latest_runs[0]
+            weekly_latest_payload = {
+                "run_id": latest_model.id,
+                "job_name": latest_model.job_name,
+                "status": latest_model.status,
+                "trigger": latest_model.trigger,
+                "started_at": latest_model.started_at.isoformat(),
+                "finished_at": latest_model.finished_at.isoformat(),
+                "detail": latest_detail,
+            }
+        else:
+            weekly_latest_payload = {
+                "run_id": None,
+                "job_name": W07_WEEKLY_JOB_NAME,
+                "status": "not_found",
+                "detail": {},
+            }
+
+    with get_conn() as conn:
+        evidence_rows = conn.execute(
+            select(adoption_w07_evidence_files)
+            .where(adoption_w07_evidence_files.c.site == site)
+            .order_by(adoption_w07_evidence_files.c.uploaded_at.asc(), adoption_w07_evidence_files.c.id.asc())
+        ).mappings().all()
+
+    package_buffer = io.BytesIO()
+    with zipfile.ZipFile(package_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(
+            "README.txt",
+            "\n".join(
+                [
+                    "KA Facility OS - W07 Completion Package",
+                    f"site={site}",
+                    f"generated_at={generated_at.isoformat()}",
+                    f"generated_by={actor}",
+                    "",
+                    "Contents:",
+                    "- manifest.json",
+                    "- completion/completion.json",
+                    "- completion/readiness.json",
+                    "- tracker/items.json",
+                    "- tracker/items.csv",
+                    "- evidence/index.csv (optional)",
+                    "- evidence/files/* (optional)",
+                    "- weekly/latest.json (optional)",
+                    "- weekly/trends.json (optional)",
+                    "- weekly/trends.csv (optional)",
+                ]
+            ),
+        )
+        zf.writestr(
+            "completion/completion.json",
+            json.dumps(completion.model_dump(mode="json"), ensure_ascii=False, indent=2, default=str),
+        )
+        zf.writestr(
+            "completion/readiness.json",
+            json.dumps(completion.readiness.model_dump(mode="json"), ensure_ascii=False, indent=2, default=str),
+        )
+        zf.writestr("tracker/items.csv", tracker_csv)
+        zf.writestr("tracker/items.json", json.dumps(tracker_json, ensure_ascii=False, indent=2, default=str))
+        blockers = completion.readiness.blockers if isinstance(completion.readiness.blockers, list) else []
+        zf.writestr("completion/blockers.txt", "\n".join([str(x) for x in blockers]) + ("\n" if blockers else ""))
+
+        if include_weekly and weekly_payload is not None and weekly_csv is not None:
+            zf.writestr("weekly/trends.csv", weekly_csv)
+            zf.writestr(
+                "weekly/trends.json",
+                json.dumps(weekly_payload, ensure_ascii=False, indent=2, default=str),
+            )
+            if weekly_latest_payload is not None:
+                zf.writestr(
+                    "weekly/latest.json",
+                    json.dumps(weekly_latest_payload, ensure_ascii=False, indent=2, default=str),
+                )
+
+        if include_evidence:
+            for evidence in evidence_rows:
+                evidence_id = int(evidence.get("id") or 0)
+                tracker_item_id = int(evidence.get("tracker_item_id") or 0)
+                model = item_by_id.get(tracker_item_id)
+                safe_item_key = _safe_download_filename(
+                    str(model.item_key) if model is not None else f"item-{tracker_item_id}",
+                    fallback=f"item-{tracker_item_id}",
+                    max_length=80,
+                )
+                safe_file_name = _safe_download_filename(
+                    str(evidence.get("file_name") or ""),
+                    fallback=f"evidence-{evidence_id}.bin",
+                    max_length=120,
+                )
+                archive_path = f"evidence/files/{safe_item_key}/{evidence_id}-{safe_file_name}"
+                blob = _read_evidence_blob(row=evidence)
+                blob_included = blob is not None
+                if blob_included:
+                    evidence_file_count += 1
+                    zf.writestr(archive_path, blob or b"")
+                else:
+                    evidence_missing_blob_count += 1
+
+                evidence_index_rows.append(
+                    {
+                        "evidence_id": evidence_id,
+                        "tracker_item_id": tracker_item_id,
+                        "item_key": model.item_key if model is not None else "",
+                        "item_type": model.item_type if model is not None else "",
+                        "file_name": str(evidence.get("file_name") or ""),
+                        "content_type": str(evidence.get("content_type") or ""),
+                        "file_size": int(evidence.get("file_size") or 0),
+                        "sha256": str(evidence.get("sha256") or ""),
+                        "uploaded_by": str(evidence.get("uploaded_by") or ""),
+                        "uploaded_at": (
+                            _as_optional_datetime(evidence.get("uploaded_at")).isoformat()
+                            if _as_optional_datetime(evidence.get("uploaded_at")) is not None
+                            else ""
+                        ),
+                        "archive_path": archive_path,
+                        "blob_included": blob_included,
+                    }
+                )
+            zf.writestr("evidence/index.csv", _build_w07_evidence_index_csv(evidence_index_rows))
+            zf.writestr(
+                "evidence/index.json",
+                json.dumps(evidence_index_rows, ensure_ascii=False, indent=2, default=str),
+            )
+
+        manifest = {
+            "title": "W07 Completion Package",
+            "generated_at": generated_at.isoformat(),
+            "generated_by": actor,
+            "site": site,
+            "completion_status": completion.status,
+            "readiness_ready": bool(completion.readiness.ready),
+            "completion_rate_percent": int(completion.readiness.completion_rate_percent),
+            "summary": {
+                "tracker_items": len(rows),
+                "blockers": len(blockers),
+                "include_evidence": bool(include_evidence),
+                "include_weekly": bool(include_weekly),
+                "evidence_rows": len(evidence_index_rows),
+                "evidence_files_included": evidence_file_count,
+                "evidence_missing_blob": evidence_missing_blob_count,
+                "weekly_points": int((weekly_payload or {}).get("point_count") or 0),
+            },
+            "files": {
+                "tracker_csv": "tracker/items.csv",
+                "completion_json": "completion/completion.json",
+                "readiness_json": "completion/readiness.json",
+                "blockers_txt": "completion/blockers.txt",
+                "evidence_index_csv": "evidence/index.csv" if include_evidence else None,
+                "weekly_trends_csv": "weekly/trends.csv" if include_weekly else None,
+            },
+        }
+        zf.writestr(
+            "manifest.json",
+            json.dumps(manifest, ensure_ascii=False, indent=2, default=str),
+        )
+
+    package_bytes = package_buffer.getvalue()
+    package_sha256 = hashlib.sha256(package_bytes).hexdigest()
+    manifest_with_hash = {
+        **manifest,
+        "sha256": package_sha256,
+        "bytes": len(package_bytes),
+    }
+    return package_bytes, manifest_with_hash
+
+
 def _build_w07_automation_readiness_snapshot(
     *,
     site: str | None,
@@ -9569,6 +9849,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w07_tracker_bootstrap_api": "/api/adoption/w07/tracker/bootstrap",
         "adoption_w07_tracker_readiness_api": "/api/adoption/w07/tracker/readiness",
         "adoption_w07_tracker_completion_api": "/api/adoption/w07/tracker/completion",
+        "adoption_w07_tracker_completion_package_api": "/api/adoption/w07/tracker/completion-package",
         "adoption_w07_tracker_complete_api": "/api/adoption/w07/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
@@ -12161,6 +12442,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/ops/adoption/w07/automation-readiness">W07 Automation Readiness API (Token)</a>
         <a href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
         <a href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
+        <a href="/api/adoption/w07/tracker/completion-package?site=HQ">W07 Completion Package ZIP (Token)</a>
         <a href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
         <a href="/api/ops/adoption/w07/sla-quality/latest-weekly">W07 Weekly Latest API (Token)</a>
       </div>
@@ -14130,6 +14412,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="adoptW07AutomationReadinessApi" href="/api/ops/adoption/w07/automation-readiness">W07 Automation Readiness API (Token)</a>
               <a id="adoptW07TrackerItemsApi" href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
               <a id="adoptW07TrackerOverviewApi" href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
+              <a id="adoptW07CompletionPackageApi" href="/api/adoption/w07/tracker/completion-package?site=HQ">W07 Completion Package ZIP (Token)</a>
               <a id="adoptW07WeeklyRunApi" href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
               <a id="adoptW07WeeklyLatestApi" href="/api/ops/adoption/w07/sla-quality/latest-weekly">W07 Weekly Latest API (Token)</a>
               <a id="adoptW07WeeklyTrendsApi" href="/api/ops/adoption/w07/sla-quality/trends">W07 Weekly Trends API (Token)</a>
@@ -14227,6 +14510,19 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w07CompleteReserved3" value="site는 실행추적 site를 자동 동기화" disabled />
               <input id="w07CompleteReserved4" value="완료 실패 시 주간실행 미수행" disabled />
               <button id="w07CompleteAndWeeklyBtn" class="btn run" type="button">W07 완료+주간실행</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07PackageIncludeEvidence" type="checkbox" checked />
+                evidence 포함
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07PackageIncludeWeekly" type="checkbox" checked />
+                weekly 포함
+              </label>
+              <input id="w07PackageWeeklyLimit" value="26" placeholder="weekly limit (1-104)" />
+              <input id="w07PackageReserved1" value="ZIP: completion + readiness + tracker + optional evidence/weekly" disabled />
+              <button id="w07DownloadPackageBtn" class="btn run" type="button">W07 완료 패키지 다운로드</button>
             </div>
             <div id="w07TrackerMeta" class="meta">조회 전</div>
             <div id="w07SelectionMeta" class="w07-filter-hint">필터: ALL | 표시: 0/0 | 선택: 0</div>
@@ -14835,6 +15131,59 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           throw new Error("HTTP " + response.status + " | " + (typeof data === "string" ? data : JSON.stringify(data)));
         }}
         return data;
+      }}
+
+      function parseContentDispositionFilename(value) {{
+        const raw = String(value || "");
+        if (!raw) return "";
+        const utfMatch = raw.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utfMatch && utfMatch[1]) {{
+          try {{
+            return decodeURIComponent(utfMatch[1]);
+          }} catch (err) {{
+            return utfMatch[1];
+          }}
+        }}
+        const basicMatch = raw.match(/filename=\"?([^\";]+)\"?/i);
+        if (basicMatch && basicMatch[1]) {{
+          return basicMatch[1];
+        }}
+        return "";
+      }}
+
+      async function downloadAuthFile(path, defaultFilename) {{
+        const token = getToken();
+        if (!token) {{
+          throw new Error("인증 토큰이 없습니다.");
+        }}
+        const response = await fetch(path, {{
+          method: "GET",
+          headers: {{
+            "X-Admin-Token": token,
+            "Accept": "application/octet-stream",
+          }},
+        }});
+        if (!response.ok) {{
+          const text = await response.text();
+          throw new Error("HTTP " + response.status + " | " + text);
+        }}
+        const blob = await response.blob();
+        const headerName = parseContentDispositionFilename(response.headers.get("Content-Disposition"));
+        const fileName = headerName || defaultFilename || "download.bin";
+        const objectUrl = window.URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = fileName;
+        anchor.rel = "noopener";
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
+        return {{
+          fileName,
+          size: blob.size,
+          sha256: response.headers.get("X-Archive-SHA256") || "",
+        }};
       }}
 
       function activate(tab, updateUrl) {{
@@ -16750,6 +17099,52 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         await runW07Complete({{ triggerWeeklyAfterComplete: true }});
       }}
 
+      async function runW07DownloadCompletionPackage() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const site = (document.getElementById("w07TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        const includeEvidence = !!document.getElementById("w07PackageIncludeEvidence").checked;
+        const includeWeekly = !!document.getElementById("w07PackageIncludeWeekly").checked;
+        const weeklyLimitRaw = (document.getElementById("w07PackageWeeklyLimit").value || "").trim();
+        const weeklyLimit = Math.max(1, Math.min(104, asInt(weeklyLimitRaw || "26", 26)));
+        const params = new URLSearchParams();
+        params.set("site", site);
+        params.set("include_evidence", includeEvidence ? "true" : "false");
+        params.set("include_weekly", includeWeekly ? "true" : "false");
+        params.set("weekly_limit", String(weeklyLimit));
+        const path = "/api/adoption/w07/tracker/completion-package?" + params.toString();
+        try {{
+          meta.textContent = "다운로드 준비 중... " + path;
+          const result = await downloadAuthFile(
+            path,
+            "ka-facility-os-w07-completion-package-" + site.replaceAll(" ", "_") + ".zip"
+          );
+          meta.textContent =
+            "성공: 패키지 다운로드 완료 | file=" + String(result.fileName || "-")
+            + " | bytes=" + String(result.size || 0)
+            + " | sha256=" + String(result.sha256 || "-");
+          pushW07ActionResult({{
+            action: "completion_package_download",
+            tracker_item_id: "-",
+            result: "ok",
+            detail: String(result.fileName || "downloaded"),
+          }});
+          renderW07ActionResultsPanel();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          pushW07ActionResult({{
+            action: "completion_package_download",
+            tracker_item_id: "-",
+            result: "failed",
+            detail: err.message,
+          }});
+          renderW07ActionResultsPanel();
+        }}
+      }}
+
       async function runW07TrackerUpdateAndUpload() {{
         const meta = document.getElementById("w07TrackerMeta");
         const trackerItemIdRaw = (document.getElementById("w07TrackItemId").value || "").trim();
@@ -17848,6 +18243,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w07ReadinessBtn").addEventListener("click", runW07Readiness);
       document.getElementById("w07CompleteBtn").addEventListener("click", () => runW07Complete());
       document.getElementById("w07CompleteAndWeeklyBtn").addEventListener("click", runW07CompleteAndWeekly);
+      document.getElementById("w07DownloadPackageBtn").addEventListener("click", runW07DownloadCompletionPackage);
       document.getElementById("w07TrackUpdateBtn").addEventListener("click", runW07TrackerUpdateAndUpload);
       document.getElementById("w07WeeklyRunBtn").addEventListener("click", runW07WeeklyJob);
       document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
@@ -20009,6 +20405,65 @@ def get_w07_tracker_completion(
             select(adoption_w07_site_runs).where(adoption_w07_site_runs.c.site == site).limit(1)
         ).mappings().first()
     return _row_to_w07_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.get("/api/adoption/w07/tracker/completion-package", response_model=None)
+def download_w07_tracker_completion_package(
+    site: Annotated[str, Query(min_length=1)],
+    include_evidence: Annotated[bool, Query()] = True,
+    include_weekly: Annotated[bool, Query()] = True,
+    weekly_limit: Annotated[int, Query(ge=1, le=104)] = 26,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> Response:
+    _require_site_access(principal, site)
+    checked_at = datetime.now(timezone.utc)
+    rows = _load_w07_tracker_items_for_site(site)
+    readiness = _compute_w07_tracker_readiness(site=site, rows=rows, checked_at=checked_at)
+    with get_conn() as conn:
+        completion_row = conn.execute(
+            select(adoption_w07_site_runs).where(adoption_w07_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    completion = _row_to_w07_completion_model(site=site, readiness=readiness, row=completion_row)
+    package_bytes, manifest = _build_w07_completion_package_zip(
+        site=site,
+        completion=completion,
+        rows=rows,
+        include_evidence=include_evidence,
+        include_weekly=include_weekly,
+        weekly_limit=weekly_limit,
+        principal=principal,
+    )
+    timestamp = checked_at.strftime("%Y%m%dT%H%M%SZ")
+    file_name = _safe_download_filename(
+        f"ka-facility-os-w07-completion-package-{site}-{timestamp}.zip",
+        fallback=f"ka-facility-os-w07-completion-package-{timestamp}.zip",
+        max_length=140,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="w07_completion_package_download",
+        resource_type="adoption_w07_package",
+        resource_id=site,
+        detail={
+            "site": site,
+            "include_evidence": include_evidence,
+            "include_weekly": include_weekly,
+            "weekly_limit": weekly_limit,
+            "completion_status": completion.status,
+            "readiness_ready": completion.readiness.ready,
+            "sha256": manifest.get("sha256"),
+            "bytes": manifest.get("bytes"),
+        },
+    )
+    return Response(
+        content=package_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Archive-SHA256": str(manifest.get("sha256") or ""),
+            "X-Package-Site": site,
+        },
+    )
 
 
 @app.post("/api/adoption/w07/tracker/complete", response_model=W07TrackerCompletionRead)

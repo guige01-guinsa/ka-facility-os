@@ -1,5 +1,8 @@
 import importlib
+import io
+import json
 import sys
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -248,6 +251,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w07_tracker_overview_api"] == "/api/adoption/w07/tracker/overview"
     assert service_info.json()["adoption_w07_tracker_readiness_api"] == "/api/adoption/w07/tracker/readiness"
     assert service_info.json()["adoption_w07_tracker_completion_api"] == "/api/adoption/w07/tracker/completion"
+    assert (
+        service_info.json()["adoption_w07_tracker_completion_package_api"]
+        == "/api/adoption/w07/tracker/completion-package"
+    )
     assert service_info.json()["adoption_w07_tracker_complete_api"] == "/api/adoption/w07/tracker/complete"
     assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
     assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
@@ -2183,6 +2190,28 @@ def test_w07_tracker_execution_flow(app_client: TestClient) -> None:
     )
     assert completion.status_code == 200
     assert completion.json()["status"] == "completed"
+
+    completion_package = app_client.get(
+        "/api/adoption/w07/tracker/completion-package?site=W07+Tracker+Site&include_evidence=true&include_weekly=true&weekly_limit=10",
+        headers=manager_headers,
+    )
+    assert completion_package.status_code == 200
+    assert completion_package.headers["content-type"].startswith("application/zip")
+    assert completion_package.headers.get("x-package-site") == "W07 Tracker Site"
+    assert len(completion_package.headers.get("x-archive-sha256", "")) == 64
+    with zipfile.ZipFile(io.BytesIO(completion_package.content), mode="r") as zf:
+        names = set(zf.namelist())
+        assert "manifest.json" in names
+        assert "completion/completion.json" in names
+        assert "completion/readiness.json" in names
+        assert "tracker/items.csv" in names
+        assert "evidence/index.csv" in names
+        assert "weekly/trends.csv" in names
+        manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        assert manifest["site"] == "W07 Tracker Site"
+        assert manifest["completion_status"] == "completed"
+        assert manifest["summary"]["tracker_items"] >= 13
+        assert manifest["summary"]["include_evidence"] is True
 
 
 def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
