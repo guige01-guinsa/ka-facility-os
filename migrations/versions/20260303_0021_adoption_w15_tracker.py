@@ -173,6 +173,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Forward-only safety migration.
+    # See docs/W15_MIGRATION_ROLLBACK.md for operational rollback strategy.
     pass
 
 
