@@ -647,6 +647,66 @@ adoption_w11_site_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+adoption_w12_tracker_items = Table(
+    "adoption_w12_tracker_items",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("item_type", String(40), nullable=False),
+    Column("item_key", String(120), nullable=False),
+    Column("item_name", String(200), nullable=False),
+    Column("assignee", String(120), nullable=True),
+    Column("status", String(20), nullable=False, default="pending"),
+    Column("completion_checked", Boolean, nullable=False, default=False),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("due_at", DateTime(timezone=True), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("evidence_count", Integer, nullable=False, default=0),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+adoption_w12_evidence_files = Table(
+    "adoption_w12_evidence_files",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("tracker_item_id", Integer, nullable=False),
+    Column("site", String(120), nullable=False),
+    Column("file_name", String(255), nullable=False),
+    Column("content_type", String(120), nullable=False, default="application/octet-stream"),
+    Column("file_size", Integer, nullable=False, default=0),
+    Column("file_bytes", LargeBinary, nullable=False),
+    Column("storage_backend", String(20), nullable=False, default="db"),
+    Column("storage_key", String(400), nullable=True),
+    Column("sha256", String(64), nullable=True),
+    Column("malware_scan_status", String(20), nullable=False, default="unknown"),
+    Column("malware_scan_engine", String(80), nullable=True),
+    Column("malware_scanned_at", DateTime(timezone=True), nullable=True),
+    Column("note", Text, nullable=False, default=""),
+    Column("uploaded_by", String(80), nullable=False, default="system"),
+    Column("uploaded_at", DateTime(timezone=True), nullable=False),
+)
+
+adoption_w12_site_runs = Table(
+    "adoption_w12_site_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False, unique=True),
+    Column("status", String(40), nullable=False, default="active"),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("force_used", Boolean, nullable=False, default=False),
+    Column("completed_by", String(80), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("last_checked_at", DateTime(timezone=True), nullable=False),
+    Column("readiness_json", Text, nullable=False, default="{}"),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:
