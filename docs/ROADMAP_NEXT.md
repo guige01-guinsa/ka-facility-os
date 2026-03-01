@@ -38,6 +38,10 @@
   - 워크로드/추천 API(`.../tracker/workload`) 추가
   - 자동할당 실행/최신조회 API(`.../tracker/auto-assign/run|latest`) 추가
   - 시간단위 Cron 잡(`ops_governance_remediation_auto_assign`) 연동 준비
+- W24 착수 완료: Governance Remediation KPI Pulse
+  - KPI 스냅샷 API(`.../tracker/kpi`) 추가
+  - KPI 실행/최신조회 API(`.../tracker/kpi/run|latest`) 추가
+  - 시간단위 Cron 잡(`ops_governance_remediation_kpi`) 연동 준비
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -183,6 +187,22 @@
 
 완료 기준:
 - dry-run/실행 모드 모두에서 추천/배정 집계가 일관됨
+- 최근 실행 이력(job_run) 조회 가능
+- 회귀 테스트 전체 통과
+
+## W24: Governance Remediation KPI Pulse (우선순위 9)
+목표:
+- 리메디에이션 백로그를 일/주 단위 KPI로 표준화해 운영 상태를 즉시 판단
+- 기한초과/미배정/처리량 정체를 한 화면 지표로 드러내고 자동점검 이력화
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/kpi` 스냅샷 API 제공
+2. `POST /api/ops/governance/gate/remediation/tracker/kpi/run` 실행 API 제공
+3. `GET /api/ops/governance/gate/remediation/tracker/kpi/latest` 최신 이력 API 제공
+4. Cron 잡 `python -m app.jobs.ops_governance_remediation_kpi` 추가
+
+완료 기준:
+- window/due-soon 파라미터별 지표 계산이 일관됨
 - 최근 실행 이력(job_run) 조회 가능
 - 회귀 테스트 전체 통과
 

@@ -566,6 +566,18 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_remediation_tracker_auto_assign_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/auto-assign/latest"
     )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_kpi_api"]
+        == "/api/ops/governance/gate/remediation/tracker/kpi"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_kpi_run_api"]
+        == "/api/ops/governance/gate/remediation/tracker/kpi/run"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_kpi_latest_api"]
+        == "/api/ops/governance/gate/remediation/tracker/kpi/latest"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -5241,6 +5253,53 @@ def test_ops_governance_remediation_tracker_auto_assign_endpoints(app_client: Te
         updated_rows = {int(item["id"]): item for item in updated_payload}
         assert tracker_id in updated_rows
         assert (updated_rows[tracker_id].get("assignee") or "").strip() != ""
+
+
+def test_ops_governance_remediation_tracker_kpi_endpoints(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+
+    kpi = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/kpi?window_days=14&due_soon_hours=24",
+        headers=_owner_headers(),
+    )
+    assert kpi.status_code == 200
+    kpi_body = kpi.json()
+    assert int(kpi_body["window_days"]) == 14
+    assert int(kpi_body["due_soon_hours"]) == 24
+    assert int(kpi_body["metrics"]["open_items"]) >= 0
+    assert int(kpi_body["metrics"]["overdue_count"]) >= 0
+    assert int(kpi_body["metrics"]["unassigned_open_count"]) >= 0
+    assert int(kpi_body["metrics"]["critical_open_count"]) >= 0
+    assert isinstance(kpi_body["backlog_history"], dict)
+    assert isinstance(kpi_body["recommendations"], list)
+
+    run = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/kpi/run?window_days=7&due_soon_hours=12",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["job_name"] == "ops_governance_remediation_kpi"
+    assert int(run_body["window_days"]) == 7
+    assert int(run_body["due_soon_hours"]) == 12
+    assert int(run_body["metrics"]["open_items"]) >= 0
+    assert run_body["status"] in {"success", "warning", "critical"}
+
+    latest = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/kpi/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_governance_remediation_kpi"
+    assert latest_body["run_id"] == run_body["run_id"]
+    assert latest_body["status"] in {"success", "warning", "critical"}
+    assert int(latest_body["metrics"]["open_items"]) >= 0
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

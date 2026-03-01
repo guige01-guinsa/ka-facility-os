@@ -886,6 +886,7 @@ OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS = 30
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME = "ops_governance_remediation_escalation"
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE = "ops_governance_remediation_escalation"
 OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME = "ops_governance_remediation_auto_assign"
+OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME = "ops_governance_remediation_kpi"
 GOVERNANCE_REMEDIATION_ESCALATION_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_ESCALATION_ENABLED", True)
 GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS = _env_int(
     "GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS",
@@ -901,6 +902,16 @@ GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS = _env_int(
     "GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS",
     30,
     min_value=1,
+)
+GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS = _env_int(
+    "GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS",
+    14,
+    min_value=1,
+)
+GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS = _env_int(
+    "GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS",
+    24,
+    min_value=0,
 )
 W23_OWNER_ROLE_TO_ADMIN_ROLES: dict[str, tuple[str, ...]] = {
     "Platform Owner": ("owner", "manager"),
@@ -7199,6 +7210,286 @@ def _latest_ops_governance_remediation_auto_assign_payload() -> dict[str, Any] |
         row = conn.execute(
             select(job_runs)
             .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _build_w24_remediation_backlog_history(
+    *,
+    window_days: int,
+    now: datetime,
+) -> dict[str, Any]:
+    normalized_window_days = max(1, min(int(window_days), 180))
+    cutoff = now - timedelta(days=normalized_window_days)
+    job_names = [
+        OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+    ]
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name.in_(job_names))
+            .where(job_runs.c.finished_at >= cutoff)
+            .order_by(job_runs.c.finished_at.asc(), job_runs.c.id.asc())
+            .limit(400)
+        ).mappings().all()
+
+    points: list[dict[str, Any]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        open_items: int | None = None
+        metrics = detail.get("metrics")
+        if isinstance(metrics, dict):
+            raw = metrics.get("open_items")
+            if isinstance(raw, (int, float)):
+                open_items = int(raw)
+        if open_items is None:
+            snapshot = detail.get("snapshot")
+            if isinstance(snapshot, dict):
+                snapshot_metrics = snapshot.get("metrics")
+                if isinstance(snapshot_metrics, dict):
+                    raw = snapshot_metrics.get("open_items")
+                    if isinstance(raw, (int, float)):
+                        open_items = int(raw)
+        if open_items is None:
+            workload = detail.get("workload")
+            if isinstance(workload, dict):
+                raw = workload.get("total_open_items")
+                if isinstance(raw, (int, float)):
+                    open_items = int(raw)
+        if open_items is None:
+            continue
+
+        points.append(
+            {
+                "finished_at": model.finished_at.isoformat(),
+                "open_items": max(0, open_items),
+                "source_job": model.job_name,
+                "status": model.status,
+                "run_id": model.id,
+            }
+        )
+
+    trend = "flat"
+    if len(points) >= 2:
+        delta = int(points[-1].get("open_items") or 0) - int(points[0].get("open_items") or 0)
+        if delta > 0:
+            trend = "up"
+        elif delta < 0:
+            trend = "down"
+
+    return {
+        "window_days": normalized_window_days,
+        "count": len(points),
+        "trend": trend,
+        "points": points,
+    }
+
+
+def _build_w24_remediation_kpi_snapshot(
+    *,
+    window_days: int = GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+    due_soon_hours: int = GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    checked_at = now or datetime.now(timezone.utc)
+    normalized_window_days = max(1, min(int(window_days), 180))
+    normalized_due_soon_hours = max(0, min(int(due_soon_hours), 168))
+    done_cutoff = checked_at - timedelta(days=normalized_window_days)
+    due_soon_cutoff = checked_at + timedelta(hours=normalized_due_soon_hours)
+
+    all_rows = _load_w21_remediation_items(include_inactive=True)
+    active_rows = [row for row in all_rows if row.is_active]
+    open_rows = [row for row in active_rows if row.status != W21_TRACKER_STATUS_DONE]
+    done_window_rows = [
+        row
+        for row in all_rows
+        if row.completed_at is not None and row.completed_at >= done_cutoff
+    ]
+
+    pending_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_BLOCKED)
+    critical_open_rows = [row for row in open_rows if row.rule_status == "fail" and bool(row.required)]
+    unassigned_open_rows = [row for row in open_rows if not (row.assignee or "").strip()]
+    overdue_rows = [row for row in open_rows if row.due_at < checked_at]
+    if normalized_due_soon_hours > 0:
+        due_soon_rows = [row for row in open_rows if checked_at <= row.due_at <= due_soon_cutoff]
+    else:
+        due_soon_rows = []
+
+    age_hours = [max(0.0, (checked_at - row.created_at).total_seconds() / 3600.0) for row in open_rows]
+    avg_open_age_hours = round(sum(age_hours) / len(age_hours), 1) if age_hours else 0.0
+    median_open_age_hours = round(float(statistics.median(age_hours)), 1) if age_hours else 0.0
+    oldest_open_age_hours = round(max(age_hours), 1) if age_hours else 0.0
+
+    completion_rate_percent = int(round((done_count / len(active_rows)) * 100)) if active_rows else 100
+    throughput_per_day = round(len(done_window_rows) / max(1, normalized_window_days), 2)
+
+    assignee_open_counts: dict[str, int] = {}
+    for row in open_rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_open_counts[assignee] = assignee_open_counts.get(assignee, 0) + 1
+
+    top_overdue_rows = sorted(
+        overdue_rows,
+        key=lambda row: (int(row.priority), row.due_at, int(row.id)),
+    )[:10]
+    top_overdue_items = [
+        {
+            "id": int(row.id),
+            "item_id": row.item_id,
+            "rule_id": row.rule_id,
+            "priority": int(row.priority),
+            "owner_role": row.owner_role,
+            "assignee": row.assignee,
+            "status": row.status,
+            "due_at": row.due_at.isoformat(),
+            "overdue_hours": round((checked_at - row.due_at).total_seconds() / 3600.0, 1),
+        }
+        for row in top_overdue_rows
+    ]
+
+    backlog_history = _build_w24_remediation_backlog_history(
+        window_days=normalized_window_days,
+        now=checked_at,
+    )
+
+    recommendations: list[str] = []
+    if len(unassigned_open_rows) > 0:
+        recommendations.append("미배정 항목이 있어 /api/ops/governance/gate/remediation/tracker/auto-assign/run 실행 권장")
+    if len(overdue_rows) > 0:
+        recommendations.append("기한 초과 항목이 있어 /api/ops/governance/gate/remediation/tracker/escalate/run 실행 권장")
+    if blocked_count > 0:
+        recommendations.append("blocked 항목 owner 지정 및 선행 작업 해소 필요")
+    if len(done_window_rows) == 0 and len(open_rows) > 0:
+        recommendations.append("최근 처리량이 0건입니다. 담당자 재분배와 우선순위 재정렬 권장")
+    if not recommendations:
+        recommendations.append("현재 리메디에이션 트래커 상태가 안정적입니다. 현재 운영 정책 유지 권장")
+
+    return {
+        "generated_at": checked_at.isoformat(),
+        "window_days": normalized_window_days,
+        "due_soon_hours": normalized_due_soon_hours,
+        "metrics": {
+            "total_items": len(all_rows),
+            "active_items": len(active_rows),
+            "open_items": len(open_rows),
+            "pending_count": pending_count,
+            "in_progress_count": in_progress_count,
+            "done_count": done_count,
+            "blocked_count": blocked_count,
+            "completion_rate_percent": completion_rate_percent,
+            "critical_open_count": len(critical_open_rows),
+            "unassigned_open_count": len(unassigned_open_rows),
+            "overdue_count": len(overdue_rows),
+            "due_soon_count": len(due_soon_rows),
+            "done_last_window_count": len(done_window_rows),
+            "throughput_per_day": throughput_per_day,
+            "avg_open_age_hours": avg_open_age_hours,
+            "median_open_age_hours": median_open_age_hours,
+            "oldest_open_age_hours": oldest_open_age_hours,
+        },
+        "status_counts": {
+            "pending": pending_count,
+            "in_progress": in_progress_count,
+            "done": done_count,
+            "blocked": blocked_count,
+        },
+        "assignee_open_counts": assignee_open_counts,
+        "backlog_history": backlog_history,
+        "top_overdue_items": top_overdue_items,
+        "recommendations": recommendations,
+    }
+
+
+def run_ops_governance_remediation_kpi_job(
+    *,
+    trigger: str = "manual",
+    window_days: int | None = None,
+    due_soon_hours: int | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    normalized_window_days = (
+        GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
+        if window_days is None
+        else max(1, min(int(window_days), 180))
+    )
+    normalized_due_soon_hours = (
+        GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
+        if due_soon_hours is None
+        else max(0, min(int(due_soon_hours), 168))
+    )
+    snapshot = _build_w24_remediation_kpi_snapshot(
+        window_days=normalized_window_days,
+        due_soon_hours=normalized_due_soon_hours,
+        now=started_at,
+    )
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    overdue_count = int(metrics.get("overdue_count") or 0)
+    critical_open_count = int(metrics.get("critical_open_count") or 0)
+    unassigned_open_count = int(metrics.get("unassigned_open_count") or 0)
+    blocked_count = int(metrics.get("blocked_count") or 0)
+
+    if overdue_count > 0 or critical_open_count > 0:
+        status = "critical"
+    elif unassigned_open_count > 0 or blocked_count > 0:
+        status = "warning"
+    else:
+        status = "success"
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "window_days": normalized_window_days,
+        "due_soon_hours": normalized_due_soon_hours,
+        "metrics": metrics,
+        "status_counts": snapshot.get("status_counts", {}),
+        "assignee_open_counts": snapshot.get("assignee_open_counts", {}),
+        "backlog_history": snapshot.get("backlog_history", {}),
+        "top_overdue_items": snapshot.get("top_overdue_items", []),
+        "recommendations": snapshot.get("recommendations", []),
+    }
+    run_id = _write_job_run(
+        job_name=OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _latest_ops_governance_remediation_kpi_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -23173,6 +23464,9 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_workload_api": "/api/ops/governance/gate/remediation/tracker/workload",
         "ops_governance_remediation_tracker_auto_assign_run_api": "/api/ops/governance/gate/remediation/tracker/auto-assign/run",
         "ops_governance_remediation_tracker_auto_assign_latest_api": "/api/ops/governance/gate/remediation/tracker/auto-assign/latest",
+        "ops_governance_remediation_tracker_kpi_api": "/api/ops/governance/gate/remediation/tracker/kpi",
+        "ops_governance_remediation_tracker_kpi_run_api": "/api/ops/governance/gate/remediation/tracker/kpi/run",
+        "ops_governance_remediation_tracker_kpi_latest_api": "/api/ops/governance/gate/remediation/tracker/kpi/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -44871,6 +45165,91 @@ def get_ops_governance_gate_remediation_tracker_auto_assign_latest(
             "skipped_count": int(payload.get("skipped_count") or 0),
             "no_candidate_count": int(payload.get("no_candidate_count") or 0),
             "enabled": bool(payload.get("enabled", GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED)),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/governance/gate/remediation/tracker/kpi")
+def get_ops_governance_gate_remediation_tracker_kpi(
+    window_days: Annotated[int, Query(ge=1, le=180)] = GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+    due_soon_hours: Annotated[int, Query(ge=0, le=168)] = GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_w24_remediation_kpi_snapshot(
+        window_days=window_days,
+        due_soon_hours=due_soon_hours,
+    )
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_kpi_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        status="success",
+        detail={
+            "window_days": int(snapshot.get("window_days") or window_days),
+            "due_soon_hours": int(snapshot.get("due_soon_hours") or due_soon_hours),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return snapshot
+
+
+@ops_router.post("/governance/gate/remediation/tracker/kpi/run")
+def run_ops_governance_gate_remediation_tracker_kpi(
+    window_days: Annotated[int, Query(ge=1, le=180)] = GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+    due_soon_hours: Annotated[int, Query(ge=0, le=168)] = GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_governance_remediation_kpi_job(
+        trigger="api",
+        window_days=window_days,
+        due_soon_hours=due_soon_hours,
+    )
+    metrics = result.get("metrics", {}) if isinstance(result.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_kpi_run",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "warning"),
+        detail={
+            "window_days": int(result.get("window_days") or window_days),
+            "due_soon_hours": int(result.get("due_soon_hours") or due_soon_hours),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/kpi/latest")
+def get_ops_governance_gate_remediation_tracker_kpi_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_ops_governance_remediation_kpi_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No ops_governance_remediation_kpi run found")
+    metrics = payload.get("metrics", {}) if isinstance(payload.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_kpi_latest_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        status=str(payload.get("status") or "warning"),
+        detail={
+            "window_days": int(payload.get("window_days") or GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS),
+            "due_soon_hours": int(payload.get("due_soon_hours") or GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
         },
     )
     return payload

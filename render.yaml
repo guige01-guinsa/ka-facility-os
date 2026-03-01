@@ -85,6 +85,10 @@ services:
         value: "true"
       - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
         value: "30"
+      - key: GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
+        value: "14"
+      - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
+        value: "24"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -263,6 +267,26 @@ services:
         value: "true"
       - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
         value: "30"
+  - type: cron
+    name: ka-facility-os-ops-governance-remediation-kpi
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "50 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_governance_remediation_kpi
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
+        value: "14"
+      - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
+        value: "24"
   - type: cron
     name: ka-facility-os-ops-quality-weekly
     runtime: python
