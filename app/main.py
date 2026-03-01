@@ -68,6 +68,8 @@ from app.database import (
     adoption_w15_evidence_files,
     adoption_w15_site_runs,
     adoption_w15_tracker_items,
+    ops_governance_remediation_tracker_items,
+    ops_governance_remediation_tracker_runs,
     api_latency_samples,
     alert_deliveries,
     admin_audit_logs,
@@ -217,6 +219,14 @@ from app.schemas import (
     W15TrackerItemUpdate,
     W15TrackerOverviewRead,
     W15TrackerReadinessRead,
+    W21RemediationTrackerCompletionRead,
+    W21RemediationTrackerCompletionRequest,
+    W21RemediationTrackerItemRead,
+    W21RemediationTrackerItemUpdate,
+    W21RemediationTrackerOverviewRead,
+    W21RemediationTrackerReadinessRead,
+    W21RemediationTrackerSyncRequest,
+    W21RemediationTrackerSyncResponse,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -837,6 +847,25 @@ W15_SITE_COMPLETION_STATUS_SET = {
 }
 W15_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
 W15_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W21_TRACKER_STATUS_PENDING = "pending"
+W21_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W21_TRACKER_STATUS_DONE = "done"
+W21_TRACKER_STATUS_BLOCKED = "blocked"
+W21_TRACKER_STATUS_SET = {
+    W21_TRACKER_STATUS_PENDING,
+    W21_TRACKER_STATUS_IN_PROGRESS,
+    W21_TRACKER_STATUS_DONE,
+    W21_TRACKER_STATUS_BLOCKED,
+}
+W21_COMPLETION_STATUS_ACTIVE = "active"
+W21_COMPLETION_STATUS_COMPLETED = "completed"
+W21_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W21_COMPLETION_STATUS_SET = {
+    W21_COMPLETION_STATUS_ACTIVE,
+    W21_COMPLETION_STATUS_COMPLETED,
+    W21_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W21_TRACKER_SCOPE_GLOBAL = "global"
 W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES = _env_int(
     "W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES",
     200,
@@ -6270,6 +6299,423 @@ def _build_ops_governance_remediation_csv(plan: dict[str, Any]) -> str:
             ]
         )
     return out.getvalue()
+
+
+def _normalize_w21_tracker_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W21_TRACKER_STATUS_SET:
+        return value
+    return W21_TRACKER_STATUS_PENDING
+
+
+def _resolve_w21_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W21_COMPLETION_STATUS_SET:
+        return value
+    return W21_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w21_remediation_item_model(row: dict[str, Any]) -> W21RemediationTrackerItemRead:
+    raw_detail = str(row.get("detail_json") or "{}")
+    try:
+        detail = json.loads(raw_detail)
+    except json.JSONDecodeError:
+        detail = {}
+    if not isinstance(detail, dict):
+        detail = {}
+    due_at = _as_optional_datetime(row.get("due_at")) or datetime.now(timezone.utc)
+    gate_generated_at = _as_optional_datetime(row.get("gate_generated_at")) or due_at
+    return W21RemediationTrackerItemRead(
+        id=int(row["id"]),
+        item_id=str(row.get("item_id") or ""),
+        rule_id=str(row.get("rule_id") or ""),
+        rule_status=str(row.get("rule_status") or "warning"),
+        required=bool(row.get("required", False)),
+        priority=int(row.get("priority") or 9),
+        owner_role=str(row.get("owner_role") or ""),
+        sla_hours=max(1, int(row.get("sla_hours") or 24)),
+        due_at=due_at,
+        action=str(row.get("action") or ""),
+        reason=str(row.get("reason") or ""),
+        detail=detail,
+        assignee=row.get("assignee"),
+        status=_normalize_w21_tracker_status(row.get("status")),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        is_active=bool(row.get("is_active", True)),
+        gate_generated_at=gate_generated_at,
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _load_w21_remediation_items(*, include_inactive: bool = False) -> list[W21RemediationTrackerItemRead]:
+    stmt = select(ops_governance_remediation_tracker_items)
+    if not include_inactive:
+        stmt = stmt.where(ops_governance_remediation_tracker_items.c.is_active.is_(True))
+    stmt = stmt.order_by(
+        ops_governance_remediation_tracker_items.c.is_active.desc(),
+        ops_governance_remediation_tracker_items.c.priority.asc(),
+        ops_governance_remediation_tracker_items.c.due_at.asc(),
+        ops_governance_remediation_tracker_items.c.id.asc(),
+    )
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w21_remediation_item_model(row) for row in rows]
+
+
+def _compute_w21_remediation_overview(
+    *,
+    active_rows: list[W21RemediationTrackerItemRead],
+    active_count: int,
+    closed_count: int,
+    checked_at: datetime | None = None,
+) -> W21RemediationTrackerOverviewRead:
+    now = checked_at or datetime.now(timezone.utc)
+    pending_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_BLOCKED)
+    total_items = len(active_rows)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 100
+    missing_assignee_count = sum(1 for row in active_rows if not (row.assignee or "").strip())
+    critical_open_count = sum(
+        1
+        for row in active_rows
+        if row.rule_status == "fail" and bool(row.required) and row.status != W21_TRACKER_STATUS_DONE
+    )
+    overdue_count = sum(1 for row in active_rows if row.status != W21_TRACKER_STATUS_DONE and row.due_at < now)
+    return W21RemediationTrackerOverviewRead(
+        generated_at=now,
+        total_items=total_items,
+        active_count=active_count,
+        closed_count=closed_count,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        missing_assignee_count=missing_assignee_count,
+        critical_open_count=critical_open_count,
+        overdue_count=overdue_count,
+    )
+
+
+def _compute_w21_remediation_readiness(
+    *,
+    active_rows: list[W21RemediationTrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W21RemediationTrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    pending_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in active_rows if row.status == W21_TRACKER_STATUS_BLOCKED)
+    total_items = len(active_rows)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 100
+    missing_assignee_count = sum(1 for row in active_rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in active_rows if not bool(row.completion_checked))
+    critical_open_count = sum(
+        1
+        for row in active_rows
+        if row.rule_status == "fail" and bool(row.required) and row.status != W21_TRACKER_STATUS_DONE
+    )
+    overdue_count = sum(1 for row in active_rows if row.status != W21_TRACKER_STATUS_DONE and row.due_at < now)
+
+    blockers: list[str] = []
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if critical_open_count > 0:
+        blockers.append(f"필수 fail 리메디에이션 미완료 항목 {critical_open_count}건이 있습니다.")
+    if overdue_count > 0:
+        blockers.append(f"SLA 기한 초과 리메디에이션 항목 {overdue_count}건이 있습니다.")
+
+    if total_items == 0:
+        readiness_score_percent = 100
+        ready = True
+    else:
+        checks = [
+            pending_count == 0,
+            in_progress_count == 0,
+            blocked_count == 0,
+            missing_assignee_count == 0,
+            missing_completion_checked_count == 0,
+            critical_open_count == 0,
+            overdue_count == 0,
+        ]
+        readiness_score_percent = int(round((sum(1 for ok in checks if ok) / len(checks)) * 100))
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+        ready = len(blockers) == 0
+        if ready:
+            readiness_score_percent = 100
+
+    return W21RemediationTrackerReadinessRead(
+        generated_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        critical_open_count=critical_open_count,
+        overdue_count=overdue_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _row_to_w21_completion_model(
+    *,
+    readiness: W21RemediationTrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W21RemediationTrackerCompletionRead:
+    if row is None:
+        return W21RemediationTrackerCompletionRead(
+            status=W21_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.generated_at,
+            readiness=readiness,
+        )
+    return W21RemediationTrackerCompletionRead(
+        status=_resolve_w21_completion_status(row.get("status")),
+        completion_note=str(row.get("completion_note") or ""),
+        completed_by=row.get("completed_by"),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        force_used=bool(row.get("force_used", False)),
+        last_checked_at=_as_optional_datetime(row.get("last_checked_at")) or readiness.generated_at,
+        readiness=readiness,
+    )
+
+
+def _reset_w21_completion_if_closed(
+    *,
+    conn: Any,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(ops_governance_remediation_tracker_runs)
+        .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w21_completion_status(row.get("status"))
+    if status == W21_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(ops_governance_remediation_tracker_runs)
+        .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+        .values(
+            status=W21_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _sync_w21_remediation_tracker(
+    *,
+    actor_username: str,
+    include_warnings: bool,
+    max_items: int,
+) -> W21RemediationTrackerSyncResponse:
+    snapshot = _build_ops_governance_gate_snapshot()
+    plan = _build_ops_governance_remediation_plan(
+        snapshot=snapshot,
+        include_warnings=include_warnings,
+        max_items=max_items,
+    )
+    plan_items = [item for item in plan.get("items", []) if isinstance(item, dict)]
+    decision = str(plan.get("decision") or "no_go")
+    gate_generated_at = _as_optional_datetime(plan.get("gate_generated_at")) or datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc)
+
+    created_count = 0
+    reopened_count = 0
+    resolved_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(select(ops_governance_remediation_tracker_items)).mappings().all()
+        existing_by_rule = {
+            str(row.get("rule_id") or "").strip(): row
+            for row in existing_rows
+            if str(row.get("rule_id") or "").strip()
+        }
+        seen_rule_ids: set[str] = set()
+
+        for item in plan_items:
+            rule_id = str(item.get("rule_id") or "").strip()
+            if not rule_id:
+                continue
+            seen_rule_ids.add(rule_id)
+            due_at = _as_optional_datetime(item.get("due_at")) or now
+            current = existing_by_rule.get(rule_id)
+            if current is None:
+                conn.execute(
+                    insert(ops_governance_remediation_tracker_items).values(
+                        item_id=str(item.get("item_id") or ""),
+                        rule_id=rule_id,
+                        rule_status=str(item.get("rule_status") or "warning"),
+                        required=bool(item.get("required", False)),
+                        priority=max(1, int(item.get("priority") or 9)),
+                        owner_role=str(item.get("owner_role") or "Ops Manager"),
+                        sla_hours=max(1, int(item.get("sla_hours") or 24)),
+                        due_at=due_at,
+                        action=str(item.get("action") or ""),
+                        reason=str(item.get("reason") or ""),
+                        detail_json=_to_json_text(item.get("detail") if isinstance(item.get("detail"), dict) else {}),
+                        gate_generated_at=gate_generated_at,
+                        source_decision=decision,
+                        assignee=None,
+                        status=W21_TRACKER_STATUS_PENDING,
+                        completion_checked=False,
+                        completion_note="",
+                        completed_at=None,
+                        is_active=True,
+                        created_by=actor_username,
+                        updated_by=actor_username,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                created_count += 1
+                continue
+
+            next_status = _normalize_w21_tracker_status(current.get("status"))
+            next_checked = bool(current.get("completion_checked", False))
+            next_note = str(current.get("completion_note") or "")
+            next_completed_at = _as_optional_datetime(current.get("completed_at"))
+            was_inactive = not bool(current.get("is_active", True))
+            if was_inactive and next_status == W21_TRACKER_STATUS_DONE:
+                next_status = W21_TRACKER_STATUS_PENDING
+                next_checked = False
+                next_completed_at = None
+                reopen_note = f"[auto-reopened {now.isoformat()}] governance gate rule is active again."
+                next_note = f"{next_note}\n{reopen_note}".strip() if next_note else reopen_note
+                reopened_count += 1
+
+            conn.execute(
+                update(ops_governance_remediation_tracker_items)
+                .where(ops_governance_remediation_tracker_items.c.id == int(current["id"]))
+                .values(
+                    item_id=str(item.get("item_id") or ""),
+                    rule_status=str(item.get("rule_status") or "warning"),
+                    required=bool(item.get("required", False)),
+                    priority=max(1, int(item.get("priority") or 9)),
+                    owner_role=str(item.get("owner_role") or "Ops Manager"),
+                    sla_hours=max(1, int(item.get("sla_hours") or 24)),
+                    due_at=due_at,
+                    action=str(item.get("action") or ""),
+                    reason=str(item.get("reason") or ""),
+                    detail_json=_to_json_text(item.get("detail") if isinstance(item.get("detail"), dict) else {}),
+                    gate_generated_at=gate_generated_at,
+                    source_decision=decision,
+                    status=next_status,
+                    completion_checked=next_checked,
+                    completion_note=next_note,
+                    completed_at=next_completed_at,
+                    is_active=True,
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+
+        for row in existing_rows:
+            rule_id = str(row.get("rule_id") or "").strip()
+            if not rule_id or rule_id in seen_rule_ids:
+                continue
+            if not bool(row.get("is_active", True)):
+                continue
+            next_status = _normalize_w21_tracker_status(row.get("status"))
+            next_checked = bool(row.get("completion_checked", False))
+            next_note = str(row.get("completion_note") or "")
+            next_completed_at = _as_optional_datetime(row.get("completed_at"))
+            if next_status != W21_TRACKER_STATUS_DONE:
+                next_status = W21_TRACKER_STATUS_DONE
+                next_checked = True
+                next_completed_at = now
+                close_note = (
+                    f"[auto-resolved {now.isoformat()}] current governance gate snapshot no longer requires this rule."
+                )
+                next_note = f"{next_note}\n{close_note}".strip() if next_note else close_note
+            conn.execute(
+                update(ops_governance_remediation_tracker_items)
+                .where(ops_governance_remediation_tracker_items.c.id == int(row["id"]))
+                .values(
+                    is_active=False,
+                    status=next_status,
+                    completion_checked=next_checked,
+                    completion_note=next_note,
+                    completed_at=next_completed_at,
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+            resolved_count += 1
+
+        if created_count > 0 or reopened_count > 0 or resolved_count > 0:
+            _reset_w21_completion_if_closed(
+                conn=conn,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="tracker synchronized with latest governance remediation plan",
+            )
+
+        active_rows = conn.execute(
+            select(ops_governance_remediation_tracker_items)
+            .where(ops_governance_remediation_tracker_items.c.is_active.is_(True))
+            .order_by(
+                ops_governance_remediation_tracker_items.c.priority.asc(),
+                ops_governance_remediation_tracker_items.c.due_at.asc(),
+                ops_governance_remediation_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    active_models = [_row_to_w21_remediation_item_model(row) for row in active_rows]
+    return W21RemediationTrackerSyncResponse(
+        generated_at=now,
+        gate_generated_at=gate_generated_at,
+        decision=decision,
+        include_warnings=include_warnings,
+        max_items=max(1, min(int(max_items), 200)),
+        synced_count=len(active_models),
+        created_count=created_count,
+        reopened_count=reopened_count,
+        resolved_count=resolved_count,
+        active_count=len(active_models),
+        items=active_models,
+    )
 
 
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
@@ -22216,6 +22662,12 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_gate_history_api": "/api/ops/governance/gate/history",
         "ops_governance_gate_remediation_api": "/api/ops/governance/gate/remediation",
         "ops_governance_gate_remediation_csv_api": "/api/ops/governance/gate/remediation/csv",
+        "ops_governance_remediation_tracker_sync_api": "/api/ops/governance/gate/remediation/tracker/sync",
+        "ops_governance_remediation_tracker_items_api": "/api/ops/governance/gate/remediation/tracker/items",
+        "ops_governance_remediation_tracker_overview_api": "/api/ops/governance/gate/remediation/tracker/overview",
+        "ops_governance_remediation_tracker_readiness_api": "/api/ops/governance/gate/remediation/tracker/readiness",
+        "ops_governance_remediation_tracker_completion_api": "/api/ops/governance/gate/remediation/tracker/completion",
+        "ops_governance_remediation_tracker_complete_api": "/api/ops/governance/gate/remediation/tracker/complete",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -43407,6 +43859,358 @@ def get_ops_governance_gate_remediation_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@ops_router.post(
+    "/governance/gate/remediation/tracker/sync",
+    response_model=W21RemediationTrackerSyncResponse,
+)
+def sync_ops_governance_gate_remediation_tracker(
+    payload: W21RemediationTrackerSyncRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerSyncResponse:
+    result = _sync_w21_remediation_tracker(
+        actor_username=str(principal.get("username") or "system"),
+        include_warnings=bool(payload.include_warnings),
+        max_items=int(payload.max_items),
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_sync",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        detail={
+            "include_warnings": bool(payload.include_warnings),
+            "max_items": int(payload.max_items),
+            "active_count": int(result.active_count),
+            "created_count": int(result.created_count),
+            "reopened_count": int(result.reopened_count),
+            "resolved_count": int(result.resolved_count),
+        },
+    )
+    return result
+
+
+@ops_router.get(
+    "/governance/gate/remediation/tracker/items",
+    response_model=list[W21RemediationTrackerItemRead],
+)
+def list_ops_governance_gate_remediation_tracker_items(
+    include_inactive: Annotated[bool, Query()] = False,
+    status: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> list[W21RemediationTrackerItemRead]:
+    normalized_status: str | None = None
+    if status is not None:
+        normalized_status = status.strip().lower()
+        if normalized_status not in W21_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=422, detail="Invalid tracker status")
+
+    stmt = select(ops_governance_remediation_tracker_items)
+    if not include_inactive:
+        stmt = stmt.where(ops_governance_remediation_tracker_items.c.is_active.is_(True))
+    if normalized_status is not None:
+        stmt = stmt.where(ops_governance_remediation_tracker_items.c.status == normalized_status)
+    stmt = stmt.order_by(
+        ops_governance_remediation_tracker_items.c.is_active.desc(),
+        ops_governance_remediation_tracker_items.c.priority.asc(),
+        ops_governance_remediation_tracker_items.c.due_at.asc(),
+        ops_governance_remediation_tracker_items.c.id.asc(),
+    ).limit(limit)
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    models = [_row_to_w21_remediation_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_items_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        detail={
+            "include_inactive": include_inactive,
+            "status": normalized_status,
+            "limit": limit,
+            "count": len(models),
+        },
+    )
+    return models
+
+
+@ops_router.patch(
+    "/governance/gate/remediation/tracker/items/{tracker_item_id}",
+    response_model=W21RemediationTrackerItemRead,
+)
+def update_ops_governance_gate_remediation_tracker_item(
+    tracker_item_id: int,
+    payload: W21RemediationTrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerItemRead:
+    now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "system")
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_governance_remediation_tracker_items)
+            .where(ops_governance_remediation_tracker_items.c.id == tracker_item_id)
+            .limit(1)
+        ).mappings().first()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Remediation tracker item not found")
+
+        next_assignee = existing.get("assignee")
+        next_status = _normalize_w21_tracker_status(existing.get("status"))
+        next_checked = bool(existing.get("completion_checked", False))
+        next_note = str(existing.get("completion_note") or "")
+        next_completed_at = _as_optional_datetime(existing.get("completed_at"))
+
+        if payload.assignee is not None:
+            assignee_text = payload.assignee.strip()
+            next_assignee = assignee_text or None
+        if payload.status is not None:
+            next_status = _normalize_w21_tracker_status(payload.status)
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        if next_status == W21_TRACKER_STATUS_DONE:
+            next_completed_at = now
+            if payload.completion_checked is None and payload.status is not None:
+                next_checked = True
+        elif payload.status is not None and payload.status != W21_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+
+        if next_checked and next_status != W21_TRACKER_STATUS_DONE:
+            next_status = W21_TRACKER_STATUS_DONE
+            next_completed_at = now
+        elif (not next_checked) and next_status == W21_TRACKER_STATUS_DONE:
+            next_status = W21_TRACKER_STATUS_IN_PROGRESS
+            next_completed_at = None
+        elif next_status != W21_TRACKER_STATUS_DONE:
+            next_completed_at = None
+
+        conn.execute(
+            update(ops_governance_remediation_tracker_items)
+            .where(ops_governance_remediation_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+
+        _reset_w21_completion_if_closed(
+            conn=conn,
+            actor_username=actor_username,
+            checked_at=now,
+            reason=f"tracker item {tracker_item_id} updated",
+        )
+
+        updated_row = conn.execute(
+            select(ops_governance_remediation_tracker_items)
+            .where(ops_governance_remediation_tracker_items.c.id == tracker_item_id)
+            .limit(1)
+        ).mappings().first()
+        if updated_row is None:
+            raise HTTPException(status_code=404, detail="Remediation tracker item not found")
+
+    model = _row_to_w21_remediation_item_model(updated_row)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_item_update",
+        resource_type="ops_governance_remediation_tracker_item",
+        resource_id=str(tracker_item_id),
+        detail={
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+            "is_active": model.is_active,
+        },
+    )
+    return model
+
+
+@ops_router.get(
+    "/governance/gate/remediation/tracker/overview",
+    response_model=W21RemediationTrackerOverviewRead,
+)
+def get_ops_governance_gate_remediation_tracker_overview(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerOverviewRead:
+    now = datetime.now(timezone.utc)
+    all_rows = _load_w21_remediation_items(include_inactive=True)
+    active_rows = [row for row in all_rows if row.is_active]
+    overview = _compute_w21_remediation_overview(
+        active_rows=active_rows,
+        active_count=len(active_rows),
+        closed_count=max(0, len(all_rows) - len(active_rows)),
+        checked_at=now,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_overview_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        detail={
+            "active_count": overview.active_count,
+            "closed_count": overview.closed_count,
+            "completion_rate_percent": overview.completion_rate_percent,
+        },
+    )
+    return overview
+
+
+@ops_router.get(
+    "/governance/gate/remediation/tracker/readiness",
+    response_model=W21RemediationTrackerReadinessRead,
+)
+def get_ops_governance_gate_remediation_tracker_readiness(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerReadinessRead:
+    active_rows = _load_w21_remediation_items(include_inactive=False)
+    readiness = _compute_w21_remediation_readiness(active_rows=active_rows)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_readiness_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        status="success" if readiness.ready else "warning",
+        detail={
+            "ready": readiness.ready,
+            "total_items": readiness.total_items,
+            "readiness_score_percent": readiness.readiness_score_percent,
+        },
+    )
+    return readiness
+
+
+@ops_router.get(
+    "/governance/gate/remediation/tracker/completion",
+    response_model=W21RemediationTrackerCompletionRead,
+)
+def get_ops_governance_gate_remediation_tracker_completion(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerCompletionRead:
+    now = datetime.now(timezone.utc)
+    active_rows = _load_w21_remediation_items(include_inactive=False)
+    readiness = _compute_w21_remediation_readiness(active_rows=active_rows, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(ops_governance_remediation_tracker_runs)
+            .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+            .limit(1)
+        ).mappings().first()
+    result = _row_to_w21_completion_model(readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_completion_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        detail={
+            "status": result.status,
+            "ready": readiness.ready,
+            "readiness_score_percent": readiness.readiness_score_percent,
+        },
+    )
+    return result
+
+
+@ops_router.post(
+    "/governance/gate/remediation/tracker/complete",
+    response_model=W21RemediationTrackerCompletionRead,
+)
+def complete_ops_governance_gate_remediation_tracker(
+    payload: W21RemediationTrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> W21RemediationTrackerCompletionRead:
+    now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "system")
+    active_rows = _load_w21_remediation_items(include_inactive=False)
+    readiness = _compute_w21_remediation_readiness(active_rows=active_rows, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Remediation tracker is not ready for completion.",
+                "blockers": readiness.blockers,
+                "readiness_score_percent": readiness.readiness_score_percent,
+            },
+        )
+
+    status = W21_COMPLETION_STATUS_COMPLETED if readiness.ready else W21_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+    completion_note = (payload.completion_note or "").strip()
+    readiness_json = _to_json_text(
+        {
+            "ready": readiness.ready,
+            "readiness_score_percent": readiness.readiness_score_percent,
+            "blockers": readiness.blockers,
+            "checked_at": now.isoformat(),
+        }
+    )
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_governance_remediation_tracker_runs)
+            .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+            .limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(ops_governance_remediation_tracker_runs).values(
+                    scope=W21_TRACKER_SCOPE_GLOBAL,
+                    status=status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=now,
+                    readiness_json=readiness_json,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(ops_governance_remediation_tracker_runs)
+                .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+                .values(
+                    status=status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=now,
+                    readiness_json=readiness_json,
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(ops_governance_remediation_tracker_runs)
+            .where(ops_governance_remediation_tracker_runs.c.scope == W21_TRACKER_SCOPE_GLOBAL)
+            .limit(1)
+        ).mappings().first()
+    result = _row_to_w21_completion_model(readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_complete",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        status="success" if readiness.ready else "warning",
+        detail={
+            "status": result.status,
+            "force": bool(payload.force),
+            "ready": readiness.ready,
+            "readiness_score_percent": readiness.readiness_score_percent,
+            "blockers": readiness.blockers,
+        },
+    )
+    return result
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

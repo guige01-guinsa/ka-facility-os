@@ -914,6 +914,53 @@ adoption_w15_site_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+ops_governance_remediation_tracker_items = Table(
+    "ops_governance_remediation_tracker_items",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("item_id", String(40), nullable=False),
+    Column("rule_id", String(120), nullable=False),
+    Column("rule_status", String(20), nullable=False, default="warning"),
+    Column("required", Boolean, nullable=False, default=False),
+    Column("priority", Integer, nullable=False, default=9),
+    Column("owner_role", String(120), nullable=False),
+    Column("sla_hours", Integer, nullable=False, default=24),
+    Column("due_at", DateTime(timezone=True), nullable=False),
+    Column("action", Text, nullable=False, default=""),
+    Column("reason", Text, nullable=False, default=""),
+    Column("detail_json", Text, nullable=False, default="{}"),
+    Column("gate_generated_at", DateTime(timezone=True), nullable=False),
+    Column("source_decision", String(20), nullable=False, default="no_go"),
+    Column("assignee", String(120), nullable=True),
+    Column("status", String(20), nullable=False, default="pending"),
+    Column("completion_checked", Boolean, nullable=False, default=False),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+ops_governance_remediation_tracker_runs = Table(
+    "ops_governance_remediation_tracker_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("scope", String(40), nullable=False, unique=True, default="global"),
+    Column("status", String(40), nullable=False, default="active"),
+    Column("completion_note", Text, nullable=False, default=""),
+    Column("force_used", Boolean, nullable=False, default=False),
+    Column("completed_by", String(80), nullable=True),
+    Column("completed_at", DateTime(timezone=True), nullable=True),
+    Column("last_checked_at", DateTime(timezone=True), nullable=False),
+    Column("readiness_json", Text, nullable=False, default="{}"),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("updated_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

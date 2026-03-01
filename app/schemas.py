@@ -72,6 +72,8 @@ W14TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
 W14CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
 W15TrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
 W15CompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
+W21RemediationTrackerStatus = Literal["pending", "in_progress", "done", "blocked"]
+W21RemediationCompletionStatus = Literal["active", "completed", "completed_with_exceptions"]
 
 
 class WorkOrderCreate(BaseModel):
@@ -1291,6 +1293,105 @@ class W15TrackerCompletionRead(BaseModel):
     force_used: bool = False
     last_checked_at: datetime
     readiness: W15TrackerReadinessRead
+
+
+class W21RemediationTrackerSyncRequest(BaseModel):
+    include_warnings: bool = True
+    max_items: int = Field(default=30, ge=1, le=200)
+
+
+class W21RemediationTrackerItemUpdate(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=120)
+    status: Optional[W21RemediationTrackerStatus] = None
+    completion_checked: Optional[bool] = None
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+
+
+class W21RemediationTrackerItemRead(BaseModel):
+    id: int
+    item_id: str
+    rule_id: str
+    rule_status: str
+    required: bool
+    priority: int
+    owner_role: str
+    sla_hours: int
+    due_at: datetime
+    action: str
+    reason: str
+    detail: dict[str, Any] = Field(default_factory=dict)
+    assignee: Optional[str] = None
+    status: W21RemediationTrackerStatus
+    completion_checked: bool
+    completion_note: str
+    completed_at: Optional[datetime] = None
+    is_active: bool
+    gate_generated_at: datetime
+    created_by: str
+    updated_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class W21RemediationTrackerSyncResponse(BaseModel):
+    generated_at: datetime
+    gate_generated_at: datetime
+    decision: str
+    include_warnings: bool
+    max_items: int
+    synced_count: int
+    created_count: int
+    reopened_count: int
+    resolved_count: int
+    active_count: int
+    items: list[W21RemediationTrackerItemRead]
+
+
+class W21RemediationTrackerOverviewRead(BaseModel):
+    generated_at: datetime
+    total_items: int
+    active_count: int
+    closed_count: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    missing_assignee_count: int
+    critical_open_count: int
+    overdue_count: int
+
+
+class W21RemediationTrackerReadinessRead(BaseModel):
+    generated_at: datetime
+    total_items: int
+    pending_count: int
+    in_progress_count: int
+    done_count: int
+    blocked_count: int
+    completion_rate_percent: int
+    missing_assignee_count: int
+    missing_completion_checked_count: int
+    critical_open_count: int
+    overdue_count: int
+    readiness_score_percent: int
+    ready: bool
+    blockers: list[str]
+
+
+class W21RemediationTrackerCompletionRequest(BaseModel):
+    completion_note: Optional[str] = Field(default=None, max_length=4000)
+    force: bool = False
+
+
+class W21RemediationTrackerCompletionRead(BaseModel):
+    status: W21RemediationCompletionStatus
+    completion_note: str
+    completed_by: Optional[str] = None
+    completed_at: Optional[datetime] = None
+    force_used: bool = False
+    last_checked_at: datetime
+    readiness: W21RemediationTrackerReadinessRead
 
 
 class SlaEscalationRunRequest(BaseModel):

@@ -518,6 +518,30 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_gate_remediation_csv_api"]
         == "/api/ops/governance/gate/remediation/csv"
     )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_sync_api"]
+        == "/api/ops/governance/gate/remediation/tracker/sync"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_items_api"]
+        == "/api/ops/governance/gate/remediation/tracker/items"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_overview_api"]
+        == "/api/ops/governance/gate/remediation/tracker/overview"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_readiness_api"]
+        == "/api/ops/governance/gate/remediation/tracker/readiness"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_completion_api"]
+        == "/api/ops/governance/gate/remediation/tracker/completion"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_complete_api"]
+        == "/api/ops/governance/gate/remediation/tracker/complete"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -4966,6 +4990,100 @@ def test_ops_governance_gate_remediation_endpoints(app_client: TestClient) -> No
     assert csv_export.headers["content-type"].startswith("text/csv")
     assert "item_id,rule_id,rule_status,required,priority,owner_role,sla_hours,due_at,action,reason" in csv_export.text
 
+
+def test_ops_governance_gate_remediation_tracker_flow(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+    sync_body = sync.json()
+    assert sync_body["active_count"] >= 0
+    assert isinstance(sync_body["items"], list)
+
+    items = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/items",
+        headers=_owner_headers(),
+    )
+    assert items.status_code == 200
+    item_rows = items.json()
+    assert isinstance(item_rows, list)
+
+    overview = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/overview",
+        headers=_owner_headers(),
+    )
+    assert overview.status_code == 200
+    overview_body = overview.json()
+    assert overview_body["active_count"] >= 0
+    assert overview_body["completion_rate_percent"] >= 0
+
+    readiness_before = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/readiness",
+        headers=_owner_headers(),
+    )
+    assert readiness_before.status_code == 200
+    readiness_before_body = readiness_before.json()
+    assert readiness_before_body["total_items"] >= 0
+
+    if item_rows:
+        first_item_id = int(item_rows[0]["id"])
+        block = app_client.patch(
+            f"/api/ops/governance/gate/remediation/tracker/items/{first_item_id}",
+            headers=_owner_headers(),
+            json={
+                "assignee": "Ops Owner",
+                "status": "blocked",
+                "completion_checked": False,
+                "completion_note": "needs follow-up",
+            },
+        )
+        assert block.status_code == 200
+        assert block.json()["status"] == "blocked"
+
+        complete_fail = app_client.post(
+            "/api/ops/governance/gate/remediation/tracker/complete",
+            headers=_owner_headers(),
+            json={"completion_note": "try close"},
+        )
+        assert complete_fail.status_code == 409
+
+        for row in item_rows:
+            item_id = int(row["id"])
+            patched = app_client.patch(
+                f"/api/ops/governance/gate/remediation/tracker/items/{item_id}",
+                headers=_owner_headers(),
+                json={
+                    "assignee": "Ops Owner",
+                    "status": "done",
+                    "completion_checked": True,
+                    "completion_note": "closed in test",
+                },
+            )
+            assert patched.status_code == 200
+            assert patched.json()["status"] == "done"
+            assert patched.json()["completion_checked"] is True
+
+    complete = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/complete",
+        headers=_owner_headers(),
+        json={"completion_note": "tracker close", "force": False},
+    )
+    assert complete.status_code == 200
+    complete_body = complete.json()
+    assert complete_body["status"] in {"completed", "completed_with_exceptions"}
+    if complete_body["readiness"]["ready"]:
+        assert complete_body["status"] == "completed"
+
+    completion = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/completion",
+        headers=_owner_headers(),
+    )
+    assert completion.status_code == 200
+    completion_body = completion.json()
+    assert completion_body["status"] in {"active", "completed", "completed_with_exceptions"}
+    assert "readiness" in completion_body
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:
     import app.database as db_module

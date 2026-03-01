@@ -26,6 +26,10 @@
   - 게이트 규칙 결과를 실행 가능한 조치계획으로 변환(`owner_role`, `sla_hours`, `due_at`, `action`)
   - `/api/ops/governance/gate/remediation` + CSV export API 추가
   - 운영자가 즉시 후속 작업을 배정할 수 있는 우선순위 목록 자동 생성
+- W21 착수 완료: Governance Remediation Execution Tracker
+  - 리메디에이션 항목 동기화(sync) + 담당자/상태/완료체크 추적 API 추가
+  - readiness/overview/completion 판정 API 추가
+  - 완료 후 재동기화 시 자동 재오픈/자동 해소 로직 반영
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -124,6 +128,22 @@
 완료 기준:
 - remediation item 생성 규칙이 일관되고 우선순위가 안정적으로 정렬됨
 - CSV 출력으로 현장 실행표로 바로 사용 가능
+- 회귀 테스트 전체 통과
+
+## W21: Governance Remediation Execution Tracker (우선순위 6)
+목표:
+- 리메디에이션 계획을 실행 추적 가능한 운영 보드로 전환
+- 담당자/상태/완료체크를 API에서 일관되게 관리
+
+주요 작업:
+1. `POST /api/ops/governance/gate/remediation/tracker/sync`로 최신 remediation plan 동기화
+2. `GET/PATCH /api/ops/governance/gate/remediation/tracker/items*`로 항목 운영
+3. `GET /api/ops/governance/gate/remediation/tracker/overview|readiness` 제공
+4. `GET/POST /api/ops/governance/gate/remediation/tracker/completion|complete` 완료 판정 제공
+
+완료 기준:
+- 항목별 assignee/status/completion_checked 추적 가능
+- readiness 기반 완료 판정(강제 완료 포함) 지원
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

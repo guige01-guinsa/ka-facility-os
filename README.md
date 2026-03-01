@@ -103,6 +103,13 @@ Open:
   - `GET /api/ops/governance/gate/history` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation/csv` (permission: `admins:manage`)
+  - `POST /api/ops/governance/gate/remediation/tracker/sync` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/items` (permission: `admins:manage`)
+  - `PATCH /api/ops/governance/gate/remediation/tracker/items/{id}` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/overview` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/readiness` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/completion` (permission: `admins:manage`)
+  - `POST /api/ops/governance/gate/remediation/tracker/complete` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -439,6 +446,13 @@ Job monitoring:
 - `GET /api/ops/governance/gate/history`
 - `GET /api/ops/governance/gate/remediation`
 - `GET /api/ops/governance/gate/remediation/csv`
+- `POST /api/ops/governance/gate/remediation/tracker/sync`
+- `GET /api/ops/governance/gate/remediation/tracker/items`
+- `PATCH /api/ops/governance/gate/remediation/tracker/items/{id}`
+- `GET /api/ops/governance/gate/remediation/tracker/overview`
+- `GET /api/ops/governance/gate/remediation/tracker/readiness`
+- `GET /api/ops/governance/gate/remediation/tracker/completion`
+- `POST /api/ops/governance/gate/remediation/tracker/complete`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
