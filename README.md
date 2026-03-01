@@ -32,6 +32,10 @@ Open:
   - `GET /api/public/adoption-plan/w02` (W02 Scheduled SOP + sandbox execution pack)
   - `GET /api/public/adoption-plan/w02/checklist.csv` (W02 SOP/sandbox checklist export)
   - `GET /api/public/adoption-plan/w02/schedule.ics` (W02 calendar import)
+  - `GET /api/public/adoption-plan/w08` (W08 report discipline execution pack)
+  - `GET /api/public/adoption-plan/w08/checklist.csv` (W08 report discipline checklist export)
+  - `GET /api/public/adoption-plan/w08/schedule.ics` (W08 calendar import)
+  - `GET /api/public/adoption-plan/w08/reporting-sop` (W08 reporting SOP pack)
   - `GET /api/public/post-mvp` (post-MVP roadmap/backlog/release/KPI/risk plan)
   - `GET /api/public/post-mvp/backlog.csv` (execution backlog export)
   - `GET /api/public/post-mvp/releases.ics` (release calendar import)
@@ -124,6 +128,9 @@ Open:
   - `GET /api/ops/adoption/w07/sla-quality/latest-weekly` (`adoption_w07:read`)
   - `GET /api/ops/adoption/w07/sla-quality/trends` (`adoption_w07:read`)
   - `GET /api/ops/adoption/w07/sla-quality/archive.csv` (`adoption_w07:read`)
+- W08 report discipline
+  - `GET /api/ops/adoption/w08/report-discipline` (`adoption_w08:read`)
+  - `GET /api/ops/adoption/w08/site-benchmark` (`adoption_w08:read`)
 - Inspections
   - `POST /api/inspections` (`inspections:write`)
   - `GET /api/inspections` (`inspections:read`)
@@ -165,6 +172,9 @@ Open:
     - `owner`: approved lock
     - locked unlock: admin override only (`workflow_locks:admin`)
   - W02 tracker:
+    - `manager/operator`: read + write
+    - `auditor`: read
+  - W08 report discipline:
     - `manager/operator`: read + write
     - `auditor`: read
 - Legacy bootstrap:
@@ -313,6 +323,12 @@ Job monitoring:
 - `GET /api/public/adoption-plan/w02`
 - `GET /api/public/adoption-plan/w02/checklist.csv`
 - `GET /api/public/adoption-plan/w02/schedule.ics`
+- `GET /api/public/adoption-plan/w08`
+- `GET /api/public/adoption-plan/w08/checklist.csv`
+- `GET /api/public/adoption-plan/w08/schedule.ics`
+- `GET /api/public/adoption-plan/w08/reporting-sop`
+- `GET /api/ops/adoption/w08/report-discipline`
+- `GET /api/ops/adoption/w08/site-benchmark`
 - `GET /api/public/post-mvp`
 - `GET /api/public/post-mvp/backlog.csv`
 - `GET /api/public/post-mvp/releases.ics`

@@ -284,6 +284,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w06:write",
         "adoption_w07:read",
         "adoption_w07:write",
+        "adoption_w08:read",
+        "adoption_w08:write",
     },
     "operator": {
         "inspections:read",
@@ -304,6 +306,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w06:write",
         "adoption_w07:read",
         "adoption_w07:write",
+        "adoption_w08:read",
+        "adoption_w08:write",
     },
     "auditor": {
         "inspections:read",
@@ -317,6 +321,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w05:read",
         "adoption_w06:read",
         "adoption_w07:read",
+        "adoption_w08:read",
     },
 }
 
@@ -1882,6 +1887,159 @@ ADOPTION_W07_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W08_REPORT_DISCIPLINE_CHECKLIST: list[dict[str, Any]] = [
+    {
+        "id": "W08-RD-01",
+        "cadence": "Daily 09:30",
+        "discipline": "Monthly export readiness check",
+        "owner_role": "Auditor",
+        "target": "월간 리포트 CSV/PDF 출력 경로 점검 100%",
+        "definition_of_done": "export 경로 실패/권한 오류 0건",
+        "evidence_hint": "Export smoke test 결과",
+        "api_ref": "/api/reports/monthly",
+    },
+    {
+        "id": "W08-RD-02",
+        "cadence": "Daily 14:30",
+        "discipline": "Work-order data quality triage",
+        "owner_role": "Ops PM",
+        "target": "due_at 누락/상태 비정합 당일 정리",
+        "definition_of_done": "품질 이슈 backlog 순증 0",
+        "evidence_hint": "Data quality triage 로그",
+        "api_ref": "/api/ops/adoption/w08/report-discipline",
+    },
+    {
+        "id": "W08-RD-03",
+        "cadence": "Wednesday 16:00",
+        "discipline": "Site benchmark review",
+        "owner_role": "Owner",
+        "target": "하위 3개 site 개선 액션 지정 100%",
+        "definition_of_done": "site별 개선 owner/ETA 확정",
+        "evidence_hint": "Benchmark 리뷰 노트",
+        "api_ref": "/api/ops/adoption/w08/site-benchmark",
+    },
+    {
+        "id": "W08-RD-04",
+        "cadence": "Friday 17:00",
+        "discipline": "Weekly reporting close",
+        "owner_role": "Owner + Auditor",
+        "target": "report discipline score >= 85",
+        "definition_of_done": "주간 점검 결과/다음주 보완안 승인",
+        "evidence_hint": "Weekly close report",
+        "api_ref": "/api/ops/adoption/w08/report-discipline",
+    },
+]
+
+ADOPTION_W08_DATA_QUALITY_CONTROLS: list[dict[str, Any]] = [
+    {
+        "id": "W08-DQ-01",
+        "control": "Missing due_at guard",
+        "objective": "SLA 계산 불가 작업지시 제거",
+        "api_ref": "/api/work-orders",
+        "pass_criteria": "due_at missing rate <= 2%",
+    },
+    {
+        "id": "W08-DQ-02",
+        "control": "Invalid priority normalization",
+        "objective": "우선순위 기준값 통일(low/medium/high/critical)",
+        "api_ref": "/api/work-orders",
+        "pass_criteria": "invalid priority 0건",
+    },
+    {
+        "id": "W08-DQ-03",
+        "control": "Completion timestamp integrity",
+        "objective": "completed 상태의 timestamp 무결성 확보",
+        "api_ref": "/api/work-orders/{id}/complete",
+        "pass_criteria": "completed_without_completed_at 0건",
+    },
+    {
+        "id": "W08-DQ-04",
+        "control": "Report export traceability",
+        "objective": "CSV/PDF 출력 감사로그 추적성 보장",
+        "api_ref": "/api/admin/audit-logs",
+        "pass_criteria": "report_monthly_export_* 누락 0건",
+    },
+]
+
+ADOPTION_W08_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W08-E01",
+        "date": "2026-04-20",
+        "start_time": "09:00",
+        "end_time": "09:40",
+        "title": "W08 kickoff - report discipline baseline",
+        "owner": "Auditor + Ops PM",
+        "output": "Baseline discipline snapshot",
+    },
+    {
+        "id": "W08-E02",
+        "date": "2026-04-21",
+        "start_time": "14:00",
+        "end_time": "14:30",
+        "title": "Data quality triage clinic",
+        "owner": "Ops Lead",
+        "output": "Top data-quality issues and owners",
+    },
+    {
+        "id": "W08-E03",
+        "date": "2026-04-22",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Site benchmark coaching",
+        "owner": "Owner",
+        "output": "Bottom-site improvement actions",
+    },
+    {
+        "id": "W08-E04",
+        "date": "2026-04-23",
+        "start_time": "15:30",
+        "end_time": "16:00",
+        "title": "Monthly export rehearsal",
+        "owner": "Audit Lead",
+        "output": "CSV/PDF export rehearsal evidence",
+    },
+    {
+        "id": "W08-E05",
+        "date": "2026-04-24",
+        "start_time": "17:00",
+        "end_time": "17:30",
+        "title": "W08 close review",
+        "owner": "Owner + Auditor",
+        "output": "W08 close and next-week hardening list",
+    },
+]
+
+ADOPTION_W08_REPORTING_SOP: list[dict[str, Any]] = [
+    {
+        "step_id": "W08-SOP-01",
+        "stage": "Prepare",
+        "action": "월간 대상 month/site를 확정하고 데이터 범위를 잠금",
+        "output": "Export parameter sheet",
+        "api_ref": "/api/reports/monthly",
+    },
+    {
+        "step_id": "W08-SOP-02",
+        "stage": "Export",
+        "action": "CSV/PDF를 각각 생성하고 파일 해시/크기 검증",
+        "output": "CSV/PDF artifact pair",
+        "api_ref": "/api/reports/monthly/csv",
+    },
+    {
+        "step_id": "W08-SOP-03",
+        "stage": "Audit",
+        "action": "감사로그에서 export action 추적 및 누락 확인",
+        "output": "Audit trace log",
+        "api_ref": "/api/admin/audit-logs",
+    },
+    {
+        "step_id": "W08-SOP-04",
+        "stage": "Close",
+        "action": "주간 discipline score 리뷰 및 하위 site 개선 오더 발행",
+        "output": "Discipline close report",
+        "api_ref": "/api/ops/adoption/w08/report-discipline",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -1954,6 +2112,18 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "Admin Users", "href": "/api/admin/users"},
             {"label": "Admin Audit Logs", "href": "/api/admin/audit-logs"},
             {"label": "Workflow Locks", "href": "/api/workflow-locks"},
+        ],
+    },
+    {
+        "id": "report-discipline",
+        "name": "Report Discipline",
+        "name_ko": "리포트 규율",
+        "description": "W08 기준으로 리포트 출력 준수율, 데이터 품질, 사이트 벤치마크를 운영합니다.",
+        "kpi_hint": "Report discipline score >= 85",
+        "links": [
+            {"label": "W08 Pack", "href": "/api/public/adoption-plan/w08"},
+            {"label": "W08 Discipline", "href": "/api/ops/adoption/w08/report-discipline"},
+            {"label": "W08 Benchmark", "href": "/api/ops/adoption/w08/site-benchmark"},
         ],
     },
     {
@@ -7762,6 +7932,355 @@ def _build_w07_sla_quality_snapshot(
     }
 
 
+def _build_w08_report_discipline_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(14, min(int(days), 120))
+    start = now - timedelta(days=window_days)
+
+    def _safe_rate(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round((float(numerator) / float(denominator)) * 100.0, 2)
+
+    def _priority_valid(value: Any) -> bool:
+        return str(value or "").strip().lower() in {"low", "medium", "high", "critical"}
+
+    wo_stmt = select(
+        work_orders.c.site,
+        work_orders.c.status,
+        work_orders.c.priority,
+        work_orders.c.due_at,
+        work_orders.c.completed_at,
+        work_orders.c.created_at,
+    ).where(work_orders.c.created_at >= start)
+    insp_stmt = select(
+        inspections.c.site,
+        inspections.c.risk_level,
+        inspections.c.created_at,
+    ).where(inspections.c.created_at >= start)
+    export_stmt = (
+        select(
+            admin_audit_logs.c.action,
+            admin_audit_logs.c.detail_json,
+            admin_audit_logs.c.created_at,
+        )
+        .where(admin_audit_logs.c.created_at >= start)
+        .where(admin_audit_logs.c.action.in_(["report_monthly_export_csv", "report_monthly_export_pdf"]))
+    )
+
+    if site is not None:
+        wo_stmt = wo_stmt.where(work_orders.c.site == site)
+        insp_stmt = insp_stmt.where(inspections.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "target_discipline_score": 85.0,
+                "thresholds": {
+                    "missing_due_rate_percent": 2.0,
+                    "data_quality_issue_rate_percent": 5.0,
+                    "report_export_coverage_percent": 95.0,
+                },
+                "metrics": {
+                    "site_count": 0,
+                    "work_orders_created": 0,
+                    "work_orders_completed": 0,
+                    "work_orders_missing_due_at": 0,
+                    "missing_due_rate_percent": 0.0,
+                    "invalid_priority_count": 0,
+                    "completed_without_completed_at_count": 0,
+                    "open_overdue_count": 0,
+                    "overdue_rate_percent": 0.0,
+                    "sla_violation_count": 0,
+                    "sla_violation_rate_percent": 0.0,
+                    "data_quality_issue_count": 0,
+                    "data_quality_issue_rate_percent": 0.0,
+                    "inspections_created": 0,
+                    "inspections_high_risk": 0,
+                    "report_export_count": 0,
+                    "report_export_csv_count": 0,
+                    "report_export_pdf_count": 0,
+                    "report_export_coverage_percent": 0.0,
+                    "report_export_last_at": None,
+                    "discipline_score": 0.0,
+                    "target_met": False,
+                },
+                "top_risk_sites": [],
+                "site_benchmark": [],
+                "recommendations": ["접근 가능한 site scope에 데이터가 없습니다."],
+            }
+        wo_stmt = wo_stmt.where(work_orders.c.site.in_(allowed_sites))
+        insp_stmt = insp_stmt.where(inspections.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        wo_rows = conn.execute(wo_stmt).mappings().all()
+        insp_rows = conn.execute(insp_stmt).mappings().all()
+        export_rows = conn.execute(export_stmt).mappings().all()
+
+    site_stats: dict[str, dict[str, Any]] = {}
+
+    def _site_bucket(site_name: str) -> dict[str, Any]:
+        if site_name not in site_stats:
+            site_stats[site_name] = {
+                "site": site_name,
+                "work_orders_created": 0,
+                "work_orders_completed": 0,
+                "work_orders_missing_due_at": 0,
+                "invalid_priority_count": 0,
+                "completed_without_completed_at_count": 0,
+                "open_overdue_count": 0,
+                "sla_violation_count": 0,
+                "data_quality_issue_count": 0,
+                "inspections_created": 0,
+                "inspections_high_risk": 0,
+                "report_export_count": 0,
+                "report_export_csv_count": 0,
+                "report_export_pdf_count": 0,
+                "report_export_last_at": None,
+            }
+        return site_stats[site_name]
+
+    for row in wo_rows:
+        site_name = _normalize_site_name(str(row.get("site") or ""))
+        if site_name is None:
+            continue
+        bucket = _site_bucket(site_name)
+        bucket["work_orders_created"] = int(bucket["work_orders_created"]) + 1
+
+        status = str(row.get("status") or "").strip().lower()
+        due_at = _as_optional_datetime(row.get("due_at"))
+        completed_at = _as_optional_datetime(row.get("completed_at"))
+
+        if status == "completed":
+            bucket["work_orders_completed"] = int(bucket["work_orders_completed"]) + 1
+            if completed_at is None:
+                bucket["completed_without_completed_at_count"] = int(bucket["completed_without_completed_at_count"]) + 1
+
+        if due_at is None:
+            bucket["work_orders_missing_due_at"] = int(bucket["work_orders_missing_due_at"]) + 1
+
+        if not _priority_valid(row.get("priority")):
+            bucket["invalid_priority_count"] = int(bucket["invalid_priority_count"]) + 1
+
+        is_open = status in {"open", "acked"}
+        if is_open and due_at is not None and due_at < now:
+            bucket["open_overdue_count"] = int(bucket["open_overdue_count"]) + 1
+
+        violated = False
+        if due_at is not None:
+            if completed_at is not None:
+                violated = completed_at > due_at
+            elif is_open:
+                violated = now > due_at
+        if violated:
+            bucket["sla_violation_count"] = int(bucket["sla_violation_count"]) + 1
+
+    for row in insp_rows:
+        site_name = _normalize_site_name(str(row.get("site") or ""))
+        if site_name is None:
+            continue
+        bucket = _site_bucket(site_name)
+        bucket["inspections_created"] = int(bucket["inspections_created"]) + 1
+        risk = str(row.get("risk_level") or "").strip().lower()
+        if risk in {"high", "critical"}:
+            bucket["inspections_high_risk"] = int(bucket["inspections_high_risk"]) + 1
+
+    for row in export_rows:
+        action = str(row.get("action") or "").strip().lower()
+        detail = _parse_job_detail_json(row.get("detail_json"))
+        detail_site_raw = detail.get("site")
+        detail_site = _normalize_site_name(str(detail_site_raw)) if detail_site_raw is not None else None
+
+        if site is not None:
+            if detail_site not in {None, "ALL", site}:
+                continue
+            target_site = site
+        elif allowed_sites is not None:
+            if detail_site is None or detail_site == "ALL" or detail_site not in allowed_sites:
+                continue
+            target_site = detail_site
+        else:
+            if detail_site in {None, "ALL"}:
+                continue
+            target_site = detail_site
+
+        if target_site is None:
+            continue
+        bucket = _site_bucket(target_site)
+        bucket["report_export_count"] = int(bucket["report_export_count"]) + 1
+        if action == "report_monthly_export_csv":
+            bucket["report_export_csv_count"] = int(bucket["report_export_csv_count"]) + 1
+        if action == "report_monthly_export_pdf":
+            bucket["report_export_pdf_count"] = int(bucket["report_export_pdf_count"]) + 1
+        created_at = _as_optional_datetime(row.get("created_at"))
+        current_last = _as_optional_datetime(bucket.get("report_export_last_at"))
+        if created_at is not None and (current_last is None or created_at > current_last):
+            bucket["report_export_last_at"] = created_at
+
+    benchmark_rows: list[dict[str, Any]] = []
+    for site_name in sorted(site_stats.keys()):
+        bucket = site_stats[site_name]
+        created_count = int(bucket["work_orders_created"])
+        missing_due = int(bucket["work_orders_missing_due_at"])
+        invalid_priority = int(bucket["invalid_priority_count"])
+        completed_missing = int(bucket["completed_without_completed_at_count"])
+        overdue_open = int(bucket["open_overdue_count"])
+        violations = int(bucket["sla_violation_count"])
+        data_quality_issue_count = missing_due + invalid_priority + completed_missing
+        bucket["data_quality_issue_count"] = data_quality_issue_count
+
+        missing_due_rate = _safe_rate(missing_due, created_count)
+        overdue_rate = _safe_rate(overdue_open, created_count)
+        violation_rate = _safe_rate(violations, created_count)
+        data_quality_issue_rate = _safe_rate(data_quality_issue_count, created_count)
+
+        expected_exports = max(1, int(math.ceil(float(window_days) / 30.0)) * 2)
+        export_coverage = _safe_rate(int(bucket["report_export_count"]), expected_exports)
+        risk_score = round((data_quality_issue_rate * 0.4) + (overdue_rate * 0.3) + (violation_rate * 0.3), 2)
+        discipline_score = round(
+            max(0.0, min(100.0, 100.0 - risk_score + min(15.0, export_coverage * 0.15))),
+            2,
+        )
+
+        benchmark_rows.append(
+            {
+                "site": site_name,
+                "work_orders_created": created_count,
+                "work_orders_completed": int(bucket["work_orders_completed"]),
+                "missing_due_rate_percent": missing_due_rate,
+                "overdue_rate_percent": overdue_rate,
+                "sla_violation_rate_percent": violation_rate,
+                "data_quality_issue_rate_percent": data_quality_issue_rate,
+                "report_export_count": int(bucket["report_export_count"]),
+                "report_export_coverage_percent": export_coverage,
+                "inspections_high_risk": int(bucket["inspections_high_risk"]),
+                "risk_score": risk_score,
+                "discipline_score": discipline_score,
+                "report_export_last_at": (
+                    _as_optional_datetime(bucket.get("report_export_last_at")).isoformat()
+                    if _as_optional_datetime(bucket.get("report_export_last_at")) is not None
+                    else None
+                ),
+            }
+        )
+
+    total_created = sum(int(row.get("work_orders_created") or 0) for row in benchmark_rows)
+    total_completed = sum(int(row.get("work_orders_completed") or 0) for row in benchmark_rows)
+    total_missing_due = sum(int(site_stats[row["site"]]["work_orders_missing_due_at"]) for row in benchmark_rows)
+    total_invalid_priority = sum(int(site_stats[row["site"]]["invalid_priority_count"]) for row in benchmark_rows)
+    total_completed_missing = sum(int(site_stats[row["site"]]["completed_without_completed_at_count"]) for row in benchmark_rows)
+    total_overdue_open = sum(int(site_stats[row["site"]]["open_overdue_count"]) for row in benchmark_rows)
+    total_violations = sum(int(site_stats[row["site"]]["sla_violation_count"]) for row in benchmark_rows)
+    total_issue_count = sum(int(site_stats[row["site"]]["data_quality_issue_count"]) for row in benchmark_rows)
+    total_inspections = sum(int(site_stats[row["site"]]["inspections_created"]) for row in benchmark_rows)
+    total_high_risk = sum(int(site_stats[row["site"]]["inspections_high_risk"]) for row in benchmark_rows)
+    total_exports = sum(int(site_stats[row["site"]]["report_export_count"]) for row in benchmark_rows)
+    total_exports_csv = sum(int(site_stats[row["site"]]["report_export_csv_count"]) for row in benchmark_rows)
+    total_exports_pdf = sum(int(site_stats[row["site"]]["report_export_pdf_count"]) for row in benchmark_rows)
+
+    expected_total_exports = max(1, int(math.ceil(float(window_days) / 30.0)) * 2 * max(1, len(benchmark_rows)))
+    export_coverage_percent = _safe_rate(total_exports, expected_total_exports)
+    missing_due_rate_percent = _safe_rate(total_missing_due, total_created)
+    overdue_rate_percent = _safe_rate(total_overdue_open, total_created)
+    violation_rate_percent = _safe_rate(total_violations, total_created)
+    issue_rate_percent = _safe_rate(total_issue_count, total_created)
+    global_risk_score = round((issue_rate_percent * 0.4) + (overdue_rate_percent * 0.3) + (violation_rate_percent * 0.3), 2)
+    discipline_score = round(
+        max(0.0, min(100.0, 100.0 - global_risk_score + min(15.0, export_coverage_percent * 0.15))),
+        2,
+    )
+
+    top_risk_sites = sorted(
+        benchmark_rows,
+        key=lambda row: (
+            float(row.get("risk_score") or 0.0),
+            float(row.get("overdue_rate_percent") or 0.0),
+            int(row.get("work_orders_created") or 0),
+        ),
+        reverse=True,
+    )[:5]
+    site_benchmark = sorted(
+        benchmark_rows,
+        key=lambda row: (
+            float(row.get("discipline_score") or 0.0),
+            float(row.get("report_export_coverage_percent") or 0.0),
+            -float(row.get("risk_score") or 0.0),
+        ),
+        reverse=True,
+    )
+
+    report_export_last_at: str | None = None
+    for row in benchmark_rows:
+        candidate = _as_optional_datetime(row.get("report_export_last_at"))
+        if candidate is None:
+            continue
+        current = _as_optional_datetime(report_export_last_at)
+        if current is None or candidate > current:
+            report_export_last_at = candidate.isoformat()
+
+    recommendations: list[str] = []
+    if missing_due_rate_percent > 2.0:
+        recommendations.append("due_at 누락 비율이 높습니다. 생성 단계 필수값 검증을 강화하세요.")
+    if issue_rate_percent > 5.0:
+        recommendations.append("데이터 품질 이슈율이 기준을 초과했습니다. 일일 triage를 고정하세요.")
+    if overdue_rate_percent > 10.0:
+        recommendations.append("overdue open 비율이 높습니다. 담당자 재할당과 ETA 재설정을 수행하세요.")
+    if violation_rate_percent > 10.0:
+        recommendations.append("SLA 위반률이 높습니다. 우선순위 기준과 마감 정책을 재점검하세요.")
+    if export_coverage_percent < 95.0:
+        recommendations.append("월간 리포트 export 커버리지가 낮습니다. CSV/PDF 리허설을 주간 루틴에 추가하세요.")
+    if total_high_risk > 0 and total_inspections > 0:
+        recommendations.append("고위험 점검 항목이 존재합니다. W07 고위험 대응 플레이와 연동하세요.")
+    if not recommendations:
+        recommendations.append("W08 리포트 규율 지표가 안정적입니다. 현재 운영 리듬을 유지하세요.")
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "target_discipline_score": 85.0,
+        "thresholds": {
+            "missing_due_rate_percent": 2.0,
+            "data_quality_issue_rate_percent": 5.0,
+            "report_export_coverage_percent": 95.0,
+        },
+        "metrics": {
+            "site_count": len(benchmark_rows),
+            "work_orders_created": total_created,
+            "work_orders_completed": total_completed,
+            "work_orders_missing_due_at": total_missing_due,
+            "missing_due_rate_percent": missing_due_rate_percent,
+            "invalid_priority_count": total_invalid_priority,
+            "completed_without_completed_at_count": total_completed_missing,
+            "open_overdue_count": total_overdue_open,
+            "overdue_rate_percent": overdue_rate_percent,
+            "sla_violation_count": total_violations,
+            "sla_violation_rate_percent": violation_rate_percent,
+            "data_quality_issue_count": total_issue_count,
+            "data_quality_issue_rate_percent": issue_rate_percent,
+            "inspections_created": total_inspections,
+            "inspections_high_risk": total_high_risk,
+            "report_export_count": total_exports,
+            "report_export_csv_count": total_exports_csv,
+            "report_export_pdf_count": total_exports_pdf,
+            "report_export_coverage_percent": export_coverage_percent,
+            "report_export_last_at": report_export_last_at,
+            "discipline_score": discipline_score,
+            "target_met": discipline_score >= 85.0,
+        },
+        "top_risk_sites": top_risk_sites,
+        "site_benchmark": site_benchmark,
+        "recommendations": recommendations,
+    }
+
+
 def _parse_job_detail_json(raw: Any) -> dict[str, Any]:
     try:
         loaded = json.loads(str(raw or "{}"))
@@ -9885,6 +10404,10 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w07_checklist_csv_api": "/api/public/adoption-plan/w07/checklist.csv",
         "public_adoption_w07_schedule_ics_api": "/api/public/adoption-plan/w07/schedule.ics",
         "public_adoption_w07_coaching_playbook_api": "/api/public/adoption-plan/w07/coaching-playbook",
+        "public_adoption_w08_api": "/api/public/adoption-plan/w08",
+        "public_adoption_w08_checklist_csv_api": "/api/public/adoption-plan/w08/checklist.csv",
+        "public_adoption_w08_schedule_ics_api": "/api/public/adoption-plan/w08/schedule.ics",
+        "public_adoption_w08_reporting_sop_api": "/api/public/adoption-plan/w08/reporting-sop",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -9920,6 +10443,8 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w07_sla_quality_weekly_latest_api": "/api/ops/adoption/w07/sla-quality/latest-weekly",
         "adoption_w07_sla_quality_weekly_trends_api": "/api/ops/adoption/w07/sla-quality/trends",
         "adoption_w07_sla_quality_weekly_archive_csv_api": "/api/ops/adoption/w07/sla-quality/archive.csv",
+        "adoption_w08_report_discipline_api": "/api/ops/adoption/w08/report-discipline",
+        "adoption_w08_site_benchmark_api": "/api/ops/adoption/w08/site-benchmark",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -9976,6 +10501,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "w05_usage_consistency": _adoption_w05_payload(),
         "w06_operational_rhythm": _adoption_w06_payload(),
         "w07_sla_quality": _adoption_w07_payload(),
+        "w08_report_discipline": _adoption_w08_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -10015,6 +10541,10 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w07_checklist_csv": "/api/public/adoption-plan/w07/checklist.csv",
                 "w07_schedule_ics": "/api/public/adoption-plan/w07/schedule.ics",
                 "w07_coaching_playbook": "/api/public/adoption-plan/w07/coaching-playbook",
+                "w08_json": "/api/public/adoption-plan/w08",
+                "w08_checklist_csv": "/api/public/adoption-plan/w08/checklist.csv",
+                "w08_schedule_ics": "/api/public/adoption-plan/w08/schedule.ics",
+                "w08_reporting_sop": "/api/public/adoption-plan/w08/reporting-sop",
             },
             "next_review_date": next_review_date,
         },
@@ -10753,6 +11283,151 @@ def _build_adoption_w07_schedule_ics(payload: dict[str, Any]) -> str:
     return "\r\n".join(calendar_lines) + "\r\n"
 
 
+def _adoption_w08_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 8),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 8,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Habit",
+            "focus": "Report discipline",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 8)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W08 Report Discipline Pack",
+        "public": True,
+        "timeline": timeline,
+        "report_discipline_checklist": ADOPTION_W08_REPORT_DISCIPLINE_CHECKLIST,
+        "data_quality_controls": ADOPTION_W08_DATA_QUALITY_CONTROLS,
+        "scheduled_events": ADOPTION_W08_SCHEDULED_EVENTS,
+        "reporting_sop": ADOPTION_W08_REPORTING_SOP,
+        "report_discipline_api": "/api/ops/adoption/w08/report-discipline",
+        "site_benchmark_api": "/api/ops/adoption/w08/site-benchmark",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w08",
+            "checklist_csv": "/api/public/adoption-plan/w08/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w08/schedule.ics",
+            "reporting_sop": "/api/public/adoption-plan/w08/reporting-sop",
+        },
+    }
+
+
+def _build_adoption_w08_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "cadence_or_control",
+            "discipline_or_objective",
+            "owner_or_api_ref",
+            "target_or_pass_criteria",
+            "definition_of_done_or_evidence",
+            "api_ref",
+        ]
+    )
+    for item in payload.get("report_discipline_checklist", []):
+        writer.writerow(
+            [
+                "report_discipline",
+                item.get("id", ""),
+                item.get("cadence", ""),
+                item.get("discipline", ""),
+                item.get("owner_role", ""),
+                item.get("target", ""),
+                item.get("definition_of_done", ""),
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("data_quality_controls", []):
+        writer.writerow(
+            [
+                "data_quality_control",
+                item.get("id", ""),
+                item.get("control", ""),
+                item.get("objective", ""),
+                item.get("api_ref", ""),
+                item.get("pass_criteria", ""),
+                "",
+                item.get("api_ref", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                item.get("date", ""),
+                item.get("title", ""),
+                item.get("owner", ""),
+                item.get("output", ""),
+                f"{item.get('start_time', '')}-{item.get('end_time', '')}",
+                "",
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w08_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w08-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W08] {str(item.get('title', 'Report Discipline Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W08 Report Discipline//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
+
+
 def _w02_sample_files_payload() -> dict[str, Any]:
     items: list[dict[str, Any]] = []
     for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
@@ -11123,6 +11798,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w05_pack = plan.get("w05_usage_consistency", {})
     w06_pack = plan.get("w06_operational_rhythm", {})
     w07_pack = plan.get("w07_sla_quality", {})
+    w08_pack = plan.get("w08_report_discipline", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -11455,6 +12131,51 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w07_schedule_rows: list[str] = []
     for item in w07_pack.get("scheduled_events", []):
         w07_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w08_checklist_rows: list[str] = []
+    for item in w08_pack.get("report_discipline_checklist", []):
+        w08_checklist_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("cadence", "")))}</td>
+              <td>{html.escape(str(item.get("discipline", "")))}</td>
+              <td>{html.escape(str(item.get("owner_role", "")))}</td>
+              <td>{html.escape(str(item.get("target", "")))}</td>
+              <td>{html.escape(str(item.get("definition_of_done", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_hint", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+            </tr>
+            """
+        )
+
+    w08_quality_rows: list[str] = []
+    for item in w08_pack.get("data_quality_controls", []):
+        w08_quality_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("control", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{html.escape(str(item.get("api_ref", "")))}</td>
+              <td>{html.escape(str(item.get("pass_criteria", "")))}</td>
+            </tr>
+            """
+        )
+
+    w08_schedule_rows: list[str] = []
+    for item in w08_pack.get("scheduled_events", []):
+        w08_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -12132,6 +12853,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w07/checklist.csv">W07 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
+        <a href="/api/public/adoption-plan/w08">W08 JSON</a>
+        <a href="/api/public/adoption-plan/w08/checklist.csv">W08 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w08/schedule.ics">W08 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w08/reporting-sop">W08 Reporting SOP</a>
         <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
@@ -12556,6 +13281,70 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w07_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W08 Report Discipline</h2>
+      <p class="sub">월간 리포트 출력 규율과 데이터 품질을 운영 KPI로 관리하고, site 벤치마크로 개선 우선순위를 확정합니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w08">W08 JSON</a>
+        <a href="/api/public/adoption-plan/w08/checklist.csv">W08 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w08/schedule.ics">W08 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w08/reporting-sop">W08 Reporting SOP</a>
+        <a href="/api/ops/adoption/w08/report-discipline">W08 Discipline API (Token)</a>
+        <a href="/api/ops/adoption/w08/site-benchmark">W08 Site Benchmark API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Checklist ID</th>
+              <th>Cadence</th>
+              <th>Discipline</th>
+              <th>Owner Role</th>
+              <th>Target</th>
+              <th>Definition of Done</th>
+              <th>Evidence Hint</th>
+              <th>API Ref</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w08_checklist_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Control ID</th>
+              <th>Control</th>
+              <th>Objective</th>
+              <th>API Ref</th>
+              <th>Pass Criteria</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w08_quality_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w08_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -14507,6 +15296,39 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w07QualityTopSites" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">Recommendations</h4>
             <div id="w07QualityRecommendations" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W08 Report Discipline</h3>
+            <div id="adoptionW08Top" class="cards"></div>
+            <div id="adoptionW08Checklist" class="empty">데이터 없음</div>
+            <div id="adoptionW08Quality" class="empty">데이터 없음</div>
+            <div id="adoptionW08Schedule" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW08Json" href="/api/public/adoption-plan/w08">W08 JSON</a>
+              <a id="adoptW08ChecklistCsv" href="/api/public/adoption-plan/w08/checklist.csv">W08 Checklist CSV</a>
+              <a id="adoptW08ScheduleIcs" href="/api/public/adoption-plan/w08/schedule.ics">W08 Schedule ICS</a>
+              <a id="adoptW08ReportingSop" href="/api/public/adoption-plan/w08/reporting-sop">W08 Reporting SOP</a>
+              <a id="adoptW08DisciplineApi" href="/api/ops/adoption/w08/report-discipline">W08 Discipline API (Token)</a>
+              <a id="adoptW08BenchmarkApi" href="/api/ops/adoption/w08/site-benchmark">W08 Site Benchmark API (Token)</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>W08 Report Discipline Dashboard (Token)</h3>
+            <div class="filter-row">
+              <input id="w08DisciplineSite" placeholder="site (optional, 빈 값이면 전체)" />
+              <input id="w08DisciplineDays" value="30" placeholder="window days (14-120)" />
+              <input id="w08DisciplineReserved1" value="token required" disabled />
+              <input id="w08DisciplineReserved2" value="site scope enforced" disabled />
+              <button id="w08DisciplineRefreshBtn" class="btn run" type="button">W08 리포트 새로고침</button>
+            </div>
+            <div id="w08DisciplineMeta" class="meta">조회 전</div>
+            <div id="w08DisciplineSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">Top Risk Sites</h4>
+            <div id="w08DisciplineTopSites" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Site Benchmark</h4>
+            <div id="w08DisciplineBenchmark" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Recommendations</h4>
+            <div id="w08DisciplineRecommendations" class="empty">데이터 없음</div>
           </div>
           <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
@@ -16811,6 +17633,114 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW08ReportDiscipline() {{
+        const meta = document.getElementById("w08DisciplineMeta");
+        const summary = document.getElementById("w08DisciplineSummary");
+        const topSites = document.getElementById("w08DisciplineTopSites");
+        const benchmark = document.getElementById("w08DisciplineBenchmark");
+        const recommendations = document.getElementById("w08DisciplineRecommendations");
+        const site = (document.getElementById("w08DisciplineSite").value || "").trim();
+        const daysRaw = (document.getElementById("w08DisciplineDays").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) {{
+          params.set("site", site);
+        }}
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        const path = "/api/ops/adoption/w08/report-discipline" + (params.toString() ? ("?" + params.toString()) : "");
+        const benchmarkParams = new URLSearchParams();
+        if (site) {{
+          benchmarkParams.set("site", site);
+        }}
+        if (daysRaw) {{
+          benchmarkParams.set("days", daysRaw);
+        }}
+        benchmarkParams.set("limit", "10");
+        const benchmarkPath = "/api/ops/adoption/w08/site-benchmark?" + benchmarkParams.toString();
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const [data, benchmarkData] = await Promise.all([
+            fetchJson(path, true),
+            fetchJson(benchmarkPath, true).catch((err) => ({{ __error: err.message }})),
+          ]);
+          const metrics = data.metrics || {{}};
+          meta.textContent =
+            "성공: site=" + String(data.site || "ALL")
+            + " | window_days=" + String(data.window_days || "-")
+            + " | discipline_score=" + String(metrics.discipline_score ?? 0)
+            + " | coverage=" + String(metrics.report_export_coverage_percent ?? 0) + "%";
+          const summaryItems = [
+            ["Site Count", metrics.site_count ?? 0],
+            ["Created WOs", metrics.work_orders_created ?? 0],
+            ["Completed WOs", metrics.work_orders_completed ?? 0],
+            ["Missing due_at", metrics.work_orders_missing_due_at ?? 0],
+            ["Missing due_at %", metrics.missing_due_rate_percent ?? 0],
+            ["Invalid Priority", metrics.invalid_priority_count ?? 0],
+            ["Completed w/o TS", metrics.completed_without_completed_at_count ?? 0],
+            ["Overdue Open", metrics.open_overdue_count ?? 0],
+            ["Overdue Rate %", metrics.overdue_rate_percent ?? 0],
+            ["SLA Violation %", metrics.sla_violation_rate_percent ?? 0],
+            ["DQ Issue %", metrics.data_quality_issue_rate_percent ?? 0],
+            ["Inspections", metrics.inspections_created ?? 0],
+            ["High Risk Inspections", metrics.inspections_high_risk ?? 0],
+            ["Report Exports", metrics.report_export_count ?? 0],
+            ["Report Coverage %", metrics.report_export_coverage_percent ?? 0],
+            ["Discipline Score", metrics.discipline_score ?? 0],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          topSites.innerHTML = renderTable(
+            data.top_risk_sites || [],
+            [
+              {{ key: "site", label: "Site" }},
+              {{ key: "risk_score", label: "Risk Score" }},
+              {{ key: "discipline_score", label: "Discipline Score" }},
+              {{ key: "missing_due_rate_percent", label: "Missing due %" }},
+              {{ key: "overdue_rate_percent", label: "Overdue %" }},
+              {{ key: "sla_violation_rate_percent", label: "Violation %" }},
+              {{ key: "report_export_coverage_percent", label: "Coverage %" }},
+            ]
+          );
+          const benchmarkItems = benchmarkData && !benchmarkData.__error
+            ? (benchmarkData.items || [])
+            : (data.site_benchmark || []);
+          benchmark.innerHTML = renderTable(
+            benchmarkItems,
+            [
+              {{ key: "site", label: "Site" }},
+              {{ key: "discipline_score", label: "Discipline Score" }},
+              {{ key: "risk_score", label: "Risk Score" }},
+              {{ key: "work_orders_created", label: "Created WOs" }},
+              {{ key: "data_quality_issue_rate_percent", label: "DQ Issue %" }},
+              {{ key: "report_export_count", label: "Export Count" }},
+              {{ key: "report_export_last_at", label: "Last Export At" }},
+            ]
+          );
+          const recRows = Array.isArray(data.recommendations)
+            ? data.recommendations.map((item, idx) => ({{
+                no: idx + 1,
+                recommendation: item,
+              }}))
+            : [];
+          recommendations.innerHTML = renderTable(
+            recRows,
+            [
+              {{ key: "no", label: "#" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          topSites.innerHTML = renderEmpty(err.message);
+          benchmark.innerHTML = renderEmpty(err.message);
+          recommendations.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
       async function runW07Tracker() {{
         const meta = document.getElementById("w07TrackerMeta");
         const summary = document.getElementById("w07TrackerSummary");
@@ -17493,6 +18423,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w07Checklist = document.getElementById("adoptionW07Checklist");
         const w07Coaching = document.getElementById("adoptionW07Coaching");
         const w07Schedule = document.getElementById("adoptionW07Schedule");
+        const w08Top = document.getElementById("adoptionW08Top");
+        const w08Checklist = document.getElementById("adoptionW08Checklist");
+        const w08Quality = document.getElementById("adoptionW08Quality");
+        const w08Schedule = document.getElementById("adoptionW08Schedule");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -17952,6 +18886,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w08 = data.w08_report_discipline || {{}};
+          const w08TopItems = [
+            ["Week", "W" + String(w08.timeline?.week || 8).padStart(2, "0")],
+            ["Focus", w08.timeline?.focus || "Report discipline"],
+            ["Checklist", (w08.report_discipline_checklist || []).length],
+            ["DQ Controls", (w08.data_quality_controls || []).length],
+            ["Sessions", (w08.scheduled_events || []).length],
+            ["Metric", w08.timeline?.success_metric || "Monthly report on-time rate >= 95%"],
+          ];
+          w08Top.innerHTML = w08TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w08Checklist.innerHTML = renderTable(
+            (w08.report_discipline_checklist || []).map((row) => ({{
+              id: row.id || "",
+              cadence: row.cadence || "",
+              discipline: row.discipline || "",
+              owner_role: row.owner_role || "",
+              target: row.target || "",
+              definition_of_done: row.definition_of_done || "",
+              api_ref: row.api_ref || "",
+            }})),
+            [
+              {{ key: "id", label: "Checklist ID" }},
+              {{ key: "cadence", label: "Cadence" }},
+              {{ key: "discipline", label: "Discipline" }},
+              {{ key: "owner_role", label: "Owner Role" }},
+              {{ key: "target", label: "Target" }},
+              {{ key: "definition_of_done", label: "Definition of Done" }},
+              {{ key: "api_ref", label: "API Ref" }},
+            ]
+          );
+
+          w08Quality.innerHTML = renderTable(
+            (w08.data_quality_controls || []).map((row) => ({{
+              id: row.id || "",
+              control: row.control || "",
+              objective: row.objective || "",
+              api_ref: row.api_ref || "",
+              pass_criteria: row.pass_criteria || "",
+            }})),
+            [
+              {{ key: "id", label: "Control ID" }},
+              {{ key: "control", label: "Control" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "api_ref", label: "API Ref" }},
+              {{ key: "pass_criteria", label: "Pass Criteria" }},
+            ]
+          );
+
+          w08Schedule.innerHTML = renderTable(
+            (w08.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -17988,6 +18990,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             runW05Consistency().catch(() => null);
             runW06Rhythm().catch(() => null);
             runW07SlaQuality().catch(() => null);
+            runW08ReportDiscipline().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -18074,6 +19077,17 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w07QualityTopSites.innerHTML = renderEmpty("인증 토큰 필요");
             w07QualityRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
 
+            const w08DisciplineMeta = document.getElementById("w08DisciplineMeta");
+            const w08DisciplineSummary = document.getElementById("w08DisciplineSummary");
+            const w08DisciplineTopSites = document.getElementById("w08DisciplineTopSites");
+            const w08DisciplineBenchmark = document.getElementById("w08DisciplineBenchmark");
+            const w08DisciplineRecommendations = document.getElementById("w08DisciplineRecommendations");
+            w08DisciplineMeta.textContent = "토큰 저장 후 W08 report discipline API를 사용할 수 있습니다.";
+            w08DisciplineSummary.innerHTML = "";
+            w08DisciplineTopSites.innerHTML = renderEmpty("인증 토큰 필요");
+            w08DisciplineBenchmark.innerHTML = renderEmpty("인증 토큰 필요");
+            w08DisciplineRecommendations.innerHTML = renderEmpty("인증 토큰 필요");
+
             w07TrackerItemsCache = [];
             w07SelectedItemIds = new Set();
             w07ActiveItemId = null;
@@ -18118,6 +19132,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w07Checklist.innerHTML = renderEmpty(err.message);
           w07Coaching.innerHTML = renderEmpty(err.message);
           w07Schedule.innerHTML = renderEmpty(err.message);
+          w08Top.innerHTML = "";
+          w08Checklist.innerHTML = renderEmpty(err.message);
+          w08Quality.innerHTML = renderEmpty(err.message);
+          w08Schedule.innerHTML = renderEmpty(err.message);
           document.getElementById("w05ConsistencyMeta").textContent = "실패: " + err.message;
           document.getElementById("w05ConsistencySummary").innerHTML = "";
           document.getElementById("w05ConsistencyTopSites").innerHTML = renderEmpty(err.message);
@@ -18132,6 +19150,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           document.getElementById("w07AutomationReadiness").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityTopSites").innerHTML = renderEmpty(err.message);
           document.getElementById("w07QualityRecommendations").innerHTML = renderEmpty(err.message);
+          document.getElementById("w08DisciplineMeta").textContent = "실패: " + err.message;
+          document.getElementById("w08DisciplineSummary").innerHTML = "";
+          document.getElementById("w08DisciplineTopSites").innerHTML = renderEmpty(err.message);
+          document.getElementById("w08DisciplineBenchmark").innerHTML = renderEmpty(err.message);
+          document.getElementById("w08DisciplineRecommendations").innerHTML = renderEmpty(err.message);
           document.getElementById("w07TrackerMeta").textContent = "실패: " + err.message;
           document.getElementById("w07TrackerSummary").innerHTML = "";
           document.getElementById("w07TrackerTable").innerHTML = renderEmpty(err.message);
@@ -18331,6 +19354,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w07WeeklyRunBtn").addEventListener("click", runW07WeeklyJob);
       document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
       document.getElementById("w07WeeklyTrendsBtn").addEventListener("click", runW07WeeklyTrends);
+      document.getElementById("w08DisciplineRefreshBtn").addEventListener("click", runW08ReportDiscipline);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -18368,6 +19392,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w07WeeklySite").value) {{
         document.getElementById("w07WeeklySite").value = "HQ";
+      }}
+      if (!document.getElementById("w08DisciplineSite").value) {{
+        document.getElementById("w08DisciplineSite").value = "HQ";
       }}
       renderW07SelectionMeta();
       renderW07ActionResultsPanel();
@@ -18453,6 +19480,11 @@ def get_public_adoption_w06() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w07")
 def get_public_adoption_w07() -> dict[str, Any]:
     return _adoption_w07_payload()
+
+
+@app.get("/api/public/adoption-plan/w08")
+def get_public_adoption_w08() -> dict[str, Any]:
+    return _adoption_w08_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -18679,6 +19711,41 @@ def get_public_adoption_w07_coaching_playbook() -> dict[str, Any]:
         "public": True,
         "timeline": payload.get("timeline", {}),
         "items": payload.get("coaching_plays", []),
+    }
+
+
+@app.get("/api/public/adoption-plan/w08/checklist.csv")
+def get_public_adoption_w08_checklist_csv() -> Response:
+    payload = _adoption_w08_payload()
+    csv_text = _build_adoption_w08_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w08-report-discipline-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w08/schedule.ics")
+def get_public_adoption_w08_schedule_ics() -> Response:
+    payload = _adoption_w08_payload()
+    ics_text = _build_adoption_w08_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w08-report-discipline.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w08/reporting-sop")
+def get_public_adoption_w08_reporting_sop() -> dict[str, Any]:
+    payload = _adoption_w08_payload()
+    return {
+        "title": "W08 Reporting SOP",
+        "public": True,
+        "count": len(payload.get("reporting_sop", [])),
+        "items": payload.get("reporting_sop", []),
     }
 
 
@@ -22128,6 +23195,72 @@ def get_ops_adoption_w07_sla_quality(
         },
     )
     return snapshot
+
+
+@app.get("/api/ops/adoption/w08/report-discipline")
+def get_ops_adoption_w08_report_discipline(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w08:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w08_report_discipline_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="w08_report_discipline_view",
+        resource_type="adoption_w08_report_discipline",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "discipline_score": metrics.get("discipline_score"),
+            "report_export_coverage_percent": metrics.get("report_export_coverage_percent"),
+            "data_quality_issue_rate_percent": metrics.get("data_quality_issue_rate_percent"),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w08/site-benchmark")
+def get_ops_adoption_w08_site_benchmark(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=14, le=120)] = 30,
+    limit: Annotated[int, Query(ge=1, le=30)] = 10,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w08:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w08_report_discipline_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    items = snapshot.get("site_benchmark", []) if isinstance(snapshot.get("site_benchmark"), list) else []
+    filtered: list[dict[str, Any]] = []
+    for row in items:
+        row_site = _normalize_site_name(str(row.get("site") or ""))
+        if site is not None and row_site != site:
+            continue
+        filtered.append(row)
+    limited = filtered[: max(1, min(limit, 30))]
+    _write_audit_log(
+        principal=principal,
+        action="w08_site_benchmark_view",
+        resource_type="adoption_w08_benchmark",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "limit": limit,
+            "count": len(limited),
+        },
+    )
+    return {
+        "generated_at": snapshot.get("generated_at"),
+        "site": site,
+        "window_days": snapshot.get("window_days"),
+        "count": len(limited),
+        "items": limited,
+        "thresholds": snapshot.get("thresholds", {}),
+    }
 
 
 @app.get("/api/ops/adoption/w07/automation-readiness")

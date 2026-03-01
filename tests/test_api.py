@@ -182,12 +182,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "public_adoption_w05_api" in root_json.json()
     assert "public_adoption_w06_api" in root_json.json()
     assert "public_adoption_w07_api" in root_json.json()
+    assert "public_adoption_w08_api" in root_json.json()
     assert "adoption_w02_tracker_items_api" in root_json.json()
     assert "adoption_w03_tracker_items_api" in root_json.json()
     assert "adoption_w04_tracker_items_api" in root_json.json()
     assert "adoption_w05_consistency_api" in root_json.json()
     assert "adoption_w06_rhythm_api" in root_json.json()
     assert "adoption_w07_sla_quality_api" in root_json.json()
+    assert "adoption_w08_report_discipline_api" in root_json.json()
     assert "adoption_w07_tracker_items_api" in root_json.json()
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
@@ -215,6 +217,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W05 Usage Consistency" in root_html.text
     assert "W06 Operational Rhythm" in root_html.text
     assert "W07 SLA Quality" in root_html.text
+    assert "W08 Report Discipline" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
     assert "W07 실행 추적" in root_html.text
@@ -222,6 +225,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
     assert "W07 품질 새로고침" in root_html.text
+    assert "W08 리포트 새로고침" in root_html.text
     assert "완료 판정" in root_html.text
     assert "W02 완료 확정" in root_html.text
     assert "W04 완료 확정" in root_html.text
@@ -268,6 +272,19 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["public_adoption_w07_coaching_playbook_api"]
         == "/api/public/adoption-plan/w07/coaching-playbook"
     )
+    assert service_info.json()["public_adoption_w08_api"] == "/api/public/adoption-plan/w08"
+    assert (
+        service_info.json()["public_adoption_w08_checklist_csv_api"]
+        == "/api/public/adoption-plan/w08/checklist.csv"
+    )
+    assert (
+        service_info.json()["public_adoption_w08_schedule_ics_api"]
+        == "/api/public/adoption-plan/w08/schedule.ics"
+    )
+    assert (
+        service_info.json()["public_adoption_w08_reporting_sop_api"]
+        == "/api/public/adoption-plan/w08/reporting-sop"
+    )
     assert service_info.json()["adoption_w02_tracker_items_api"] == "/api/adoption/w02/tracker/items"
     assert service_info.json()["adoption_w02_tracker_overview_api"] == "/api/adoption/w02/tracker/overview"
     assert service_info.json()["adoption_w02_tracker_readiness_api"] == "/api/adoption/w02/tracker/readiness"
@@ -297,6 +314,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
     assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
     assert service_info.json()["adoption_w07_sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
+    assert service_info.json()["adoption_w08_report_discipline_api"] == "/api/ops/adoption/w08/report-discipline"
+    assert service_info.json()["adoption_w08_site_benchmark_api"] == "/api/ops/adoption/w08/site-benchmark"
     assert (
         service_info.json()["adoption_w07_automation_readiness_api"]
         == "/api/ops/adoption/w07/automation-readiness"
@@ -358,6 +377,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W05 Usage Consistency" in adoption_html.text
     assert "W06 Operational Rhythm" in adoption_html.text
     assert "W07 SLA Quality" in adoption_html.text
+    assert "W08 Report Discipline" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
@@ -413,6 +433,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert len(body["w07_sla_quality"]["sla_checklist"]) >= 4
     assert len(body["w07_sla_quality"]["coaching_plays"]) >= 4
     assert len(body["w07_sla_quality"]["scheduled_events"]) >= 5
+    assert body["w08_report_discipline"]["timeline"]["week"] == 8
+    assert len(body["w08_report_discipline"]["report_discipline_checklist"]) >= 4
+    assert len(body["w08_report_discipline"]["data_quality_controls"]) >= 4
+    assert len(body["w08_report_discipline"]["scheduled_events"]) >= 5
+    assert len(body["w08_report_discipline"]["reporting_sop"]) >= 4
     assert len(body["training_outline"]) >= 8
     assert len(body["kpi_dashboard_items"]) >= 8
     assert "campaign_kit" in body
@@ -596,6 +621,38 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w07_playbook.status_code == 200
     assert w07_playbook.json()["public"] is True
     assert len(w07_playbook.json()["items"]) >= 4
+
+    w08 = app_client.get("/api/public/adoption-plan/w08")
+    assert w08.status_code == 200
+    w08_body = w08.json()
+    assert w08_body["public"] is True
+    assert w08_body["timeline"]["focus"] == "Report discipline"
+    assert len(w08_body["report_discipline_checklist"]) >= 4
+    assert len(w08_body["data_quality_controls"]) >= 4
+    assert len(w08_body["scheduled_events"]) >= 5
+    assert len(w08_body["reporting_sop"]) >= 4
+    assert w08_body["report_discipline_api"] == "/api/ops/adoption/w08/report-discipline"
+    assert w08_body["site_benchmark_api"] == "/api/ops/adoption/w08/site-benchmark"
+
+    w08_csv = app_client.get("/api/public/adoption-plan/w08/checklist.csv")
+    assert w08_csv.status_code == 200
+    assert w08_csv.headers["content-type"].startswith("text/csv")
+    assert (
+        "section,id,cadence_or_control,discipline_or_objective,owner_or_api_ref,target_or_pass_criteria,definition_of_done_or_evidence,api_ref"
+        in w08_csv.text
+    )
+    assert "report_discipline,W08-RD-01" in w08_csv.text
+
+    w08_ics = app_client.get("/api/public/adoption-plan/w08/schedule.ics")
+    assert w08_ics.status_code == 200
+    assert w08_ics.headers["content-type"].startswith("text/calendar")
+    assert "BEGIN:VCALENDAR" in w08_ics.text
+    assert "SUMMARY:[W08] W08 kickoff - report discipline baseline" in w08_ics.text
+
+    w08_sop = app_client.get("/api/public/adoption-plan/w08/reporting-sop")
+    assert w08_sop.status_code == 200
+    assert w08_sop.json()["public"] is True
+    assert len(w08_sop.json()["items"]) >= 4
 
     w02_sample_files = app_client.get("/api/public/adoption-plan/w02/sample-files")
     assert w02_sample_files.status_code == 200
@@ -2490,6 +2547,158 @@ def test_w07_automation_readiness_endpoint(app_client: TestClient) -> None:
 
     forbidden = app_client.get(
         "/api/ops/adoption/w07/automation-readiness?site=Outside+W07+Ready+Site",
+        headers=manager_headers,
+    )
+    assert forbidden.status_code == 403
+
+
+def test_w08_report_discipline_snapshot_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w08_manager_ci",
+            "display_name": "W08 Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W08 Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w08-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    created_missing_due = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W08 missing due",
+            "description": "data quality check",
+            "site": "W08 Site",
+            "location": "F1",
+            "priority": "high",
+        },
+    )
+    assert created_missing_due.status_code == 201
+
+    created_overdue = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W08 overdue open",
+            "description": "overdue check",
+            "site": "W08 Site",
+            "location": "F2",
+            "priority": "critical",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+        },
+    )
+    assert created_overdue.status_code == 201
+
+    created_complete = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W08 complete path",
+            "description": "completion timestamp check",
+            "site": "W08 Site",
+            "location": "F3",
+            "priority": "medium",
+            "due_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert created_complete.status_code == 201
+    created_complete_id = created_complete.json()["id"]
+    completed = app_client.patch(
+        f"/api/work-orders/{created_complete_id}/complete",
+        headers=manager_headers,
+        json={"resolution_notes": "W08 completed"},
+    )
+    assert completed.status_code == 200
+
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=manager_headers,
+        json={
+            "site": "W08 Site",
+            "location": "F1",
+            "cycle": "daily",
+            "inspector": "w08_manager_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert inspection.status_code == 201
+
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    report_export = app_client.get(
+        f"/api/reports/monthly/csv?month={month}&site=W08+Site",
+        headers=manager_headers,
+    )
+    assert report_export.status_code == 200
+
+    scoped = app_client.get(
+        "/api/ops/adoption/w08/report-discipline?site=W08+Site&days=30",
+        headers=manager_headers,
+    )
+    assert scoped.status_code == 200
+    scoped_body = scoped.json()
+    assert scoped_body["site"] == "W08 Site"
+    assert scoped_body["window_days"] == 30
+    assert isinstance(scoped_body["metrics"], dict)
+    assert scoped_body["metrics"]["work_orders_created"] >= 3
+    assert "discipline_score" in scoped_body["metrics"]
+    assert "report_export_coverage_percent" in scoped_body["metrics"]
+    assert "data_quality_issue_rate_percent" in scoped_body["metrics"]
+    assert isinstance(scoped_body["top_risk_sites"], list)
+    assert isinstance(scoped_body["site_benchmark"], list)
+    assert isinstance(scoped_body["recommendations"], list)
+    assert len(scoped_body["recommendations"]) >= 1
+
+    benchmark = app_client.get(
+        "/api/ops/adoption/w08/site-benchmark?site=W08+Site&days=30&limit=5",
+        headers=manager_headers,
+    )
+    assert benchmark.status_code == 200
+    benchmark_body = benchmark.json()
+    assert benchmark_body["site"] == "W08 Site"
+    assert benchmark_body["window_days"] == 30
+    assert benchmark_body["count"] >= 1
+    assert isinstance(benchmark_body["items"], list)
+    assert all(row["site"] == "W08 Site" for row in benchmark_body["items"])
+
+    all_visible = app_client.get(
+        "/api/ops/adoption/w08/report-discipline?days=30",
+        headers=manager_headers,
+    )
+    assert all_visible.status_code == 200
+    all_visible_body = all_visible.json()
+    assert all_visible_body["site"] is None
+    assert isinstance(all_visible_body["top_risk_sites"], list)
+    assert any(row["site"] == "W08 Site" for row in all_visible_body["top_risk_sites"])
+
+    owner_outside = app_client.post(
+        "/api/work-orders",
+        headers=_owner_headers(),
+        json={
+            "title": "Outside W08 scope",
+            "description": "outside",
+            "site": "Outside W08 Site",
+            "location": "F9",
+            "priority": "high",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert owner_outside.status_code == 201
+
+    forbidden = app_client.get(
+        "/api/ops/adoption/w08/report-discipline?site=Outside+W08+Site&days=30",
         headers=manager_headers,
     )
     assert forbidden.status_code == 403
