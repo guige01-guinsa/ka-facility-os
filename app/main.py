@@ -885,6 +885,7 @@ OPS_GOVERNANCE_GATE_JOB_NAME = "ops_governance_gate"
 OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS = 30
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME = "ops_governance_remediation_escalation"
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE = "ops_governance_remediation_escalation"
+OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME = "ops_governance_remediation_auto_assign"
 GOVERNANCE_REMEDIATION_ESCALATION_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_ESCALATION_ENABLED", True)
 GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS = _env_int(
     "GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS",
@@ -895,6 +896,22 @@ GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED = _env_bool(
     "GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED",
     True,
 )
+GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED", True)
+GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS = _env_int(
+    "GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS",
+    30,
+    min_value=1,
+)
+W23_OWNER_ROLE_TO_ADMIN_ROLES: dict[str, tuple[str, ...]] = {
+    "Platform Owner": ("owner", "manager"),
+    "Security Manager": ("owner", "manager"),
+    "Ops Lead": ("owner", "manager", "operator"),
+    "Ops PM": ("owner", "manager", "operator"),
+    "Release Manager": ("owner", "manager"),
+    "DR Owner": ("owner", "manager"),
+    "Operations Excellence Lead": ("owner", "manager", "operator"),
+    "Ops Manager": ("owner", "manager", "operator"),
+}
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 6, 12)
@@ -6936,6 +6953,252 @@ def _latest_ops_governance_remediation_escalation_payload() -> dict[str, Any] | 
         row = conn.execute(
             select(job_runs)
             .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    return {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _w23_candidate_usernames_by_role() -> dict[str, list[str]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(admin_users.c.username, admin_users.c.role)
+            .where(admin_users.c.is_active.is_(True))
+        ).mappings().all()
+    grouped: dict[str, list[str]] = {"owner": [], "manager": [], "operator": []}
+    for row in rows:
+        role = str(row.get("role") or "").strip().lower()
+        username = str(row.get("username") or "").strip()
+        if not username or role not in grouped:
+            continue
+        grouped[role].append(username)
+    for role, items in grouped.items():
+        grouped[role] = sorted(set(items))
+    return grouped
+
+
+def _w23_choose_assignee(
+    *,
+    owner_role: str,
+    current_loads: dict[str, int],
+    by_role: dict[str, list[str]],
+) -> tuple[str | None, str]:
+    preferred_roles = W23_OWNER_ROLE_TO_ADMIN_ROLES.get(
+        owner_role,
+        ("owner", "manager", "operator"),
+    )
+    candidates: list[str] = []
+    for role in preferred_roles:
+        candidates.extend(by_role.get(role, []))
+    deduped = sorted(set(candidates))
+    if not deduped:
+        fallback = sorted(
+            set(by_role.get("owner", []) + by_role.get("manager", []) + by_role.get("operator", []))
+        )
+        deduped = fallback
+    if not deduped:
+        return None, "no active owner/manager/operator user found"
+    selected = min(deduped, key=lambda username: (int(current_loads.get(username, 0)), username))
+    selected_load = int(current_loads.get(selected, 0))
+    reason = f"least-loaded among {','.join(preferred_roles)} (current_load={selected_load})"
+    return selected, reason
+
+
+def _build_w23_remediation_workload_snapshot(
+    *,
+    include_inactive: bool = False,
+    max_suggestions: int = 20,
+) -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc)
+    rows = _load_w21_remediation_items(include_inactive=include_inactive)
+    if not include_inactive:
+        rows = [row for row in rows if row.status != W21_TRACKER_STATUS_DONE]
+    assignee_open_counts: dict[str, int] = {}
+    owner_role_open_counts: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "").strip() or "unassigned"
+        assignee_open_counts[assignee] = assignee_open_counts.get(assignee, 0) + 1
+        owner_role_open_counts[row.owner_role] = owner_role_open_counts.get(row.owner_role, 0) + 1
+
+    candidate_by_role = _w23_candidate_usernames_by_role()
+    load_map = {
+        username: int(count)
+        for username, count in assignee_open_counts.items()
+        if username != "unassigned"
+    }
+
+    suggestions: list[dict[str, Any]] = []
+    unassigned_rows = [row for row in rows if not (row.assignee or "").strip()]
+    ordered_unassigned = sorted(unassigned_rows, key=lambda row: (int(row.priority), row.due_at, int(row.id)))
+    for row in ordered_unassigned[: max(1, min(int(max_suggestions), 100))]:
+        suggested_assignee, reason = _w23_choose_assignee(
+            owner_role=row.owner_role,
+            current_loads=load_map,
+            by_role=candidate_by_role,
+        )
+        if suggested_assignee is not None:
+            load_map[suggested_assignee] = int(load_map.get(suggested_assignee, 0)) + 1
+        suggestions.append(
+            {
+                "id": int(row.id),
+                "item_id": row.item_id,
+                "rule_id": row.rule_id,
+                "owner_role": row.owner_role,
+                "priority": int(row.priority),
+                "due_at": row.due_at.isoformat(),
+                "recommended_assignee": suggested_assignee,
+                "reason": reason,
+            }
+        )
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "include_inactive": bool(include_inactive),
+        "total_open_items": len(rows),
+        "unassigned_open_count": len(unassigned_rows),
+        "assignee_open_counts": assignee_open_counts,
+        "owner_role_open_counts": owner_role_open_counts,
+        "candidate_usernames_by_role": candidate_by_role,
+        "suggestions": suggestions,
+    }
+
+
+def run_ops_governance_remediation_auto_assign_job(
+    *,
+    trigger: str = "manual",
+    dry_run: bool = False,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    normalized_limit = (
+        GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
+        if limit is None
+        else max(1, min(int(limit), 500))
+    )
+    workload = _build_w23_remediation_workload_snapshot(include_inactive=False, max_suggestions=normalized_limit)
+    suggestions = workload.get("suggestions") if isinstance(workload.get("suggestions"), list) else []
+
+    assigned_count = 0
+    skipped_count = 0
+    no_candidate_count = 0
+    updated_ids: list[int] = []
+    assignment_rows: list[dict[str, Any]] = []
+
+    if GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED and (not dry_run):
+        now = datetime.now(timezone.utc)
+        with get_conn() as conn:
+            for item in suggestions[:normalized_limit]:
+                if not isinstance(item, dict):
+                    continue
+                tracker_id = int(item.get("id") or 0)
+                assignee = item.get("recommended_assignee")
+                reason = str(item.get("reason") or "")
+                if tracker_id <= 0:
+                    skipped_count += 1
+                    continue
+                if assignee is None:
+                    no_candidate_count += 1
+                    continue
+                row = conn.execute(
+                    select(ops_governance_remediation_tracker_items)
+                    .where(ops_governance_remediation_tracker_items.c.id == tracker_id)
+                    .limit(1)
+                ).mappings().first()
+                if row is None:
+                    skipped_count += 1
+                    continue
+                current_assignee = str(row.get("assignee") or "").strip()
+                current_status = _normalize_w21_tracker_status(row.get("status"))
+                if current_assignee:
+                    skipped_count += 1
+                    continue
+                next_status = current_status if current_status != W21_TRACKER_STATUS_PENDING else W21_TRACKER_STATUS_IN_PROGRESS
+                note_prefix = str(row.get("completion_note") or "").strip()
+                auto_note = f"[auto-assigned {now.isoformat()}] {reason}"
+                completion_note = f"{note_prefix}\n{auto_note}".strip() if note_prefix else auto_note
+                conn.execute(
+                    update(ops_governance_remediation_tracker_items)
+                    .where(ops_governance_remediation_tracker_items.c.id == tracker_id)
+                    .values(
+                        assignee=str(assignee),
+                        status=next_status,
+                        completion_note=completion_note,
+                        updated_by="system",
+                        updated_at=now,
+                    )
+                )
+                assigned_count += 1
+                updated_ids.append(tracker_id)
+                assignment_rows.append(
+                    {
+                        "id": tracker_id,
+                        "assignee": str(assignee),
+                        "status": next_status,
+                        "reason": reason,
+                    }
+                )
+    else:
+        for item in suggestions[:normalized_limit]:
+            if not isinstance(item, dict):
+                continue
+            if item.get("recommended_assignee") is None:
+                no_candidate_count += 1
+
+    status = "success"
+    if not GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED:
+        status = "warning"
+    elif no_candidate_count > 0 and assigned_count == 0:
+        status = "warning"
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "enabled": GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED,
+        "dry_run": bool(dry_run),
+        "limit": normalized_limit,
+        "workload": workload,
+        "candidate_count": len(suggestions),
+        "assigned_count": assigned_count,
+        "skipped_count": skipped_count,
+        "no_candidate_count": no_candidate_count,
+        "updated_ids": updated_ids,
+        "assignments": assignment_rows,
+    }
+    run_id = _write_job_run(
+        job_name=OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
+def _latest_ops_governance_remediation_auto_assign_payload() -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -22907,6 +23170,9 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_sla_api": "/api/ops/governance/gate/remediation/tracker/sla",
         "ops_governance_remediation_tracker_escalate_run_api": "/api/ops/governance/gate/remediation/tracker/escalate/run",
         "ops_governance_remediation_tracker_escalate_latest_api": "/api/ops/governance/gate/remediation/tracker/escalate/latest",
+        "ops_governance_remediation_tracker_workload_api": "/api/ops/governance/gate/remediation/tracker/workload",
+        "ops_governance_remediation_tracker_auto_assign_run_api": "/api/ops/governance/gate/remediation/tracker/auto-assign/run",
+        "ops_governance_remediation_tracker_auto_assign_latest_api": "/api/ops/governance/gate/remediation/tracker/auto-assign/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -44525,6 +44791,86 @@ def get_ops_governance_gate_remediation_tracker_escalation_latest(
             "critical_count": int(payload.get("critical_count") or 0),
             "notify_attempted": bool(payload.get("notify_attempted", False)),
             "notify_dispatched": bool(payload.get("notify_dispatched", False)),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/governance/gate/remediation/tracker/workload")
+def get_ops_governance_gate_remediation_tracker_workload(
+    include_inactive: Annotated[bool, Query()] = False,
+    max_suggestions: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    snapshot = _build_w23_remediation_workload_snapshot(
+        include_inactive=include_inactive,
+        max_suggestions=max_suggestions,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_workload_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=W21_TRACKER_SCOPE_GLOBAL,
+        status="success",
+        detail={
+            "include_inactive": bool(snapshot.get("include_inactive", include_inactive)),
+            "total_open_items": int(snapshot.get("total_open_items") or 0),
+            "unassigned_open_count": int(snapshot.get("unassigned_open_count") or 0),
+            "suggestion_count": len(snapshot.get("suggestions") or []),
+        },
+    )
+    return snapshot
+
+
+@ops_router.post("/governance/gate/remediation/tracker/auto-assign/run")
+def run_ops_governance_gate_remediation_tracker_auto_assign(
+    dry_run: Annotated[bool, Query()] = False,
+    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_governance_remediation_auto_assign_job(
+        trigger="api",
+        dry_run=dry_run,
+        limit=limit,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_auto_assign_run",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(result.get("run_id") or "pending"),
+        status=str(result.get("status") or "warning"),
+        detail={
+            "dry_run": bool(result.get("dry_run", dry_run)),
+            "limit": int(result.get("limit") or (limit or GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS)),
+            "candidate_count": int(result.get("candidate_count") or 0),
+            "assigned_count": int(result.get("assigned_count") or 0),
+            "skipped_count": int(result.get("skipped_count") or 0),
+            "no_candidate_count": int(result.get("no_candidate_count") or 0),
+            "enabled": bool(result.get("enabled", GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED)),
+        },
+    )
+    return result
+
+
+@ops_router.get("/governance/gate/remediation/tracker/auto-assign/latest")
+def get_ops_governance_gate_remediation_tracker_auto_assign_latest(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _latest_ops_governance_remediation_auto_assign_payload()
+    if payload is None:
+        raise HTTPException(status_code=404, detail="No ops_governance_remediation_auto_assign run found")
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_auto_assign_latest_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=str(payload.get("run_id") or "unknown"),
+        status=str(payload.get("status") or "warning"),
+        detail={
+            "candidate_count": int(payload.get("candidate_count") or 0),
+            "assigned_count": int(payload.get("assigned_count") or 0),
+            "skipped_count": int(payload.get("skipped_count") or 0),
+            "no_candidate_count": int(payload.get("no_candidate_count") or 0),
+            "enabled": bool(payload.get("enabled", GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED)),
         },
     )
     return payload

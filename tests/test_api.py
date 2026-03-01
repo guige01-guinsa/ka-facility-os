@@ -554,6 +554,18 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_remediation_tracker_escalate_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/escalate/latest"
     )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_workload_api"]
+        == "/api/ops/governance/gate/remediation/tracker/workload"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_auto_assign_run_api"]
+        == "/api/ops/governance/gate/remediation/tracker/auto-assign/run"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_auto_assign_latest_api"]
+        == "/api/ops/governance/gate/remediation/tracker/auto-assign/latest"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -5138,6 +5150,97 @@ def test_ops_governance_remediation_tracker_sla_escalation_endpoints(app_client:
     assert latest_body["job_name"] == "ops_governance_remediation_escalation"
     assert latest_body["run_id"] == run_body["run_id"]
     assert int(latest_body["candidate_count"]) >= 0
+
+
+def test_ops_governance_remediation_tracker_auto_assign_endpoints(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+
+    items = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/items",
+        headers=_owner_headers(),
+    )
+    assert items.status_code == 200
+    item_rows = items.json()
+    assert isinstance(item_rows, list)
+    assert len(item_rows) > 0
+
+    for row in item_rows[:10]:
+        tracker_id = int(row["id"])
+        reset = app_client.patch(
+            f"/api/ops/governance/gate/remediation/tracker/items/{tracker_id}",
+            headers=_owner_headers(),
+            json={
+                "assignee": "",
+                "status": "pending",
+                "completion_checked": False,
+                "completion_note": "reset for auto-assign test",
+            },
+        )
+        assert reset.status_code == 200
+        assert reset.json()["assignee"] in {"", None}
+
+    workload = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/workload?max_suggestions=10",
+        headers=_owner_headers(),
+    )
+    assert workload.status_code == 200
+    workload_body = workload.json()
+    assert int(workload_body["total_open_items"]) >= 0
+    assert int(workload_body["unassigned_open_count"]) >= 0
+    assert isinstance(workload_body["assignee_open_counts"], dict)
+    assert isinstance(workload_body["candidate_usernames_by_role"], dict)
+    assert isinstance(workload_body["suggestions"], list)
+
+    dry_run = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/auto-assign/run?dry_run=true&limit=10",
+        headers=_owner_headers(),
+    )
+    assert dry_run.status_code == 200
+    dry_run_body = dry_run.json()
+    assert dry_run_body["job_name"] == "ops_governance_remediation_auto_assign"
+    assert dry_run_body["dry_run"] is True
+    assert int(dry_run_body["candidate_count"]) >= 0
+    assert int(dry_run_body["assigned_count"]) == 0
+
+    run = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/auto-assign/run?dry_run=false&limit=10",
+        headers=_owner_headers(),
+    )
+    assert run.status_code == 200
+    run_body = run.json()
+    assert run_body["job_name"] == "ops_governance_remediation_auto_assign"
+    assert run_body["dry_run"] is False
+    assert int(run_body["candidate_count"]) >= 0
+    assert int(run_body["assigned_count"]) >= 0
+    assert isinstance(run_body["updated_ids"], list)
+
+    latest = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/auto-assign/latest",
+        headers=_owner_headers(),
+    )
+    assert latest.status_code == 200
+    latest_body = latest.json()
+    assert latest_body["job_name"] == "ops_governance_remediation_auto_assign"
+    assert latest_body["run_id"] == run_body["run_id"]
+    assert int(latest_body["assigned_count"]) >= 0
+
+    if run_body["updated_ids"]:
+        tracker_id = int(run_body["updated_ids"][0])
+        updated = app_client.get(
+            "/api/ops/governance/gate/remediation/tracker/items",
+            headers=_owner_headers(),
+        )
+        assert updated.status_code == 200
+        updated_payload = updated.json()
+        assert isinstance(updated_payload, list)
+        updated_rows = {int(item["id"]): item for item in updated_payload}
+        assert tracker_id in updated_rows
+        assert (updated_rows[tracker_id].get("assignee") or "").strip() != ""
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

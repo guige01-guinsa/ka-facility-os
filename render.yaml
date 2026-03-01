@@ -81,6 +81,10 @@ services:
         value: "12"
       - key: GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
         value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
+        value: "30"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -238,6 +242,26 @@ services:
       - key: ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES
         value: "30"
       - key: ALERT_GUARD_RECOVER_MAX_TARGETS
+        value: "30"
+  - type: cron
+    name: ka-facility-os-ops-governance-remediation-auto-assign
+    runtime: python
+    plan: starter
+    region: singapore
+    autoDeployTrigger: commit
+    schedule: "35 * * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.ops_governance_remediation_auto_assign
+    envVars:
+      - key: ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        sync: false
+      - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED
+        value: "true"
+      - key: GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
         value: "30"
   - type: cron
     name: ka-facility-os-ops-quality-weekly

@@ -34,6 +34,10 @@
   - 리메디에이션 SLA 스냅샷 API(`.../tracker/sla`) 추가
   - 에스컬레이션 실행/최신조회 API(`.../tracker/escalate/run|latest`) 추가
   - 시간단위 Cron 잡(`ops_governance_remediation_escalation`) 연동 준비
+- W23 착수 완료: Governance Remediation Auto Assignment
+  - 워크로드/추천 API(`.../tracker/workload`) 추가
+  - 자동할당 실행/최신조회 API(`.../tracker/auto-assign/run|latest`) 추가
+  - 시간단위 Cron 잡(`ops_governance_remediation_auto_assign`) 연동 준비
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -163,6 +167,22 @@
 
 완료 기준:
 - dry-run/실행 모드 모두에서 후보/critical 집계가 일관됨
+- 최근 실행 이력(job_run) 조회 가능
+- 회귀 테스트 전체 통과
+
+## W23: Governance Remediation Auto Assignment (우선순위 8)
+목표:
+- 미배정 리메디에이션 항목을 역할기반 후보군으로 자동 배정
+- 담당자 워크로드를 정량화해 운영 병목을 줄임
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/workload` 워크로드/추천 API 제공
+2. `POST /api/ops/governance/gate/remediation/tracker/auto-assign/run` 실행 API 제공
+3. `GET /api/ops/governance/gate/remediation/tracker/auto-assign/latest` 최신 이력 API 제공
+4. Cron 잡 `python -m app.jobs.ops_governance_remediation_auto_assign` 추가
+
+완료 기준:
+- dry-run/실행 모드 모두에서 추천/배정 집계가 일관됨
 - 최근 실행 이력(job_run) 조회 가능
 - 회귀 테스트 전체 통과
 
