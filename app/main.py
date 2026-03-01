@@ -14221,6 +14221,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <button id="w07ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="w07CompleteBtn" class="btn" type="button">W07 완료 확정</button>
             </div>
+            <div class="filter-row">
+              <input id="w07CompleteReserved1" value="원클릭: 완료확정 후 주간실행" disabled />
+              <input id="w07CompleteReserved2" value="주간실행은 아래 W07 주간 자동화/트렌드 설정값 사용" disabled />
+              <input id="w07CompleteReserved3" value="site는 실행추적 site를 자동 동기화" disabled />
+              <input id="w07CompleteReserved4" value="완료 실패 시 주간실행 미수행" disabled />
+              <button id="w07CompleteAndWeeklyBtn" class="btn run" type="button">W07 완료+주간실행</button>
+            </div>
             <div id="w07TrackerMeta" class="meta">조회 전</div>
             <div id="w07SelectionMeta" class="w07-filter-hint">필터: ALL | 표시: 0/0 | 선택: 0</div>
             <div id="w07TrackerSummary" class="cards"></div>
@@ -16619,8 +16626,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         await runW07Tracker();
       }}
 
-      async function runW07Complete() {{
+      async function runW07Complete(options = {{}}) {{
         const meta = document.getElementById("w07ReadinessMeta");
+        const settings = Object.assign({{ triggerWeeklyAfterComplete: false }}, options || {{}});
         const site = (document.getElementById("w07TrackSite").value || "").trim();
         if (!site) {{
           meta.textContent = "site 값을 입력하세요.";
@@ -16685,6 +16693,44 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             result: "ok",
             detail: "status=" + String(result.status || "-"),
           }});
+          if (settings.triggerWeeklyAfterComplete) {{
+            const statusValue = String(result.status || "");
+            if (!statusValue.startsWith("completed")) {{
+              pushW07ActionResult({{
+                action: "complete_then_weekly",
+                tracker_item_id: "-",
+                result: "skipped",
+                detail: "status=" + statusValue + " (weekly skipped)",
+              }});
+              meta.textContent += " | 주간실행: 완료 상태가 아니어서 건너뜀";
+            }} else {{
+              const weeklySiteInput = document.getElementById("w07WeeklySite");
+              if (weeklySiteInput) {{
+                weeklySiteInput.value = site;
+              }}
+              try {{
+                const weeklyRunResult = await runW07WeeklyJob();
+                if (!weeklyRunResult || weeklyRunResult.ok !== true) {{
+                  throw new Error((weeklyRunResult && weeklyRunResult.error) || "weekly run failed");
+                }}
+                pushW07ActionResult({{
+                  action: "complete_then_weekly",
+                  tracker_item_id: "-",
+                  result: "ok",
+                  detail: "weekly run triggered",
+                }});
+                meta.textContent += " | 주간실행: 성공";
+              }} catch (weeklyErr) {{
+                pushW07ActionResult({{
+                  action: "complete_then_weekly",
+                  tracker_item_id: "-",
+                  result: "failed",
+                  detail: weeklyErr.message || String(weeklyErr),
+                }});
+                meta.textContent += " | 주간실행: 실패";
+              }}
+            }}
+          }}
           renderW07ActionResultsPanel();
           await runW07Tracker();
         }} catch (err) {{
@@ -16698,6 +16744,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           renderW07ActionResultsPanel();
           await runW07Tracker().catch(() => null);
         }}
+      }}
+
+      async function runW07CompleteAndWeekly() {{
+        await runW07Complete({{ triggerWeeklyAfterComplete: true }});
       }}
 
       async function runW07TrackerUpdateAndUpload() {{
@@ -16868,10 +16918,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           );
           await runW07WeeklyLatest();
           await runW07WeeklyTrends();
+          return {{ ok: true, data }};
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           summary.innerHTML = "";
           latestTable.innerHTML = renderEmpty(err.message);
+          return {{ ok: false, error: err.message }};
         }}
       }}
 
@@ -17794,7 +17846,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w07BulkApplyBtn").addEventListener("click", runW07BulkApply);
       document.getElementById("w07TrackRefreshBtn").addEventListener("click", runW07Tracker);
       document.getElementById("w07ReadinessBtn").addEventListener("click", runW07Readiness);
-      document.getElementById("w07CompleteBtn").addEventListener("click", runW07Complete);
+      document.getElementById("w07CompleteBtn").addEventListener("click", () => runW07Complete());
+      document.getElementById("w07CompleteAndWeeklyBtn").addEventListener("click", runW07CompleteAndWeekly);
       document.getElementById("w07TrackUpdateBtn").addEventListener("click", runW07TrackerUpdateAndUpload);
       document.getElementById("w07WeeklyRunBtn").addEventListener("click", runW07WeeklyJob);
       document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
