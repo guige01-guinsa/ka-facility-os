@@ -6,6 +6,7 @@ import io
 import json
 import math
 import secrets
+import statistics
 import string
 import time
 from collections import deque
@@ -39,6 +40,9 @@ from app.database import (
     adoption_w03_evidence_files,
     adoption_w03_site_runs,
     adoption_w03_tracker_items,
+    adoption_w04_evidence_files,
+    adoption_w04_site_runs,
+    adoption_w04_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -106,6 +110,15 @@ from app.schemas import (
     W03TrackerItemUpdate,
     W03TrackerOverviewRead,
     W03TrackerReadinessRead,
+    W04EvidenceRead,
+    W04TrackerCompletionRead,
+    W04TrackerCompletionRequest,
+    W04TrackerBootstrapRequest,
+    W04TrackerBootstrapResponse,
+    W04TrackerItemRead,
+    W04TrackerItemUpdate,
+    W04TrackerOverviewRead,
+    W04TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -242,6 +255,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w02:write",
         "adoption_w03:read",
         "adoption_w03:write",
+        "adoption_w04:read",
+        "adoption_w04:write",
     },
     "operator": {
         "inspections:read",
@@ -254,6 +269,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "adoption_w02:write",
         "adoption_w03:read",
         "adoption_w03:write",
+        "adoption_w04:read",
+        "adoption_w04:write",
     },
     "auditor": {
         "inspections:read",
@@ -263,6 +280,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "workflow_locks:read",
         "adoption_w02:read",
         "adoption_w03:read",
+        "adoption_w04:read",
     },
 }
 
@@ -336,6 +354,26 @@ W03_SITE_COMPLETION_STATUS_SET = {
 }
 W03_EVIDENCE_REQUIRED_ITEM_TYPES = {"role_workshop"}
 W03_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W04_TRACKER_STATUS_PENDING = "pending"
+W04_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W04_TRACKER_STATUS_DONE = "done"
+W04_TRACKER_STATUS_BLOCKED = "blocked"
+W04_TRACKER_STATUS_SET = {
+    W04_TRACKER_STATUS_PENDING,
+    W04_TRACKER_STATUS_IN_PROGRESS,
+    W04_TRACKER_STATUS_DONE,
+    W04_TRACKER_STATUS_BLOCKED,
+}
+W04_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W04_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W04_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W04_SITE_COMPLETION_STATUS_SET = {
+    W04_SITE_COMPLETION_STATUS_ACTIVE,
+    W04_SITE_COMPLETION_STATUS_COMPLETED,
+    W04_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W04_EVIDENCE_REQUIRED_ITEM_TYPES = {"coaching_action"}
+W04_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 5, 22)
@@ -1240,6 +1278,164 @@ ADOPTION_W03_SCHEDULED_EVENTS: list[dict[str, Any]] = [
     },
 ]
 
+ADOPTION_W04_COACHING_ACTIONS: list[dict[str, Any]] = [
+    {
+        "id": "W04-CA-01",
+        "champion_role": "Site Champion",
+        "action": "Run first-success funnel review per site",
+        "owner": "CS + Ops Lead",
+        "due_hint": "Mon 10:00",
+        "objective": "Identify drop-off between login, inspection, and WO completion",
+        "evidence_required": True,
+        "quick_fix": "Focus first on the largest drop-off stage",
+    },
+    {
+        "id": "W04-CA-02",
+        "champion_role": "Site Champion",
+        "action": "Close top blocker #1 with owner and due date",
+        "owner": "Ops Lead",
+        "due_hint": "Tue 15:00",
+        "objective": "Remove the most frequent execution blocker in one cycle",
+        "evidence_required": True,
+        "quick_fix": "Assign one accountable owner and verify within 24h",
+    },
+    {
+        "id": "W04-CA-03",
+        "champion_role": "Site Champion",
+        "action": "Close top blocker #2 and publish fix note",
+        "owner": "QA Lead",
+        "due_hint": "Wed 16:00",
+        "objective": "Reduce repeated failures by documenting the fix path",
+        "evidence_required": True,
+        "quick_fix": "Attach screenshot + API response snippet",
+    },
+    {
+        "id": "W04-CA-04",
+        "champion_role": "Site Champion",
+        "action": "Close top blocker #3 and run 1 retest",
+        "owner": "Ops PM",
+        "due_hint": "Thu 14:00",
+        "objective": "Confirm blocker removal with one real retest",
+        "evidence_required": True,
+        "quick_fix": "Retest with production-like data",
+    },
+    {
+        "id": "W04-CA-05",
+        "champion_role": "Manager",
+        "action": "Coach low-performing users (1:1 x 3)",
+        "owner": "Site Manager",
+        "due_hint": "Thu 17:00",
+        "objective": "Reduce median time-to-first-success to <= 15 minutes",
+        "evidence_required": True,
+        "quick_fix": "Use 15-minute script + checklist",
+    },
+    {
+        "id": "W04-CA-06",
+        "champion_role": "Owner",
+        "action": "Approve W04 acceleration close report",
+        "owner": "Owner + PM",
+        "due_hint": "Fri 17:00",
+        "objective": "Decide go/no-go for W05 consistency mission",
+        "evidence_required": False,
+        "quick_fix": "Require blocker trend and TTV delta in one page",
+    },
+]
+
+ADOPTION_W04_SCHEDULED_EVENTS: list[dict[str, Any]] = [
+    {
+        "id": "W04-E01",
+        "date": "2026-03-23",
+        "start_time": "10:00",
+        "end_time": "10:30",
+        "title": "W04 kickoff - first-success funnel review",
+        "owner": "CS + Ops Lead",
+        "output": "Site funnel baseline and top drop-off stage",
+    },
+    {
+        "id": "W04-E02",
+        "date": "2026-03-23",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Blocker triage #1",
+        "owner": "Ops Lead",
+        "output": "Top blocker owner assigned",
+    },
+    {
+        "id": "W04-E03",
+        "date": "2026-03-24",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Blocker triage #2",
+        "owner": "QA Lead",
+        "output": "Fix note published",
+    },
+    {
+        "id": "W04-E04",
+        "date": "2026-03-25",
+        "start_time": "16:00",
+        "end_time": "16:30",
+        "title": "Blocker triage #3 + retest",
+        "owner": "Ops PM",
+        "output": "Retest evidence attached",
+    },
+    {
+        "id": "W04-E05",
+        "date": "2026-03-26",
+        "start_time": "15:00",
+        "end_time": "15:45",
+        "title": "Site champion coaching clinic",
+        "owner": "Site Manager",
+        "output": "Low performer coaching log",
+    },
+    {
+        "id": "W04-E06",
+        "date": "2026-03-27",
+        "start_time": "16:30",
+        "end_time": "17:00",
+        "title": "W04 close review",
+        "owner": "Owner + PM",
+        "output": "W04 close report + W05 handoff",
+    },
+]
+
+W04_COMMON_MISTAKE_FIX_CATALOG: list[dict[str, str]] = [
+    {
+        "mistake_key": "missing_assignee",
+        "mistake": "담당자 없이 항목을 생성/방치",
+        "symptom": "pending/in_progress가 오래 유지되고 완료율이 정체됨",
+        "quick_fix": "항목 생성 직후 assignee 지정, 24시간 내 상태 업데이트",
+        "where_to_check": "W04 Tracker Overview + assignee breakdown",
+    },
+    {
+        "mistake_key": "missing_evidence",
+        "mistake": "코칭 액션 완료 후 증빙 미업로드",
+        "symptom": "완료 판정에서 missing evidence blocker 발생",
+        "quick_fix": "상태 저장과 동시에 txt/pdf/png 증빙 업로드",
+        "where_to_check": "W04 Tracker item evidence list",
+    },
+    {
+        "mistake_key": "slow_first_action",
+        "mistake": "첫 작업 진입이 늦어 TTV가 증가",
+        "symptom": "funnel에서 auth->inspection 구간 지연",
+        "quick_fix": "첫 로그인 15분 내 점검 생성 과제 고정",
+        "where_to_check": "W04 Funnel stage timings",
+    },
+    {
+        "mistake_key": "wo_completion_delay",
+        "mistake": "작업지시 완료 단계에서 병목",
+        "symptom": "inspection->work_order_complete 전환율 하락",
+        "quick_fix": "ACK 템플릿과 완료노트 템플릿 표준화",
+        "where_to_check": "Work-order timeline + W04 Funnel",
+    },
+    {
+        "mistake_key": "alert_delivery_failures",
+        "mistake": "알림 실패를 방치",
+        "symptom": "failed alert delivery 증가, 에스컬레이션 응답 지연",
+        "quick_fix": "실패 타겟 재시도 배치 실행 + 채널 가드 확인",
+        "where_to_check": "Alert deliveries / retries / guard",
+    },
+]
+
 FACILITY_WEB_MODULES: list[dict[str, Any]] = [
     {
         "id": "inspection-ops",
@@ -1968,6 +2164,7 @@ def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[
         if method == "POST" and (
             ("/api/adoption/w02/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w03/tracker/items/" in path and path.endswith("/evidence"))
+            or ("/api/adoption/w04/tracker/items/" in path and path.endswith("/evidence"))
         ):
             return "auth-upload", API_RATE_LIMIT_MAX_AUTH_UPLOAD
         if path.startswith("/api/admin/"):
@@ -5162,6 +5359,739 @@ def _reset_w03_completion_if_closed(
     )
 
 
+def _row_to_w04_tracker_item_model(row: dict[str, Any]) -> W04TrackerItemRead:
+    return W04TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w04_evidence_model(row: dict[str, Any]) -> W04EvidenceRead:
+    return W04EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w04_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w04_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W04_COACHING_ACTIONS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "coaching_action",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("action", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W04_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w04_tracker_overview(site: str, rows: list[W04TrackerItemRead]) -> W04TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W04TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w04_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W04TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W04TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W04_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1
+        for row in rows
+        if row.item_type in W04_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(coaching_action) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W04TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w04_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W04_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W04_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w04_completion_model(
+    *,
+    site: str,
+    readiness: W04TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W04TrackerCompletionRead:
+    if row is None:
+        return W04TrackerCompletionRead(
+            site=site,
+            status=W04_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w04_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W04TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w04_tracker_items_for_site(site: str) -> list[W04TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w04_tracker_items)
+            .where(adoption_w04_tracker_items.c.site == site)
+            .order_by(
+                adoption_w04_tracker_items.c.item_type.asc(),
+                adoption_w04_tracker_items.c.item_key.asc(),
+                adoption_w04_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w04_tracker_item_model(row) for row in rows]
+
+
+def _reset_w04_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w04_site_runs.c.status)
+        .where(adoption_w04_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w04_site_completion_status(row.get("status"))
+    if status == W04_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w04_site_runs)
+        .where(adoption_w04_site_runs.c.site == site)
+        .values(
+            status=W04_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
+def _median_minutes(values: list[float]) -> float | None:
+    if not values:
+        return None
+    try:
+        return round(float(statistics.median(values)), 2)
+    except statistics.StatisticsError:
+        return None
+
+
+def _build_w04_funnel_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(1, min(int(days), 90))
+    start = now - timedelta(days=window_days)
+
+    inspection_stmt = (
+        select(inspections.c.inspector, inspections.c.site, inspections.c.created_at)
+        .where(inspections.c.created_at >= start)
+    )
+    completion_stmt = (
+        select(work_order_events.c.actor_username, work_orders.c.site, work_order_events.c.created_at)
+        .select_from(work_order_events.join(work_orders, work_order_events.c.work_order_id == work_orders.c.id))
+        .where(work_order_events.c.event_type == "status_changed")
+        .where(work_order_events.c.to_status == "completed")
+        .where(work_order_events.c.created_at >= start)
+    )
+
+    if site is not None:
+        inspection_stmt = inspection_stmt.where(inspections.c.site == site)
+        completion_stmt = completion_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "target_ttv_minutes": 15.0,
+                "metrics": {
+                    "total_users": 0,
+                    "inspection_converted_users": 0,
+                    "work_order_completed_users": 0,
+                    "inspection_conversion_rate_percent": 0.0,
+                    "work_order_completion_rate_percent": 0.0,
+                    "median_ttv_minutes": None,
+                    "target_met": False,
+                },
+                "stage_timings_minutes": {
+                    "auth_to_first_inspection": None,
+                    "inspection_to_first_work_order_complete": None,
+                    "auth_to_first_work_order_complete": None,
+                },
+                "stages": [],
+                "actors": [],
+            }
+        inspection_stmt = inspection_stmt.where(inspections.c.site.in_(allowed_sites))
+        completion_stmt = completion_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        auth_rows = conn.execute(
+            select(admin_audit_logs.c.actor_username, admin_audit_logs.c.created_at)
+            .where(admin_audit_logs.c.created_at >= start)
+            .where(admin_audit_logs.c.actor_username.is_not(None))
+            .where(admin_audit_logs.c.actor_username != "system")
+        ).mappings().all()
+        inspection_rows = conn.execute(inspection_stmt).mappings().all()
+        completion_rows = conn.execute(completion_stmt).mappings().all()
+
+    actor_auth_first: dict[str, datetime] = {}
+    for row in auth_rows:
+        actor = str(row.get("actor_username") or "").strip()
+        if not actor:
+            continue
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is None:
+            continue
+        prev = actor_auth_first.get(actor)
+        if prev is None or created_at < prev:
+            actor_auth_first[actor] = created_at
+
+    considered_actors: set[str] = set()
+    actor_first_inspection: dict[str, datetime] = {}
+    for row in inspection_rows:
+        actor = str(row.get("inspector") or "").strip()
+        if not actor:
+            continue
+        considered_actors.add(actor)
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is None:
+            continue
+        prev = actor_first_inspection.get(actor)
+        if prev is None or created_at < prev:
+            actor_first_inspection[actor] = created_at
+
+    actor_first_complete: dict[str, datetime] = {}
+    for row in completion_rows:
+        actor = str(row.get("actor_username") or "").strip()
+        if not actor or actor == "system":
+            continue
+        considered_actors.add(actor)
+        created_at = _as_optional_datetime(row.get("created_at"))
+        if created_at is None:
+            continue
+        prev = actor_first_complete.get(actor)
+        if prev is None or created_at < prev:
+            actor_first_complete[actor] = created_at
+
+    if site is None and allowed_sites is None:
+        considered_actors.update(actor_auth_first.keys())
+
+    inspection_converted = 0
+    completion_converted = 0
+    auth_to_inspection_minutes: list[float] = []
+    inspection_to_complete_minutes: list[float] = []
+    auth_to_complete_minutes: list[float] = []
+    actor_rows: list[dict[str, Any]] = []
+
+    for actor in sorted(considered_actors):
+        auth_at = actor_auth_first.get(actor)
+        inspection_at = actor_first_inspection.get(actor)
+        complete_at = actor_first_complete.get(actor)
+        anchors = [x for x in [auth_at, inspection_at, complete_at] if x is not None]
+        if not anchors:
+            continue
+        first_auth = auth_at or min(anchors)
+
+        has_inspection = inspection_at is not None and inspection_at >= first_auth
+        has_complete = complete_at is not None and complete_at >= first_auth
+        if has_inspection:
+            inspection_converted += 1
+            auth_to_inspection_minutes.append((inspection_at - first_auth).total_seconds() / 60.0)
+        if has_complete:
+            completion_converted += 1
+            auth_to_complete_minutes.append((complete_at - first_auth).total_seconds() / 60.0)
+        if has_inspection and has_complete and complete_at is not None and inspection_at is not None and complete_at >= inspection_at:
+            inspection_to_complete_minutes.append((complete_at - inspection_at).total_seconds() / 60.0)
+
+        actor_rows.append(
+            {
+                "actor": actor,
+                "first_auth_at": first_auth.isoformat() if first_auth is not None else None,
+                "first_inspection_at": inspection_at.isoformat() if inspection_at is not None else None,
+                "first_work_order_complete_at": complete_at.isoformat() if complete_at is not None else None,
+            }
+        )
+
+    total_users = len(actor_rows)
+    inspection_conversion_rate = round((inspection_converted / total_users) * 100, 2) if total_users > 0 else 0.0
+    completion_conversion_rate = round((completion_converted / total_users) * 100, 2) if total_users > 0 else 0.0
+    median_ttv_minutes = _median_minutes(auth_to_complete_minutes)
+    target_ttv_minutes = 15.0
+    target_met = median_ttv_minutes is not None and median_ttv_minutes <= target_ttv_minutes
+
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "target_ttv_minutes": target_ttv_minutes,
+        "metrics": {
+            "total_users": total_users,
+            "inspection_converted_users": inspection_converted,
+            "work_order_completed_users": completion_converted,
+            "inspection_conversion_rate_percent": inspection_conversion_rate,
+            "work_order_completion_rate_percent": completion_conversion_rate,
+            "median_ttv_minutes": median_ttv_minutes,
+            "target_met": target_met,
+        },
+        "stage_timings_minutes": {
+            "auth_to_first_inspection": _median_minutes(auth_to_inspection_minutes),
+            "inspection_to_first_work_order_complete": _median_minutes(inspection_to_complete_minutes),
+            "auth_to_first_work_order_complete": median_ttv_minutes,
+        },
+        "stages": [
+            {
+                "stage_id": "authenticated",
+                "label": "Authenticated Users",
+                "user_count": total_users,
+                "conversion_rate_percent": 100.0 if total_users > 0 else 0.0,
+            },
+            {
+                "stage_id": "first_inspection",
+                "label": "First Inspection Created",
+                "user_count": inspection_converted,
+                "conversion_rate_percent": inspection_conversion_rate,
+            },
+            {
+                "stage_id": "first_work_order_complete",
+                "label": "First Work-Order Completed",
+                "user_count": completion_converted,
+                "conversion_rate_percent": completion_conversion_rate,
+            },
+        ],
+        "actors": actor_rows[:100],
+    }
+
+
+def _build_w04_blocker_snapshot(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+    max_items: int = 3,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    window_days = max(1, min(int(days), 90))
+    start = now - timedelta(days=window_days)
+    limit_items = max(1, min(int(max_items), 10))
+
+    overdue_stmt = (
+        select(work_orders.c.id)
+        .where(work_orders.c.status.in_(["open", "acked"]))
+        .where(work_orders.c.due_at.is_not(None))
+        .where(work_orders.c.due_at < now)
+    )
+    alert_stmt = (
+        select(alert_deliveries.c.id)
+        .where(alert_deliveries.c.last_attempt_at >= start)
+        .where(alert_deliveries.c.status.in_(["failed", "warning"]))
+    )
+    audit_fail_stmt = (
+        select(admin_audit_logs.c.id)
+        .where(admin_audit_logs.c.created_at >= start)
+        .where(admin_audit_logs.c.status != "success")
+    )
+    tracker_stmt = select(adoption_w04_tracker_items.c.id).where(
+        adoption_w04_tracker_items.c.status.in_(
+            [
+                W04_TRACKER_STATUS_PENDING,
+                W04_TRACKER_STATUS_IN_PROGRESS,
+                W04_TRACKER_STATUS_BLOCKED,
+            ]
+        )
+    )
+
+    if site is not None:
+        overdue_stmt = overdue_stmt.where(work_orders.c.site == site)
+        tracker_stmt = tracker_stmt.where(adoption_w04_tracker_items.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now.isoformat(),
+                "site": site,
+                "window_days": window_days,
+                "top": [],
+                "counts": {},
+            }
+        overdue_stmt = overdue_stmt.where(work_orders.c.site.in_(allowed_sites))
+        tracker_stmt = tracker_stmt.where(adoption_w04_tracker_items.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        overdue_count = len(conn.execute(overdue_stmt).all())
+        failed_alert_count = len(conn.execute(alert_stmt).all())
+        audit_fail_count = len(conn.execute(audit_fail_stmt).all())
+        tracker_open_count = len(conn.execute(tracker_stmt).all())
+
+    funnel = _build_w04_funnel_snapshot(site=site, days=window_days, allowed_sites=allowed_sites)
+    ttv = funnel.get("metrics", {}).get("median_ttv_minutes")
+    inspection_conv = float(funnel.get("metrics", {}).get("inspection_conversion_rate_percent") or 0.0)
+    completion_conv = float(funnel.get("metrics", {}).get("work_order_completion_rate_percent") or 0.0)
+
+    candidates: list[dict[str, Any]] = []
+    if overdue_count > 0:
+        candidates.append(
+            {
+                "blocker_key": "overdue_open_work_orders",
+                "title": "Overdue open work orders",
+                "count": overdue_count,
+                "source": "work_orders",
+                "recommendation": "우선순위 높은 overdue 건부터 담당자 재할당 및 ETA 재설정",
+            }
+        )
+    if failed_alert_count > 0:
+        candidates.append(
+            {
+                "blocker_key": "failed_alert_deliveries",
+                "title": "Failed alert deliveries",
+                "count": failed_alert_count,
+                "source": "alert_deliveries",
+                "recommendation": "실패 타겟 재시도 배치 실행 후 channel guard 상태 점검",
+            }
+        )
+    if audit_fail_count > 0:
+        candidates.append(
+            {
+                "blocker_key": "audit_operation_failures",
+                "title": "Audit-recorded failed operations",
+                "count": audit_fail_count,
+                "source": "admin_audit_logs",
+                "recommendation": "실패 action별 재현 절차와 빠른 해결 가이드 갱신",
+            }
+        )
+    if tracker_open_count > 0:
+        candidates.append(
+            {
+                "blocker_key": "w04_tracker_open_items",
+                "title": "Open W04 coaching items",
+                "count": tracker_open_count,
+                "source": "adoption_w04_tracker",
+                "recommendation": "pending/in_progress 항목 담당자 지정 후 24시간 내 상태 갱신",
+            }
+        )
+    if isinstance(ttv, (int, float)) and float(ttv) > 15.0:
+        candidates.append(
+            {
+                "blocker_key": "median_ttv_over_target",
+                "title": "Median TTV over target",
+                "count": int(round(float(ttv))),
+                "source": "w04_funnel",
+                "recommendation": "첫 로그인 15분 내 점검 생성 미션을 강제하고 현장 코칭 실시",
+            }
+        )
+    if inspection_conv < 70.0:
+        candidates.append(
+            {
+                "blocker_key": "low_inspection_conversion",
+                "title": "Low inspection conversion",
+                "count": int(round(70.0 - inspection_conv)),
+                "source": "w04_funnel",
+                "recommendation": "초기 화면에서 점검 생성 버튼/가이드 우선 노출",
+            }
+        )
+    if completion_conv < 50.0:
+        candidates.append(
+            {
+                "blocker_key": "low_completion_conversion",
+                "title": "Low work-order completion conversion",
+                "count": int(round(50.0 - completion_conv)),
+                "source": "w04_funnel",
+                "recommendation": "ACK/완료 템플릿 표준화 및 관리자 1:1 코칭 적용",
+            }
+        )
+
+    top = sorted(candidates, key=lambda x: (int(x.get("count", 0)), str(x.get("blocker_key", ""))), reverse=True)[:limit_items]
+    counts = {str(item["blocker_key"]): int(item["count"]) for item in candidates}
+    return {
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": window_days,
+        "top": top,
+        "counts": counts,
+    }
+
+
+def _build_w04_common_mistakes_payload(
+    *,
+    site: str | None,
+    days: int,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    blockers = _build_w04_blocker_snapshot(site=site, days=days, allowed_sites=allowed_sites, max_items=10)
+    blocker_counts = blockers.get("counts", {})
+    mistake_items: list[dict[str, Any]] = []
+    mapping = {
+        "missing_assignee": {"w04_tracker_open_items"},
+        "missing_evidence": {"w04_tracker_open_items"},
+        "slow_first_action": {"median_ttv_over_target", "low_inspection_conversion"},
+        "wo_completion_delay": {"overdue_open_work_orders", "low_completion_conversion"},
+        "alert_delivery_failures": {"failed_alert_deliveries"},
+    }
+
+    for item in W04_COMMON_MISTAKE_FIX_CATALOG:
+        key = str(item.get("mistake_key") or "")
+        related_blockers = mapping.get(key, set())
+        observed_count = sum(int(blocker_counts.get(name, 0)) for name in related_blockers)
+        mistake_items.append(
+            {
+                "mistake_key": key,
+                "mistake": item.get("mistake", ""),
+                "symptom": item.get("symptom", ""),
+                "quick_fix": item.get("quick_fix", ""),
+                "where_to_check": item.get("where_to_check", ""),
+                "observed_count": observed_count,
+            }
+        )
+    sorted_items = sorted(mistake_items, key=lambda x: int(x.get("observed_count", 0)), reverse=True)
+    now = datetime.now(timezone.utc)
+    return {
+        "title": "W04 Common Mistakes and Quick Fix Guide",
+        "public": True,
+        "generated_at": now.isoformat(),
+        "site": site,
+        "window_days": max(1, min(int(days), 90)),
+        "items": sorted_items,
+        "top_blockers": blockers.get("top", []),
+    }
+
+
+def _build_w04_common_mistakes_html(payload: dict[str, Any]) -> str:
+    rows: list[str] = []
+    for item in payload.get("items", []):
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(item.get('mistake', '')))}</td>"
+            f"<td>{html.escape(str(item.get('symptom', '')))}</td>"
+            f"<td>{html.escape(str(item.get('quick_fix', '')))}</td>"
+            f"<td>{html.escape(str(item.get('where_to_check', '')))}</td>"
+            f"<td>{html.escape(str(item.get('observed_count', 0)))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append("<tr><td colspan='5'>No data</td></tr>")
+
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>W04 Common Mistakes</title>
+  <style>
+    body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f2f6fb; color: #112; }}
+    .wrap {{ max-width: 980px; margin: 0 auto; padding: 18px; }}
+    .box {{ background: #fff; border: 1px solid #d8e2ef; border-radius: 12px; padding: 14px; }}
+    h1 {{ margin: 0 0 8px; font-size: 24px; }}
+    p {{ margin: 0 0 10px; color: #355; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ border: 1px solid #d8e2ef; padding: 8px; font-size: 13px; text-align: left; vertical-align: top; }}
+    th {{ background: #eef4fb; }}
+    .links a {{ margin-right: 8px; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="box">
+      <h1>{html.escape(str(payload.get("title", "W04 Common Mistakes")))}</h1>
+      <p>Generated: {html.escape(str(payload.get("generated_at", "")))}</p>
+      <p>Site: {html.escape(str(payload.get("site", "ALL")))} | Window: {html.escape(str(payload.get("window_days", "")))} days</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w04/common-mistakes">JSON</a>
+        <a href="/api/public/adoption-plan/w04">W04 Pack</a>
+        <a href="/">Main</a>
+      </div>
+      <table>
+        <thead>
+          <tr><th>Mistake</th><th>Symptom</th><th>Quick Fix</th><th>Where To Check</th><th>Observed</th></tr>
+        </thead>
+        <tbody>
+          {"".join(rows)}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
 def run_sla_escalation_job(
     *,
     site: str | None = None,
@@ -6539,6 +7469,11 @@ def _service_info_payload() -> dict[str, str]:
         "public_adoption_w03_api": "/api/public/adoption-plan/w03",
         "public_adoption_w03_checklist_csv_api": "/api/public/adoption-plan/w03/checklist.csv",
         "public_adoption_w03_schedule_ics_api": "/api/public/adoption-plan/w03/schedule.ics",
+        "public_adoption_w04_api": "/api/public/adoption-plan/w04",
+        "public_adoption_w04_checklist_csv_api": "/api/public/adoption-plan/w04/checklist.csv",
+        "public_adoption_w04_schedule_ics_api": "/api/public/adoption-plan/w04/schedule.ics",
+        "public_adoption_w04_common_mistakes_api": "/api/public/adoption-plan/w04/common-mistakes",
+        "public_adoption_w04_common_mistakes_html": "/web/adoption/w04/common-mistakes",
         "adoption_w02_tracker_items_api": "/api/adoption/w02/tracker/items",
         "adoption_w02_tracker_overview_api": "/api/adoption/w02/tracker/overview",
         "adoption_w02_tracker_bootstrap_api": "/api/adoption/w02/tracker/bootstrap",
@@ -6551,6 +7486,14 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w03_tracker_readiness_api": "/api/adoption/w03/tracker/readiness",
         "adoption_w03_tracker_completion_api": "/api/adoption/w03/tracker/completion",
         "adoption_w03_tracker_complete_api": "/api/adoption/w03/tracker/complete",
+        "adoption_w04_funnel_api": "/api/ops/adoption/w04/funnel",
+        "adoption_w04_blockers_api": "/api/ops/adoption/w04/blockers",
+        "adoption_w04_tracker_items_api": "/api/adoption/w04/tracker/items",
+        "adoption_w04_tracker_overview_api": "/api/adoption/w04/tracker/overview",
+        "adoption_w04_tracker_bootstrap_api": "/api/adoption/w04/tracker/bootstrap",
+        "adoption_w04_tracker_readiness_api": "/api/adoption/w04/tracker/readiness",
+        "adoption_w04_tracker_completion_api": "/api/adoption/w04/tracker/completion",
+        "adoption_w04_tracker_complete_api": "/api/adoption/w04/tracker/complete",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -6603,6 +7546,7 @@ def _adoption_plan_payload() -> dict[str, Any]:
         "workflow_lock_matrix": ADOPTION_WORKFLOW_LOCK_MATRIX,
         "w02_sop_sandbox": _adoption_w02_payload(),
         "w03_go_live_onboarding": _adoption_w03_payload(),
+        "w04_first_success_acceleration": _adoption_w04_payload(),
         "training_outline": ADOPTION_TRAINING_OUTLINE,
         "kpi_dashboard_items": ADOPTION_KPI_DASHBOARD_ITEMS,
         "campaign_kit": {
@@ -6626,6 +7570,10 @@ def _adoption_plan_payload() -> dict[str, Any]:
                 "w03_json": "/api/public/adoption-plan/w03",
                 "w03_checklist_csv": "/api/public/adoption-plan/w03/checklist.csv",
                 "w03_schedule_ics": "/api/public/adoption-plan/w03/schedule.ics",
+                "w04_json": "/api/public/adoption-plan/w04",
+                "w04_checklist_csv": "/api/public/adoption-plan/w04/checklist.csv",
+                "w04_schedule_ics": "/api/public/adoption-plan/w04/schedule.ics",
+                "w04_common_mistakes": "/api/public/adoption-plan/w04/common-mistakes",
             },
             "next_review_date": next_review_date,
         },
@@ -6698,6 +7646,138 @@ def _adoption_w03_payload() -> dict[str, Any]:
             "schedule_ics": "/api/public/adoption-plan/w03/schedule.ics",
         },
     }
+
+
+def _adoption_w04_payload() -> dict[str, Any]:
+    week_item = next(
+        (item for item in ADOPTION_WEEKLY_EXECUTION if int(item.get("week", 0)) == 4),
+        None,
+    )
+    if week_item is None:
+        timeline = {
+            "week": 4,
+            "start_date": "",
+            "end_date": "",
+            "phase": "Adaptation",
+            "focus": "First success acceleration",
+        }
+    else:
+        timeline = {
+            "week": int(week_item.get("week", 4)),
+            "start_date": str(week_item.get("start_date", "")),
+            "end_date": str(week_item.get("end_date", "")),
+            "phase": str(week_item.get("phase", "")),
+            "focus": str(week_item.get("focus", "")),
+            "owner": str(week_item.get("owner", "")),
+            "success_metric": str(week_item.get("success_metric", "")),
+        }
+
+    return {
+        "title": "W04 First Success Acceleration Pack",
+        "public": True,
+        "timeline": timeline,
+        "coaching_actions": ADOPTION_W04_COACHING_ACTIONS,
+        "scheduled_events": ADOPTION_W04_SCHEDULED_EVENTS,
+        "common_mistakes_reference": "/api/public/adoption-plan/w04/common-mistakes",
+        "downloads": {
+            "json": "/api/public/adoption-plan/w04",
+            "checklist_csv": "/api/public/adoption-plan/w04/checklist.csv",
+            "schedule_ics": "/api/public/adoption-plan/w04/schedule.ics",
+            "common_mistakes": "/api/public/adoption-plan/w04/common-mistakes",
+        },
+    }
+
+
+def _build_adoption_w04_checklist_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "section",
+            "id",
+            "champion_role",
+            "action",
+            "owner",
+            "due_hint",
+            "objective",
+            "evidence_required",
+            "quick_fix",
+        ]
+    )
+    for item in payload.get("coaching_actions", []):
+        writer.writerow(
+            [
+                "coaching_action",
+                item.get("id", ""),
+                item.get("champion_role", ""),
+                item.get("action", ""),
+                item.get("owner", ""),
+                item.get("due_hint", ""),
+                item.get("objective", ""),
+                item.get("evidence_required", False),
+                item.get("quick_fix", ""),
+            ]
+        )
+    for item in payload.get("scheduled_events", []):
+        writer.writerow(
+            [
+                "scheduled_event",
+                item.get("id", ""),
+                "",
+                item.get("title", ""),
+                item.get("owner", ""),
+                f"{item.get('date', '')} {item.get('start_time', '')}-{item.get('end_time', '')}",
+                "",
+                "",
+                item.get("output", ""),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_adoption_w04_schedule_ics(payload: dict[str, Any]) -> str:
+    dtstamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    events: list[str] = []
+    for item in payload.get("scheduled_events", []):
+        date_raw = str(item.get("date", ""))
+        start_raw = str(item.get("start_time", "09:00"))
+        end_raw = str(item.get("end_time", "10:00"))
+        try:
+            start_dt = datetime.strptime(f"{date_raw} {start_raw}", "%Y-%m-%d %H:%M")
+            end_dt = datetime.strptime(f"{date_raw} {end_raw}", "%Y-%m-%d %H:%M")
+        except ValueError:
+            continue
+        uid = f"ka-facility-os-w04-{str(item.get('id', '')).lower()}@public"
+        summary = f"[W04] {str(item.get('title', 'First Success Session'))}"
+        description = "\n".join(
+            [
+                f"Owner: {str(item.get('owner', ''))}",
+                f"Output: {str(item.get('output', ''))}",
+            ]
+        )
+        events.extend(
+            [
+                "BEGIN:VEVENT",
+                f"UID:{uid}",
+                f"DTSTAMP:{dtstamp}",
+                f"DTSTART:{start_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"DTEND:{end_dt.strftime('%Y%m%dT%H%M%S')}",
+                f"SUMMARY:{_ics_escape(summary)}",
+                f"DESCRIPTION:{_ics_escape(description)}",
+                "END:VEVENT",
+            ]
+        )
+
+    calendar_lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//KA Facility OS//W04 First Success Acceleration//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+    ]
+    calendar_lines.extend(events)
+    calendar_lines.append("END:VCALENDAR")
+    return "\r\n".join(calendar_lines) + "\r\n"
 
 
 def _build_adoption_w03_checklist_csv(payload: dict[str, Any]) -> str:
@@ -7186,6 +8266,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     kpis = plan.get("kpi_dashboard_items", [])
     w02_pack = plan.get("w02_sop_sandbox", {})
     w03_pack = plan.get("w03_go_live_onboarding", {})
+    w04_pack = plan.get("w04_first_success_acceleration", {})
     post_mvp = _post_mvp_payload()
     module_hub = _facility_modules_payload()
     facility_modules = module_hub.get("modules", [])
@@ -7352,6 +8433,36 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
     w03_schedule_rows: list[str] = []
     for item in w03_pack.get("scheduled_events", []):
         w03_schedule_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("date", "")))}</td>
+              <td>{html.escape(str(item.get("start_time", "")))} - {html.escape(str(item.get("end_time", "")))}</td>
+              <td>{html.escape(str(item.get("title", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("output", "")))}</td>
+            </tr>
+            """
+        )
+
+    w04_action_rows: list[str] = []
+    for item in w04_pack.get("coaching_actions", []):
+        w04_action_rows.append(
+            f"""
+            <tr>
+              <td>{html.escape(str(item.get("id", "")))}</td>
+              <td>{html.escape(str(item.get("champion_role", "")))}</td>
+              <td>{html.escape(str(item.get("action", "")))}</td>
+              <td>{html.escape(str(item.get("owner", "")))}</td>
+              <td>{html.escape(str(item.get("due_hint", "")))}</td>
+              <td>{html.escape(str(item.get("objective", "")))}</td>
+              <td>{html.escape(str(item.get("evidence_required", "")))}</td>
+            </tr>
+            """
+        )
+
+    w04_schedule_rows: list[str] = []
+    for item in w04_pack.get("scheduled_events", []):
+        w04_schedule_rows.append(
             f"""
             <tr>
               <td>{html.escape(str(item.get("date", "")))}</td>
@@ -8013,6 +9124,11 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w03">W03 JSON</a>
         <a href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w04">W04 JSON</a>
+        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
+        <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
         <a href="/web/console">Facility Console HTML</a>
         <a href="/api/service-info">Service Info</a>
       </div>
@@ -8192,6 +9308,56 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
           </thead>
           <tbody>
             {"".join(w03_schedule_rows)}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>W04 First Success Acceleration</h2>
+      <p class="sub">첫 성공 시간(TTV) 단축과 Top blocker 제거를 위한 코칭 실행 패키지입니다.</p>
+      <div class="links">
+        <a href="/api/public/adoption-plan/w04">W04 JSON</a>
+        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
+        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
+        <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
+        <a href="/api/ops/adoption/w04/funnel">W04 Funnel API (Token)</a>
+        <a href="/api/ops/adoption/w04/blockers">W04 Blockers API (Token)</a>
+        <a href="/api/adoption/w04/tracker/items">W04 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w04/tracker/overview?site=HQ">W04 Tracker Overview API (Token)</a>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Action ID</th>
+              <th>Champion Role</th>
+              <th>Action</th>
+              <th>Owner</th>
+              <th>Due Hint</th>
+              <th>Objective</th>
+              <th>Evidence Required</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w04_action_rows)}
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap" style="margin-top: 12px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Time</th>
+              <th>Session</th>
+              <th>Owner</th>
+              <th>Output</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(w04_schedule_rows)}
           </tbody>
         </table>
       </div>
@@ -9744,6 +10910,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
           </div>
           <div class="box">
+            <h3>W04 First Success Acceleration</h3>
+            <div id="adoptionW04Top" class="cards"></div>
+            <div id="adoptionW04Actions" class="empty">데이터 없음</div>
+            <div id="adoptionW04Schedule" class="empty">데이터 없음</div>
+            <div id="adoptionW04Mistakes" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="adoptW04Json" href="/api/public/adoption-plan/w04">W04 JSON</a>
+              <a id="adoptW04ChecklistCsv" href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
+              <a id="adoptW04ScheduleIcs" href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
+              <a id="adoptW04MistakesJson" href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
+              <a id="adoptW04MistakesHtml" href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
+            </div>
+          </div>
+          <div class="box">
             <h3>W02 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
               <input id="w02TrackSite" placeholder="site (required, 예: HQ)" />
@@ -9848,6 +11028,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w03EvidenceTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>W04 First-Success Funnel + Top Blockers</h3>
+            <div class="filter-row">
+              <input id="w04FunnelSite" placeholder="site (required, 예: HQ)" />
+              <input id="w04FunnelDays" value="30" placeholder="window days (1-90)" />
+              <input id="w04FunnelMaxBlockers" value="3" placeholder="max blockers (1-10)" />
+              <input id="w04FunnelReserved" value="token required" disabled />
+              <button id="w04FunnelRefreshBtn" class="btn run" type="button">W04 퍼널 새로고침</button>
+            </div>
+            <div id="w04FunnelMeta" class="meta">조회 전</div>
+            <div id="w04FunnelSummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">퍼널 단계</h4>
+            <div id="w04FunnelStages" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">Top Blockers</h4>
+            <div id="w04BlockerTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W04 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w04TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w04TrackItemId" placeholder="tracker_item_id" />
+              <input id="w04TrackAssignee" placeholder="assignee" />
+              <select id="w04TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w04TrackBootstrapBtn" class="btn run" type="button">W04 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w04TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w04TrackNote" placeholder="completion note (optional)" />
+              <input id="w04EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w04EvidenceFile" type="file" />
+              <button id="w04TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w04EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w04Reserved1" value="token required for write actions" disabled />
+              <input id="w04Reserved2" value="site scope enforced" disabled />
+              <input id="w04Reserved3" value="max file 5MB" disabled />
+              <button id="w04TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w04CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w04CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w04Reserved4" value="readiness gate required" disabled />
+              <button id="w04ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w04CompleteBtn" class="btn" type="button">W04 완료 확정</button>
+            </div>
+            <div id="w04TrackerMeta" class="meta">조회 전</div>
+            <div id="w04TrackerSummary" class="cards"></div>
+            <div id="w04TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W04 완료 판정 결과</h4>
+            <div id="w04ReadinessMeta" class="meta">조회 전</div>
+            <div id="w04ReadinessCards" class="cards"></div>
+            <div id="w04ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w04EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>주차별 실행표</h3>
             <div id="adoptionWeekly" class="empty">데이터 없음</div>
           </div>
@@ -9940,7 +11188,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (!Array.isArray(rows) || rows.length === 0) {{
           return renderEmpty("증빙 파일이 없습니다.");
         }}
-        const phase = trackerPhase === "w03" ? "w03" : "w02";
+        const phase = trackerPhase === "w04" ? "w04" : (trackerPhase === "w03" ? "w03" : "w02");
         const body = rows.map((row) => {{
           const downloadHref = "/api/adoption/" + phase + "/tracker/evidence/" + encodeURIComponent(String(row.id || "")) + "/download";
           return (
@@ -10947,6 +12195,336 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runW04FunnelBlockers() {{
+        const meta = document.getElementById("w04FunnelMeta");
+        const summary = document.getElementById("w04FunnelSummary");
+        const stages = document.getElementById("w04FunnelStages");
+        const blockers = document.getElementById("w04BlockerTable");
+        const site = (document.getElementById("w04FunnelSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          summary.innerHTML = "";
+          stages.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          blockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        const daysRaw = (document.getElementById("w04FunnelDays").value || "").trim();
+        const maxItemsRaw = (document.getElementById("w04FunnelMaxBlockers").value || "").trim();
+        const params = new URLSearchParams();
+        params.set("site", site);
+        if (daysRaw) {{
+          params.set("days", daysRaw);
+        }}
+        if (maxItemsRaw) {{
+          params.set("max_items", maxItemsRaw);
+        }}
+        try {{
+          meta.textContent = "조회 중... W04 funnel + blockers";
+          const [funnel, topBlockers] = await Promise.all([
+            fetchJson("/api/ops/adoption/w04/funnel?" + params.toString(), true),
+            fetchJson("/api/ops/adoption/w04/blockers?" + params.toString(), true),
+          ]);
+          const metrics = funnel.metrics || {{}};
+          const timings = funnel.stage_timings_minutes || {{}};
+          meta.textContent =
+            "성공: W04 funnel (" + site + ")"
+            + " | median_ttv=" + String(metrics.median_ttv_minutes ?? "-")
+            + " | target_met=" + String(metrics.target_met ? "YES" : "NO");
+          const summaryItems = [
+            ["Target TTV(min)", funnel.target_ttv_minutes ?? 15],
+            ["Median TTV(min)", metrics.median_ttv_minutes ?? "-"],
+            ["Target Met", metrics.target_met ? "YES" : "NO"],
+            ["Total Users", metrics.total_users ?? 0],
+            ["Inspection Conv %", metrics.inspection_conversion_rate_percent ?? 0],
+            ["WO Complete Conv %", metrics.work_order_completion_rate_percent ?? 0],
+            ["Auth->Inspection(min)", timings.auth_to_first_inspection ?? "-"],
+            ["Inspection->Complete(min)", timings.inspection_to_first_work_order_complete ?? "-"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          stages.innerHTML = renderTable(
+            funnel.stages || [],
+            [
+              {{ key: "stage_id", label: "Stage ID" }},
+              {{ key: "label", label: "Label" }},
+              {{ key: "user_count", label: "Users" }},
+              {{ key: "conversion_rate_percent", label: "Conv %" }},
+            ]
+          );
+          blockers.innerHTML = renderTable(
+            topBlockers.top || [],
+            [
+              {{ key: "blocker_key", label: "Blocker Key" }},
+              {{ key: "title", label: "Title" }},
+              {{ key: "count", label: "Count" }},
+              {{ key: "source", label: "Source" }},
+              {{ key: "recommendation", label: "Recommendation" }},
+            ]
+          );
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          stages.innerHTML = renderEmpty(err.message);
+          blockers.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW04Tracker() {{
+        const meta = document.getElementById("w04TrackerMeta");
+        const summary = document.getElementById("w04TrackerSummary");
+        const table = document.getElementById("w04TrackerTable");
+        const readinessMeta = document.getElementById("w04ReadinessMeta");
+        const readinessCards = document.getElementById("w04ReadinessCards");
+        const readinessBlockers = document.getElementById("w04ReadinessBlockers");
+        const evidenceTable = document.getElementById("w04EvidenceTable");
+        const site = (document.getElementById("w04TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요.";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중... W04 tracker";
+          readinessMeta.textContent = "조회 중... W04 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w04/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w04/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w04/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w04/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W04 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w04EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w04TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w04/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w04");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW04Readiness() {{
+        await runW04Tracker();
+      }}
+
+      async function runW04TrackerBootstrap() {{
+        const meta = document.getElementById("w04TrackerMeta");
+        const site = (document.getElementById("w04TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중... W04 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w04/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW04Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW04Complete() {{
+        const meta = document.getElementById("w04ReadinessMeta");
+        const site = (document.getElementById("w04TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        const completionNote = (document.getElementById("w04CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w04CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중... W04 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w04/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW04Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW04Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW04TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w04TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w04TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w04TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w04TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w04TrackCompleted").checked;
+        const note = (document.getElementById("w04TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w04EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중... tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w04/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w04EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w04/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w04EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW04Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
       async function runAdoption() {{
         const meta = document.getElementById("adoptionMeta");
         const top = document.getElementById("adoptionTop");
@@ -10960,6 +12538,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const w03Workshops = document.getElementById("adoptionW03Workshops");
         const w03OfficeHours = document.getElementById("adoptionW03OfficeHours");
         const w03Schedule = document.getElementById("adoptionW03Schedule");
+        const w04Top = document.getElementById("adoptionW04Top");
+        const w04Actions = document.getElementById("adoptionW04Actions");
+        const w04Schedule = document.getElementById("adoptionW04Schedule");
+        const w04Mistakes = document.getElementById("adoptionW04Mistakes");
         const weekly = document.getElementById("adoptionWeekly");
         const training = document.getElementById("adoptionTraining");
         const kpi = document.getElementById("adoptionKpi");
@@ -11143,6 +12725,74 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ]
           );
 
+          const w04 = data.w04_first_success_acceleration || {{}};
+          const w04TopItems = [
+            ["Week", "W" + String(w04.timeline?.week || 4).padStart(2, "0")],
+            ["Focus", w04.timeline?.focus || "First success acceleration"],
+            ["Coaching Actions", (w04.coaching_actions || []).length],
+            ["Sessions", (w04.scheduled_events || []).length],
+            ["Metric", w04.timeline?.success_metric || "Median TTV <= 15m"],
+            ["Common Mistakes", "Published"],
+          ];
+          w04Top.innerHTML = w04TopItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+
+          w04Actions.innerHTML = renderTable(
+            (w04.coaching_actions || []).map((row) => ({{
+              id: row.id || "",
+              champion_role: row.champion_role || "",
+              action: row.action || "",
+              owner: row.owner || "",
+              due_hint: row.due_hint || "",
+              objective: row.objective || "",
+              evidence_required: String(Boolean(row.evidence_required)),
+            }})),
+            [
+              {{ key: "id", label: "Action ID" }},
+              {{ key: "champion_role", label: "Champion Role" }},
+              {{ key: "action", label: "Action" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "due_hint", label: "Due Hint" }},
+              {{ key: "objective", label: "Objective" }},
+              {{ key: "evidence_required", label: "Evidence Required" }},
+            ]
+          );
+          w04Schedule.innerHTML = renderTable(
+            (w04.scheduled_events || []).map((row) => ({{
+              date: row.date || "",
+              time: (row.start_time || "") + " - " + (row.end_time || ""),
+              title: row.title || "",
+              owner: row.owner || "",
+              output: row.output || "",
+            }})),
+            [
+              {{ key: "date", label: "Date" }},
+              {{ key: "time", label: "Time" }},
+              {{ key: "title", label: "Session" }},
+              {{ key: "owner", label: "Owner" }},
+              {{ key: "output", label: "Output" }},
+            ]
+          );
+
+          const commonMistakesPath = String(w04.common_mistakes_reference || "/api/public/adoption-plan/w04/common-mistakes");
+          const mistakesPayload = await fetchJson(commonMistakesPath, false).catch(() => null);
+          const mistakeRows = mistakesPayload && Array.isArray(mistakesPayload.items) ? mistakesPayload.items : [];
+          w04Mistakes.innerHTML = renderTable(
+            mistakeRows.slice(0, 6).map((row) => ({{
+              mistake: row.mistake || "",
+              symptom: row.symptom || "",
+              quick_fix: row.quick_fix || "",
+              observed_count: row.observed_count ?? 0,
+            }})),
+            [
+              {{ key: "mistake", label: "Mistake" }},
+              {{ key: "symptom", label: "Symptom" }},
+              {{ key: "quick_fix", label: "Quick Fix" }},
+              {{ key: "observed_count", label: "Observed" }},
+            ]
+          );
+
           weekly.innerHTML = renderTable(
             data.weekly_execution || [],
             [
@@ -11174,6 +12824,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           if (getToken()) {{
             runW02Tracker().catch(() => null);
             runW03Tracker().catch(() => null);
+            runW04Tracker().catch(() => null);
+            runW04FunnelBlockers().catch(() => null);
           }} else {{
             const w02TrackerMeta = document.getElementById("w02TrackerMeta");
             const w02TrackerSummary = document.getElementById("w02TrackerSummary");
@@ -11204,6 +12856,30 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             w03ReadinessCards.innerHTML = "";
             w03ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
             w03EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
+
+            const w04FunnelMeta = document.getElementById("w04FunnelMeta");
+            const w04FunnelSummary = document.getElementById("w04FunnelSummary");
+            const w04FunnelStages = document.getElementById("w04FunnelStages");
+            const w04BlockerTable = document.getElementById("w04BlockerTable");
+            w04FunnelMeta.textContent = "토큰 저장 후 W04 funnel API를 사용할 수 있습니다.";
+            w04FunnelSummary.innerHTML = "";
+            w04FunnelStages.innerHTML = renderEmpty("인증 토큰 필요");
+            w04BlockerTable.innerHTML = renderEmpty("인증 토큰 필요");
+
+            const w04TrackerMeta = document.getElementById("w04TrackerMeta");
+            const w04TrackerSummary = document.getElementById("w04TrackerSummary");
+            const w04TrackerTable = document.getElementById("w04TrackerTable");
+            const w04ReadinessMeta = document.getElementById("w04ReadinessMeta");
+            const w04ReadinessCards = document.getElementById("w04ReadinessCards");
+            const w04ReadinessBlockers = document.getElementById("w04ReadinessBlockers");
+            const w04EvidenceTable = document.getElementById("w04EvidenceTable");
+            w04TrackerMeta.textContent = "토큰 저장 후 실행 추적 API를 사용할 수 있습니다.";
+            w04TrackerSummary.innerHTML = "";
+            w04TrackerTable.innerHTML = renderEmpty("인증 토큰 필요");
+            w04ReadinessMeta.textContent = "토큰 저장 후 완료 판정 API를 사용할 수 있습니다.";
+            w04ReadinessCards.innerHTML = "";
+            w04ReadinessBlockers.innerHTML = renderEmpty("인증 토큰 필요");
+            w04EvidenceTable.innerHTML = renderEmpty("인증 토큰 필요");
           }}
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
@@ -11218,6 +12894,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           w03Workshops.innerHTML = renderEmpty(err.message);
           w03OfficeHours.innerHTML = renderEmpty(err.message);
           w03Schedule.innerHTML = renderEmpty(err.message);
+          w04Top.innerHTML = "";
+          w04Actions.innerHTML = renderEmpty(err.message);
+          w04Schedule.innerHTML = renderEmpty(err.message);
+          w04Mistakes.innerHTML = renderEmpty(err.message);
           weekly.innerHTML = renderEmpty(err.message);
           training.innerHTML = renderEmpty(err.message);
           kpi.innerHTML = renderEmpty(err.message);
@@ -11281,6 +12961,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w03ReadinessBtn").addEventListener("click", runW03Readiness);
       document.getElementById("w03CompleteBtn").addEventListener("click", runW03Complete);
       document.getElementById("w03TrackUpdateBtn").addEventListener("click", runW03TrackerUpdateAndUpload);
+      document.getElementById("w04FunnelRefreshBtn").addEventListener("click", runW04FunnelBlockers);
+      document.getElementById("w04TrackBootstrapBtn").addEventListener("click", runW04TrackerBootstrap);
+      document.getElementById("w04TrackRefreshBtn").addEventListener("click", runW04Tracker);
+      document.getElementById("w04ReadinessBtn").addEventListener("click", runW04Readiness);
+      document.getElementById("w04CompleteBtn").addEventListener("click", runW04Complete);
+      document.getElementById("w04TrackUpdateBtn").addEventListener("click", runW04TrackerUpdateAndUpload);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -11297,6 +12983,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w03TrackSite").value) {{
         document.getElementById("w03TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w04TrackSite").value) {{
+        document.getElementById("w04TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w04FunnelSite").value) {{
+        document.getElementById("w04FunnelSite").value = "HQ";
       }}
       activate("{selected_tab}", false);
 
@@ -11360,6 +13052,11 @@ def get_public_adoption_w02() -> dict[str, Any]:
 @app.get("/api/public/adoption-plan/w03")
 def get_public_adoption_w03() -> dict[str, Any]:
     return _adoption_w03_payload()
+
+
+@app.get("/api/public/adoption-plan/w04")
+def get_public_adoption_w04() -> dict[str, Any]:
+    return _adoption_w04_payload()
 
 
 @app.get("/api/public/modules", response_model=None)
@@ -11441,6 +13138,47 @@ def get_public_adoption_w03_schedule_ics() -> Response:
         media_type="text/calendar; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@app.get("/api/public/adoption-plan/w04/checklist.csv")
+def get_public_adoption_w04_checklist_csv() -> Response:
+    payload = _adoption_w04_payload()
+    csv_text = _build_adoption_w04_checklist_csv(payload)
+    file_name = "ka-facility-os-adoption-w04-first-success-acceleration-checklist.csv"
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w04/schedule.ics")
+def get_public_adoption_w04_schedule_ics() -> Response:
+    payload = _adoption_w04_payload()
+    ics_text = _build_adoption_w04_schedule_ics(payload)
+    file_name = "ka-facility-os-adoption-w04-first-success-acceleration.ics"
+    return Response(
+        content=ics_text,
+        media_type="text/calendar; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/public/adoption-plan/w04/common-mistakes")
+def get_public_adoption_w04_common_mistakes(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> dict[str, Any]:
+    return _build_w04_common_mistakes_payload(site=site, days=days, allowed_sites=None)
+
+
+@app.get("/web/adoption/w04/common-mistakes", response_model=None)
+def get_public_adoption_w04_common_mistakes_html(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+) -> HTMLResponse:
+    payload = _build_w04_common_mistakes_payload(site=site, days=days, allowed_sites=None)
+    return HTMLResponse(_build_w04_common_mistakes_html(payload))
 
 
 @app.get("/api/public/adoption-plan/w02/sample-files")
@@ -12566,6 +14304,528 @@ def download_w03_tracker_evidence(
     )
 
 
+@app.post("/api/adoption/w04/tracker/bootstrap", response_model=W04TrackerBootstrapResponse)
+def bootstrap_w04_tracker_items(
+    payload: W04TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
+) -> W04TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w04_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w04_tracker_items.c.item_type,
+                adoption_w04_tracker_items.c.item_key,
+            ).where(adoption_w04_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w04_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W04_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w04_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w04_tracker_items)
+            .where(adoption_w04_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w04_tracker_items.c.item_type.asc(),
+                adoption_w04_tracker_items.c.item_key.asc(),
+                adoption_w04_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w04_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w04_tracker_bootstrap",
+        resource_type="adoption_w04_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W04TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w04/tracker/items", response_model=list[W04TrackerItemRead])
+def list_w04_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> list[W04TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W04_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W04 tracker status")
+
+    stmt = select(adoption_w04_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w04_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w04_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w04_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w04_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w04_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w04_tracker_items.c.updated_at.desc(),
+        adoption_w04_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w04_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w04/tracker/overview", response_model=W04TrackerOverviewRead)
+def get_w04_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> W04TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w04_tracker_items).where(adoption_w04_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w04_tracker_item_model(row) for row in rows]
+    return _compute_w04_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w04/tracker/readiness", response_model=W04TrackerReadinessRead)
+def get_w04_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> W04TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w04_tracker_items_for_site(site)
+    return _compute_w04_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w04/tracker/completion", response_model=W04TrackerCompletionRead)
+def get_w04_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> W04TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w04_tracker_items_for_site(site)
+    readiness = _compute_w04_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w04_site_runs).where(adoption_w04_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w04_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w04/tracker/complete", response_model=W04TrackerCompletionRead)
+def complete_w04_tracker(
+    payload: W04TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
+) -> W04TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w04_tracker_items_for_site(payload.site)
+    readiness = _compute_w04_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W04 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W04_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W04_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w04_site_runs).where(adoption_w04_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w04_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w04_site_runs)
+                .where(adoption_w04_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w04_site_runs).where(adoption_w04_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w04_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w04_tracker_complete",
+        resource_type="adoption_w04_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w04/tracker/items/{tracker_item_id}", response_model=W04TrackerItemRead)
+def update_w04_tracker_item(
+    tracker_item_id: int,
+    payload: W04TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
+) -> W04TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w04_tracker_items).where(adoption_w04_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W04 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W04_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W04_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W04_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W04_TRACKER_STATUS_DONE:
+            next_status = W04_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W04_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W04 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w04_tracker_items)
+            .where(adoption_w04_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w04_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w04_tracker_items).where(adoption_w04_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W04 tracker item")
+    model = _row_to_w04_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w04_tracker_item_update",
+        resource_type="adoption_w04_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w04/tracker/items/{tracker_item_id}/evidence", response_model=W04EvidenceRead, status_code=201)
+async def upload_w04_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
+) -> W04EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported evidence content type",
+        )
+    file_bytes = await file.read(W04_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W04_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W04_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w04_tracker_items).where(adoption_w04_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W04 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w04_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w04_tracker_items)
+            .where(adoption_w04_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        evidence_row = conn.execute(
+            select(adoption_w04_evidence_files).where(adoption_w04_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w04_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w04_tracker_evidence_upload",
+        resource_type="adoption_w04_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w04/tracker/items/{tracker_item_id}/evidence", response_model=list[W04EvidenceRead])
+def list_w04_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> list[W04EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w04_tracker_items).where(adoption_w04_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W04 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w04_evidence_files)
+            .where(adoption_w04_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w04_evidence_files.c.uploaded_at.desc(), adoption_w04_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w04_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w04/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w04_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w04_evidence_files).where(adoption_w04_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W04 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w04_tracker_evidence_download",
+        resource_type="adoption_w04_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -13625,6 +15885,65 @@ def get_dashboard_trends(
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
     return build_dashboard_trends(site=site, days=days, allowed_sites=allowed_sites)
+
+
+@app.get("/api/ops/adoption/w04/funnel")
+def get_ops_adoption_w04_funnel(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w04_funnel_snapshot(site=site, days=days, allowed_sites=allowed_sites)
+    _write_audit_log(
+        principal=principal,
+        action="w04_funnel_view",
+        resource_type="adoption_w04_funnel",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "total_users": int(snapshot.get("metrics", {}).get("total_users") or 0),
+            "median_ttv_minutes": snapshot.get("metrics", {}).get("median_ttv_minutes"),
+            "target_met": bool(snapshot.get("metrics", {}).get("target_met", False)),
+        },
+    )
+    return snapshot
+
+
+@app.get("/api/ops/adoption/w04/blockers")
+def get_ops_adoption_w04_blockers(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=1, le=90)] = 30,
+    max_items: Annotated[int, Query(ge=1, le=10)] = 3,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    snapshot = _build_w04_blocker_snapshot(
+        site=site,
+        days=days,
+        allowed_sites=allowed_sites,
+        max_items=max_items,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="w04_blockers_view",
+        resource_type="adoption_w04_blockers",
+        resource_id=site or "all",
+        detail={
+            "site": site,
+            "window_days": int(snapshot.get("window_days") or days),
+            "max_items": max_items,
+            "top_keys": [
+                str(item.get("blocker_key") or "")
+                for item in snapshot.get("top", [])
+                if isinstance(item, dict)
+            ],
+        },
+    )
+    return snapshot
 
 
 @app.get("/api/ops/handover/brief", response_model=OpsHandoverBriefRead)
