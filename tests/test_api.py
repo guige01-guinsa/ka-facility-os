@@ -41,6 +41,7 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_KEY", "ci-signing-key")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
+    monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
 
     import app.database as database_module
     import app.main as main_module
@@ -81,6 +82,7 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_KEY", "ci-signing-key")
     monkeypatch.delenv("ALERT_WEBHOOK_URL", raising=False)
     monkeypatch.delenv("ALERT_WEBHOOK_URLS", raising=False)
+    monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
 
     import app.database as database_module
     import app.main as main_module
@@ -479,6 +481,16 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
     assert service_info.json()["ops_runbook_checks_run_api"] == "/api/ops/runbook/checks/run"
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
+    assert (
+        service_info.json()["ops_runbook_checks_latest_summary_json_api"]
+        == "/api/ops/runbook/checks/latest/summary.json"
+    )
+    assert (
+        service_info.json()["ops_runbook_checks_latest_summary_csv_api"]
+        == "/api/ops/runbook/checks/latest/summary.csv"
+    )
+    assert service_info.json()["ops_runbook_checks_archive_json_api"] == "/api/ops/runbook/checks/archive.json"
+    assert service_info.json()["ops_runbook_checks_archive_csv_api"] == "/api/ops/runbook/checks/archive.csv"
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -4438,6 +4450,7 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "token_expiry_pressure" in ids
     assert "rate_limit_backend" in ids
     assert "audit_archive_signing" in ids
+    assert "ops_daily_check_archive" in ids
     assert "alert_channel_guard" in ids
     assert "alert_retention_recent" in ids
     assert "alert_guard_recovery_recent" in ids
@@ -4474,6 +4487,9 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["evidence_archive_integrity_policy"]["sample_per_table"] >= 1
     assert "w02" in body["evidence_archive_integrity_policy"]["modules"]
     assert body["alerting"]["ops_daily_check_alert_level"] == "critical"
+    assert body["alerting"]["ops_daily_check_archive_enabled"] is True
+    assert str(body["alerting"]["ops_daily_check_archive_path"]).endswith("/ops_daily_check_archives")
+    assert body["alerting"]["ops_daily_check_archive_retention_days"] == 60
     assert isinstance(body["alerting"]["webhook_target_count"], int)
     assert body["alerting"]["channel_guard_enabled"] is True
     assert body["alerting"]["channel_guard_fail_threshold"] == 3
@@ -4624,6 +4640,13 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert "alert_dispatched" in body
     assert "alert_channels" in body
     assert "mttr_slo_check" in body
+    assert body["summary"]["job_name"] == "ops_daily_check"
+    assert body["summary"]["version"] == "v1"
+    assert body["summary"]["check_count"] == body["check_count"]
+    assert body["archive"]["enabled"] is True
+    assert str(body["archive"]["path"]).endswith("/ops_daily_check_archives")
+    assert body["archive"]["csv_file"]
+    assert body["archive"]["json_file"]
     if body["run_id"] is not None:
         assert body["run_id"] > 0
 
@@ -4642,6 +4665,8 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert "alert_dispatched" in latest_body
     assert isinstance(latest_body["alert_channels"], list)
     assert "mttr_slo_check" in latest_body
+    assert latest_body["summary"]["job_name"] == "ops_daily_check"
+    assert latest_body["archive"]["enabled"] is True
 
     latest_without_checks = app_client.get(
         "/api/ops/runbook/checks/latest?include_checks=false",
@@ -4649,6 +4674,42 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     )
     assert latest_without_checks.status_code == 200
     assert "checks" not in latest_without_checks.json()
+
+    latest_summary_json = app_client.get(
+        "/api/ops/runbook/checks/latest/summary.json",
+        headers=_owner_headers(),
+    )
+    assert latest_summary_json.status_code == 200
+    latest_summary_json_body = latest_summary_json.json()
+    assert latest_summary_json_body["summary"]["job_name"] == "ops_daily_check"
+    assert latest_summary_json_body["summary"]["run_id"] == latest_body["run_id"]
+
+    latest_summary_csv = app_client.get(
+        "/api/ops/runbook/checks/latest/summary.csv",
+        headers=_owner_headers(),
+    )
+    assert latest_summary_csv.status_code == 200
+    assert latest_summary_csv.headers["content-type"].startswith("text/csv")
+    assert "run_id,checked_at,trigger,status,overall_status" in latest_summary_csv.text
+    assert "check_id,check_status,check_message" in latest_summary_csv.text
+
+    archive_json = app_client.get(
+        "/api/ops/runbook/checks/archive.json?limit=5",
+        headers=_owner_headers(),
+    )
+    assert archive_json.status_code == 200
+    archive_json_body = archive_json.json()
+    assert archive_json_body["job_name"] == "ops_daily_check"
+    assert archive_json_body["count"] >= 1
+    assert archive_json_body["rows"][0]["run_id"] == latest_body["run_id"]
+
+    archive_csv = app_client.get(
+        "/api/ops/runbook/checks/archive.csv?limit=5",
+        headers=_owner_headers(),
+    )
+    assert archive_csv.status_code == 200
+    assert archive_csv.headers["content-type"].startswith("text/csv")
+    assert "run_id,finished_at,trigger,status,overall_status" in archive_csv.text
 
     history = app_client.get(
         "/api/ops/job-runs?job_name=ops_daily_check",

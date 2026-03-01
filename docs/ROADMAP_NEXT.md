@@ -7,11 +7,18 @@
   - 성능: 주요 API P95 지연 모니터/런북 체크 반영
   - 신뢰성: 배포 스모크 + 롤백 체크리스트 API/스크립트 표준화
   - 데이터: 증빙/감사 아카이브 무결성 배치 점검 강화
+- W17-3 착수 완료
+  - `ops_daily_check` 결과 요약 자동 JSON/CSV 아카이브 발행
+  - 최신 요약 및 이력 JSON/CSV API 추가
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
   - `/api/ops/deploy/smoke/record`
   - `/api/ops/integrity/evidence-archive`
+  - `/api/ops/runbook/checks/latest/summary.json`
+  - `/api/ops/runbook/checks/latest/summary.csv`
+  - `/api/ops/runbook/checks/archive.json`
+  - `/api/ops/runbook/checks/archive.csv`
 
 ## 다음 목표
 - W15 이후 운영을 "기능 확대"보다 "운영비용 절감 + 안정성 + 거버넌스 자동화"로 전환

@@ -312,6 +312,12 @@ W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD = float(getenv("W07_QUALITY_ALERT_ES
 W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD = float(getenv("W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD", "95"))
 W07_WEEKLY_ARCHIVE_ENABLED = _env_bool("W07_WEEKLY_ARCHIVE_ENABLED", True)
 W07_WEEKLY_ARCHIVE_PATH = getenv("W07_WEEKLY_ARCHIVE_PATH", "data/adoption-w07-archives").strip() or "data/adoption-w07-archives"
+OPS_DAILY_CHECK_ARCHIVE_ENABLED = _env_bool("OPS_DAILY_CHECK_ARCHIVE_ENABLED", True)
+OPS_DAILY_CHECK_ARCHIVE_PATH = (
+    getenv("OPS_DAILY_CHECK_ARCHIVE_PATH", "data/ops-daily-check-archives").strip()
+    or "data/ops-daily-check-archives"
+)
+OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS = _env_int("OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS", 60, min_value=1)
 EVIDENCE_ALLOWED_CONTENT_TYPES = {
     value.strip().lower()
     for value in getenv(
@@ -19274,6 +19280,283 @@ def run_alert_retry_job(
     )
 
 
+def _normalized_ops_daily_check_rows(checks: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in checks:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            {
+                "id": str(item.get("id") or ""),
+                "status": str(item.get("status") or "unknown"),
+                "message": str(item.get("message") or ""),
+            }
+        )
+    return rows
+
+
+def _build_ops_daily_check_summary(
+    *,
+    run_id: int | None,
+    checked_at: datetime,
+    trigger: str,
+    status: str,
+    overall_status: str,
+    check_count: int,
+    warning_count: int,
+    critical_count: int,
+    checks: list[dict[str, Any]],
+    alert_level: str,
+    alert_attempted: bool,
+    alert_dispatched: bool,
+    alert_error: str | None,
+    mttr_slo_check: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "version": "v1",
+        "job_name": "ops_daily_check",
+        "run_id": run_id,
+        "checked_at": checked_at.isoformat(),
+        "trigger": trigger,
+        "status": status,
+        "overall_status": overall_status,
+        "check_count": check_count,
+        "warning_count": warning_count,
+        "critical_count": critical_count,
+        "alert": {
+            "level": alert_level,
+            "attempted": alert_attempted,
+            "dispatched": alert_dispatched,
+            "error": alert_error,
+        },
+        "mttr_slo_check": mttr_slo_check,
+        "checks": _normalized_ops_daily_check_rows(checks),
+    }
+
+
+def _build_ops_daily_check_summary_csv(summary: dict[str, Any]) -> str:
+    checks = summary.get("checks")
+    if not isinstance(checks, list):
+        checks = []
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "run_id",
+            "checked_at",
+            "trigger",
+            "status",
+            "overall_status",
+            "check_count",
+            "warning_count",
+            "critical_count",
+            "alert_level",
+            "alert_attempted",
+            "alert_dispatched",
+            "alert_error",
+        ]
+    )
+    alert = summary.get("alert", {}) if isinstance(summary.get("alert"), dict) else {}
+    writer.writerow(
+        [
+            summary.get("run_id"),
+            summary.get("checked_at"),
+            summary.get("trigger"),
+            summary.get("status"),
+            summary.get("overall_status"),
+            summary.get("check_count"),
+            summary.get("warning_count"),
+            summary.get("critical_count"),
+            alert.get("level"),
+            bool(alert.get("attempted", False)),
+            bool(alert.get("dispatched", False)),
+            alert.get("error"),
+        ]
+    )
+    writer.writerow([])
+    writer.writerow(["check_id", "check_status", "check_message"])
+    for item in checks:
+        if not isinstance(item, dict):
+            continue
+        writer.writerow(
+            [
+                item.get("id"),
+                item.get("status"),
+                item.get("message"),
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _prune_ops_daily_check_archive_files(*, archive_dir: Path, now: datetime) -> int:
+    cutoff = now - timedelta(days=max(1, OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS))
+    deleted_count = 0
+    for pattern in ("ops-daily-check-*.json", "ops-daily-check-*.csv"):
+        for file_path in archive_dir.glob(pattern):
+            try:
+                modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+            except OSError:
+                continue
+            if modified_at >= cutoff:
+                continue
+            try:
+                file_path.unlink()
+                deleted_count += 1
+            except OSError:
+                continue
+    return deleted_count
+
+
+def _publish_ops_daily_check_summary_artifacts(
+    *,
+    summary: dict[str, Any],
+    finished_at: datetime,
+) -> dict[str, Any]:
+    archive = {
+        "enabled": OPS_DAILY_CHECK_ARCHIVE_ENABLED,
+        "path": OPS_DAILY_CHECK_ARCHIVE_PATH,
+        "retention_days": max(1, OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS),
+        "json_file": None,
+        "csv_file": None,
+        "pruned_files": 0,
+        "error": None,
+    }
+    if not OPS_DAILY_CHECK_ARCHIVE_ENABLED:
+        return archive
+    try:
+        archive_dir = Path(OPS_DAILY_CHECK_ARCHIVE_PATH)
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        stamp = finished_at.strftime("%Y%m%dT%H%M%SZ")
+        run_id = summary.get("run_id")
+        run_label = f"run-{run_id}" if run_id is not None else "run-na"
+        base_name = f"ops-daily-check-{stamp}-{run_label}"
+        json_file = archive_dir / f"{base_name}.json"
+        csv_file = archive_dir / f"{base_name}.csv"
+        json_payload = {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "summary": summary,
+        }
+        json_file.write_text(
+            json.dumps(json_payload, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        csv_file.write_text(_build_ops_daily_check_summary_csv(summary), encoding="utf-8")
+        archive["json_file"] = str(json_file)
+        archive["csv_file"] = str(csv_file)
+        archive["pruned_files"] = _prune_ops_daily_check_archive_files(archive_dir=archive_dir, now=finished_at)
+    except Exception as exc:  # pragma: no cover - defensive filesystem path
+        archive["error"] = str(exc)
+    return archive
+
+
+def _build_ops_daily_check_summary_from_job_run(model: JobRunRead, detail: dict[str, Any]) -> dict[str, Any]:
+    checks = detail.get("checks")
+    if not isinstance(checks, list):
+        checks = []
+    return _build_ops_daily_check_summary(
+        run_id=model.id,
+        checked_at=model.finished_at,
+        trigger=model.trigger,
+        status=model.status,
+        overall_status=str(detail.get("overall_status") or model.status),
+        check_count=int(detail.get("check_count") or len(checks)),
+        warning_count=int(detail.get("warning_count") or 0),
+        critical_count=int(detail.get("critical_count") or 0),
+        checks=[item for item in checks if isinstance(item, dict)],
+        alert_level=str(detail.get("alert_level") or "critical"),
+        alert_attempted=bool(detail.get("alert_attempted", False)),
+        alert_dispatched=bool(detail.get("alert_dispatched", False)),
+        alert_error=(str(detail.get("alert_error")) if detail.get("alert_error") is not None else None),
+        mttr_slo_check=detail.get("mttr_slo_check", {}) if isinstance(detail.get("mttr_slo_check"), dict) else {},
+    )
+
+
+def _build_ops_daily_check_archive_rows(*, limit: int) -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "ops_daily_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(max(1, min(limit, 365)))
+        ).mappings().all()
+
+    payload_rows: list[dict[str, Any]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else None
+        if summary is None:
+            summary = _build_ops_daily_check_summary_from_job_run(model, detail)
+        archive = detail.get("archive") if isinstance(detail.get("archive"), dict) else {}
+        payload_rows.append(
+            {
+                "run_id": model.id,
+                "finished_at": model.finished_at.isoformat(),
+                "trigger": model.trigger,
+                "status": model.status,
+                "overall_status": summary.get("overall_status"),
+                "check_count": summary.get("check_count"),
+                "warning_count": summary.get("warning_count"),
+                "critical_count": summary.get("critical_count"),
+                "alert_level": (summary.get("alert") or {}).get("level") if isinstance(summary.get("alert"), dict) else None,
+                "alert_attempted": bool((summary.get("alert") or {}).get("attempted", False))
+                if isinstance(summary.get("alert"), dict)
+                else False,
+                "alert_dispatched": bool((summary.get("alert") or {}).get("dispatched", False))
+                if isinstance(summary.get("alert"), dict)
+                else False,
+                "archive_json_file": archive.get("json_file"),
+                "archive_csv_file": archive.get("csv_file"),
+                "archive_error": archive.get("error"),
+            }
+        )
+    return payload_rows
+
+
+def _build_ops_daily_check_archive_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "run_id",
+            "finished_at",
+            "trigger",
+            "status",
+            "overall_status",
+            "check_count",
+            "warning_count",
+            "critical_count",
+            "alert_level",
+            "alert_attempted",
+            "alert_dispatched",
+            "archive_json_file",
+            "archive_csv_file",
+            "archive_error",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                row.get("run_id"),
+                row.get("finished_at"),
+                row.get("trigger"),
+                row.get("status"),
+                row.get("overall_status"),
+                row.get("check_count"),
+                row.get("warning_count"),
+                row.get("critical_count"),
+                row.get("alert_level"),
+                bool(row.get("alert_attempted", False)),
+                bool(row.get("alert_dispatched", False)),
+                row.get("archive_json_file"),
+                row.get("archive_csv_file"),
+                row.get("archive_error"),
+            ]
+        )
+    return buffer.getvalue()
+
+
 def run_ops_daily_check_job(
     *,
     trigger: str = "manual",
@@ -19347,32 +19630,66 @@ def run_ops_daily_check_job(
         status = "warning"
 
     finished_at = datetime.now(timezone.utc)
+    detail: dict[str, Any] = {
+        "overall_status": overall_status,
+        "check_count": len(checks),
+        "warning_count": warning_count,
+        "critical_count": critical_count,
+        "checks": checks,
+        "alert_level": alert_level,
+        "alert_attempted": alert_attempted,
+        "alert_dispatched": alert_dispatched,
+        "alert_error": alert_error,
+        "alert_channels": [channel.model_dump() for channel in alert_channels],
+        "security_posture": {
+            "rate_limit": posture_snapshot.get("rate_limit"),
+            "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
+            "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
+            "token_policy": posture_snapshot.get("token_policy"),
+        },
+        "mttr_slo_check": mttr_slo_summary,
+    }
     run_id = _write_job_run(
         job_name="ops_daily_check",
         trigger=trigger,
         status=status,
         started_at=started_at,
         finished_at=finished_at,
-        detail={
-            "overall_status": overall_status,
-            "check_count": len(checks),
-            "warning_count": warning_count,
-            "critical_count": critical_count,
-            "checks": checks,
-            "alert_level": alert_level,
-            "alert_attempted": alert_attempted,
-            "alert_dispatched": alert_dispatched,
-            "alert_error": alert_error,
-            "alert_channels": [channel.model_dump() for channel in alert_channels],
-            "security_posture": {
-                "rate_limit": posture_snapshot.get("rate_limit"),
-                "audit_archive_signing": posture_snapshot.get("audit_archive_signing"),
-                "evidence_storage_backend": posture_snapshot.get("evidence_storage_backend"),
-                "token_policy": posture_snapshot.get("token_policy"),
-            },
-            "mttr_slo_check": mttr_slo_summary,
-        },
+        detail=detail,
     )
+
+    summary = _build_ops_daily_check_summary(
+        run_id=run_id,
+        checked_at=finished_at,
+        trigger=trigger,
+        status=status,
+        overall_status=overall_status,
+        check_count=len(checks),
+        warning_count=warning_count,
+        critical_count=critical_count,
+        checks=checks,
+        alert_level=alert_level,
+        alert_attempted=alert_attempted,
+        alert_dispatched=alert_dispatched,
+        alert_error=alert_error,
+        mttr_slo_check=mttr_slo_summary,
+    )
+    archive = _publish_ops_daily_check_summary_artifacts(
+        summary=summary,
+        finished_at=finished_at,
+    )
+    detail["summary"] = summary
+    detail["archive"] = archive
+    if run_id is not None:
+        try:
+            with get_conn() as conn:
+                conn.execute(
+                    update(job_runs)
+                    .where(job_runs.c.id == run_id)
+                    .values(detail_json=_to_json_text(detail))
+                )
+        except SQLAlchemyError:
+            pass
 
     return {
         "run_id": run_id,
@@ -19396,6 +19713,8 @@ def run_ops_daily_check_job(
             "token_policy": posture_snapshot.get("token_policy"),
         },
         "mttr_slo_check": mttr_slo_summary,
+        "summary": summary,
+        "archive": archive,
     }
 
 
@@ -20352,6 +20671,10 @@ def _service_info_payload() -> dict[str, str]:
         "ops_runbook_checks_api": "/api/ops/runbook/checks",
         "ops_runbook_checks_run_api": "/api/ops/runbook/checks/run",
         "ops_runbook_checks_latest_api": "/api/ops/runbook/checks/latest",
+        "ops_runbook_checks_latest_summary_json_api": "/api/ops/runbook/checks/latest/summary.json",
+        "ops_runbook_checks_latest_summary_csv_api": "/api/ops/runbook/checks/latest/summary.csv",
+        "ops_runbook_checks_archive_json_api": "/api/ops/runbook/checks/archive.json",
+        "ops_runbook_checks_archive_csv_api": "/api/ops/runbook/checks/archive.csv",
         "ops_security_posture_api": "/api/ops/security/posture",
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
@@ -40262,6 +40585,18 @@ def _build_ops_runbook_checks_snapshot(
             else "No recent alert retry job run in last 90 minutes.",
         },
         {
+            "id": "ops_daily_check_archive",
+            "status": "ok" if OPS_DAILY_CHECK_ARCHIVE_ENABLED else "warning",
+            "message": (
+                "Ops daily check summary archive is enabled."
+                if OPS_DAILY_CHECK_ARCHIVE_ENABLED
+                else "Ops daily check summary archive is disabled."
+            ),
+            "archive_enabled": OPS_DAILY_CHECK_ARCHIVE_ENABLED,
+            "archive_path": OPS_DAILY_CHECK_ARCHIVE_PATH,
+            "retention_days": max(1, OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS),
+        },
+        {
             "id": "api_latency_p95",
             "status": latency_snapshot["status"],
             "message": latency_snapshot["message"],
@@ -40521,6 +40856,9 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
         "alerting": {
             "webhook_target_count": len(alert_targets),
             "ops_daily_check_alert_level": _normalize_ops_daily_check_alert_level(OPS_DAILY_CHECK_ALERT_LEVEL),
+            "ops_daily_check_archive_enabled": OPS_DAILY_CHECK_ARCHIVE_ENABLED,
+            "ops_daily_check_archive_path": OPS_DAILY_CHECK_ARCHIVE_PATH,
+            "ops_daily_check_archive_retention_days": max(1, OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS),
             "channel_guard_enabled": ALERT_CHANNEL_GUARD_ENABLED,
             "channel_guard_fail_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
             "channel_guard_cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
@@ -40663,6 +41001,10 @@ def get_ops_runbook_checks_latest(
         critical_count = int(detail.get("critical_count", sum(1 for item in checks if item.get("status") == "critical")))
     except (TypeError, ValueError):
         critical_count = sum(1 for item in checks if item.get("status") == "critical")
+    summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else None
+    if summary is None:
+        summary = _build_ops_daily_check_summary_from_job_run(model, detail)
+    archive = detail.get("archive") if isinstance(detail.get("archive"), dict) else {}
 
     response: dict[str, Any] = {
         "run_id": model.id,
@@ -40682,6 +41024,8 @@ def get_ops_runbook_checks_latest(
         "alert_channels": detail.get("alert_channels", []),
         "security_posture": detail.get("security_posture", {}),
         "mttr_slo_check": detail.get("mttr_slo_check", {}),
+        "summary": summary,
+        "archive": archive,
     }
     if include_checks:
         response["checks"] = checks
@@ -40698,6 +41042,134 @@ def get_ops_runbook_checks_latest(
         },
     )
     return response
+
+
+@app.get("/api/ops/runbook/checks/latest/summary.json")
+def get_ops_runbook_checks_latest_summary_json(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "ops_daily_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No ops_daily_check run found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else None
+    if summary is None:
+        summary = _build_ops_daily_check_summary_from_job_run(model, detail)
+    archive = detail.get("archive") if isinstance(detail.get("archive"), dict) else {}
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "job_name": "ops_daily_check",
+        "summary": summary,
+        "archive": archive,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_summary_json_view",
+        resource_type="ops_runbook",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+        },
+    )
+    return payload
+
+
+@app.get("/api/ops/runbook/checks/latest/summary.csv")
+def get_ops_runbook_checks_latest_summary_csv(
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == "ops_daily_check")
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No ops_daily_check run found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else None
+    if summary is None:
+        summary = _build_ops_daily_check_summary_from_job_run(model, detail)
+    csv_text = _build_ops_daily_check_summary_csv(summary)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-daily-check-summary-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_summary_csv_export",
+        resource_type="ops_runbook",
+        resource_id=file_name,
+        detail={
+            "run_id": model.id,
+            "status": model.status,
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@app.get("/api/ops/runbook/checks/archive.json")
+def get_ops_runbook_checks_archive_json(
+    limit: Annotated[int, Query(ge=1, le=365)] = 30,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    rows = _build_ops_daily_check_archive_rows(limit=limit)
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "job_name": "ops_daily_check",
+        "limit": limit,
+        "count": len(rows),
+        "rows": rows,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_archive_json_view",
+        resource_type="ops_runbook",
+        resource_id="archive",
+        detail={
+            "limit": limit,
+            "count": len(rows),
+        },
+    )
+    return payload
+
+
+@app.get("/api/ops/runbook/checks/archive.csv")
+def get_ops_runbook_checks_archive_csv(
+    limit: Annotated[int, Query(ge=1, le=365)] = 90,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    rows = _build_ops_daily_check_archive_rows(limit=limit)
+    csv_text = _build_ops_daily_check_archive_csv(rows)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-daily-check-archive-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_daily_check_archive_csv_export",
+        resource_type="ops_runbook",
+        resource_id=file_name,
+        detail={
+            "limit": limit,
+            "count": len(rows),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/api/ops/security/posture")
@@ -40735,6 +41207,11 @@ def get_ops_security_posture(
             "alert_mttr_slo_enabled": snapshot.get("alerting", {}).get("mttr_slo_enabled"),
             "alert_mttr_slo_window_days": snapshot.get("alerting", {}).get("mttr_slo_window_days"),
             "alert_mttr_slo_threshold_minutes": snapshot.get("alerting", {}).get("mttr_slo_threshold_minutes"),
+            "ops_daily_check_archive_enabled": snapshot.get("alerting", {}).get("ops_daily_check_archive_enabled"),
+            "ops_daily_check_archive_path": snapshot.get("alerting", {}).get("ops_daily_check_archive_path"),
+            "ops_daily_check_archive_retention_days": snapshot.get("alerting", {}).get(
+                "ops_daily_check_archive_retention_days"
+            ),
         },
     )
     return snapshot

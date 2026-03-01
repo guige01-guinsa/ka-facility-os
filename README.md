@@ -81,6 +81,10 @@ Open:
   - `GET /api/ops/runbook/checks` (permission: `admins:manage`)
   - `POST /api/ops/runbook/checks/run` (permission: `admins:manage`)
   - `GET /api/ops/runbook/checks/latest` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks/latest/summary.json` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks/latest/summary.csv` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks/archive.json` (permission: `admins:manage`)
+  - `GET /api/ops/runbook/checks/archive.csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -302,6 +306,9 @@ Optional alert webhook env:
 - `W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD` (default `95`)
 - `W07_WEEKLY_ARCHIVE_ENABLED` (default `true`)
 - `W07_WEEKLY_ARCHIVE_PATH` (default `data/adoption-w07-archives`)
+- `OPS_DAILY_CHECK_ARCHIVE_ENABLED` (default `true`)
+- `OPS_DAILY_CHECK_ARCHIVE_PATH` (default `data/ops-daily-check-archives`)
+- `OPS_DAILY_CHECK_ARCHIVE_RETENTION_DAYS` (default `60`)
 - `ALERT_GUARD_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_RETENTION_DAYS` (default `90`)
 - `ALERT_RETENTION_MAX_DELETE` (default `5000`)
@@ -368,6 +375,10 @@ Job monitoring:
 - `GET /api/ops/runbook/checks`
 - `POST /api/ops/runbook/checks/run`
 - `GET /api/ops/runbook/checks/latest`
+- `GET /api/ops/runbook/checks/latest/summary.json`
+- `GET /api/ops/runbook/checks/latest/summary.csv`
+- `GET /api/ops/runbook/checks/archive.json`
+- `GET /api/ops/runbook/checks/archive.csv`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
