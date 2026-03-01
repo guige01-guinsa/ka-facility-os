@@ -43,6 +43,9 @@ from app.database import (
     adoption_w04_evidence_files,
     adoption_w04_site_runs,
     adoption_w04_tracker_items,
+    adoption_w07_evidence_files,
+    adoption_w07_site_runs,
+    adoption_w07_tracker_items,
     alert_deliveries,
     admin_audit_logs,
     admin_tokens,
@@ -119,6 +122,15 @@ from app.schemas import (
     W04TrackerItemUpdate,
     W04TrackerOverviewRead,
     W04TrackerReadinessRead,
+    W07EvidenceRead,
+    W07TrackerBootstrapRequest,
+    W07TrackerBootstrapResponse,
+    W07TrackerCompletionRead,
+    W07TrackerCompletionRequest,
+    W07TrackerItemRead,
+    W07TrackerItemUpdate,
+    W07TrackerOverviewRead,
+    W07TrackerReadinessRead,
     WorkflowLockCreate,
     WorkflowLockDraftUpdate,
     WorkflowLockRead,
@@ -195,6 +207,13 @@ ADMIN_TOKEN_ROTATE_AFTER_DAYS = _env_int("ADMIN_TOKEN_ROTATE_AFTER_DAYS", 45, mi
 ADMIN_TOKEN_ROTATE_WARNING_DAYS = _env_int("ADMIN_TOKEN_ROTATE_WARNING_DAYS", 7, min_value=0)
 ADMIN_TOKEN_MAX_IDLE_DAYS = _env_int("ADMIN_TOKEN_MAX_IDLE_DAYS", 30, min_value=1)
 ADMIN_TOKEN_MAX_ACTIVE_PER_USER = _env_int("ADMIN_TOKEN_MAX_ACTIVE_PER_USER", 5, min_value=1)
+W07_QUALITY_ALERT_ENABLED = _env_bool("W07_QUALITY_ALERT_ENABLED", True)
+W07_QUALITY_ALERT_COOLDOWN_MINUTES = _env_int("W07_QUALITY_ALERT_COOLDOWN_MINUTES", 180, min_value=0)
+W07_QUALITY_ALERT_MIN_WINDOW_DAYS = _env_int("W07_QUALITY_ALERT_MIN_WINDOW_DAYS", 7, min_value=7)
+W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD = float(getenv("W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD", "30"))
+W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD = float(getenv("W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD", "95"))
+W07_WEEKLY_ARCHIVE_ENABLED = _env_bool("W07_WEEKLY_ARCHIVE_ENABLED", True)
+W07_WEEKLY_ARCHIVE_PATH = getenv("W07_WEEKLY_ARCHIVE_PATH", "data/adoption-w07-archives").strip() or "data/adoption-w07-archives"
 EVIDENCE_ALLOWED_CONTENT_TYPES = {
     value.strip().lower()
     for value in getenv(
@@ -389,6 +408,28 @@ W04_SITE_COMPLETION_STATUS_SET = {
 }
 W04_EVIDENCE_REQUIRED_ITEM_TYPES = {"coaching_action"}
 W04_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W07_TRACKER_STATUS_PENDING = "pending"
+W07_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W07_TRACKER_STATUS_DONE = "done"
+W07_TRACKER_STATUS_BLOCKED = "blocked"
+W07_TRACKER_STATUS_SET = {
+    W07_TRACKER_STATUS_PENDING,
+    W07_TRACKER_STATUS_IN_PROGRESS,
+    W07_TRACKER_STATUS_DONE,
+    W07_TRACKER_STATUS_BLOCKED,
+}
+W07_SITE_COMPLETION_STATUS_ACTIVE = "active"
+W07_SITE_COMPLETION_STATUS_COMPLETED = "completed"
+W07_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W07_SITE_COMPLETION_STATUS_SET = {
+    W07_SITE_COMPLETION_STATUS_ACTIVE,
+    W07_SITE_COMPLETION_STATUS_COMPLETED,
+    W07_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W07_EVIDENCE_REQUIRED_ITEM_TYPES = {"sla_checklist", "coaching_play"}
+W07_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+W07_WEEKLY_JOB_NAME = "adoption_w07_sla_quality_weekly"
+W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 
 ADOPTION_PLAN_START = date(2026, 3, 2)
 ADOPTION_PLAN_END = date(2026, 5, 22)
@@ -2558,6 +2599,7 @@ def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[
             ("/api/adoption/w02/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w03/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w04/tracker/items/" in path and path.endswith("/evidence"))
+            or ("/api/adoption/w07/tracker/items/" in path and path.endswith("/evidence"))
         ):
             return "auth-upload", API_RATE_LIMIT_MAX_AUTH_UPLOAD
         if path.startswith("/api/admin/"):
@@ -6035,6 +6077,297 @@ def _reset_w04_completion_if_closed(
     )
 
 
+def _row_to_w07_tracker_item_model(row: dict[str, Any]) -> W07TrackerItemRead:
+    return W07TrackerItemRead(
+        id=int(row["id"]),
+        site=str(row["site"]),
+        item_type=str(row["item_type"]),
+        item_key=str(row["item_key"]),
+        item_name=str(row["item_name"]),
+        assignee=row.get("assignee"),
+        status=str(row["status"]),
+        completion_checked=bool(row.get("completion_checked", False)),
+        completion_note=str(row.get("completion_note") or ""),
+        due_at=_as_optional_datetime(row.get("due_at")),
+        completed_at=_as_optional_datetime(row.get("completed_at")),
+        evidence_count=int(row.get("evidence_count") or 0),
+        created_by=str(row.get("created_by") or "system"),
+        updated_by=str(row.get("updated_by") or "system"),
+        created_at=_as_datetime(row["created_at"]),
+        updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _row_to_w07_evidence_model(row: dict[str, Any]) -> W07EvidenceRead:
+    return W07EvidenceRead(
+        id=int(row["id"]),
+        tracker_item_id=int(row["tracker_item_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
+    )
+
+
+def _adoption_w07_catalog_items(site: str) -> list[dict[str, Any]]:
+    payload = _adoption_w07_payload()
+    timeline = payload.get("timeline", {})
+    default_due_at: datetime | None = None
+    end_date_raw = str(timeline.get("end_date") or "")
+    if end_date_raw:
+        try:
+            parsed = datetime.strptime(f"{end_date_raw} 23:59", "%Y-%m-%d %H:%M")
+            default_due_at = parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            default_due_at = None
+
+    entries: list[dict[str, Any]] = []
+    for item in ADOPTION_W07_SLA_CHECKLIST:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "sla_checklist",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("control", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W07_COACHING_PLAYS:
+        entries.append(
+            {
+                "site": site,
+                "item_type": "coaching_play",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("play", "")),
+                "due_at": default_due_at,
+            }
+        )
+    for item in ADOPTION_W07_SCHEDULED_EVENTS:
+        event_due_at = default_due_at
+        try:
+            event_due = datetime.strptime(
+                f"{str(item.get('date', ''))} {str(item.get('end_time', '23:59'))}",
+                "%Y-%m-%d %H:%M",
+            )
+            event_due_at = event_due.replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+        entries.append(
+            {
+                "site": site,
+                "item_type": "scheduled_event",
+                "item_key": str(item.get("id", "")),
+                "item_name": str(item.get("title", "")),
+                "due_at": event_due_at,
+            }
+        )
+    return entries
+
+
+def _compute_w07_tracker_overview(site: str, rows: list[W07TrackerItemRead]) -> W07TrackerOverviewRead:
+    pending_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_BLOCKED)
+    total = len(rows)
+    completion_rate = int(round((done_count / total) * 100)) if total > 0 else 0
+    evidence_total = sum(int(row.evidence_count) for row in rows)
+    assignee_breakdown: dict[str, int] = {}
+    for row in rows:
+        assignee = (row.assignee or "unassigned").strip() or "unassigned"
+        assignee_breakdown[assignee] = assignee_breakdown.get(assignee, 0) + 1
+
+    return W07TrackerOverviewRead(
+        site=site,
+        total_items=total,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate,
+        evidence_total_count=evidence_total,
+        assignee_breakdown=assignee_breakdown,
+    )
+
+
+def _compute_w07_tracker_readiness(
+    *,
+    site: str,
+    rows: list[W07TrackerItemRead],
+    checked_at: datetime | None = None,
+) -> W07TrackerReadinessRead:
+    now = checked_at or datetime.now(timezone.utc)
+    total_items = len(rows)
+    pending_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_PENDING)
+    in_progress_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_IN_PROGRESS)
+    done_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_DONE)
+    blocked_count = sum(1 for row in rows if row.status == W07_TRACKER_STATUS_BLOCKED)
+    completion_rate_percent = int(round((done_count / total_items) * 100)) if total_items > 0 else 0
+    evidence_total_count = sum(int(row.evidence_count) for row in rows)
+
+    missing_assignee_count = sum(1 for row in rows if not (row.assignee or "").strip())
+    missing_completion_checked_count = sum(1 for row in rows if not bool(row.completion_checked))
+    missing_required_evidence_count = sum(
+        1 for row in rows if row.item_type in W07_EVIDENCE_REQUIRED_ITEM_TYPES and int(row.evidence_count) <= 0
+    )
+
+    blockers: list[str] = []
+    if total_items == 0:
+        blockers.append("트래커 항목이 없습니다. bootstrap을 먼저 실행하세요.")
+    if pending_count > 0:
+        blockers.append(f"pending 항목 {pending_count}건이 남아 있습니다.")
+    if in_progress_count > 0:
+        blockers.append(f"in_progress 항목 {in_progress_count}건이 남아 있습니다.")
+    if blocked_count > 0:
+        blockers.append(f"blocked 항목 {blocked_count}건을 해소해야 합니다.")
+    if missing_assignee_count > 0:
+        blockers.append(f"담당자 미지정 항목 {missing_assignee_count}건이 있습니다.")
+    if missing_completion_checked_count > 0:
+        blockers.append(f"완료 체크 미확정 항목 {missing_completion_checked_count}건이 있습니다.")
+    if missing_required_evidence_count > 0:
+        blockers.append(f"필수 증빙 미업로드(sla_checklist/coaching_play) 항목 {missing_required_evidence_count}건이 있습니다.")
+
+    rule_checks = [
+        total_items > 0,
+        pending_count == 0,
+        in_progress_count == 0,
+        blocked_count == 0,
+        missing_assignee_count == 0,
+        missing_completion_checked_count == 0,
+        missing_required_evidence_count == 0,
+    ]
+    readiness_score_percent = int(round((sum(1 for ok in rule_checks if ok) / len(rule_checks)) * 100))
+    if total_items > 0:
+        readiness_score_percent = max(readiness_score_percent, completion_rate_percent)
+    ready = len(blockers) == 0
+    if ready:
+        readiness_score_percent = 100
+
+    return W07TrackerReadinessRead(
+        site=site,
+        checked_at=now,
+        total_items=total_items,
+        pending_count=pending_count,
+        in_progress_count=in_progress_count,
+        done_count=done_count,
+        blocked_count=blocked_count,
+        completion_rate_percent=completion_rate_percent,
+        evidence_total_count=evidence_total_count,
+        missing_assignee_count=missing_assignee_count,
+        missing_completion_checked_count=missing_completion_checked_count,
+        missing_required_evidence_count=missing_required_evidence_count,
+        readiness_score_percent=readiness_score_percent,
+        ready=ready,
+        blockers=blockers,
+    )
+
+
+def _resolve_w07_site_completion_status(raw: Any) -> str:
+    value = str(raw or "").strip().lower()
+    if value in W07_SITE_COMPLETION_STATUS_SET:
+        return value
+    return W07_SITE_COMPLETION_STATUS_ACTIVE
+
+
+def _row_to_w07_completion_model(
+    *,
+    site: str,
+    readiness: W07TrackerReadinessRead,
+    row: dict[str, Any] | None,
+) -> W07TrackerCompletionRead:
+    if row is None:
+        return W07TrackerCompletionRead(
+            site=site,
+            status=W07_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            completed_by=None,
+            completed_at=None,
+            force_used=False,
+            last_checked_at=readiness.checked_at,
+            readiness=readiness,
+        )
+
+    status = _resolve_w07_site_completion_status(row.get("status"))
+    completion_note = str(row.get("completion_note") or "")
+    completed_by = row.get("completed_by")
+    completed_at = _as_optional_datetime(row.get("completed_at"))
+    force_used = bool(row.get("force_used", False))
+    last_checked_at = _as_optional_datetime(row.get("last_checked_at")) or readiness.checked_at
+    return W07TrackerCompletionRead(
+        site=site,
+        status=status,
+        completion_note=completion_note,
+        completed_by=completed_by,
+        completed_at=completed_at,
+        force_used=force_used,
+        last_checked_at=last_checked_at,
+        readiness=readiness,
+    )
+
+
+def _load_w07_tracker_items_for_site(site: str) -> list[W07TrackerItemRead]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w07_tracker_items)
+            .where(adoption_w07_tracker_items.c.site == site)
+            .order_by(
+                adoption_w07_tracker_items.c.item_type.asc(),
+                adoption_w07_tracker_items.c.item_key.asc(),
+                adoption_w07_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+    return [_row_to_w07_tracker_item_model(row) for row in rows]
+
+
+def _reset_w07_completion_if_closed(
+    *,
+    conn: Any,
+    site: str,
+    actor_username: str,
+    checked_at: datetime,
+    reason: str,
+) -> None:
+    row = conn.execute(
+        select(adoption_w07_site_runs.c.status)
+        .where(adoption_w07_site_runs.c.site == site)
+        .limit(1)
+    ).mappings().first()
+    if row is None:
+        return
+    status = _resolve_w07_site_completion_status(row.get("status"))
+    if status == W07_SITE_COMPLETION_STATUS_ACTIVE:
+        return
+    conn.execute(
+        update(adoption_w07_site_runs)
+        .where(adoption_w07_site_runs.c.site == site)
+        .values(
+            status=W07_SITE_COMPLETION_STATUS_ACTIVE,
+            completion_note="",
+            force_used=False,
+            completed_by=None,
+            completed_at=None,
+            last_checked_at=checked_at,
+            readiness_json=_to_json_text(
+                {
+                    "auto_reopened": True,
+                    "reason": reason,
+                    "checked_at": checked_at.isoformat(),
+                }
+            ),
+            updated_by=actor_username,
+            updated_at=checked_at,
+        )
+    )
+
+
 def _median_minutes(values: list[float]) -> float | None:
     if not values:
         return None
@@ -6042,6 +6375,26 @@ def _median_minutes(values: list[float]) -> float | None:
         return round(float(statistics.median(values)), 2)
     except statistics.StatisticsError:
         return None
+
+
+def _percentile_minutes(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    if percentile <= 0:
+        return round(float(min(values)), 2)
+    if percentile >= 100:
+        return round(float(max(values)), 2)
+    sorted_values = sorted(values)
+    if len(sorted_values) == 1:
+        return round(float(sorted_values[0]), 2)
+    rank = (len(sorted_values) - 1) * (percentile / 100.0)
+    lower = int(math.floor(rank))
+    upper = int(math.ceil(rank))
+    if lower == upper:
+        return round(float(sorted_values[lower]), 2)
+    weight = rank - lower
+    interpolated = sorted_values[lower] + (sorted_values[upper] - sorted_values[lower]) * weight
+    return round(float(interpolated), 2)
 
 
 def _build_w04_funnel_snapshot(
@@ -6914,9 +7267,68 @@ def _build_w07_sla_quality_snapshot(
     start = now - timedelta(days=window_days)
     baseline_start = start - timedelta(days=baseline_days)
 
+    def _empty_snapshot() -> dict[str, Any]:
+        return {
+            "generated_at": now.isoformat(),
+            "site": site,
+            "window_days": window_days,
+            "baseline_days": baseline_days,
+            "target_response_improvement_percent": 10.0,
+            "thresholds": {
+                "escalation_rate_percent": round(max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD), 2),
+                "alert_success_rate_percent": round(max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD)), 2),
+                "data_quality_issue_rate_percent": 5.0,
+            },
+            "metrics": {
+                "created_work_orders": 0,
+                "acked_work_orders": 0,
+                "completed_work_orders": 0,
+                "median_ack_minutes": None,
+                "p90_ack_minutes": None,
+                "baseline_median_ack_minutes": None,
+                "response_time_improvement_percent": None,
+                "target_met": False,
+                "median_mttr_minutes": None,
+                "priority_mttr_minutes": {},
+                "sla_violation_count": 0,
+                "sla_violation_rate_percent": 0.0,
+                "open_work_orders": 0,
+                "overdue_open_work_orders": 0,
+                "escalated_open_work_orders": 0,
+                "escalated_work_orders": 0,
+                "escalation_rate_percent": 0.0,
+                "alert_total": 0,
+                "alert_success_count": 0,
+                "alert_success_rate_percent": 0.0,
+                "sla_run_count": 0,
+                "data_quality_gate_pass": True,
+                "data_quality_issue_count": 0,
+                "data_quality_critical_issue_count": 0,
+                "data_quality_issue_rate_percent": 0.0,
+            },
+            "data_quality": {
+                "gate_pass": True,
+                "issue_count": 0,
+                "critical_issue_count": 0,
+                "issue_rate_percent": 0.0,
+                "checks": {
+                    "missing_due_at_count": 0,
+                    "missing_priority_count": 0,
+                    "invalid_status_count": 0,
+                    "completed_without_completed_at_count": 0,
+                    "ack_before_created_count": 0,
+                    "completion_before_created_count": 0,
+                    "due_before_created_count": 0,
+                },
+            },
+            "top_risk_sites": [],
+            "recommendations": [],
+        }
+
     current_stmt = select(
         work_orders.c.site,
         work_orders.c.status,
+        work_orders.c.priority,
         work_orders.c.created_at,
         work_orders.c.acknowledged_at,
         work_orders.c.completed_at,
@@ -6935,6 +7347,7 @@ def _build_w07_sla_quality_snapshot(
     open_stmt = select(
         work_orders.c.site,
         work_orders.c.status,
+        work_orders.c.priority,
         work_orders.c.due_at,
         work_orders.c.is_escalated,
     ).where(work_orders.c.status.in_(["open", "acked"]))
@@ -6955,33 +7368,7 @@ def _build_w07_sla_quality_snapshot(
         open_stmt = open_stmt.where(work_orders.c.site == site)
     elif allowed_sites is not None:
         if not allowed_sites:
-            return {
-                "generated_at": now.isoformat(),
-                "site": site,
-                "window_days": window_days,
-                "baseline_days": baseline_days,
-                "target_response_improvement_percent": 10.0,
-                "metrics": {
-                    "created_work_orders": 0,
-                    "acked_work_orders": 0,
-                    "completed_work_orders": 0,
-                    "median_ack_minutes": None,
-                    "baseline_median_ack_minutes": None,
-                    "response_time_improvement_percent": None,
-                    "target_met": False,
-                    "open_work_orders": 0,
-                    "overdue_open_work_orders": 0,
-                    "escalated_open_work_orders": 0,
-                    "escalated_work_orders": 0,
-                    "escalation_rate_percent": 0.0,
-                    "alert_total": 0,
-                    "alert_success_count": 0,
-                    "alert_success_rate_percent": 0.0,
-                    "sla_run_count": 0,
-                },
-                "top_risk_sites": [],
-                "recommendations": [],
-            }
+            return _empty_snapshot()
         current_stmt = current_stmt.where(work_orders.c.site.in_(allowed_sites))
         baseline_stmt = baseline_stmt.where(work_orders.c.site.in_(allowed_sites))
         open_stmt = open_stmt.where(work_orders.c.site.in_(allowed_sites))
@@ -7003,10 +7390,22 @@ def _build_w07_sla_quality_snapshot(
             values.append((acknowledged_at - created_at).total_seconds() / 60.0)
         return values
 
+    def _normalize_priority(raw: Any) -> str:
+        value = str(raw or "").strip().lower()
+        if value in {"low", "medium", "high", "critical"}:
+            return value
+        return "unknown"
+
+    def _safe_rate(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round((float(numerator) / float(denominator)) * 100.0, 2)
+
     current_ack_minutes = _ack_minutes(current_rows)
     baseline_ack_minutes = _ack_minutes(baseline_rows)
-    median_ack_minutes = round(statistics.median(current_ack_minutes), 2) if current_ack_minutes else None
-    baseline_median_ack_minutes = round(statistics.median(baseline_ack_minutes), 2) if baseline_ack_minutes else None
+    median_ack_minutes = _median_minutes(current_ack_minutes)
+    p90_ack_minutes = _percentile_minutes(current_ack_minutes, 90.0)
+    baseline_median_ack_minutes = _median_minutes(baseline_ack_minutes)
     response_time_improvement_percent: float | None = None
     if baseline_median_ack_minutes is not None and median_ack_minutes is not None:
         if baseline_median_ack_minutes > 0:
@@ -7021,16 +7420,94 @@ def _build_w07_sla_quality_snapshot(
     acked_work_orders = sum(1 for row in current_rows if _as_optional_datetime(row.get("acknowledged_at")) is not None)
     completed_work_orders = sum(1 for row in current_rows if _as_optional_datetime(row.get("completed_at")) is not None)
     escalated_work_orders = sum(1 for row in current_rows if bool(row.get("is_escalated", False)))
-    escalation_rate_percent = (
-        round((escalated_work_orders / created_work_orders) * 100.0, 2) if created_work_orders > 0 else 0.0
-    )
+    escalation_rate_percent = _safe_rate(escalated_work_orders, created_work_orders)
+
+    priority_mttr_values: dict[str, list[float]] = {}
+    overall_mttr_values: list[float] = []
+    site_created: dict[str, int] = {}
+    site_escalated_work_orders: dict[str, int] = {}
+    site_violation_count: dict[str, int] = {}
+    site_ack_values: dict[str, list[float]] = {}
+
+    missing_due_at_count = 0
+    missing_priority_count = 0
+    invalid_status_count = 0
+    completed_without_completed_at_count = 0
+    ack_before_created_count = 0
+    completion_before_created_count = 0
+    due_before_created_count = 0
+    sla_violation_count = 0
+
+    valid_statuses = {"open", "acked", "completed", "canceled"}
+    for row in current_rows:
+        row_site = str(row.get("site") or "").strip()
+        if row_site:
+            site_created[row_site] = int(site_created.get(row_site, 0)) + 1
+            if bool(row.get("is_escalated", False)):
+                site_escalated_work_orders[row_site] = int(site_escalated_work_orders.get(row_site, 0)) + 1
+
+        status_value = str(row.get("status") or "").strip().lower()
+        if status_value not in valid_statuses:
+            invalid_status_count += 1
+
+        priority_value = _normalize_priority(row.get("priority"))
+        if priority_value == "unknown":
+            missing_priority_count += 1
+
+        created_at = _as_optional_datetime(row.get("created_at"))
+        acknowledged_at = _as_optional_datetime(row.get("acknowledged_at"))
+        completed_at = _as_optional_datetime(row.get("completed_at"))
+        due_at = _as_optional_datetime(row.get("due_at"))
+
+        if due_at is None:
+            missing_due_at_count += 1
+        elif created_at is not None and due_at < created_at:
+            due_before_created_count += 1
+
+        if status_value == "completed" and completed_at is None:
+            completed_without_completed_at_count += 1
+
+        if created_at is not None and acknowledged_at is not None:
+            if acknowledged_at < created_at:
+                ack_before_created_count += 1
+            elif row_site:
+                site_ack_values.setdefault(row_site, []).append(
+                    (acknowledged_at - created_at).total_seconds() / 60.0
+                )
+
+        if created_at is not None and completed_at is not None:
+            if completed_at < created_at:
+                completion_before_created_count += 1
+            else:
+                mttr_minutes = (completed_at - created_at).total_seconds() / 60.0
+                overall_mttr_values.append(mttr_minutes)
+                priority_mttr_values.setdefault(priority_value, []).append(mttr_minutes)
+
+        violated = False
+        if due_at is not None:
+            if completed_at is not None:
+                violated = completed_at > due_at
+            else:
+                violated = now > due_at
+        if violated:
+            sla_violation_count += 1
+            if row_site:
+                site_violation_count[row_site] = int(site_violation_count.get(row_site, 0)) + 1
+
+    priority_mttr_minutes = {
+        priority: _median_minutes(values)
+        for priority, values in sorted(priority_mttr_values.items(), key=lambda item: item[0])
+        if values
+    }
+    median_mttr_minutes = _median_minutes(overall_mttr_values)
+    sla_violation_rate_percent = _safe_rate(sla_violation_count, created_work_orders)
 
     open_work_orders = 0
     overdue_open_work_orders = 0
     escalated_open_work_orders = 0
     site_open: dict[str, int] = {}
     site_overdue: dict[str, int] = {}
-    site_escalated: dict[str, int] = {}
+    site_escalated_open: dict[str, int] = {}
     for row in open_rows:
         row_site = str(row.get("site") or "").strip()
         if not row_site:
@@ -7043,7 +7520,7 @@ def _build_w07_sla_quality_snapshot(
             site_overdue[row_site] = int(site_overdue.get(row_site, 0)) + 1
         if bool(row.get("is_escalated", False)):
             escalated_open_work_orders += 1
-            site_escalated[row_site] = int(site_escalated.get(row_site, 0)) + 1
+            site_escalated_open[row_site] = int(site_escalated_open.get(row_site, 0)) + 1
 
     alert_total = 0
     alert_success_count = 0
@@ -7069,7 +7546,7 @@ def _build_w07_sla_quality_snapshot(
         alert_total += 1
         if str(row.get("status") or "").strip().lower() == "success":
             alert_success_count += 1
-    alert_success_rate_percent = round((alert_success_count / alert_total) * 100.0, 2) if alert_total > 0 else 0.0
+    alert_success_rate_percent = _safe_rate(alert_success_count, alert_total)
 
     sla_run_count = 0
     for row in sla_run_rows:
@@ -7092,66 +7569,93 @@ def _build_w07_sla_quality_snapshot(
                 continue
         sla_run_count += 1
 
-    site_ack: dict[str, list[float]] = {}
-    for row in current_rows:
-        row_site = str(row.get("site") or "").strip()
-        if not row_site:
-            continue
-        created_at = _as_optional_datetime(row.get("created_at"))
-        acknowledged_at = _as_optional_datetime(row.get("acknowledged_at"))
-        if created_at is None or acknowledged_at is None or acknowledged_at < created_at:
-            continue
-        site_ack.setdefault(row_site, []).append((acknowledged_at - created_at).total_seconds() / 60.0)
-
     top_risk_sites: list[dict[str, Any]] = []
     if site is None:
-        for site_name, open_count in site_open.items():
-            ack_values = site_ack.get(site_name, [])
+        all_sites = set(site_open) | set(site_created)
+        for site_name in sorted(all_sites):
+            created_count = int(site_created.get(site_name, 0))
+            violation_count = int(site_violation_count.get(site_name, 0))
+            ack_values = site_ack_values.get(site_name, [])
             top_risk_sites.append(
                 {
                     "site": site_name,
-                    "open_work_orders": open_count,
+                    "open_work_orders": int(site_open.get(site_name, 0)),
                     "overdue_open_work_orders": int(site_overdue.get(site_name, 0)),
-                    "escalated_open_work_orders": int(site_escalated.get(site_name, 0)),
-                    "median_ack_minutes": round(statistics.median(ack_values), 2) if ack_values else None,
+                    "escalated_open_work_orders": int(site_escalated_open.get(site_name, 0)),
+                    "escalation_rate_percent": _safe_rate(
+                        int(site_escalated_work_orders.get(site_name, 0)),
+                        created_count,
+                    ),
+                    "sla_violation_rate_percent": _safe_rate(violation_count, created_count),
+                    "median_ack_minutes": _median_minutes(ack_values),
+                    "p90_ack_minutes": _percentile_minutes(ack_values, 90.0),
                 }
             )
         top_risk_sites = sorted(
             top_risk_sites,
             key=lambda item: (
+                float(item.get("sla_violation_rate_percent") or 0.0),
+                float(item.get("escalation_rate_percent") or 0.0),
                 int(item.get("overdue_open_work_orders") or 0),
-                int(item.get("escalated_open_work_orders") or 0),
                 int(item.get("open_work_orders") or 0),
             ),
             reverse=True,
         )[:5]
     elif site is not None:
-        ack_values = site_ack.get(site, [])
+        ack_values = site_ack_values.get(site, [])
+        created_count = int(site_created.get(site, 0))
         top_risk_sites = [
             {
                 "site": site,
                 "open_work_orders": open_work_orders,
                 "overdue_open_work_orders": overdue_open_work_orders,
                 "escalated_open_work_orders": escalated_open_work_orders,
-                "median_ack_minutes": round(statistics.median(ack_values), 2) if ack_values else None,
+                "escalation_rate_percent": _safe_rate(int(site_escalated_work_orders.get(site, 0)), created_count),
+                "sla_violation_rate_percent": _safe_rate(int(site_violation_count.get(site, 0)), created_count),
+                "median_ack_minutes": _median_minutes(ack_values),
+                "p90_ack_minutes": _percentile_minutes(ack_values, 90.0),
             }
         ]
 
     target_response_improvement_percent = 10.0
+    data_quality_issue_count = (
+        missing_due_at_count
+        + missing_priority_count
+        + invalid_status_count
+        + completed_without_completed_at_count
+        + ack_before_created_count
+        + completion_before_created_count
+        + due_before_created_count
+    )
+    data_quality_critical_issue_count = (
+        completed_without_completed_at_count
+        + ack_before_created_count
+        + completion_before_created_count
+        + due_before_created_count
+    )
+    data_quality_issue_rate_percent = _safe_rate(data_quality_issue_count, created_work_orders)
+    data_quality_gate_pass = data_quality_critical_issue_count == 0 and data_quality_issue_rate_percent <= 5.0
+
     recommendations: list[str] = []
     if response_time_improvement_percent is None:
         recommendations.append("ACK 반응시간 비교 데이터가 부족합니다. ack 이벤트를 누락 없이 기록하세요.")
     elif response_time_improvement_percent < target_response_improvement_percent:
         recommendations.append("SLA response 개선폭이 목표 미만입니다. 지연 site를 우선 코칭하세요.")
+    if p90_ack_minutes is not None and p90_ack_minutes > 120.0:
+        recommendations.append("ACK p90이 120분을 초과했습니다. 피크 시간대 큐 분산/즉시 ACK 룰을 적용하세요.")
+    if sla_violation_rate_percent > 20.0:
+        recommendations.append("SLA violation rate가 높습니다. due_at/우선순위 기준 triage를 즉시 강화하세요.")
     if overdue_open_work_orders > 0:
         recommendations.append("overdue open 작업지시가 남아 있습니다. 담당자 재할당과 ETA 재설정을 수행하세요.")
-    if escalation_rate_percent >= 30.0:
+    if escalation_rate_percent >= max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD):
         recommendations.append("escalation rate가 높습니다. 고위험 작업 분리 보드를 운영하세요.")
-    if alert_total > 0 and alert_success_rate_percent < 95.0:
+    if alert_total > 0 and alert_success_rate_percent < max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD)):
         recommendations.append("alert 성공률이 낮습니다. 재시도 런과 채널 상태 점검을 실행하세요.")
     expected_runs = max(1, window_days // 7)
     if sla_run_count < expected_runs:
         recommendations.append("SLA 에스컬레이션 런 빈도가 낮습니다. Cron/수동 백업 런을 점검하세요.")
+    if not data_quality_gate_pass:
+        recommendations.append("데이터 품질 게이트 실패입니다. due_at/상태/타임스탬프 무결성을 먼저 복구하세요.")
     if not recommendations:
         recommendations.append("SLA 품질 지표가 목표 범위입니다. 현재 운영 리듬을 유지하세요.")
 
@@ -7161,17 +7665,27 @@ def _build_w07_sla_quality_snapshot(
         "window_days": window_days,
         "baseline_days": baseline_days,
         "target_response_improvement_percent": target_response_improvement_percent,
+        "thresholds": {
+            "escalation_rate_percent": round(max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD), 2),
+            "alert_success_rate_percent": round(max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD)), 2),
+            "data_quality_issue_rate_percent": 5.0,
+        },
         "metrics": {
             "created_work_orders": created_work_orders,
             "acked_work_orders": acked_work_orders,
             "completed_work_orders": completed_work_orders,
             "median_ack_minutes": median_ack_minutes,
+            "p90_ack_minutes": p90_ack_minutes,
             "baseline_median_ack_minutes": baseline_median_ack_minutes,
             "response_time_improvement_percent": response_time_improvement_percent,
             "target_met": (
                 response_time_improvement_percent is not None
                 and response_time_improvement_percent >= target_response_improvement_percent
             ),
+            "median_mttr_minutes": median_mttr_minutes,
+            "priority_mttr_minutes": priority_mttr_minutes,
+            "sla_violation_count": sla_violation_count,
+            "sla_violation_rate_percent": sla_violation_rate_percent,
             "open_work_orders": open_work_orders,
             "overdue_open_work_orders": overdue_open_work_orders,
             "escalated_open_work_orders": escalated_open_work_orders,
@@ -7181,10 +7695,344 @@ def _build_w07_sla_quality_snapshot(
             "alert_success_count": alert_success_count,
             "alert_success_rate_percent": alert_success_rate_percent,
             "sla_run_count": sla_run_count,
+            "data_quality_gate_pass": data_quality_gate_pass,
+            "data_quality_issue_count": data_quality_issue_count,
+            "data_quality_critical_issue_count": data_quality_critical_issue_count,
+            "data_quality_issue_rate_percent": data_quality_issue_rate_percent,
+        },
+        "data_quality": {
+            "gate_pass": data_quality_gate_pass,
+            "issue_count": data_quality_issue_count,
+            "critical_issue_count": data_quality_critical_issue_count,
+            "issue_rate_percent": data_quality_issue_rate_percent,
+            "checks": {
+                "missing_due_at_count": missing_due_at_count,
+                "missing_priority_count": missing_priority_count,
+                "invalid_status_count": invalid_status_count,
+                "completed_without_completed_at_count": completed_without_completed_at_count,
+                "ack_before_created_count": ack_before_created_count,
+                "completion_before_created_count": completion_before_created_count,
+                "due_before_created_count": due_before_created_count,
+            },
         },
         "top_risk_sites": top_risk_sites,
         "recommendations": recommendations,
     }
+
+
+def _parse_job_detail_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    if isinstance(loaded, dict):
+        return loaded
+    return {}
+
+
+def _build_w07_degradation_signals(snapshot: dict[str, Any]) -> dict[str, Any]:
+    metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+    escalation_rate = float(metrics.get("escalation_rate_percent") or 0.0)
+    alert_success_rate = float(metrics.get("alert_success_rate_percent") or 0.0)
+    violation_rate = float(metrics.get("sla_violation_rate_percent") or 0.0)
+    data_quality_gate_pass = bool(metrics.get("data_quality_gate_pass", True))
+    response_improvement = metrics.get("response_time_improvement_percent")
+
+    escalation_threshold = max(0.0, W07_QUALITY_ALERT_ESCALATION_RATE_THRESHOLD)
+    success_threshold = max(0.0, min(100.0, W07_QUALITY_ALERT_SUCCESS_RATE_THRESHOLD))
+    violation_threshold = max(10.0, escalation_threshold)
+
+    reasons: list[str] = []
+    if escalation_rate >= escalation_threshold:
+        reasons.append(f"escalation_rate={escalation_rate}% >= {round(escalation_threshold, 2)}%")
+    if alert_success_rate < success_threshold:
+        reasons.append(f"alert_success_rate={alert_success_rate}% < {round(success_threshold, 2)}%")
+    if violation_rate >= violation_threshold:
+        reasons.append(f"sla_violation_rate={violation_rate}% >= {round(violation_threshold, 2)}%")
+    if not data_quality_gate_pass:
+        reasons.append("data_quality_gate=FAIL")
+    if isinstance(response_improvement, (int, float)) and float(response_improvement) < 0:
+        reasons.append(f"ack_improvement={round(float(response_improvement), 2)}% < 0%")
+
+    return {
+        "degraded": len(reasons) > 0,
+        "reasons": reasons,
+        "signals": {
+            "escalation_rate_percent": round(escalation_rate, 2),
+            "alert_success_rate_percent": round(alert_success_rate, 2),
+            "sla_violation_rate_percent": round(violation_rate, 2),
+            "data_quality_gate_pass": data_quality_gate_pass,
+            "response_time_improvement_percent": response_improvement,
+        },
+        "thresholds": {
+            "escalation_rate_percent": round(escalation_threshold, 2),
+            "alert_success_rate_percent": round(success_threshold, 2),
+            "sla_violation_rate_percent": round(violation_threshold, 2),
+        },
+    }
+
+
+def _w07_alert_cooldown_state(*, now: datetime, site: str | None, max_rows: int = 200) -> tuple[bool, int, str | None]:
+    cooldown_minutes = max(0, W07_QUALITY_ALERT_COOLDOWN_MINUTES)
+    if cooldown_minutes <= 0:
+        return False, 0, None
+
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(
+                alert_deliveries.c.payload_json,
+                alert_deliveries.c.last_attempt_at,
+                alert_deliveries.c.created_at,
+            )
+            .where(alert_deliveries.c.event_type == W07_DEGRADATION_ALERT_EVENT_TYPE)
+            .order_by(alert_deliveries.c.last_attempt_at.desc(), alert_deliveries.c.id.desc())
+            .limit(max(1, min(max_rows, 500)))
+        ).mappings().all()
+
+    target_site = _normalize_site_name(site)
+    for row in rows:
+        payload = _parse_job_detail_json(row.get("payload_json"))
+        payload_site = _normalize_site_name(str(payload.get("site") or "")) if payload.get("site") is not None else None
+        if target_site is None:
+            if payload_site not in {None, "ALL"}:
+                continue
+        elif payload_site != target_site:
+            continue
+
+        attempted_at = _as_optional_datetime(row.get("last_attempt_at")) or _as_optional_datetime(row.get("created_at"))
+        if attempted_at is None:
+            continue
+        next_allowed_at = attempted_at + timedelta(minutes=cooldown_minutes)
+        if now < next_allowed_at:
+            remaining = max(1, int(math.ceil((next_allowed_at - now).total_seconds() / 60.0)))
+            return True, remaining, attempted_at.isoformat()
+        return False, 0, attempted_at.isoformat()
+    return False, 0, None
+
+
+def run_w07_sla_quality_weekly_job(
+    *,
+    site: str | None = None,
+    days: int = 14,
+    trigger: str = "api",
+    force_notify: bool = False,
+    allowed_sites: list[str] | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    run_site = _normalize_site_name(site)
+    window_days = max(max(7, W07_QUALITY_ALERT_MIN_WINDOW_DAYS), min(int(days), 90))
+    snapshot = _build_w07_sla_quality_snapshot(
+        site=run_site,
+        days=window_days,
+        allowed_sites=allowed_sites if run_site is None else None,
+    )
+    degradation = _build_w07_degradation_signals(snapshot)
+    now = datetime.now(timezone.utc)
+
+    alert_attempted = False
+    alert_dispatched = False
+    alert_error: str | None = None
+    alert_channels: list[SlaAlertChannelResult] = []
+    cooldown_active = False
+    cooldown_remaining_minutes = 0
+    last_alert_at: str | None = None
+
+    if bool(degradation.get("degraded")) and W07_QUALITY_ALERT_ENABLED:
+        cooldown_active, cooldown_remaining_minutes, last_alert_at = _w07_alert_cooldown_state(
+            now=now,
+            site=run_site,
+        )
+        if force_notify or not cooldown_active:
+            alert_attempted = True
+            payload = {
+                "event": W07_DEGRADATION_ALERT_EVENT_TYPE,
+                "site": run_site or "ALL",
+                "checked_at": now.isoformat(),
+                "window_days": int(snapshot.get("window_days") or window_days),
+                "signals": degradation.get("signals", {}),
+                "thresholds": degradation.get("thresholds", {}),
+                "reasons": degradation.get("reasons", []),
+                "metrics": snapshot.get("metrics", {}),
+            }
+            alert_dispatched, alert_error, alert_channels = _dispatch_alert_event(
+                event_type=W07_DEGRADATION_ALERT_EVENT_TYPE,
+                payload=payload,
+            )
+
+    status = "success"
+    if bool(degradation.get("degraded")):
+        status = "warning"
+        if alert_attempted and not alert_dispatched:
+            status = "critical"
+
+    finished_at = datetime.now(timezone.utc)
+    detail = {
+        "site": run_site,
+        "window_days": window_days,
+        "degradation": degradation,
+        "alert_enabled": W07_QUALITY_ALERT_ENABLED,
+        "force_notify": force_notify,
+        "cooldown_active": cooldown_active,
+        "cooldown_remaining_minutes": cooldown_remaining_minutes,
+        "last_alert_at": last_alert_at,
+        "alert_attempted": alert_attempted,
+        "alert_dispatched": alert_dispatched,
+        "alert_error": alert_error,
+        "alert_channels": [item.model_dump(mode="json") for item in alert_channels],
+        "snapshot": snapshot,
+    }
+    run_id = _write_job_run(
+        job_name=W07_WEEKLY_JOB_NAME,
+        trigger=trigger,
+        status=status,
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": W07_WEEKLY_JOB_NAME,
+        "trigger": trigger,
+        "status": status,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "site": run_site,
+        "window_days": window_days,
+        "degradation": degradation,
+        "cooldown_active": cooldown_active,
+        "cooldown_remaining_minutes": cooldown_remaining_minutes,
+        "last_alert_at": last_alert_at,
+        "alert_enabled": W07_QUALITY_ALERT_ENABLED,
+        "alert_attempted": alert_attempted,
+        "alert_dispatched": alert_dispatched,
+        "alert_error": alert_error,
+        "alert_channels": [item.model_dump(mode="json") for item in alert_channels],
+        "snapshot": snapshot,
+    }
+
+
+def _is_w07_run_visible(
+    *,
+    detail_site: str | None,
+    requested_site: str | None,
+    allowed_sites: list[str] | None,
+) -> bool:
+    if requested_site is not None:
+        return detail_site == requested_site
+    if allowed_sites is None:
+        return True
+    if not allowed_sites:
+        return False
+    if detail_site is None:
+        return False
+    return detail_site in allowed_sites
+
+
+def _read_w07_weekly_job_runs(
+    *,
+    site: str | None,
+    allowed_sites: list[str] | None,
+    limit: int,
+) -> list[tuple[JobRunRead, dict[str, Any]]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == W07_WEEKLY_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(max(1, min(limit * 10, 1000)))
+        ).mappings().all()
+
+    collected: list[tuple[JobRunRead, dict[str, Any]]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        detail_site = _normalize_site_name(detail.get("site"))
+        if not _is_w07_run_visible(detail_site=detail_site, requested_site=site, allowed_sites=allowed_sites):
+            continue
+        collected.append((model, detail))
+        if len(collected) >= limit:
+            break
+    return collected
+
+
+def _build_w07_weekly_trends_payload(
+    *,
+    site: str | None,
+    allowed_sites: list[str] | None,
+    limit: int = 26,
+) -> dict[str, Any]:
+    runs = _read_w07_weekly_job_runs(site=site, allowed_sites=allowed_sites, limit=max(1, min(limit, 104)))
+    points: list[dict[str, Any]] = []
+    for model, detail in reversed(runs):
+        snapshot = detail.get("snapshot", {}) if isinstance(detail.get("snapshot"), dict) else {}
+        metrics = snapshot.get("metrics", {}) if isinstance(snapshot.get("metrics"), dict) else {}
+        degradation = detail.get("degradation", {}) if isinstance(detail.get("degradation"), dict) else {}
+        signals = degradation.get("signals", {}) if isinstance(degradation.get("signals"), dict) else {}
+        points.append(
+            {
+                "run_id": model.id,
+                "finished_at": model.finished_at.isoformat(),
+                "site": detail.get("site"),
+                "status": model.status,
+                "window_days": detail.get("window_days"),
+                "degraded": bool(degradation.get("degraded", False)),
+                "escalation_rate_percent": signals.get("escalation_rate_percent", metrics.get("escalation_rate_percent")),
+                "alert_success_rate_percent": signals.get("alert_success_rate_percent", metrics.get("alert_success_rate_percent")),
+                "sla_violation_rate_percent": signals.get("sla_violation_rate_percent", metrics.get("sla_violation_rate_percent")),
+                "median_ack_minutes": metrics.get("median_ack_minutes"),
+                "p90_ack_minutes": metrics.get("p90_ack_minutes"),
+                "median_mttr_minutes": metrics.get("median_mttr_minutes"),
+                "data_quality_gate_pass": bool(signals.get("data_quality_gate_pass", metrics.get("data_quality_gate_pass", True))),
+            }
+        )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "job_name": W07_WEEKLY_JOB_NAME,
+        "site": site,
+        "point_count": len(points),
+        "points": points,
+    }
+
+
+def _build_w07_weekly_archive_csv(points: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "run_id",
+            "finished_at",
+            "site",
+            "status",
+            "window_days",
+            "degraded",
+            "escalation_rate_percent",
+            "alert_success_rate_percent",
+            "sla_violation_rate_percent",
+            "median_ack_minutes",
+            "p90_ack_minutes",
+            "median_mttr_minutes",
+            "data_quality_gate_pass",
+        ]
+    )
+    for row in points:
+        writer.writerow(
+            [
+                row.get("run_id"),
+                row.get("finished_at"),
+                row.get("site"),
+                row.get("status"),
+                row.get("window_days"),
+                bool(row.get("degraded", False)),
+                row.get("escalation_rate_percent"),
+                row.get("alert_success_rate_percent"),
+                row.get("sla_violation_rate_percent"),
+                row.get("median_ack_minutes"),
+                row.get("p90_ack_minutes"),
+                row.get("median_mttr_minutes"),
+                bool(row.get("data_quality_gate_pass", True)),
+            ]
+        )
+    return buffer.getvalue()
 
 
 def run_sla_escalation_job(
@@ -8601,9 +9449,19 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_w04_tracker_readiness_api": "/api/adoption/w04/tracker/readiness",
         "adoption_w04_tracker_completion_api": "/api/adoption/w04/tracker/completion",
         "adoption_w04_tracker_complete_api": "/api/adoption/w04/tracker/complete",
+        "adoption_w07_tracker_items_api": "/api/adoption/w07/tracker/items",
+        "adoption_w07_tracker_overview_api": "/api/adoption/w07/tracker/overview",
+        "adoption_w07_tracker_bootstrap_api": "/api/adoption/w07/tracker/bootstrap",
+        "adoption_w07_tracker_readiness_api": "/api/adoption/w07/tracker/readiness",
+        "adoption_w07_tracker_completion_api": "/api/adoption/w07/tracker/completion",
+        "adoption_w07_tracker_complete_api": "/api/adoption/w07/tracker/complete",
         "adoption_w05_consistency_api": "/api/ops/adoption/w05/consistency",
         "adoption_w06_rhythm_api": "/api/ops/adoption/w06/rhythm",
         "adoption_w07_sla_quality_api": "/api/ops/adoption/w07/sla-quality",
+        "adoption_w07_sla_quality_weekly_run_api": "/api/ops/adoption/w07/sla-quality/run-weekly",
+        "adoption_w07_sla_quality_weekly_latest_api": "/api/ops/adoption/w07/sla-quality/latest-weekly",
+        "adoption_w07_sla_quality_weekly_trends_api": "/api/ops/adoption/w07/sla-quality/trends",
+        "adoption_w07_sla_quality_weekly_archive_csv_api": "/api/ops/adoption/w07/sla-quality/archive.csv",
         "public_post_mvp_plan_api": "/api/public/post-mvp",
         "public_post_mvp_backlog_csv_api": "/api/public/post-mvp/backlog.csv",
         "public_post_mvp_release_ics_api": "/api/public/post-mvp/releases.ics",
@@ -11184,6 +12042,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
         <a href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
         <a href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+        <a href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
+        <a href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
+        <a href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
+        <a href="/api/ops/adoption/w07/sla-quality/latest-weekly">W07 Weekly Latest API (Token)</a>
       </div>
       <div class="table-wrap">
         <table>
@@ -13045,6 +13907,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="adoptW07ScheduleIcs" href="/api/public/adoption-plan/w07/schedule.ics">W07 Schedule ICS</a>
               <a id="adoptW07CoachingPlaybook" href="/api/public/adoption-plan/w07/coaching-playbook">W07 Coaching Playbook</a>
               <a id="adoptW07QualityApi" href="/api/ops/adoption/w07/sla-quality">W07 SLA Quality API (Token)</a>
+              <a id="adoptW07TrackerItemsApi" href="/api/adoption/w07/tracker/items">W07 Tracker Items API (Token)</a>
+              <a id="adoptW07TrackerOverviewApi" href="/api/adoption/w07/tracker/overview?site=HQ">W07 Tracker Overview API (Token)</a>
+              <a id="adoptW07WeeklyRunApi" href="/api/ops/adoption/w07/sla-quality/run-weekly">W07 Weekly Run API (Token)</a>
+              <a id="adoptW07WeeklyLatestApi" href="/api/ops/adoption/w07/sla-quality/latest-weekly">W07 Weekly Latest API (Token)</a>
+              <a id="adoptW07WeeklyTrendsApi" href="/api/ops/adoption/w07/sla-quality/trends">W07 Weekly Trends API (Token)</a>
+              <a id="adoptW07WeeklyArchiveApi" href="/api/ops/adoption/w07/sla-quality/archive.csv">W07 Weekly Archive CSV (Token)</a>
             </div>
           </div>
           <div class="box">
@@ -13062,6 +13930,84 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="w07QualityTopSites" class="empty">데이터 없음</div>
             <h4 style="margin:10px 0 6px;">Recommendations</h4>
             <div id="w07QualityRecommendations" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
+            <div class="filter-row">
+              <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w07TrackItemId" placeholder="tracker_item_id" />
+              <input id="w07TrackAssignee" placeholder="assignee" />
+              <select id="w07TrackStatus">
+                <option value="">status(선택)</option>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="done">done</option>
+                <option value="blocked">blocked</option>
+              </select>
+              <button id="w07TrackBootstrapBtn" class="btn run" type="button">W07 항목 생성</button>
+            </div>
+            <div class="filter-row">
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07TrackCompleted" type="checkbox" />
+                완료 체크
+              </label>
+              <input id="w07TrackNote" placeholder="completion note (optional)" />
+              <input id="w07EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w07EvidenceFile" type="file" />
+              <button id="w07TrackUpdateBtn" class="btn" type="button">상태 저장</button>
+            </div>
+            <div class="filter-row">
+              <input id="w07EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
+              <input id="w07Reserved1" value="token required for write actions" disabled />
+              <input id="w07Reserved2" value="site scope enforced" disabled />
+              <input id="w07Reserved3" value="max file 5MB" disabled />
+              <button id="w07TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="w07CompletionNote" placeholder="completion note (optional)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07CompletionForce" type="checkbox" />
+                강제 완료(owner/admin)
+              </label>
+              <input id="w07Reserved4" value="readiness gate required" disabled />
+              <button id="w07ReadinessBtn" class="btn run" type="button">완료 판정</button>
+              <button id="w07CompleteBtn" class="btn" type="button">W07 완료 확정</button>
+            </div>
+            <div id="w07TrackerMeta" class="meta">조회 전</div>
+            <div id="w07TrackerSummary" class="cards"></div>
+            <div id="w07TrackerTable" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">W07 완료 판정 결과</h4>
+            <div id="w07ReadinessMeta" class="meta">조회 전</div>
+            <div id="w07ReadinessCards" class="cards"></div>
+            <div id="w07ReadinessBlockers" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
+            <div id="w07EvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>W07 주간 자동화/트렌드</h3>
+            <div class="filter-row">
+              <input id="w07WeeklySite" placeholder="site (optional, 빈 값이면 전체)" />
+              <input id="w07WeeklyDays" value="14" placeholder="window days (7-90)" />
+              <input id="w07WeeklyLimit" value="26" placeholder="trend points (1-104)" />
+              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+                <input id="w07WeeklyForceNotify" type="checkbox" />
+                force notify
+              </label>
+              <button id="w07WeeklyRunBtn" class="btn run" type="button">W07 주간 실행</button>
+            </div>
+            <div class="filter-row">
+              <input id="w07WeeklyReserved1" value="token required" disabled />
+              <input id="w07WeeklyReserved2" value="site scope enforced" disabled />
+              <input id="w07WeeklyReserved3" value="cooldown protected alerting" disabled />
+              <button id="w07WeeklyLatestBtn" class="btn run" type="button">최근 실행 조회</button>
+              <button id="w07WeeklyTrendsBtn" class="btn run" type="button">트렌드 조회</button>
+            </div>
+            <div id="w07WeeklyMeta" class="meta">조회 전</div>
+            <div id="w07WeeklySummary" class="cards"></div>
+            <h4 style="margin:10px 0 6px;">최근 실행</h4>
+            <div id="w07WeeklyLatest" class="empty">데이터 없음</div>
+            <h4 style="margin:10px 0 6px;">트렌드</h4>
+            <div id="w07WeeklyTrends" class="empty">데이터 없음</div>
           </div>
           <div class="box">
             <h3>주차별 실행표</h3>
@@ -14668,14 +15614,19 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             ["Acked WOs", metrics.acked_work_orders ?? 0],
             ["Completed WOs", metrics.completed_work_orders ?? 0],
             ["Median ACK(min)", metrics.median_ack_minutes ?? "-"],
+            ["p90 ACK(min)", metrics.p90_ack_minutes ?? "-"],
             ["Baseline ACK(min)", metrics.baseline_median_ack_minutes ?? "-"],
             ["ACK Improvement %", metrics.response_time_improvement_percent ?? "-"],
             ["Target Met", metrics.target_met ? "YES" : "NO"],
+            ["Median MTTR(min)", metrics.median_mttr_minutes ?? "-"],
+            ["SLA Violation %", metrics.sla_violation_rate_percent ?? 0],
             ["Open WOs", metrics.open_work_orders ?? 0],
             ["Overdue Open", metrics.overdue_open_work_orders ?? 0],
             ["Escalated Open", metrics.escalated_open_work_orders ?? 0],
             ["Escalation Rate %", metrics.escalation_rate_percent ?? 0],
             ["Alert Success %", metrics.alert_success_rate_percent ?? 0],
+            ["DQ Gate", metrics.data_quality_gate_pass ? "PASS" : "FAIL"],
+            ["DQ Issue %", metrics.data_quality_issue_rate_percent ?? 0],
             ["SLA Runs", metrics.sla_run_count ?? 0],
           ];
           summary.innerHTML = summaryItems.map((x) => (
@@ -14688,7 +15639,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               {{ key: "open_work_orders", label: "Open WOs" }},
               {{ key: "overdue_open_work_orders", label: "Overdue Open" }},
               {{ key: "escalated_open_work_orders", label: "Escalated Open" }},
+              {{ key: "escalation_rate_percent", label: "Escalation %" }},
+              {{ key: "sla_violation_rate_percent", label: "Violation %" }},
               {{ key: "median_ack_minutes", label: "Median ACK(min)" }},
+              {{ key: "p90_ack_minutes", label: "p90 ACK(min)" }},
             ]
           );
           const recRows = Array.isArray(data.recommendations)
@@ -14709,6 +15663,383 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           summary.innerHTML = "";
           topSites.innerHTML = renderEmpty(err.message);
           recommendations.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW07Tracker() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const summary = document.getElementById("w07TrackerSummary");
+        const table = document.getElementById("w07TrackerTable");
+        const readinessMeta = document.getElementById("w07ReadinessMeta");
+        const readinessCards = document.getElementById("w07ReadinessCards");
+        const readinessBlockers = document.getElementById("w07ReadinessBlockers");
+        const evidenceTable = document.getElementById("w07EvidenceTable");
+        const site = (document.getElementById("w07TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          readinessMeta.textContent = "site 값을 입력하세요.";
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          evidenceTable.innerHTML = renderEmpty("site 입력이 필요합니다.");
+          return;
+        }}
+        try {{
+          meta.textContent = "조회 중... W07 tracker";
+          readinessMeta.textContent = "조회 중... W07 readiness";
+          const [trackerOverview, trackerItems, readiness, completion] = await Promise.all([
+            fetchJson("/api/adoption/w07/tracker/overview?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w07/tracker/items?site=" + encodeURIComponent(site) + "&limit=500", true),
+            fetchJson("/api/adoption/w07/tracker/readiness?site=" + encodeURIComponent(site), true),
+            fetchJson("/api/adoption/w07/tracker/completion?site=" + encodeURIComponent(site), true),
+          ]);
+          meta.textContent = "성공: W07 tracker (" + site + ")";
+          readinessMeta.textContent =
+            "상태: " + String(completion.status || "active")
+            + " | ready=" + (readiness.ready ? "YES" : "NO")
+            + " | 마지막 판정=" + String(readiness.checked_at || "-");
+          const summaryItems = [
+            ["Total", trackerOverview.total_items || 0],
+            ["Pending", trackerOverview.pending_count || 0],
+            ["In Progress", trackerOverview.in_progress_count || 0],
+            ["Done", trackerOverview.done_count || 0],
+            ["Blocked", trackerOverview.blocked_count || 0],
+            ["Completion %", trackerOverview.completion_rate_percent || 0],
+            ["Evidence", trackerOverview.evidence_total_count || 0],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const readinessItems = [
+            ["Readiness Ready", readiness.ready ? "YES" : "NO"],
+            ["Readiness %", readiness.readiness_score_percent || 0],
+            ["Missing Assignee", readiness.missing_assignee_count || 0],
+            ["Missing Checked", readiness.missing_completion_checked_count || 0],
+            ["Missing Evidence", readiness.missing_required_evidence_count || 0],
+            ["Completion Status", completion.status || "active"],
+            ["Completed At", completion.completed_at || "-"],
+            ["Completed By", completion.completed_by || "-"],
+          ];
+          readinessCards.innerHTML = readinessItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          const blockers = Array.isArray(readiness.blockers) ? readiness.blockers : [];
+          if (blockers.length > 0) {{
+            readinessBlockers.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Blocker</th></tr></thead><tbody>'
+              + blockers.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            readinessBlockers.innerHTML = renderEmpty("차단 항목 없음");
+          }}
+          table.innerHTML = renderTable(
+            trackerItems || [],
+            [
+              {{ key: "id", label: "ID" }},
+              {{ key: "item_type", label: "Type" }},
+              {{ key: "item_key", label: "Key" }},
+              {{ key: "item_name", label: "Name" }},
+              {{ key: "assignee", label: "Assignee" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "completion_checked", label: "Checked" }},
+              {{ key: "evidence_count", label: "Evidence" }},
+              {{ key: "updated_at", label: "Updated At" }},
+            ]
+          );
+
+          let evidenceItemId = (document.getElementById("w07EvidenceListItemId").value || "").trim();
+          if (!evidenceItemId) {{
+            evidenceItemId = (document.getElementById("w07TrackItemId").value || "").trim();
+          }}
+          if (evidenceItemId) {{
+            const evidences = await fetchJson(
+              "/api/adoption/w07/tracker/items/" + encodeURIComponent(evidenceItemId) + "/evidence",
+              true
+            );
+            evidenceTable.innerHTML = renderEvidenceTable(evidences || [], "w07");
+          }} else {{
+            evidenceTable.innerHTML = renderEmpty("tracker_item_id 입력 시 증빙 파일 목록을 표시합니다.");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          readinessMeta.textContent = "실패: " + err.message;
+          readinessCards.innerHTML = "";
+          readinessBlockers.innerHTML = renderEmpty(err.message);
+          evidenceTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW07Readiness() {{
+        await runW07Tracker();
+      }}
+
+      async function runW07TrackerBootstrap() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const site = (document.getElementById("w07TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "생성 중... W07 tracker bootstrap";
+          const data = await fetchJson(
+            "/api/adoption/w07/tracker/bootstrap",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ site }}),
+            }}
+          );
+          meta.textContent = "성공: 생성 " + String(data.created_count || 0) + "건";
+          await runW07Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW07Complete() {{
+        const meta = document.getElementById("w07ReadinessMeta");
+        const site = (document.getElementById("w07TrackSite").value || "").trim();
+        if (!site) {{
+          meta.textContent = "site 값을 입력하세요.";
+          return;
+        }}
+        const completionNote = (document.getElementById("w07CompletionNote").value || "").trim();
+        const force = !!document.getElementById("w07CompletionForce").checked;
+        const payload = {{
+          site: site,
+          force: force,
+        }};
+        if (completionNote) {{
+          payload.completion_note = completionNote;
+        }}
+        try {{
+          meta.textContent = "실행 중... W07 완료 확정";
+          const result = await fetchJson(
+            "/api/adoption/w07/tracker/complete",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          meta.textContent =
+            "성공: status=" + String(result.status || "-")
+            + " | ready=" + String(result.readiness && result.readiness.ready ? "YES" : "NO")
+            + " | completed_at=" + String(result.completed_at || "-");
+          await runW07Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          await runW07Tracker().catch(() => null);
+        }}
+      }}
+
+      async function runW07TrackerUpdateAndUpload() {{
+        const meta = document.getElementById("w07TrackerMeta");
+        const trackerItemIdRaw = (document.getElementById("w07TrackItemId").value || "").trim();
+        const trackerItemId = Number(trackerItemIdRaw);
+        if (!trackerItemIdRaw || !Number.isFinite(trackerItemId) || trackerItemId <= 0) {{
+          meta.textContent = "유효한 tracker_item_id를 입력하세요.";
+          return;
+        }}
+
+        const assignee = (document.getElementById("w07TrackAssignee").value || "").trim();
+        const status = (document.getElementById("w07TrackStatus").value || "").trim();
+        const completionChecked = !!document.getElementById("w07TrackCompleted").checked;
+        const note = (document.getElementById("w07TrackNote").value || "").trim();
+        const payload = {{}};
+        if (assignee) payload.assignee = assignee;
+        if (status) payload.status = status;
+        if (completionChecked) {{
+          payload.completion_checked = true;
+        }} else if (status && status !== "done") {{
+          payload.completion_checked = false;
+        }}
+        if (note) payload.completion_note = note;
+        const fileInput = document.getElementById("w07EvidenceFile");
+        const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+        const hasTrackerUpdate = Object.keys(payload).length > 0;
+        if (!hasTrackerUpdate && !file) {{
+          meta.textContent = "저장할 변경 또는 업로드 파일이 없습니다.";
+          return;
+        }}
+
+        try {{
+          meta.textContent = "저장 중... tracker update";
+          if (hasTrackerUpdate) {{
+            await fetchJson(
+              "/api/adoption/w07/tracker/items/" + encodeURIComponent(trackerItemIdRaw),
+              true,
+              {{
+                method: "PATCH",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(payload),
+              }}
+            );
+          }}
+
+          if (file) {{
+            const formData = new FormData();
+            formData.append("file", file);
+            const evidenceNote = (document.getElementById("w07EvidenceNote").value || "").trim();
+            formData.append("note", evidenceNote);
+            const token = getToken();
+            if (!token) {{
+              throw new Error("인증 토큰이 없습니다.");
+            }}
+            const uploadResp = await fetch(
+              "/api/adoption/w07/tracker/items/" + encodeURIComponent(trackerItemIdRaw) + "/evidence",
+              {{
+                method: "POST",
+                headers: {{
+                  "X-Admin-Token": token,
+                  "Accept": "application/json",
+                }},
+                body: formData,
+              }}
+            );
+            const uploadText = await uploadResp.text();
+            if (!uploadResp.ok) {{
+              throw new Error("Evidence upload failed: HTTP " + uploadResp.status + " | " + uploadText);
+            }}
+            document.getElementById("w07EvidenceFile").value = "";
+          }}
+
+          meta.textContent = "성공: tracker 저장 완료";
+          await runW07Tracker();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runW07WeeklyJob() {{
+        const meta = document.getElementById("w07WeeklyMeta");
+        const summary = document.getElementById("w07WeeklySummary");
+        const latestTable = document.getElementById("w07WeeklyLatest");
+        const site = (document.getElementById("w07WeeklySite").value || "").trim();
+        const daysRaw = (document.getElementById("w07WeeklyDays").value || "").trim();
+        const forceNotify = !!document.getElementById("w07WeeklyForceNotify").checked;
+        const params = new URLSearchParams();
+        if (site) params.set("site", site);
+        if (daysRaw) params.set("days", daysRaw);
+        if (forceNotify) params.set("force_notify", "true");
+        try {{
+          meta.textContent = "실행 중... W07 weekly run";
+          const data = await fetchJson(
+            "/api/ops/adoption/w07/sla-quality/run-weekly" + (params.toString() ? ("?" + params.toString()) : ""),
+            true,
+            {{
+              method: "POST",
+            }}
+          );
+          const signals = (data.degradation && data.degradation.signals) || {{}};
+          meta.textContent =
+            "성공: run#" + String(data.run_id || "-")
+            + " | status=" + String(data.status || "-")
+            + " | degraded=" + String(data.degradation && data.degradation.degraded ? "YES" : "NO")
+            + " | cooldown=" + String(data.cooldown_active ? ("ON(" + String(data.cooldown_remaining_minutes || 0) + "m)") : "OFF");
+          const summaryItems = [
+            ["Run ID", data.run_id || "-"],
+            ["Site", data.site || "ALL"],
+            ["Window Days", data.window_days || "-"],
+            ["Degraded", data.degradation && data.degradation.degraded ? "YES" : "NO"],
+            ["Escalation Rate %", signals.escalation_rate_percent ?? "-"],
+            ["Alert Success %", signals.alert_success_rate_percent ?? "-"],
+            ["SLA Violation %", signals.sla_violation_rate_percent ?? "-"],
+            ["DQ Gate", signals.data_quality_gate_pass ? "PASS" : "FAIL"],
+            ["Alert Attempted", data.alert_attempted ? "YES" : "NO"],
+            ["Alert Dispatched", data.alert_dispatched ? "YES" : "NO"],
+            ["Archive File", data.archive_file || "-"],
+          ];
+          summary.innerHTML = summaryItems.map((x) => (
+            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
+          )).join("");
+          latestTable.innerHTML = renderTable(
+            [{{ run_id: data.run_id, status: data.status, finished_at: data.finished_at, site: data.site || "ALL", degraded: !!(data.degradation && data.degradation.degraded), reasons: Array.isArray(data.degradation && data.degradation.reasons) ? data.degradation.reasons.join(" | ") : "" }}],
+            [
+              {{ key: "run_id", label: "Run ID" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "finished_at", label: "Finished At" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "degraded", label: "Degraded" }},
+              {{ key: "reasons", label: "Reasons" }},
+            ]
+          );
+          await runW07WeeklyLatest();
+          await runW07WeeklyTrends();
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summary.innerHTML = "";
+          latestTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW07WeeklyLatest() {{
+        const meta = document.getElementById("w07WeeklyMeta");
+        const latestTable = document.getElementById("w07WeeklyLatest");
+        const site = (document.getElementById("w07WeeklySite").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) params.set("site", site);
+        const path = "/api/ops/adoption/w07/sla-quality/latest-weekly" + (params.toString() ? ("?" + params.toString()) : "");
+        try {{
+          const data = await fetchJson(path, true);
+          meta.textContent =
+            "성공: latest run#" + String(data.run_id || "-")
+            + " | status=" + String(data.status || "-")
+            + " | degraded=" + String(data.degradation && data.degradation.degraded ? "YES" : "NO");
+          latestTable.innerHTML = renderTable(
+            [{{ run_id: data.run_id, status: data.status, finished_at: data.finished_at, site: data.site || "ALL", degraded: !!(data.degradation && data.degradation.degraded), reasons: Array.isArray(data.degradation && data.degradation.reasons) ? data.degradation.reasons.join(" | ") : "" }}],
+            [
+              {{ key: "run_id", label: "Run ID" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "finished_at", label: "Finished At" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "degraded", label: "Degraded" }},
+              {{ key: "reasons", label: "Reasons" }},
+            ]
+          );
+        }} catch (err) {{
+          latestTable.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runW07WeeklyTrends() {{
+        const trendsTable = document.getElementById("w07WeeklyTrends");
+        const site = (document.getElementById("w07WeeklySite").value || "").trim();
+        const limitRaw = (document.getElementById("w07WeeklyLimit").value || "").trim();
+        const params = new URLSearchParams();
+        if (site) params.set("site", site);
+        if (limitRaw) params.set("limit", limitRaw);
+        const path = "/api/ops/adoption/w07/sla-quality/trends" + (params.toString() ? ("?" + params.toString()) : "");
+        try {{
+          const data = await fetchJson(path, true);
+          trendsTable.innerHTML = renderTable(
+            data.points || [],
+            [
+              {{ key: "run_id", label: "Run ID" }},
+              {{ key: "finished_at", label: "Finished At" }},
+              {{ key: "site", label: "Site" }},
+              {{ key: "status", label: "Status" }},
+              {{ key: "degraded", label: "Degraded" }},
+              {{ key: "escalation_rate_percent", label: "Escalation %" }},
+              {{ key: "alert_success_rate_percent", label: "Alert Success %" }},
+              {{ key: "sla_violation_rate_percent", label: "Violation %" }},
+              {{ key: "median_ack_minutes", label: "Median ACK(min)" }},
+              {{ key: "p90_ack_minutes", label: "p90 ACK(min)" }},
+              {{ key: "median_mttr_minutes", label: "Median MTTR(min)" }},
+              {{ key: "data_quality_gate_pass", label: "DQ Gate" }},
+            ]
+          );
+        }} catch (err) {{
+          trendsTable.innerHTML = renderEmpty(err.message);
         }}
       }}
 
@@ -15434,6 +16765,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("w05ConsistencyRefreshBtn").addEventListener("click", runW05Consistency);
       document.getElementById("w06RhythmRefreshBtn").addEventListener("click", runW06Rhythm);
       document.getElementById("w07QualityRefreshBtn").addEventListener("click", runW07SlaQuality);
+      document.getElementById("w07TrackBootstrapBtn").addEventListener("click", runW07TrackerBootstrap);
+      document.getElementById("w07TrackRefreshBtn").addEventListener("click", runW07Tracker);
+      document.getElementById("w07ReadinessBtn").addEventListener("click", runW07Readiness);
+      document.getElementById("w07CompleteBtn").addEventListener("click", runW07Complete);
+      document.getElementById("w07TrackUpdateBtn").addEventListener("click", runW07TrackerUpdateAndUpload);
+      document.getElementById("w07WeeklyRunBtn").addEventListener("click", runW07WeeklyJob);
+      document.getElementById("w07WeeklyLatestBtn").addEventListener("click", runW07WeeklyLatest);
+      document.getElementById("w07WeeklyTrendsBtn").addEventListener("click", runW07WeeklyTrends);
       ["rpMonth", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
@@ -15465,6 +16804,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       if (!document.getElementById("w07QualitySite").value) {{
         document.getElementById("w07QualitySite").value = "HQ";
+      }}
+      if (!document.getElementById("w07TrackSite").value) {{
+        document.getElementById("w07TrackSite").value = "HQ";
+      }}
+      if (!document.getElementById("w07WeeklySite").value) {{
+        document.getElementById("w07WeeklySite").value = "HQ";
       }}
       activate("{selected_tab}", false);
 
@@ -17422,6 +18767,529 @@ def download_w04_tracker_evidence(
     )
 
 
+@app.post("/api/adoption/w07/tracker/bootstrap", response_model=W07TrackerBootstrapResponse)
+def bootstrap_w07_tracker_items(
+    payload: W07TrackerBootstrapRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
+) -> W07TrackerBootstrapResponse:
+    _require_site_access(principal, payload.site)
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    catalog = _adoption_w07_catalog_items(payload.site)
+    created_count = 0
+
+    with get_conn() as conn:
+        existing_rows = conn.execute(
+            select(
+                adoption_w07_tracker_items.c.item_type,
+                adoption_w07_tracker_items.c.item_key,
+            ).where(adoption_w07_tracker_items.c.site == payload.site)
+        ).mappings().all()
+        existing_keys = {(str(row["item_type"]), str(row["item_key"])) for row in existing_rows}
+
+        for entry in catalog:
+            key = (str(entry["item_type"]), str(entry["item_key"]))
+            if key in existing_keys:
+                continue
+            conn.execute(
+                insert(adoption_w07_tracker_items).values(
+                    site=payload.site,
+                    item_type=str(entry["item_type"]),
+                    item_key=str(entry["item_key"]),
+                    item_name=str(entry["item_name"]),
+                    assignee=None,
+                    status=W07_TRACKER_STATUS_PENDING,
+                    completion_checked=False,
+                    completion_note="",
+                    due_at=entry.get("due_at"),
+                    completed_at=None,
+                    evidence_count=0,
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            existing_keys.add(key)
+            created_count += 1
+
+        if created_count > 0:
+            _reset_w07_completion_if_closed(
+                conn=conn,
+                site=payload.site,
+                actor_username=actor_username,
+                checked_at=now,
+                reason="bootstrap_added_items",
+            )
+
+        rows = conn.execute(
+            select(adoption_w07_tracker_items)
+            .where(adoption_w07_tracker_items.c.site == payload.site)
+            .order_by(
+                adoption_w07_tracker_items.c.item_type.asc(),
+                adoption_w07_tracker_items.c.item_key.asc(),
+                adoption_w07_tracker_items.c.id.asc(),
+            )
+        ).mappings().all()
+
+    items = [_row_to_w07_tracker_item_model(row) for row in rows]
+    _write_audit_log(
+        principal=principal,
+        action="w07_tracker_bootstrap",
+        resource_type="adoption_w07_tracker",
+        resource_id=payload.site,
+        detail={"site": payload.site, "created_count": created_count, "total_count": len(items)},
+    )
+    return W07TrackerBootstrapResponse(
+        site=payload.site,
+        created_count=created_count,
+        total_count=len(items),
+        items=items,
+    )
+
+
+@app.get("/api/adoption/w07/tracker/items", response_model=list[W07TrackerItemRead])
+def list_w07_tracker_items(
+    site: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    item_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> list[W07TrackerItemRead]:
+    _require_site_access(principal, site)
+    normalized_status = status.strip().lower() if status is not None else None
+    if normalized_status is not None and normalized_status not in W07_TRACKER_STATUS_SET:
+        raise HTTPException(status_code=400, detail="Invalid W07 tracker status")
+
+    stmt = select(adoption_w07_tracker_items)
+    if site is not None:
+        stmt = stmt.where(adoption_w07_tracker_items.c.site == site)
+    else:
+        allowed_sites = _allowed_sites_for_principal(principal)
+        if allowed_sites is not None:
+            if not allowed_sites:
+                return []
+            stmt = stmt.where(adoption_w07_tracker_items.c.site.in_(allowed_sites))
+
+    if normalized_status is not None:
+        stmt = stmt.where(adoption_w07_tracker_items.c.status == normalized_status)
+    if item_type is not None:
+        stmt = stmt.where(adoption_w07_tracker_items.c.item_type == item_type.strip())
+    if assignee is not None:
+        stmt = stmt.where(adoption_w07_tracker_items.c.assignee == assignee.strip())
+
+    stmt = stmt.order_by(
+        adoption_w07_tracker_items.c.updated_at.desc(),
+        adoption_w07_tracker_items.c.id.desc(),
+    ).limit(limit).offset(offset)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+    return [_row_to_w07_tracker_item_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w07/tracker/overview", response_model=W07TrackerOverviewRead)
+def get_w07_tracker_overview(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> W07TrackerOverviewRead:
+    _require_site_access(principal, site)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(adoption_w07_tracker_items).where(adoption_w07_tracker_items.c.site == site)
+        ).mappings().all()
+    models = [_row_to_w07_tracker_item_model(row) for row in rows]
+    return _compute_w07_tracker_overview(site, models)
+
+
+@app.get("/api/adoption/w07/tracker/readiness", response_model=W07TrackerReadinessRead)
+def get_w07_tracker_readiness(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> W07TrackerReadinessRead:
+    _require_site_access(principal, site)
+    models = _load_w07_tracker_items_for_site(site)
+    return _compute_w07_tracker_readiness(site=site, rows=models)
+
+
+@app.get("/api/adoption/w07/tracker/completion", response_model=W07TrackerCompletionRead)
+def get_w07_tracker_completion(
+    site: Annotated[str, Query(min_length=1)],
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> W07TrackerCompletionRead:
+    _require_site_access(principal, site)
+    now = datetime.now(timezone.utc)
+    models = _load_w07_tracker_items_for_site(site)
+    readiness = _compute_w07_tracker_readiness(site=site, rows=models, checked_at=now)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w07_site_runs).where(adoption_w07_site_runs.c.site == site).limit(1)
+        ).mappings().first()
+    return _row_to_w07_completion_model(site=site, readiness=readiness, row=row)
+
+
+@app.post("/api/adoption/w07/tracker/complete", response_model=W07TrackerCompletionRead)
+def complete_w07_tracker(
+    payload: W07TrackerCompletionRequest,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
+) -> W07TrackerCompletionRead:
+    _require_site_access(principal, payload.site)
+    if payload.force and not _has_permission(principal, "admins:manage"):
+        raise HTTPException(status_code=403, detail="force completion requires admins:manage")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    models = _load_w07_tracker_items_for_site(payload.site)
+    readiness = _compute_w07_tracker_readiness(site=payload.site, rows=models, checked_at=now)
+    if not readiness.ready and not payload.force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "W07 completion gate failed",
+                "site": payload.site,
+                "ready": readiness.ready,
+                "blockers": readiness.blockers,
+                "readiness": readiness.model_dump(mode="json"),
+            },
+        )
+
+    completion_note = (payload.completion_note or "").strip()
+    next_status = (
+        W07_SITE_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS
+        if payload.force and not readiness.ready
+        else W07_SITE_COMPLETION_STATUS_COMPLETED
+    )
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(adoption_w07_site_runs).where(adoption_w07_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+        if existing is None:
+            conn.execute(
+                insert(adoption_w07_site_runs).values(
+                    site=payload.site,
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    created_by=actor_username,
+                    updated_by=actor_username,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            conn.execute(
+                update(adoption_w07_site_runs)
+                .where(adoption_w07_site_runs.c.site == payload.site)
+                .values(
+                    status=next_status,
+                    completion_note=completion_note,
+                    force_used=bool(payload.force and not readiness.ready),
+                    completed_by=actor_username,
+                    completed_at=now,
+                    last_checked_at=readiness.checked_at,
+                    readiness_json=_to_json_text(readiness.model_dump(mode="json")),
+                    updated_by=actor_username,
+                    updated_at=now,
+                )
+            )
+        row = conn.execute(
+            select(adoption_w07_site_runs).where(adoption_w07_site_runs.c.site == payload.site).limit(1)
+        ).mappings().first()
+
+    model = _row_to_w07_completion_model(site=payload.site, readiness=readiness, row=row)
+    _write_audit_log(
+        principal=principal,
+        action="w07_tracker_complete",
+        resource_type="adoption_w07_tracker_site",
+        resource_id=payload.site,
+        detail={
+            "site": payload.site,
+            "status": model.status,
+            "ready": readiness.ready,
+            "force_used": model.force_used,
+            "blockers": readiness.blockers,
+            "completion_rate_percent": readiness.completion_rate_percent,
+            "missing_required_evidence_count": readiness.missing_required_evidence_count,
+        },
+    )
+    return model
+
+
+@app.patch("/api/adoption/w07/tracker/items/{tracker_item_id}", response_model=W07TrackerItemRead)
+def update_w07_tracker_item(
+    tracker_item_id: int,
+    payload: W07TrackerItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
+) -> W07TrackerItemRead:
+    has_update = (
+        payload.assignee is not None
+        or payload.status is not None
+        or payload.completion_checked is not None
+        or payload.completion_note is not None
+    )
+    if not has_update:
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w07_tracker_items).where(adoption_w07_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="W07 tracker item not found")
+        _require_site_access(principal, str(row["site"]))
+
+        next_assignee = row.get("assignee")
+        if payload.assignee is not None:
+            normalized_assignee = payload.assignee.strip()
+            next_assignee = normalized_assignee or None
+
+        next_status = str(row["status"])
+        if payload.status is not None:
+            next_status = str(payload.status)
+
+        next_checked = bool(row.get("completion_checked", False))
+        if payload.completion_checked is not None:
+            next_checked = bool(payload.completion_checked)
+
+        if next_status == W07_TRACKER_STATUS_DONE:
+            next_checked = True
+        elif payload.status is not None and payload.status != W07_TRACKER_STATUS_DONE and payload.completion_checked is None:
+            next_checked = False
+        if payload.completion_checked is True:
+            next_status = W07_TRACKER_STATUS_DONE
+        elif payload.completion_checked is False and next_status == W07_TRACKER_STATUS_DONE:
+            next_status = W07_TRACKER_STATUS_IN_PROGRESS
+
+        if next_status not in W07_TRACKER_STATUS_SET:
+            raise HTTPException(status_code=400, detail="Invalid W07 tracker status")
+
+        next_note = str(row.get("completion_note") or "")
+        if payload.completion_note is not None:
+            next_note = payload.completion_note.strip()
+
+        existing_completed_at = _as_optional_datetime(row.get("completed_at"))
+        next_completed_at = existing_completed_at
+        if next_checked:
+            if existing_completed_at is None:
+                next_completed_at = now
+        else:
+            next_completed_at = None
+
+        conn.execute(
+            update(adoption_w07_tracker_items)
+            .where(adoption_w07_tracker_items.c.id == tracker_item_id)
+            .values(
+                assignee=next_assignee,
+                status=next_status,
+                completion_checked=next_checked,
+                completion_note=next_note,
+                completed_at=next_completed_at,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        _reset_w07_completion_if_closed(
+            conn=conn,
+            site=str(row["site"]),
+            actor_username=actor_username,
+            checked_at=now,
+            reason="tracker_item_updated",
+        )
+        updated = conn.execute(
+            select(adoption_w07_tracker_items).where(adoption_w07_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update W07 tracker item")
+    model = _row_to_w07_tracker_item_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="w07_tracker_item_update",
+        resource_type="adoption_w07_tracker_item",
+        resource_id=str(model.id),
+        detail={
+            "site": model.site,
+            "status": model.status,
+            "assignee": model.assignee,
+            "completion_checked": model.completion_checked,
+        },
+    )
+    return model
+
+
+@app.post("/api/adoption/w07/tracker/items/{tracker_item_id}/evidence", response_model=W07EvidenceRead, status_code=201)
+async def upload_w07_tracker_evidence(
+    tracker_item_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
+) -> W07EvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported evidence content type",
+        )
+    file_bytes = await file.read(W07_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > W07_EVIDENCE_MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"Evidence file too large (max {W07_EVIDENCE_MAX_BYTES} bytes)")
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w07_tracker_items).where(adoption_w07_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W07 tracker item not found")
+        site = str(tracker_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(adoption_w07_evidence_files).values(
+                tracker_item_id=tracker_item_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        next_count = int(tracker_row.get("evidence_count") or 0) + 1
+        conn.execute(
+            update(adoption_w07_tracker_items)
+            .where(adoption_w07_tracker_items.c.id == tracker_item_id)
+            .values(
+                evidence_count=next_count,
+                updated_by=actor_username,
+                updated_at=now,
+            )
+        )
+        evidence_row = conn.execute(
+            select(adoption_w07_evidence_files).where(adoption_w07_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save evidence file")
+    model = _row_to_w07_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="w07_tracker_evidence_upload",
+        resource_type="adoption_w07_evidence",
+        resource_id=str(model.id),
+        detail={
+            "tracker_item_id": model.tracker_item_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/adoption/w07/tracker/items/{tracker_item_id}/evidence", response_model=list[W07EvidenceRead])
+def list_w07_tracker_evidence(
+    tracker_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> list[W07EvidenceRead]:
+    with get_conn() as conn:
+        tracker_row = conn.execute(
+            select(adoption_w07_tracker_items).where(adoption_w07_tracker_items.c.id == tracker_item_id).limit(1)
+        ).mappings().first()
+        if tracker_row is None:
+            raise HTTPException(status_code=404, detail="W07 tracker item not found")
+        _require_site_access(principal, str(tracker_row["site"]))
+
+        rows = conn.execute(
+            select(adoption_w07_evidence_files)
+            .where(adoption_w07_evidence_files.c.tracker_item_id == tracker_item_id)
+            .order_by(adoption_w07_evidence_files.c.uploaded_at.desc(), adoption_w07_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_w07_evidence_model(row) for row in rows]
+
+
+@app.get("/api/adoption/w07/tracker/evidence/{evidence_id}/download", response_model=None)
+def download_w07_tracker_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(adoption_w07_evidence_files).where(adoption_w07_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="W07 evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(str(row.get("file_name") or ""), fallback="evidence.bin", max_length=120)
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="w07_tracker_evidence_download",
+        resource_type="adoption_w07_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -18556,6 +20424,176 @@ def get_ops_adoption_w07_sla_quality(
         },
     )
     return snapshot
+
+
+@app.post("/api/ops/adoption/w07/sla-quality/run-weekly")
+def run_ops_adoption_w07_sla_quality_weekly(
+    site: Annotated[str | None, Query()] = None,
+    days: Annotated[int, Query(ge=7, le=90)] = 14,
+    force_notify: Annotated[bool, Query()] = False,
+    write_archive: Annotated[bool | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    normalized_site = _normalize_site_name(site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+
+    result = run_w07_sla_quality_weekly_job(
+        site=normalized_site,
+        days=days,
+        trigger="api",
+        force_notify=force_notify,
+        allowed_sites=allowed_sites,
+    )
+
+    archive_file: str | None = None
+    archive_error: str | None = None
+    archive_enabled = W07_WEEKLY_ARCHIVE_ENABLED if write_archive is None else bool(write_archive)
+    if archive_enabled:
+        try:
+            trends = _build_w07_weekly_trends_payload(
+                site=normalized_site,
+                allowed_sites=allowed_sites,
+                limit=104,
+            )
+            csv_text = _build_w07_weekly_archive_csv(trends.get("points", []))
+            archive_dir = Path(W07_WEEKLY_ARCHIVE_PATH)
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            site_label = (normalized_site or "all").replace(" ", "_").replace("/", "_")
+            file_path = archive_dir / f"w07-sla-quality-weekly-{site_label}-{stamp}.csv"
+            file_path.write_text(csv_text, encoding="utf-8")
+            archive_file = str(file_path)
+        except Exception as exc:  # pragma: no cover - defensive filesystem path
+            archive_error = str(exc)
+
+    response = {
+        **result,
+        "write_archive": archive_enabled,
+        "archive_file": archive_file,
+        "archive_error": archive_error,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="w07_sla_quality_weekly_run",
+        resource_type="adoption_w07_sla_quality",
+        resource_id=str(response.get("run_id") or "pending"),
+        status=str(response.get("status") or "success"),
+        detail={
+            "site": normalized_site,
+            "window_days": int(response.get("window_days") or days),
+            "degraded": bool((response.get("degradation") or {}).get("degraded", False)),
+            "reasons": (response.get("degradation") or {}).get("reasons", []),
+            "cooldown_active": bool(response.get("cooldown_active", False)),
+            "alert_attempted": bool(response.get("alert_attempted", False)),
+            "alert_dispatched": bool(response.get("alert_dispatched", False)),
+            "alert_error": response.get("alert_error"),
+            "write_archive": archive_enabled,
+            "archive_file": archive_file,
+            "archive_error": archive_error,
+        },
+    )
+    return response
+
+
+@app.get("/api/ops/adoption/w07/sla-quality/latest-weekly")
+def get_ops_adoption_w07_sla_quality_latest_weekly(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    normalized_site = _normalize_site_name(site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    runs = _read_w07_weekly_job_runs(site=normalized_site, allowed_sites=allowed_sites, limit=1)
+    if not runs:
+        raise HTTPException(status_code=404, detail="No W07 weekly run found")
+    model, detail = runs[0]
+    response = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        "site": detail.get("site"),
+        "window_days": detail.get("window_days"),
+        "degradation": detail.get("degradation", {}),
+        "alert_enabled": bool(detail.get("alert_enabled", W07_QUALITY_ALERT_ENABLED)),
+        "cooldown_active": bool(detail.get("cooldown_active", False)),
+        "cooldown_remaining_minutes": int(detail.get("cooldown_remaining_minutes") or 0),
+        "last_alert_at": detail.get("last_alert_at"),
+        "alert_attempted": bool(detail.get("alert_attempted", False)),
+        "alert_dispatched": bool(detail.get("alert_dispatched", False)),
+        "alert_error": detail.get("alert_error"),
+        "alert_channels": detail.get("alert_channels", []),
+        "snapshot": detail.get("snapshot", {}),
+    }
+    _write_audit_log(
+        principal=principal,
+        action="w07_sla_quality_weekly_latest_view",
+        resource_type="adoption_w07_sla_quality",
+        resource_id=str(model.id),
+        detail={
+            "site": normalized_site,
+            "status": model.status,
+            "degraded": bool((response.get("degradation") or {}).get("degraded", False)),
+        },
+    )
+    return response
+
+
+@app.get("/api/ops/adoption/w07/sla-quality/trends")
+def get_ops_adoption_w07_sla_quality_trends(
+    site: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=104)] = 26,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    normalized_site = _normalize_site_name(site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    payload = _build_w07_weekly_trends_payload(site=normalized_site, allowed_sites=allowed_sites, limit=limit)
+    _write_audit_log(
+        principal=principal,
+        action="w07_sla_quality_trends_view",
+        resource_type="adoption_w07_sla_quality",
+        resource_id=normalized_site or "all",
+        detail={
+            "site": normalized_site,
+            "point_count": int(payload.get("point_count") or 0),
+        },
+    )
+    return payload
+
+
+@app.get("/api/ops/adoption/w07/sla-quality/archive.csv")
+def get_ops_adoption_w07_sla_quality_archive_csv(
+    site: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=104)] = 52,
+    principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
+) -> Response:
+    _require_site_access(principal, site)
+    normalized_site = _normalize_site_name(site)
+    allowed_sites = _allowed_sites_for_principal(principal) if normalized_site is None else None
+    payload = _build_w07_weekly_trends_payload(site=normalized_site, allowed_sites=allowed_sites, limit=limit)
+    csv_text = _build_w07_weekly_archive_csv(payload.get("points", []))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    site_label = (normalized_site or "all").replace(" ", "_")
+    file_name = f"adoption-w07-sla-quality-weekly-{site_label}-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="w07_sla_quality_archive_csv_export",
+        resource_type="adoption_w07_sla_quality",
+        resource_id=file_name,
+        detail={
+            "site": normalized_site,
+            "point_count": int(payload.get("point_count") or 0),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @app.get("/api/ops/adoption/w04/funnel")
@@ -21247,3 +23285,4 @@ def print_monthly_report(
 </body>
 </html>
 """
+

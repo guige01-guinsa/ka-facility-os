@@ -147,6 +147,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w05_consistency_api" in root_json.json()
     assert "adoption_w06_rhythm_api" in root_json.json()
     assert "adoption_w07_sla_quality_api" in root_json.json()
+    assert "adoption_w07_tracker_items_api" in root_json.json()
+    assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -174,6 +176,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W07 SLA Quality" in root_html.text
     assert "W03 실행 추적" in root_html.text
     assert "W04 실행 추적" in root_html.text
+    assert "W07 실행 추적" in root_html.text
+    assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
     assert "W07 품질 새로고침" in root_html.text
@@ -240,9 +244,30 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["adoption_w04_tracker_readiness_api"] == "/api/adoption/w04/tracker/readiness"
     assert service_info.json()["adoption_w04_tracker_completion_api"] == "/api/adoption/w04/tracker/completion"
     assert service_info.json()["adoption_w04_tracker_complete_api"] == "/api/adoption/w04/tracker/complete"
+    assert service_info.json()["adoption_w07_tracker_items_api"] == "/api/adoption/w07/tracker/items"
+    assert service_info.json()["adoption_w07_tracker_overview_api"] == "/api/adoption/w07/tracker/overview"
+    assert service_info.json()["adoption_w07_tracker_readiness_api"] == "/api/adoption/w07/tracker/readiness"
+    assert service_info.json()["adoption_w07_tracker_completion_api"] == "/api/adoption/w07/tracker/completion"
+    assert service_info.json()["adoption_w07_tracker_complete_api"] == "/api/adoption/w07/tracker/complete"
     assert service_info.json()["adoption_w05_consistency_api"] == "/api/ops/adoption/w05/consistency"
     assert service_info.json()["adoption_w06_rhythm_api"] == "/api/ops/adoption/w06/rhythm"
     assert service_info.json()["adoption_w07_sla_quality_api"] == "/api/ops/adoption/w07/sla-quality"
+    assert (
+        service_info.json()["adoption_w07_sla_quality_weekly_run_api"]
+        == "/api/ops/adoption/w07/sla-quality/run-weekly"
+    )
+    assert (
+        service_info.json()["adoption_w07_sla_quality_weekly_latest_api"]
+        == "/api/ops/adoption/w07/sla-quality/latest-weekly"
+    )
+    assert (
+        service_info.json()["adoption_w07_sla_quality_weekly_trends_api"]
+        == "/api/ops/adoption/w07/sla-quality/trends"
+    )
+    assert (
+        service_info.json()["adoption_w07_sla_quality_weekly_archive_csv_api"]
+        == "/api/ops/adoption/w07/sla-quality/archive.csv"
+    )
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
@@ -2052,6 +2077,110 @@ def test_w06_operational_rhythm_snapshot_flow(app_client: TestClient) -> None:
     assert forbidden.status_code == 403
 
 
+def test_w07_tracker_execution_flow(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w07_tracker_manager_ci",
+            "display_name": "W07 Tracker Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W07 Tracker Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w07-tracker-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    bootstrap = app_client.post(
+        "/api/adoption/w07/tracker/bootstrap",
+        headers=manager_headers,
+        json={"site": "W07 Tracker Site"},
+    )
+    assert bootstrap.status_code == 200
+    bootstrap_body = bootstrap.json()
+    assert bootstrap_body["site"] == "W07 Tracker Site"
+    assert bootstrap_body["total_count"] >= 13
+
+    listed = app_client.get(
+        "/api/adoption/w07/tracker/items?site=W07+Tracker+Site&limit=500",
+        headers=manager_headers,
+    )
+    assert listed.status_code == 200
+    items = listed.json()
+    assert len(items) >= 13
+
+    for row in items:
+        item_id = int(row["id"])
+        updated = app_client.patch(
+            f"/api/adoption/w07/tracker/items/{item_id}",
+            headers=manager_headers,
+            json={
+                "assignee": "Ops QA",
+                "status": "done",
+                "completion_checked": True,
+                "completion_note": "W07 completed in CI",
+            },
+        )
+        assert updated.status_code == 200
+        assert updated.json()["status"] == "done"
+        assert updated.json()["completion_checked"] is True
+
+        if row["item_type"] in {"sla_checklist", "coaching_play"}:
+            uploaded = app_client.post(
+                f"/api/adoption/w07/tracker/items/{item_id}/evidence",
+                headers=manager_headers,
+                data={"note": "w07 proof"},
+                files={"file": (f"w07-{item_id}.txt", f"proof {item_id}".encode("utf-8"), "text/plain")},
+            )
+            assert uploaded.status_code == 201
+            evidence_id = uploaded.json()["id"]
+            downloaded = app_client.get(
+                f"/api/adoption/w07/tracker/evidence/{evidence_id}/download",
+                headers=manager_headers,
+            )
+            assert downloaded.status_code == 200
+            assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    readiness = app_client.get(
+        "/api/adoption/w07/tracker/readiness?site=W07+Tracker+Site",
+        headers=manager_headers,
+    )
+    assert readiness.status_code == 200
+    readiness_body = readiness.json()
+    assert readiness_body["ready"] is True
+    assert readiness_body["pending_count"] == 0
+    assert readiness_body["in_progress_count"] == 0
+    assert readiness_body["blocked_count"] == 0
+    assert readiness_body["missing_assignee_count"] == 0
+    assert readiness_body["missing_completion_checked_count"] == 0
+    assert readiness_body["missing_required_evidence_count"] == 0
+
+    completed = app_client.post(
+        "/api/adoption/w07/tracker/complete",
+        headers=manager_headers,
+        json={"site": "W07 Tracker Site", "completion_note": "W07 tracker complete"},
+    )
+    assert completed.status_code == 200
+    assert completed.json()["status"] == "completed"
+    assert completed.json()["readiness"]["ready"] is True
+
+    completion = app_client.get(
+        "/api/adoption/w07/tracker/completion?site=W07+Tracker+Site",
+        headers=manager_headers,
+    )
+    assert completion.status_code == 200
+    assert completion.json()["status"] == "completed"
+
+
 def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
     created = app_client.post(
         "/api/admin/users",
@@ -2141,9 +2270,16 @@ def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
     assert scoped_body["metrics"]["created_work_orders"] >= 2
     assert scoped_body["metrics"]["acked_work_orders"] >= 1
     assert scoped_body["metrics"]["completed_work_orders"] >= 1
+    assert "p90_ack_minutes" in scoped_body["metrics"]
+    assert "median_mttr_minutes" in scoped_body["metrics"]
+    assert isinstance(scoped_body["metrics"]["priority_mttr_minutes"], dict)
+    assert "sla_violation_rate_percent" in scoped_body["metrics"]
+    assert "data_quality_gate_pass" in scoped_body["metrics"]
     assert scoped_body["metrics"]["escalated_work_orders"] >= 1
     assert scoped_body["metrics"]["overdue_open_work_orders"] >= 1
     assert scoped_body["metrics"]["sla_run_count"] >= 1
+    assert "thresholds" in scoped_body
+    assert "data_quality" in scoped_body
     assert isinstance(scoped_body["top_risk_sites"], list)
     assert isinstance(scoped_body["recommendations"], list)
     assert len(scoped_body["recommendations"]) >= 1
@@ -2154,6 +2290,44 @@ def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
     )
     assert all_visible.status_code == 200
     assert all_visible.json()["site"] is None
+
+    weekly_run = app_client.post(
+        "/api/ops/adoption/w07/sla-quality/run-weekly?site=W07+Site&days=14",
+        headers=manager_headers,
+    )
+    assert weekly_run.status_code == 200
+    weekly_run_body = weekly_run.json()
+    assert weekly_run_body["job_name"] == "adoption_w07_sla_quality_weekly"
+    assert weekly_run_body["site"] == "W07 Site"
+    assert "degradation" in weekly_run_body
+    assert "cooldown_active" in weekly_run_body
+    assert "snapshot" in weekly_run_body
+
+    weekly_latest = app_client.get(
+        "/api/ops/adoption/w07/sla-quality/latest-weekly?site=W07+Site",
+        headers=manager_headers,
+    )
+    assert weekly_latest.status_code == 200
+    assert weekly_latest.json()["job_name"] == "adoption_w07_sla_quality_weekly"
+    assert weekly_latest.json()["site"] == "W07 Site"
+
+    weekly_trends = app_client.get(
+        "/api/ops/adoption/w07/sla-quality/trends?site=W07+Site&limit=10",
+        headers=manager_headers,
+    )
+    assert weekly_trends.status_code == 200
+    assert weekly_trends.json()["job_name"] == "adoption_w07_sla_quality_weekly"
+    assert weekly_trends.json()["site"] == "W07 Site"
+    assert weekly_trends.json()["point_count"] >= 1
+    assert isinstance(weekly_trends.json()["points"], list)
+
+    weekly_archive = app_client.get(
+        "/api/ops/adoption/w07/sla-quality/archive.csv?site=W07+Site&limit=10",
+        headers=manager_headers,
+    )
+    assert weekly_archive.status_code == 200
+    assert weekly_archive.headers["content-type"].startswith("text/csv")
+    assert "run_id,finished_at,site,status" in weekly_archive.text
 
     owner_outside = app_client.post(
         "/api/work-orders",
@@ -2174,6 +2348,75 @@ def test_w07_sla_quality_snapshot_flow(app_client: TestClient) -> None:
         headers=manager_headers,
     )
     assert forbidden.status_code == 403
+
+
+def test_w07_weekly_run_respects_cooldown(app_client: TestClient) -> None:
+    import app.database as db_module
+    from sqlalchemy import insert
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "w07_cooldown_manager_ci",
+            "display_name": "W07 Cooldown Manager CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["W07 Cooldown Site"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "w07-cooldown-manager-token"},
+    )
+    assert issued.status_code == 201
+    manager_headers = {"X-Admin-Token": issued.json()["token"]}
+
+    work_order = app_client.post(
+        "/api/work-orders",
+        headers=manager_headers,
+        json={
+            "title": "W07 cooldown overdue",
+            "description": "degradation input",
+            "site": "W07 Cooldown Site",
+            "location": "C7",
+            "priority": "critical",
+            "due_at": (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat(),
+        },
+    )
+    assert work_order.status_code == 201
+
+    now = datetime.now(timezone.utc)
+    with db_module.get_conn() as conn:
+        conn.execute(
+            insert(db_module.alert_deliveries).values(
+                event_type="adoption_w07_quality_degradation",
+                target="http://example.invalid/hook",
+                status="warning",
+                error="seed cooldown",
+                payload_json='{"site":"W07 Cooldown Site","seed":true}',
+                attempt_count=1,
+                last_attempt_at=now,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+
+    run = app_client.post(
+        "/api/ops/adoption/w07/sla-quality/run-weekly?site=W07+Cooldown+Site&days=14",
+        headers=manager_headers,
+    )
+    assert run.status_code == 200
+    body = run.json()
+    assert body["site"] == "W07 Cooldown Site"
+    assert body["degradation"]["degraded"] is True
+    assert body["cooldown_active"] is True
+    assert body["alert_attempted"] is False
+    assert body["cooldown_remaining_minutes"] >= 1
 
 
 def test_work_order_escalation_and_audit_log(app_client: TestClient) -> None:
