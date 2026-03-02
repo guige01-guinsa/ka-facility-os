@@ -611,6 +611,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         == "/api/ops/governance/gate/remediation/tracker/autopilot/summary.csv"
     )
     assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_anomalies_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_anomalies_csv_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv"
+    )
+    assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
     )
@@ -5549,6 +5557,27 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert "metric,value" in summary_csv.text
     assert "success_rate_percent" in summary_csv.text
     assert "latest_run_status" in summary_csv.text
+
+    anomalies = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies?days=14",
+        headers=_owner_headers(),
+    )
+    assert anomalies.status_code == 200
+    anomalies_body = anomalies.json()
+    assert int(anomalies_body["window_days"]) == 14
+    assert anomalies_body["health_status"] in {"healthy", "warning", "critical"}
+    assert isinstance(anomalies_body["anomalies"], list)
+    assert isinstance(anomalies_body["metrics"], dict)
+    assert isinstance(anomalies_body["recommendations"], list)
+
+    anomalies_csv = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv?days=14",
+        headers=_owner_headers(),
+    )
+    assert anomalies_csv.status_code == 200
+    assert anomalies_csv.headers.get("content-type", "").startswith("text/csv")
+    assert "generated_at,window_days,health_status,total_runs,success_rate_percent,skipped_rate_percent" in anomalies_csv.text
+    assert "recommendation" in anomalies_csv.text
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

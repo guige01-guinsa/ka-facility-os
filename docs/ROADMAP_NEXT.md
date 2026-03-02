@@ -62,6 +62,10 @@
   - autopilot 이력 CSV API(`.../tracker/autopilot/history.csv`) 추가
   - autopilot 요약 CSV API(`.../tracker/autopilot/summary.csv`) 추가
   - 운영 리포팅용 다운로드 포맷(지표/최신 실행 상태) 표준화
+- W30 착수 완료: Governance Remediation Autopilot Health Signals
+  - autopilot 이상징후 API(`.../tracker/autopilot/anomalies`) 추가
+  - autopilot 이상징후 CSV API(`.../tracker/autopilot/anomalies.csv`) 추가
+  - 성공률/스킵률/쿨다운 차단/에러런 기반 건강상태 자동 판정
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -304,6 +308,22 @@
 완료 기준:
 - history/summary JSON과 CSV 수치가 일관됨
 - CSV 다운로드 파일명/헤더가 운영 리포팅 용도에 맞게 고정됨
+- 회귀 테스트 전체 통과
+
+## W30: Governance Remediation Autopilot Health Signals (우선순위 15)
+목표:
+- autopilot 운영 상태를 건강신호(healthy/warning/critical)로 자동 분류
+- 반복 쿨다운 차단/성공률 저하/에러 증가를 조기 감지해 선제 대응
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies` 제공
+2. `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv` 제공
+3. summary/history 기반 이상징후 규칙(성공률/스킵률/쿨다운/에러/최신 critical) 추가
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- 동일 window에서 anomalies JSON과 CSV 결과가 일관됨
+- health_status(healthy/warning/critical)가 규칙 기반으로 재현 가능
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

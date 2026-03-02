@@ -8162,6 +8162,294 @@ def _build_w29_remediation_autopilot_summary_csv(payload: dict[str, Any]) -> str
     return out.getvalue()
 
 
+def _build_w30_remediation_autopilot_anomalies(*, days: int = 14) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    normalized_days = max(1, min(int(days), 90))
+    summary = _build_w28_remediation_autopilot_summary(days=normalized_days)
+    history_limit = max(10, min(100, normalized_days * 6))
+    history = _build_w28_remediation_autopilot_history(limit=history_limit)
+
+    total_runs = int(summary.get("total_runs") or 0)
+    success_rate_percent = float(summary.get("success_rate_percent") or 0.0)
+    skipped_rate_percent = float(summary.get("skipped_rate_percent") or 0.0)
+    cooldown_blocked_runs = int(summary.get("cooldown_blocked_runs") or 0)
+    error_runs = int(summary.get("error_runs") or 0)
+    latest_run = summary.get("latest_run") if isinstance(summary.get("latest_run"), dict) else None
+    history_items = history.get("items", []) if isinstance(history.get("items"), list) else []
+
+    anomalies: list[dict[str, Any]] = []
+
+    def add_anomaly(
+        *,
+        code: str,
+        severity: str,
+        message: str,
+        observed: Any,
+        target: Any,
+        recommendation: str,
+    ) -> None:
+        anomalies.append(
+            {
+                "code": code,
+                "severity": severity,
+                "message": message,
+                "observed": observed,
+                "target": target,
+                "recommendation": recommendation,
+            }
+        )
+
+    if total_runs == 0:
+        add_anomaly(
+            code="no_recent_runs",
+            severity="critical",
+            message="No autopilot runs found in window.",
+            observed=0,
+            target=">=1 run",
+            recommendation="Trigger manual autopilot run and verify cron schedule.",
+        )
+    elif total_runs < 5:
+        add_anomaly(
+            code="low_sample_size",
+            severity="warning",
+            message="Run count is low for stable trend analysis.",
+            observed=total_runs,
+            target=">=5 runs",
+            recommendation="Increase run cadence or expand analysis window.",
+        )
+
+    if success_rate_percent < 70.0:
+        add_anomaly(
+            code="low_success_rate",
+            severity="critical",
+            message="Autopilot success rate is below critical threshold.",
+            observed=success_rate_percent,
+            target=">=85.0",
+            recommendation="Review autopilot errors and unblock failing actions.",
+        )
+    elif success_rate_percent < 85.0:
+        add_anomaly(
+            code="degraded_success_rate",
+            severity="warning",
+            message="Autopilot success rate is below target.",
+            observed=success_rate_percent,
+            target=">=85.0",
+            recommendation="Review skipped/failed runs and tune policy thresholds.",
+        )
+
+    if skipped_rate_percent > 60.0:
+        add_anomaly(
+            code="high_skip_rate",
+            severity="critical",
+            message="Skip rate is above critical threshold.",
+            observed=skipped_rate_percent,
+            target="<=35.0",
+            recommendation="Review cooldown and skip policy to reduce skipped runs.",
+        )
+    elif skipped_rate_percent > 35.0:
+        add_anomaly(
+            code="elevated_skip_rate",
+            severity="warning",
+            message="Skip rate is above target.",
+            observed=skipped_rate_percent,
+            target="<=35.0",
+            recommendation="Tune policy thresholds and run cadence.",
+        )
+
+    if cooldown_blocked_runs >= 10:
+        add_anomaly(
+            code="cooldown_blocks_excessive",
+            severity="critical",
+            message="Cooldown blocks are frequently preventing execution.",
+            observed=cooldown_blocked_runs,
+            target="<10",
+            recommendation="Reduce cooldown minutes or increase interval between runs.",
+        )
+    elif cooldown_blocked_runs >= 5:
+        add_anomaly(
+            code="cooldown_blocks_high",
+            severity="warning",
+            message="Cooldown blocks are high.",
+            observed=cooldown_blocked_runs,
+            target="<5",
+            recommendation="Tune cooldown policy to balance safety and execution rate.",
+        )
+
+    if error_runs >= 5:
+        add_anomaly(
+            code="error_runs_high",
+            severity="critical",
+            message="Autopilot error runs exceed critical threshold.",
+            observed=error_runs,
+            target="<5",
+            recommendation="Inspect run errors and add remediation for recurring failures.",
+        )
+    elif error_runs >= 1:
+        add_anomaly(
+            code="error_runs_detected",
+            severity="warning",
+            message="Autopilot error runs detected in analysis window.",
+            observed=error_runs,
+            target="0",
+            recommendation="Review latest error payload and stabilize failing component.",
+        )
+
+    consecutive_cooldown_skips = 0
+    for item in history_items:
+        if not isinstance(item, dict):
+            continue
+        if bool(item.get("skipped", False)) and str(item.get("skip_reason") or "") == "cooldown_active":
+            consecutive_cooldown_skips += 1
+            continue
+        break
+    if consecutive_cooldown_skips >= 6:
+        add_anomaly(
+            code="consecutive_cooldown_skips",
+            severity="critical",
+            message="Consecutive cooldown skips are too high.",
+            observed=consecutive_cooldown_skips,
+            target="<3",
+            recommendation="Run with force=true once and revisit cooldown policy.",
+        )
+    elif consecutive_cooldown_skips >= 3:
+        add_anomaly(
+            code="consecutive_cooldown_skips",
+            severity="warning",
+            message="Consecutive cooldown skips detected.",
+            observed=consecutive_cooldown_skips,
+            target="<3",
+            recommendation="Check run cadence and cooldown settings.",
+        )
+
+    if isinstance(latest_run, dict):
+        latest_status = str(latest_run.get("status") or "warning")
+        latest_overdue = int(latest_run.get("overdue_count") or 0)
+        latest_critical_open = int(latest_run.get("critical_open_count") or 0)
+        if latest_status == "critical":
+            add_anomaly(
+                code="latest_run_critical",
+                severity="critical",
+                message="Latest autopilot run ended in critical state.",
+                observed=latest_status,
+                target="success|warning",
+                recommendation="Inspect latest run errors and execute recovery actions.",
+            )
+        if latest_critical_open > 0:
+            add_anomaly(
+                code="critical_open_items",
+                severity="warning",
+                message="Critical open remediation items remain.",
+                observed=latest_critical_open,
+                target="0",
+                recommendation="Prioritize critical items and rerun autopilot.",
+            )
+        if latest_overdue > 0:
+            add_anomaly(
+                code="overdue_items_open",
+                severity="warning",
+                message="Overdue remediation items remain open.",
+                observed=latest_overdue,
+                target="0",
+                recommendation="Run escalation and clear overdue backlog.",
+            )
+
+    severity_order = {"info": 0, "warning": 1, "critical": 2}
+    max_severity = 0
+    for row in anomalies:
+        level = str(row.get("severity") or "info")
+        max_severity = max(max_severity, severity_order.get(level, 0))
+    health_status = "healthy"
+    if max_severity >= severity_order["critical"]:
+        health_status = "critical"
+    elif max_severity >= severity_order["warning"]:
+        health_status = "warning"
+
+    anomalies.sort(
+        key=lambda row: (
+            -severity_order.get(str(row.get("severity") or "info"), 0),
+            str(row.get("code") or ""),
+        )
+    )
+    recommendations = list(dict.fromkeys(str(row.get("recommendation") or "") for row in anomalies if row.get("recommendation")))
+
+    return {
+        "generated_at": now.isoformat(),
+        "window_days": normalized_days,
+        "health_status": health_status,
+        "anomaly_count": len(anomalies),
+        "anomalies": anomalies,
+        "metrics": {
+            "total_runs": total_runs,
+            "executed_runs": int(summary.get("executed_runs") or 0),
+            "skipped_runs": int(summary.get("skipped_runs") or 0),
+            "success_rate_percent": success_rate_percent,
+            "skipped_rate_percent": skipped_rate_percent,
+            "cooldown_blocked_runs": cooldown_blocked_runs,
+            "error_runs": error_runs,
+            "consecutive_cooldown_skips": consecutive_cooldown_skips,
+        },
+        "latest_run": latest_run,
+        "recommendations": recommendations[:5],
+    }
+
+
+def _build_w30_remediation_autopilot_anomalies_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "generated_at",
+            "window_days",
+            "health_status",
+            "total_runs",
+            "success_rate_percent",
+            "skipped_rate_percent",
+            "cooldown_blocked_runs",
+            "error_runs",
+            "code",
+            "severity",
+            "message",
+            "observed",
+            "target",
+            "recommendation",
+        ]
+    )
+    metrics = payload.get("metrics", {}) if isinstance(payload.get("metrics"), dict) else {}
+    anomalies = payload.get("anomalies", []) if isinstance(payload.get("anomalies"), list) else []
+    rows = anomalies or [
+        {
+            "code": "none",
+            "severity": "info",
+            "message": "No anomalies detected",
+            "observed": "",
+            "target": "",
+            "recommendation": "",
+        }
+    ]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        writer.writerow(
+            [
+                payload.get("generated_at"),
+                int(payload.get("window_days") or 0),
+                payload.get("health_status"),
+                int(metrics.get("total_runs") or 0),
+                float(metrics.get("success_rate_percent") or 0.0),
+                float(metrics.get("skipped_rate_percent") or 0.0),
+                int(metrics.get("cooldown_blocked_runs") or 0),
+                int(metrics.get("error_runs") or 0),
+                row.get("code"),
+                row.get("severity"),
+                row.get("message"),
+                row.get("observed"),
+                row.get("target"),
+                row.get("recommendation"),
+            ]
+        )
+    return out.getvalue()
+
+
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
@@ -24128,6 +24416,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_autopilot_history_csv_api": "/api/ops/governance/gate/remediation/tracker/autopilot/history.csv",
         "ops_governance_remediation_tracker_autopilot_summary_api": "/api/ops/governance/gate/remediation/tracker/autopilot/summary",
         "ops_governance_remediation_tracker_autopilot_summary_csv_api": "/api/ops/governance/gate/remediation/tracker/autopilot/summary.csv",
+        "ops_governance_remediation_tracker_autopilot_anomalies_api": "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies",
+        "ops_governance_remediation_tracker_autopilot_anomalies_csv_api": "/api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv",
         "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
         "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
@@ -46195,6 +46485,63 @@ def get_ops_governance_gate_remediation_tracker_autopilot_summary_csv(
             "skipped_runs": int(payload.get("skipped_runs") or 0),
             "cooldown_blocked_runs": int(payload.get("cooldown_blocked_runs") or 0),
             "success_rate_percent": float(payload.get("success_rate_percent") or 0.0),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/anomalies")
+def get_ops_governance_gate_remediation_tracker_autopilot_anomalies(
+    days: Annotated[int, Query(ge=1, le=90)] = 14,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _build_w30_remediation_autopilot_anomalies(days=days)
+    metrics = payload.get("metrics", {}) if isinstance(payload.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_anomalies_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id="autopilot_anomalies",
+        status=str(payload.get("health_status") or "healthy"),
+        detail={
+            "window_days": int(payload.get("window_days") or days),
+            "health_status": payload.get("health_status"),
+            "anomaly_count": int(payload.get("anomaly_count") or 0),
+            "total_runs": int(metrics.get("total_runs") or 0),
+            "success_rate_percent": float(metrics.get("success_rate_percent") or 0.0),
+            "skipped_rate_percent": float(metrics.get("skipped_rate_percent") or 0.0),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/anomalies.csv")
+def get_ops_governance_gate_remediation_tracker_autopilot_anomalies_csv(
+    days: Annotated[int, Query(ge=1, le=90)] = 14,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    payload = _build_w30_remediation_autopilot_anomalies(days=days)
+    csv_text = _build_w30_remediation_autopilot_anomalies_csv(payload)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-governance-remediation-autopilot-anomalies-{stamp}.csv"
+    metrics = payload.get("metrics", {}) if isinstance(payload.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_anomalies_csv_export",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=file_name,
+        status=str(payload.get("health_status") or "healthy"),
+        detail={
+            "window_days": int(payload.get("window_days") or days),
+            "health_status": payload.get("health_status"),
+            "anomaly_count": int(payload.get("anomaly_count") or 0),
+            "total_runs": int(metrics.get("total_runs") or 0),
+            "success_rate_percent": float(metrics.get("success_rate_percent") or 0.0),
+            "skipped_rate_percent": float(metrics.get("skipped_rate_percent") or 0.0),
         },
     )
     return Response(
