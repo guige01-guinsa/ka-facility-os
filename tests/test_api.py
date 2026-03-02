@@ -312,6 +312,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
     assert "ID/PW 로그인" in root_html.text
+    assert "사용자 신규가입" in root_html.text
     assert "요약 새로고침" in root_html.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})

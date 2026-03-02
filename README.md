@@ -52,6 +52,7 @@ Open:
   - `GET /api/auth/me`
   - `PATCH /api/auth/me/profile` (self profile update: `display_name` / `password`)
   - `DELETE /api/auth/me` (self account deactivation)
+  - Main HTML (`/`) includes "사용자 신규가입" form that calls `POST /api/admin/users` with current token
   - `GET /api/admin/users` (permission: `owner` or `manager`)
   - `POST /api/admin/users` (permission: `owner` or `manager`)
   - `PATCH /api/admin/users/{user_id}` (permission: `owner` or `manager`, access guardrails applied)

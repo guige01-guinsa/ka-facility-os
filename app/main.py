@@ -31487,6 +31487,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       gap: 8px;
       margin-bottom: 9px;
     }}
+    .signup-row {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 140px) minmax(0, 160px) auto;
+      gap: 8px;
+      margin-bottom: 9px;
+    }}
     .auth-row input, .filter-row input {{
       width: 100%;
       border: 1px solid #c8d8ec;
@@ -31497,6 +31503,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       background: #fff;
     }}
     .login-row input {{
+      width: 100%;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }}
+    .signup-row input, .signup-row select {{
       width: 100%;
       border: 1px solid #c8d8ec;
       border-radius: 10px;
@@ -31755,6 +31770,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       .tab-btn {{ font-size: 13px; padding: 10px; }}
       .auth-row {{ grid-template-columns: 1fr; }}
       .login-row {{ grid-template-columns: 1fr; }}
+      .signup-row {{ grid-template-columns: 1fr; }}
       .filter-row {{ grid-template-columns: 1fr; }}
       .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .adopt-grid {{ grid-template-columns: 1fr; }}
@@ -31796,6 +31812,19 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <input id="loginPasswordInput" type="password" placeholder="password" autocomplete="current-password" />
           <input id="loginTokenLabelInput" value="web-login" placeholder="token label" />
           <button id="loginBtn" class="btn run" type="button">ID/PW 로그인</button>
+        </div>
+        <div class="signup-row">
+          <input id="signupUsernameInput" placeholder="new username" autocomplete="username" />
+          <input id="signupPasswordInput" type="password" placeholder="new password" autocomplete="new-password" />
+          <input id="signupDisplayNameInput" placeholder="display name (optional)" />
+          <select id="signupRoleInput">
+            <option value="operator">operator</option>
+            <option value="auditor">auditor</option>
+            <option value="manager">manager</option>
+            <option value="owner">owner</option>
+          </select>
+          <input id="signupSiteScopeInput" value="*" placeholder="site scope (comma, e.g. HQ,B1)" />
+          <button id="signupBtn" class="btn run" type="button">사용자 신규가입</button>
         </div>
         <div id="authState" class="auth-state">토큰 상태: 없음</div>
 
@@ -32624,6 +32653,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       const loginUsernameInput = document.getElementById("loginUsernameInput");
       const loginPasswordInput = document.getElementById("loginPasswordInput");
       const loginTokenLabelInput = document.getElementById("loginTokenLabelInput");
+      const signupUsernameInput = document.getElementById("signupUsernameInput");
+      const signupPasswordInput = document.getElementById("signupPasswordInput");
+      const signupDisplayNameInput = document.getElementById("signupDisplayNameInput");
+      const signupRoleInput = document.getElementById("signupRoleInput");
+      const signupSiteScopeInput = document.getElementById("signupSiteScopeInput");
       let authProfile = null;
       let w07TrackerItemsCache = [];
       let w07TrackerFilter = "all";
@@ -33291,6 +33325,72 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           authProfile = null;
           updateAuthStateFromToken();
           setAuthState("로그인 실패 | " + err.message);
+        }}
+      }}
+
+      function parseSiteScopeInput(raw) {{
+        const parts = String(raw || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item !== "");
+        if (!parts.length) {{
+          return ["*"];
+        }}
+        if (parts.includes("*")) {{
+          return ["*"];
+        }}
+        return Array.from(new Set(parts));
+      }}
+
+      async function runAuthSignup() {{
+        const username = (signupUsernameInput && signupUsernameInput.value ? signupUsernameInput.value : "").trim();
+        const password = (signupPasswordInput && signupPasswordInput.value ? signupPasswordInput.value : "").trim();
+        const displayName = (signupDisplayNameInput && signupDisplayNameInput.value ? signupDisplayNameInput.value : "").trim();
+        const roleValue = (signupRoleInput && signupRoleInput.value ? signupRoleInput.value : "").trim().toLowerCase();
+        const role = roleValue || "operator";
+        const siteScopeRaw = (signupSiteScopeInput && signupSiteScopeInput.value ? signupSiteScopeInput.value : "").trim();
+
+        if (!username) {{
+          setAuthState("가입 실패: username을 입력하세요.");
+          return;
+        }}
+        if (!password) {{
+          setAuthState("가입 실패: password를 입력하세요.");
+          return;
+        }}
+        setAuthState("가입 처리 중...");
+        try {{
+          const payload = {{
+            username,
+            password,
+            role,
+            permissions: [],
+            site_scope: parseSiteScopeInput(siteScopeRaw),
+          }};
+          if (displayName) {{
+            payload.display_name = displayName;
+          }}
+          const created = await fetchJson("/api/admin/users", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          if (signupPasswordInput) {{
+            signupPasswordInput.value = "";
+          }}
+          if (loginUsernameInput) {{
+            loginUsernameInput.value = String(created.username || username);
+          }}
+          if (loginPasswordInput) {{
+            loginPasswordInput.value = password;
+          }}
+          setAuthState(
+            "가입 성공 | 사용자: " + String(created.username || username)
+            + " | 역할: " + String(created.role || role)
+            + " | 이제 ID/PW 로그인 버튼으로 확인하세요."
+          );
+        }} catch (err) {{
+          setAuthState("가입 실패 | " + err.message);
         }}
       }}
 
@@ -37679,6 +37779,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           if (event.key === "Enter") {{
             event.preventDefault();
             runAuthLogin();
+          }}
+        }});
+      }}
+      document.getElementById("signupBtn").addEventListener("click", runAuthSignup);
+      if (signupPasswordInput) {{
+        signupPasswordInput.addEventListener("keydown", (event) => {{
+          if (event.key === "Enter") {{
+            event.preventDefault();
+            runAuthSignup();
           }}
         }});
       }}
