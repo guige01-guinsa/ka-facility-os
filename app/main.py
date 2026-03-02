@@ -3686,10 +3686,10 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
         "description": "신규 사용자가 검증된 샘플데이터와 단계별 조건으로 실습하고 즉시 완료판정을 받을 수 있습니다.",
         "kpi_hint": "First successful practice <= 20 min",
         "links": [
-            {"label": "Tutorial Hub", "href": "/web/tutorial-simulator"},
-            {"label": "Tutorial API", "href": "/api/public/tutorial-simulator"},
-            {"label": "Sample Files", "href": "/api/public/tutorial-simulator/sample-files"},
-            {"label": "Start Session", "href": "/api/ops/tutorial-simulator/sessions/start"},
+            {"label": "튜토리얼 허브", "href": "/web/tutorial-simulator"},
+            {"label": "튜토리얼 API", "href": "/api/public/tutorial-simulator"},
+            {"label": "샘플 파일", "href": "/api/public/tutorial-simulator/sample-files"},
+            {"label": "세션 시작", "href": "/api/ops/tutorial-simulator/sessions/start"},
         ],
     },
     {
@@ -4319,7 +4319,7 @@ def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: i
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KA Facility OS - API Browser View</title>
+  <title>KA Facility OS - API 브라우저 보기</title>
   <style>
     :root {{
       --ink: #0f2139;
@@ -4392,15 +4392,15 @@ def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: i
 <body>
   <div class="wrap">
     <section class="hero">
-      <h1>API Browser View</h1>
+      <h1>API 브라우저 보기</h1>
       <p>브라우저 접속 시 JSON 원문 대신 사람이 읽기 쉬운 HTML 보기입니다.</p>
       <div class="meta">
         Path: {html.escape(path_label)} | HTTP: {status_code}
       </div>
       <div class="links">
-        <a href="/">Public Main</a>
-        <a href="/web/console">Operations Console</a>
-        <a href="{html.escape(raw_href)}">Raw JSON</a>
+        <a href="/">공개 메인</a>
+        <a href="/web/console">운영 콘솔</a>
+        <a href="{html.escape(raw_href)}">원본 JSON</a>
       </div>
       <pre>{html.escape(payload_text)}</pre>
     </section>
@@ -20788,7 +20788,7 @@ def _build_w04_common_mistakes_payload(
     sorted_items = sorted(mistake_items, key=lambda x: int(x.get("observed_count", 0)), reverse=True)
     now = datetime.now(timezone.utc)
     return {
-        "title": "W04 Common Mistakes and Quick Fix Guide",
+        "title": "W04 자주 하는 실수와 빠른 해결 가이드",
         "public": True,
         "generated_at": now.isoformat(),
         "site": site,
@@ -20819,7 +20819,7 @@ def _build_w04_common_mistakes_html(payload: dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>W04 Common Mistakes</title>
+  <title>W04 자주 하는 실수</title>
   <style>
     body {{ font-family: 'Segoe UI', Arial, sans-serif; margin: 0; background: #f2f6fb; color: #112; }}
     .wrap {{ max-width: 980px; margin: 0 auto; padding: 18px; }}
@@ -20835,17 +20835,17 @@ def _build_w04_common_mistakes_html(payload: dict[str, Any]) -> str:
 <body>
   <div class="wrap">
     <div class="box">
-      <h1>{html.escape(str(payload.get("title", "W04 Common Mistakes")))}</h1>
-      <p>Generated: {html.escape(str(payload.get("generated_at", "")))}</p>
-      <p>Site: {html.escape(str(payload.get("site", "ALL")))} | Window: {html.escape(str(payload.get("window_days", "")))} days</p>
+      <h1>{html.escape(str(payload.get("title", "W04 자주 하는 실수")))}</h1>
+      <p>생성 시각: {html.escape(str(payload.get("generated_at", "")))}</p>
+      <p>사이트: {html.escape(str(payload.get("site", "ALL")))} | 기간: {html.escape(str(payload.get("window_days", "")))}일</p>
       <div class="links">
-        <a href="/api/public/adoption-plan/w04/common-mistakes">JSON</a>
-        <a href="/api/public/adoption-plan/w04">W04 Pack</a>
-        <a href="/">Main</a>
+        <a href="/api/public/adoption-plan/w04/common-mistakes">JSON 보기</a>
+        <a href="/api/public/adoption-plan/w04">W04 패키지</a>
+        <a href="/">메인</a>
       </div>
       <table>
         <thead>
-          <tr><th>Mistake</th><th>Symptom</th><th>Quick Fix</th><th>Where To Check</th><th>Observed</th></tr>
+          <tr><th>실수</th><th>증상</th><th>빠른 해결</th><th>확인 위치</th><th>발생 수</th></tr>
         </thead>
         <tbody>
           {"".join(rows)}
@@ -27235,7 +27235,7 @@ def _post_mvp_payload() -> dict[str, Any]:
 
 def _facility_modules_payload() -> dict[str, Any]:
     return {
-        "title": "KA Facility OS Facility Web Modules",
+        "title": "KA Facility OS 시설 웹 모듈",
         "published_on": "2026-02-27",
         "public": True,
         "main_page": "/",
@@ -27271,7 +27271,7 @@ def _tutorial_simulator_sample_files_payload() -> dict[str, Any]:
         )
 
     return {
-        "title": "Tutorial Simulator Verified Sample Files",
+        "title": "Tutorial Simulator Verified 샘플 파일",
         "public": True,
         "validated_on": "2026-03-02",
         "verified_by": "ka-facility-os tutorial qa suite",
@@ -27378,10 +27378,10 @@ def _build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       <h1>KA Facility OS Tutorial Simulator</h1>
       <p class="caption">검증 샘플데이터/파일 기반으로 신규 사용자가 실습 실행부터 완료판정까지 한 화면에서 진행할 수 있습니다.</p>
       <div class="links">
-        <a href="/api/public/tutorial-simulator">Tutorial JSON API</a>
-        <a href="/api/public/tutorial-simulator/sample-files">Sample Files API</a>
-        <a href="/api/public/modules">Facility Modules</a>
-        <a href="/web/console">Operations Console</a>
+        <a href="/api/public/tutorial-simulator">튜토리얼 JSON API</a>
+        <a href="/api/public/tutorial-simulator/sample-files">샘플 파일 API</a>
+        <a href="/api/public/modules">시설 모듈</a>
+        <a href="/web/console">운영 콘솔</a>
       </div>
       <div class="chips">
         <span id="chipValidatedOn">validated_on: -</span>
@@ -27417,7 +27417,7 @@ def _build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
         </div>
         <div class="row">
           <input id="sessionIdInput" placeholder="session_id (자동채움)" />
-          <input id="assigneeInput" value="Ops Trainee" placeholder="assignee" />
+          <input id="assigneeInput" value="Ops Trainee" placeholder="담당자" />
           <input id="resolutionInput" value="Tutorial completion" placeholder="resolution_notes" />
           <button id="listSessionsBtn" class="btn" type="button">최근 세션</button>
         </div>
@@ -27452,7 +27452,7 @@ def _build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
     </section>
 
     <section class="card">
-      <h2>Result JSON</h2>
+      <h2>결과 JSON</h2>
       <pre id="resultJson" class="mono">{}</pre>
     </section>
   </main>
@@ -29206,7 +29206,7 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KA Facility OS - Public Main</title>
+  <title>KA Facility OS - 공개 메인</title>
   <style>
     :root {{
       --ink: #0d1f3a;
@@ -29562,16 +29562,16 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/schedule.csv">Schedule CSV</a>
         <a href="/api/public/adoption-plan/schedule.ics">Calendar ICS</a>
         <a href="/api/public/adoption-plan/w02">W02 JSON</a>
-        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
-        <a href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
+        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 일정 ICS</a>
+        <a href="/api/public/adoption-plan/w02/sample-files">W02 샘플 파일</a>
         <a href="/api/public/adoption-plan/w03">W03 JSON</a>
-        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 일정 ICS</a>
         <a href="/api/public/adoption-plan/w04">W04 JSON</a>
-        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
-        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
+        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 일정 ICS</a>
+        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 자주 하는 실수 JSON</a>
         <a href="/api/public/adoption-plan/w05">W05 JSON</a>
         <a href="/api/public/adoption-plan/w05/missions.csv">W05 Missions CSV</a>
         <a href="/api/public/adoption-plan/w05/schedule.ics">W05 Schedule ICS</a>
@@ -29591,18 +29591,18 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
         <a href="/api/public/adoption-plan/w09">W09 JSON</a>
         <a href="/api/public/adoption-plan/w09/checklist.csv">W09 Checklist CSV</a>
         <a href="/api/public/adoption-plan/w09/schedule.ics">W09 Schedule ICS</a>
-        <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
-        <a href="/web/console">Facility Console HTML</a>
-        <a href="/api/service-info">Service Info</a>
+        <a href="/web/adoption/w04/common-mistakes">W04 자주 하는 실수 HTML</a>
+        <a href="/web/console">시설 콘솔 HTML</a>
+        <a href="/api/service-info">서비스 정보</a>
       </div>
     </section>
 
     <section class="section">
-      <h2>Facility Web Modules</h2>
+      <h2>시설 웹 모듈</h2>
       <p class="sub">메인 페이지를 시설관리 허브로 사용하고, 핵심 모듈을 카드형으로 바로 연결합니다.</p>
       <div class="links">
-        <a href="/api/public/modules">Modules API</a>
-        <a href="/web/console">Operations Console HTML</a>
+        <a href="/api/public/modules">모듈 API</a>
+        <a href="/web/console">운영 콘솔 HTML</a>
       </div>
       <div class="grid">
         {"".join(module_cards)}
@@ -29638,9 +29638,9 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       <p class="sub">SOP 표준화와 샌드박스 실습을 주간 일정으로 고정해 즉시 실행 가능 상태로 만듭니다.</p>
       <div class="links">
         <a href="/api/public/adoption-plan/w02">W02 JSON</a>
-        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
-        <a href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
+        <a href="/api/public/adoption-plan/w02/checklist.csv">W02 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w02/schedule.ics">W02 일정 ICS</a>
+        <a href="/api/public/adoption-plan/w02/sample-files">W02 샘플 파일</a>
         <a href="/api/adoption/w02/tracker/items">W02 Tracker Items API (Token)</a>
         <a href="/api/adoption/w02/tracker/overview?site=HQ">W02 Tracker Overview API (Token)</a>
       </div>
@@ -29702,8 +29702,8 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       <p class="sub">런치 주차 온보딩(킥오프 + 역할 워크숍 + 일일 오피스아워) 실행 패키지입니다.</p>
       <div class="links">
         <a href="/api/public/adoption-plan/w03">W03 JSON</a>
-        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+        <a href="/api/public/adoption-plan/w03/checklist.csv">W03 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w03/schedule.ics">W03 일정 ICS</a>
         <a href="/api/adoption/w03/tracker/items">W03 Tracker Items API (Token)</a>
         <a href="/api/adoption/w03/tracker/overview?site=HQ">W03 Tracker Overview API (Token)</a>
       </div>
@@ -29781,10 +29781,10 @@ def _build_public_main_page_html(service_info: dict[str, str], plan: dict[str, A
       <p class="sub">첫 성공 시간(TTV) 단축과 Top blocker 제거를 위한 코칭 실행 패키지입니다.</p>
       <div class="links">
         <a href="/api/public/adoption-plan/w04">W04 JSON</a>
-        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
-        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
-        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
-        <a href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
+        <a href="/api/public/adoption-plan/w04/checklist.csv">W04 체크리스트 CSV</a>
+        <a href="/api/public/adoption-plan/w04/schedule.ics">W04 일정 ICS</a>
+        <a href="/api/public/adoption-plan/w04/common-mistakes">W04 자주 하는 실수 JSON</a>
+        <a href="/web/adoption/w04/common-mistakes">W04 자주 하는 실수 HTML</a>
         <a href="/api/ops/adoption/w04/funnel">W04 Funnel API (Token)</a>
         <a href="/api/ops/adoption/w04/blockers">W04 Blockers API (Token)</a>
         <a href="/api/adoption/w04/tracker/items">W04 Tracker Items API (Token)</a>
@@ -30833,7 +30833,7 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KA Facility OS - Facility Console</title>
+  <title>KA Facility OS - 시설 콘솔</title>
   <style>
     :root {
       --ink: #0f1e36;
@@ -31075,10 +31075,10 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
       <h1>KA Facility OS 시설관리 운영 콘솔</h1>
       <p>서비스: __SERVICE_NAME__ | API 결과를 브라우저에서 표/카드로 즉시 확인하는 HTML 콘솔입니다. JSON API는 그대로 유지되며, 이 화면은 사람 중심 운영 뷰입니다.</p>
       <div class="hero-links">
-        <a href="/">Public Main</a>
-        <a href="/docs">Swagger Docs</a>
-        <a href="/api/service-info">Service Info API</a>
-        <a href="/api/public/modules">Modules API</a>
+        <a href="/">공개 메인</a>
+        <a href="/docs">스웨거 문서</a>
+        <a href="/api/service-info">서비스 정보 API</a>
+        <a href="/api/public/modules">모듈 API</a>
       </div>
     </header>
 
@@ -31213,7 +31213,7 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
             </div>
             <button class="btn run run-btn" data-panel="monthlyReport" type="button">JSON 조회</button>
             <div class="download-links">
-              <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">Print HTML</a>
+              <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">HTML 인쇄</a>
               <a id="reportCsvLink" href="/api/reports/monthly/csv" target="_blank" rel="noopener">CSV 다운로드</a>
               <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF 다운로드</a>
             </div>
@@ -31229,11 +31229,11 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
         </div>
 
         <div class="result-panel">
-          <h3>Result Viewer</h3>
+          <h3>결과 보기</h3>
           <p id="resultMeta" class="result-meta">조회 대상을 선택하세요.</p>
           <div id="resultView" class="empty">아직 조회 결과가 없습니다.</div>
           <details>
-            <summary>Raw JSON 보기</summary>
+            <summary>원본 JSON 보기</summary>
             <pre id="resultRaw" class="mono">{}</pre>
           </details>
         </div>
@@ -31558,7 +31558,7 @@ def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>KA Facility OS - Public Modules</title>
+  <title>KA Facility OS - 공개 모듈</title>
   <style>
     :root {{
       --ink: #0f1f37;
@@ -31639,12 +31639,12 @@ def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
 <body>
   <div class="wrap">
     <header class="hero">
-      <h1>Facility Web Modules</h1>
+      <h1>시설 웹 모듈</h1>
       <p>브라우저에서 API JSON 대신 사람이 읽기 쉬운 모듈 카드 화면입니다.</p>
       <div class="hero-links">
-        <a href="/">Public Main</a>
-        <a href="/web/console">Operations Console</a>
-        <a href="/api/public/modules">Same URL (JSON/HTML)</a>
+        <a href="/">공개 메인</a>
+        <a href="/web/console">운영 콘솔</a>
+        <a href="/api/public/modules">동일 URL (JSON/HTML)</a>
       </div>
     </header>
     <section class="grid">
@@ -31663,9 +31663,9 @@ def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) 
           <div class="box">
             <h3>{label} 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
-              <input id="{code}TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="{code}TrackItemId" placeholder="tracker_item_id" />
-              <input id="{code}TrackAssignee" placeholder="assignee" />
+              <input id="{code}TrackSite" placeholder="site (필수, 예: HQ)" />
+              <input id="{code}TrackItemId" placeholder="tracker_item_id(숫자)" />
+              <input id="{code}TrackAssignee" placeholder="담당자" />
               <select id="{code}TrackStatus">
                 <option value="">status(선택)</option>
                 <option value="pending">pending</option>
@@ -31680,25 +31680,25 @@ def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) 
                 <input id="{code}TrackCompleted" type="checkbox" />
                 완료 체크
               </label>
-              <input id="{code}TrackNote" placeholder="completion note (optional)" />
-              <input id="{code}EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="{code}TrackNote" placeholder="완료 메모(선택)" />
+              <input id="{code}EvidenceNote" placeholder="증빙 메모(선택)" />
               <input id="{code}EvidenceFile" type="file" />
               <button id="{code}TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
-              <input id="{code}EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="{code}Reserved1" value="token required for write actions" disabled />
-              <input id="{code}Reserved2" value="site scope enforced" disabled />
-              <input id="{code}Reserved3" value="max file 5MB" disabled />
+              <input id="{code}EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
+              <input id="{code}Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
+              <input id="{code}Reserved2" value="site 범위 권한 적용" disabled />
+              <input id="{code}Reserved3" value="파일 최대 5MB" disabled />
               <button id="{code}TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
-              <input id="{code}CompletionNote" placeholder="completion note (optional)" />
+              <input id="{code}CompletionNote" placeholder="완료 메모(선택)" />
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="{code}CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
               </label>
-              <input id="{code}Reserved4" value="readiness gate required" disabled />
+              <input id="{code}Reserved4" value="준비도 게이트 필요" disabled />
               <button id="{code}ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="{code}CompleteBtn" class="btn" type="button">{label} 완료 확정</button>
             </div>
@@ -32149,16 +32149,16 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       <h1>시설관리시스템 메인</h1>
       <p>단일 셸 기반 운영 화면입니다. 탭 전환 시 같은 페이지에서 데이터를 즉시 조회하며, 링크 공유를 위해 탭 URL 상태도 유지합니다.</p>
       <div class="links">
-        <a href="{html.escape(service_info.get("docs", "/docs"))}">Swagger Docs</a>
-        <a href="/api/service-info">Service Info</a>
-        <a href="/web/console">Legacy Console</a>
-        <a href="/web/adoption">Legacy Adoption</a>
+        <a href="{html.escape(service_info.get("docs", "/docs"))}">스웨거 문서</a>
+        <a href="/api/service-info">서비스 정보</a>
+        <a href="/web/console">레거시 콘솔</a>
+        <a href="/web/adoption">레거시 정착 계획</a>
         <a href="/web/tutorial-simulator">튜토리얼</a>
       </div>
     </header>
 
     <section class="tabs">
-      <div class="tab-head" role="tablist" aria-label="Main tabs">
+      <div class="tab-head" role="tablist" aria-label="메인 탭">
         <button class="tab-btn" type="button" role="tab" data-tab="overview">운영요약</button>
         <button class="tab-btn" type="button" role="tab" data-tab="workorders">작업지시</button>
         <button class="tab-btn" type="button" role="tab" data-tab="inspections">점검</button>
@@ -32313,7 +32313,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div class="box">
             <h3>리포트 다운로드/출력</h3>
             <div class="mini-links">
-              <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">Print HTML</a>
+              <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">HTML 인쇄</a>
               <a id="reportCsvLink" href="/api/reports/monthly/csv" target="_blank" rel="noopener">CSV</a>
               <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF</a>
             </div>
@@ -32344,9 +32344,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="adoptionW02Schedule" class="empty">데이터 없음</div>
             <div class="mini-links">
               <a id="adoptW02Json" href="/api/public/adoption-plan/w02">W02 JSON</a>
-              <a id="adoptW02ChecklistCsv" href="/api/public/adoption-plan/w02/checklist.csv">W02 Checklist CSV</a>
-              <a id="adoptW02ScheduleIcs" href="/api/public/adoption-plan/w02/schedule.ics">W02 Schedule ICS</a>
-              <a id="adoptW02SampleFiles" href="/api/public/adoption-plan/w02/sample-files">W02 Sample Files</a>
+              <a id="adoptW02ChecklistCsv" href="/api/public/adoption-plan/w02/checklist.csv">W02 체크리스트 CSV</a>
+              <a id="adoptW02ScheduleIcs" href="/api/public/adoption-plan/w02/schedule.ics">W02 일정 ICS</a>
+              <a id="adoptW02SampleFiles" href="/api/public/adoption-plan/w02/sample-files">W02 샘플 파일</a>
             </div>
           </div>
           <div class="box">
@@ -32358,8 +32358,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="adoptionW03Schedule" class="empty">데이터 없음</div>
             <div class="mini-links">
               <a id="adoptW03Json" href="/api/public/adoption-plan/w03">W03 JSON</a>
-              <a id="adoptW03ChecklistCsv" href="/api/public/adoption-plan/w03/checklist.csv">W03 Checklist CSV</a>
-              <a id="adoptW03ScheduleIcs" href="/api/public/adoption-plan/w03/schedule.ics">W03 Schedule ICS</a>
+              <a id="adoptW03ChecklistCsv" href="/api/public/adoption-plan/w03/checklist.csv">W03 체크리스트 CSV</a>
+              <a id="adoptW03ScheduleIcs" href="/api/public/adoption-plan/w03/schedule.ics">W03 일정 ICS</a>
             </div>
           </div>
           <div class="box">
@@ -32370,18 +32370,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div id="adoptionW04Mistakes" class="empty">데이터 없음</div>
             <div class="mini-links">
               <a id="adoptW04Json" href="/api/public/adoption-plan/w04">W04 JSON</a>
-              <a id="adoptW04ChecklistCsv" href="/api/public/adoption-plan/w04/checklist.csv">W04 Checklist CSV</a>
-              <a id="adoptW04ScheduleIcs" href="/api/public/adoption-plan/w04/schedule.ics">W04 Schedule ICS</a>
-              <a id="adoptW04MistakesJson" href="/api/public/adoption-plan/w04/common-mistakes">W04 Common Mistakes JSON</a>
-              <a id="adoptW04MistakesHtml" href="/web/adoption/w04/common-mistakes">W04 Common Mistakes HTML</a>
+              <a id="adoptW04ChecklistCsv" href="/api/public/adoption-plan/w04/checklist.csv">W04 체크리스트 CSV</a>
+              <a id="adoptW04ScheduleIcs" href="/api/public/adoption-plan/w04/schedule.ics">W04 일정 ICS</a>
+              <a id="adoptW04MistakesJson" href="/api/public/adoption-plan/w04/common-mistakes">W04 자주 하는 실수 JSON</a>
+              <a id="adoptW04MistakesHtml" href="/web/adoption/w04/common-mistakes">W04 자주 하는 실수 HTML</a>
             </div>
           </div>
           <div class="box">
             <h3>W02 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
-              <input id="w02TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w02TrackItemId" placeholder="tracker_item_id" />
-              <input id="w02TrackAssignee" placeholder="assignee" />
+              <input id="w02TrackSite" placeholder="site (필수, 예: HQ)" />
+              <input id="w02TrackItemId" placeholder="tracker_item_id(숫자)" />
+              <input id="w02TrackAssignee" placeholder="담당자" />
               <select id="w02TrackStatus">
                 <option value="">status(선택)</option>
                 <option value="pending">pending</option>
@@ -32396,25 +32396,25 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 <input id="w02TrackCompleted" type="checkbox" />
                 완료 체크
               </label>
-              <input id="w02TrackNote" placeholder="completion note (optional)" />
-              <input id="w02EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w02TrackNote" placeholder="완료 메모(선택)" />
+              <input id="w02EvidenceNote" placeholder="증빙 메모(선택)" />
               <input id="w02EvidenceFile" type="file" />
               <button id="w02TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
-              <input id="w02EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w02Reserved1" value="token required for write actions" disabled />
-              <input id="w02Reserved2" value="site scope enforced" disabled />
-              <input id="w02Reserved3" value="max file 5MB" disabled />
+              <input id="w02EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
+              <input id="w02Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
+              <input id="w02Reserved2" value="site 범위 권한 적용" disabled />
+              <input id="w02Reserved3" value="파일 최대 5MB" disabled />
               <button id="w02TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
-              <input id="w02CompletionNote" placeholder="completion note (optional)" />
+              <input id="w02CompletionNote" placeholder="완료 메모(선택)" />
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="w02CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
               </label>
-              <input id="w02Reserved4" value="readiness gate required" disabled />
+              <input id="w02Reserved4" value="준비도 게이트 필요" disabled />
               <button id="w02ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="w02CompleteBtn" class="btn" type="button">W02 완료 확정</button>
             </div>
@@ -32431,9 +32431,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div class="box">
             <h3>W03 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
-              <input id="w03TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w03TrackItemId" placeholder="tracker_item_id" />
-              <input id="w03TrackAssignee" placeholder="assignee" />
+              <input id="w03TrackSite" placeholder="site (필수, 예: HQ)" />
+              <input id="w03TrackItemId" placeholder="tracker_item_id(숫자)" />
+              <input id="w03TrackAssignee" placeholder="담당자" />
               <select id="w03TrackStatus">
                 <option value="">status(선택)</option>
                 <option value="pending">pending</option>
@@ -32448,25 +32448,25 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 <input id="w03TrackCompleted" type="checkbox" />
                 완료 체크
               </label>
-              <input id="w03TrackNote" placeholder="completion note (optional)" />
-              <input id="w03EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w03TrackNote" placeholder="완료 메모(선택)" />
+              <input id="w03EvidenceNote" placeholder="증빙 메모(선택)" />
               <input id="w03EvidenceFile" type="file" />
               <button id="w03TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
-              <input id="w03EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w03Reserved1" value="token required for write actions" disabled />
-              <input id="w03Reserved2" value="site scope enforced" disabled />
-              <input id="w03Reserved3" value="max file 5MB" disabled />
+              <input id="w03EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
+              <input id="w03Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
+              <input id="w03Reserved2" value="site 범위 권한 적용" disabled />
+              <input id="w03Reserved3" value="파일 최대 5MB" disabled />
               <button id="w03TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
-              <input id="w03CompletionNote" placeholder="completion note (optional)" />
+              <input id="w03CompletionNote" placeholder="완료 메모(선택)" />
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="w03CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
               </label>
-              <input id="w03Reserved4" value="readiness gate required" disabled />
+              <input id="w03Reserved4" value="준비도 게이트 필요" disabled />
               <button id="w03ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="w03CompleteBtn" class="btn" type="button">W03 완료 확정</button>
             </div>
@@ -32483,7 +32483,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div class="box">
             <h3>W04 First-Success Funnel + Top Blockers</h3>
             <div class="filter-row">
-              <input id="w04FunnelSite" placeholder="site (required, 예: HQ)" />
+              <input id="w04FunnelSite" placeholder="site (필수, 예: HQ)" />
               <input id="w04FunnelDays" value="30" placeholder="window days (1-90)" />
               <input id="w04FunnelMaxBlockers" value="3" placeholder="max blockers (1-10)" />
               <input id="w04FunnelReserved" value="token required" disabled />
@@ -32499,9 +32499,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div class="box">
             <h3>W04 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
-              <input id="w04TrackSite" placeholder="site (required, 예: HQ)" />
-              <input id="w04TrackItemId" placeholder="tracker_item_id" />
-              <input id="w04TrackAssignee" placeholder="assignee" />
+              <input id="w04TrackSite" placeholder="site (필수, 예: HQ)" />
+              <input id="w04TrackItemId" placeholder="tracker_item_id(숫자)" />
+              <input id="w04TrackAssignee" placeholder="담당자" />
               <select id="w04TrackStatus">
                 <option value="">status(선택)</option>
                 <option value="pending">pending</option>
@@ -32516,25 +32516,25 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 <input id="w04TrackCompleted" type="checkbox" />
                 완료 체크
               </label>
-              <input id="w04TrackNote" placeholder="completion note (optional)" />
-              <input id="w04EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w04TrackNote" placeholder="완료 메모(선택)" />
+              <input id="w04EvidenceNote" placeholder="증빙 메모(선택)" />
               <input id="w04EvidenceFile" type="file" />
               <button id="w04TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
-              <input id="w04EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id" />
-              <input id="w04Reserved1" value="token required for write actions" disabled />
-              <input id="w04Reserved2" value="site scope enforced" disabled />
-              <input id="w04Reserved3" value="max file 5MB" disabled />
+              <input id="w04EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
+              <input id="w04Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
+              <input id="w04Reserved2" value="site 범위 권한 적용" disabled />
+              <input id="w04Reserved3" value="파일 최대 5MB" disabled />
               <button id="w04TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
-              <input id="w04CompletionNote" placeholder="completion note (optional)" />
+              <input id="w04CompletionNote" placeholder="완료 메모(선택)" />
               <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
                 <input id="w04CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
               </label>
-              <input id="w04Reserved4" value="readiness gate required" disabled />
+              <input id="w04Reserved4" value="준비도 게이트 필요" disabled />
               <button id="w04ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="w04CompleteBtn" class="btn" type="button">W04 완료 확정</button>
             </div>
@@ -32568,7 +32568,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w05ConsistencySite" placeholder="site (optional, 빈 값이면 전체)" />
               <input id="w05ConsistencyDays" value="28" placeholder="window days (14-90)" />
               <input id="w05ConsistencyReserved1" value="token required" disabled />
-              <input id="w05ConsistencyReserved2" value="site scope enforced" disabled />
+              <input id="w05ConsistencyReserved2" value="site 범위 권한 적용" disabled />
               <button id="w05ConsistencyRefreshBtn" class="btn run" type="button">W05 지표 새로고침</button>
             </div>
             <div id="w05ConsistencyMeta" class="meta">조회 전</div>
@@ -32598,7 +32598,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w06RhythmSite" placeholder="site (optional, 빈 값이면 전체)" />
               <input id="w06RhythmDays" value="14" placeholder="window days (7-90)" />
               <input id="w06RhythmReserved1" value="token required" disabled />
-              <input id="w06RhythmReserved2" value="site scope enforced" disabled />
+              <input id="w06RhythmReserved2" value="site 범위 권한 적용" disabled />
               <button id="w06RhythmRefreshBtn" class="btn run" type="button">W06 리듬 새로고침</button>
             </div>
             <div id="w06RhythmMeta" class="meta">조회 전</div>
@@ -32638,7 +32638,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w07QualitySite" placeholder="site (optional, 빈 값이면 전체)" />
               <input id="w07QualityDays" value="14" placeholder="window days (7-90)" />
               <input id="w07QualityReserved1" value="token required" disabled />
-              <input id="w07QualityReserved2" value="site scope enforced" disabled />
+              <input id="w07QualityReserved2" value="site 범위 권한 적용" disabled />
               <button id="w07QualityRefreshBtn" class="btn run" type="button">W07 품질 새로고침</button>
             </div>
             <div id="w07QualityMeta" class="meta">조회 전</div>
@@ -32671,7 +32671,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w08DisciplineSite" placeholder="site (optional, 빈 값이면 전체)" />
               <input id="w08DisciplineDays" value="30" placeholder="window days (14-120)" />
               <input id="w08DisciplineReserved1" value="token required" disabled />
-              <input id="w08DisciplineReserved2" value="site scope enforced" disabled />
+              <input id="w08DisciplineReserved2" value="site 범위 권한 적용" disabled />
               <button id="w08DisciplineRefreshBtn" class="btn run" type="button">W08 리포트 새로고침</button>
             </div>
             <div id="w08DisciplineMeta" class="meta">조회 전</div>
@@ -32705,7 +32705,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w09KpiSite" placeholder="site (optional, 비우면 전체)" />
               <input id="w09KpiDays" value="30" placeholder="window days (14-120)" />
               <input id="w09KpiReserved1" value="token required" disabled />
-              <input id="w09KpiReserved2" value="site scope enforced" disabled />
+              <input id="w09KpiReserved2" value="site 범위 권한 적용" disabled />
               <button id="w09KpiRefreshBtn" class="btn run" type="button">W09 KPI 새로고침</button>
             </div>
             <div id="w09KpiMeta" class="meta">조회 전</div>
@@ -32743,7 +32743,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w10KpiSite" placeholder="site (optional, 비우면 전체)" />
               <input id="w10KpiDays" value="30" placeholder="window days (14-120)" />
               <input id="w10KpiReserved1" value="token required" disabled />
-              <input id="w10KpiReserved2" value="site scope enforced" disabled />
+              <input id="w10KpiReserved2" value="site 범위 권한 적용" disabled />
               <button id="w10KpiRefreshBtn" class="btn run" type="button">W10 지표 새로고침</button>
             </div>
             <div id="w10KpiMeta" class="meta">조회 전</div>
@@ -32781,7 +32781,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w11KpiSite" placeholder="site (optional, 비우면 전체)" />
               <input id="w11KpiDays" value="30" placeholder="window days (14-120)" />
               <input id="w11KpiReserved1" value="token required" disabled />
-              <input id="w11KpiReserved2" value="site scope enforced" disabled />
+              <input id="w11KpiReserved2" value="site 범위 권한 적용" disabled />
               <button id="w11KpiRefreshBtn" class="btn run" type="button">W11 지표 새로고침</button>
             </div>
             <div id="w11KpiMeta" class="meta">조회 전</div>
@@ -32819,7 +32819,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <input id="w15KpiSite" placeholder="site (optional, 비우면 전체)" />
               <input id="w15KpiDays" value="30" placeholder="window days (14-120)" />
               <input id="w15KpiReserved1" value="token required" disabled />
-              <input id="w15KpiReserved2" value="site scope enforced" disabled />
+              <input id="w15KpiReserved2" value="site 범위 권한 적용" disabled />
               <button id="w15KpiRefreshBtn" class="btn run" type="button">W15 지표 새로고침</button>
             </div>
             <div id="w15KpiMeta" class="meta">조회 전</div>
@@ -32838,9 +32838,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <div class="box">
             <h3>W07 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
             <div class="filter-row">
-              <input id="w07TrackSite" placeholder="site (required, 예: HQ)" />
+              <input id="w07TrackSite" placeholder="site (필수, 예: HQ)" />
               <input id="w07TrackItemId" placeholder="tracker_item_id (표에서 자동 선택)" readonly />
-              <input id="w07TrackAssignee" placeholder="assignee" />
+              <input id="w07TrackAssignee" placeholder="담당자" />
               <select id="w07TrackStatus">
                 <option value="">status(선택)</option>
                 <option value="pending">pending</option>
@@ -32856,17 +32856,17 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 <input id="w07TrackCompleted" type="checkbox" />
                 완료 체크
               </label>
-              <input id="w07TrackNote" placeholder="completion note (optional)" />
-              <input id="w07EvidenceNote" placeholder="evidence note (optional)" />
+              <input id="w07TrackNote" placeholder="완료 메모(선택)" />
+              <input id="w07EvidenceNote" placeholder="증빙 메모(선택)" />
               <input id="w07EvidenceFile" type="file" />
               <button id="w07TrackUpdateBtn" class="btn" type="button">상태 저장</button>
             </div>
             <div class="filter-row">
               <input id="w07EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id (자동 입력)" />
               <div id="w07EvidenceDropzone" class="dropzone" title="클릭 또는 파일 드래그">파일 드래그/클릭 업로드 준비</div>
-              <input id="w07Reserved1" value="token required for write actions" disabled />
-              <input id="w07Reserved2" value="site scope enforced" disabled />
-              <input id="w07Reserved3" value="max file 5MB" disabled />
+              <input id="w07Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
+              <input id="w07Reserved2" value="site 범위 권한 적용" disabled />
+              <input id="w07Reserved3" value="파일 최대 5MB" disabled />
               <button id="w07TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
             </div>
             <div class="filter-row">
@@ -32898,7 +32898,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
                 <input id="w07CompletionForce" type="checkbox" />
                 강제 완료(owner/admin)
               </label>
-              <input id="w07Reserved4" value="readiness gate required" disabled />
+              <input id="w07Reserved4" value="준비도 게이트 필요" disabled />
               <button id="w07ReadinessBtn" class="btn run" type="button">완료 판정</button>
               <button id="w07CompleteBtn" class="btn" type="button">W07 완료 확정</button>
             </div>
@@ -32959,7 +32959,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
             <div class="filter-row">
               <input id="w07WeeklyReserved1" value="token required" disabled />
-              <input id="w07WeeklyReserved2" value="site scope enforced" disabled />
+              <input id="w07WeeklyReserved2" value="site 범위 권한 적용" disabled />
               <input id="w07WeeklyReserved3" value="cooldown protected alerting" disabled />
               <button id="w07WeeklyLatestBtn" class="btn run" type="button">최근 실행 조회</button>
               <button id="w07WeeklyTrendsBtn" class="btn run" type="button">트렌드 조회</button>
@@ -32998,7 +32998,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <div class="mini-links">
               <a href="/web/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 화면 열기</a>
               <a href="/api/public/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 JSON API</a>
-              <a href="/api/public/tutorial-simulator/sample-files" target="_blank" rel="noopener">튜토리얼 Sample Files</a>
+              <a href="/api/public/tutorial-simulator/sample-files" target="_blank" rel="noopener">튜토리얼 샘플 파일</a>
               <a href="/api/ops/tutorial-simulator/sessions/start" target="_blank" rel="noopener">세션 시작 API</a>
               <a href="/api/ops/tutorial-simulator/sessions" target="_blank" rel="noopener">세션 목록 API</a>
             </div>
@@ -52544,5 +52544,6 @@ app.include_router(ops_router)
 app.include_router(admin_router)
 app.include_router(adoption_router)
 app.include_router(public_router)
+
 
 

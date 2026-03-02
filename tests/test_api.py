@@ -677,7 +677,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert console_html.headers["content-type"].startswith("text/html")
     assert "KA Facility OS 시설관리 운영 콘솔" in console_html.text
     assert "X-Admin-Token" in console_html.text
-    assert "Result Viewer" in console_html.text
+    assert "결과 보기" in console_html.text
     assert "알림 채널 KPI (7/30일)" in console_html.text
     assert "알림 데이터 보관정책" in console_html.text
 
@@ -699,10 +699,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W11 Scale Readiness" in adoption_html.text
     assert "W14 Stability Sprint" in adoption_html.text
     assert "W15 Operations Efficiency" in adoption_html.text
-    assert "W02 Sample Files" in adoption_html.text
-    assert "Facility Web Modules" in adoption_html.text
+    assert "W02 샘플 파일" in adoption_html.text
+    assert "시설 웹 모듈" in adoption_html.text
     assert "Tutorial Simulator" in adoption_html.text
-    assert "Operations Console HTML" in adoption_html.text
+    assert "운영 콘솔 HTML" in adoption_html.text
     assert "요약 모드 (핵심 5줄): OFF" in adoption_html.text
     assert "핵심 5줄 요약" in adoption_html.text
     assert "Post-MVP Execution Pack" in adoption_html.text
@@ -719,8 +719,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     modules_html = app_client.get("/api/public/modules", headers={"Accept": "text/html"})
     assert modules_html.status_code == 200
     assert modules_html.headers["content-type"].startswith("text/html")
-    assert "Facility Web Modules" in modules_html.text
-    assert "Operations Console" in modules_html.text
+    assert "시설 웹 모듈" in modules_html.text
+    assert "운영 콘솔" in modules_html.text
     assert "Tutorial Simulator" in modules_html.text
 
     public_plan = app_client.get("/api/public/adoption-plan")
@@ -873,14 +873,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert w04_mistakes_json.status_code == 200
     mistakes_body = w04_mistakes_json.json()
     assert mistakes_body["public"] is True
-    assert mistakes_body["title"] == "W04 Common Mistakes and Quick Fix Guide"
+    assert mistakes_body["title"] == "W04 자주 하는 실수와 빠른 해결 가이드"
     assert isinstance(mistakes_body["items"], list)
     assert len(mistakes_body["items"]) >= 5
 
     w04_mistakes_html = app_client.get("/web/adoption/w04/common-mistakes")
     assert w04_mistakes_html.status_code == 200
     assert w04_mistakes_html.headers["content-type"].startswith("text/html")
-    assert "W04 Common Mistakes and Quick Fix Guide" in w04_mistakes_html.text
+    assert "W04 자주 하는 실수와 빠른 해결 가이드" in w04_mistakes_html.text
 
     w05 = app_client.get("/api/public/adoption-plan/w05")
     assert w05.status_code == 200
@@ -1128,8 +1128,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     post_mvp_html = app_client.get("/api/public/post-mvp", headers={"Accept": "text/html"})
     assert post_mvp_html.status_code == 200
     assert post_mvp_html.headers["content-type"].startswith("text/html")
-    assert "API Browser View" in post_mvp_html.text
-    assert "Raw JSON" in post_mvp_html.text
+    assert "API 브라우저 보기" in post_mvp_html.text
+    assert "원본 JSON" in post_mvp_html.text
 
     post_mvp_raw = app_client.get("/api/public/post-mvp?raw=1", headers={"Accept": "text/html"})
     assert post_mvp_raw.status_code == 200
@@ -6028,7 +6028,7 @@ def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
     assert public_html.status_code == 200
     assert public_html.headers.get("content-type", "").startswith("text/html")
     assert "Tutorial Simulator" in public_html.text
-    assert "Sample Files API" in public_html.text
+    assert "샘플 파일 API" in public_html.text
     assert "세션 실습 실행" in public_html.text
 
     simulator_html = app_client.get("/web/tutorial-simulator")
