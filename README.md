@@ -143,6 +143,8 @@ Open:
   - `GET /api/ops/tutorial-simulator/sessions/{session_id}` (permission: `admins:manage`)
   - `POST /api/ops/tutorial-simulator/sessions/{session_id}/check` (permission: `admins:manage`)
   - `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}` (permission: `admins:manage`)
+  - `GET /api/public/tutorial-simulator/sample-files`
+  - `GET /api/public/tutorial-simulator/sample-files/{sample_id}`
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -549,6 +551,8 @@ Job monitoring:
 - `GET /api/public/adoption-plan/campaign`
 - `GET /api/public/modules`
 - `GET /api/public/tutorial-simulator`
+- `GET /api/public/tutorial-simulator/sample-files`
+- `GET /api/public/tutorial-simulator/sample-files/{sample_id}`
 - `GET /web/adoption`
 - `GET /web/console`
 - `GET /web/tutorial-simulator`

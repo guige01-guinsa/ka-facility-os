@@ -666,6 +666,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["alert_retention_latest_api"] == "/api/ops/alerts/retention/latest"
     assert service_info.json()["alert_retention_run_api"] == "/api/ops/alerts/retention/run"
     assert service_info.json()["public_tutorial_simulator_api"] == "/api/public/tutorial-simulator"
+    assert (
+        service_info.json()["public_tutorial_simulator_sample_files_api"]
+        == "/api/public/tutorial-simulator/sample-files"
+    )
     assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
 
     console_html = app_client.get("/web/console")
@@ -5993,12 +5997,39 @@ def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
     body = public_payload.json()
     assert body["public"] is True
     assert body["simulator_html"] == "/web/tutorial-simulator"
+    assert body["sample_files_api"] == "/api/public/tutorial-simulator/sample-files"
+    assert body["session_list_api"] == "/api/ops/tutorial-simulator/sessions"
+    assert body["default_site"] == "Tutorial-HQ"
+    assert body["quickstart"]["definition_of_done"] == "progress.status=completed and completion_percent=100"
+    assert len(body["sample_files"]) >= 4
     assert any(item["id"] == "ts-core-01" for item in body["scenarios"])
+
+    sample_files = app_client.get("/api/public/tutorial-simulator/sample-files")
+    assert sample_files.status_code == 200
+    sample_files_body = sample_files.json()
+    assert sample_files_body["public"] is True
+    assert sample_files_body["count"] >= 4
+    assert len(sample_files_body["items"]) >= 4
+    sample_lookup = {str(item["sample_id"]): item for item in sample_files_body["items"]}
+    assert "ts-core-01-session-start" in sample_lookup
+    assert "ts-core-01-practice-checklist" in sample_lookup
+
+    start_sample_download = app_client.get(sample_lookup["ts-core-01-session-start"]["download_url"])
+    assert start_sample_download.status_code == 200
+    assert start_sample_download.headers["content-type"].startswith("application/json")
+    assert '"scenario_id": "ts-core-01"' in start_sample_download.text
+
+    checklist_sample_download = app_client.get(sample_lookup["ts-core-01-practice-checklist"]["download_url"])
+    assert checklist_sample_download.status_code == 200
+    assert checklist_sample_download.headers["content-type"].startswith("text/markdown")
+    assert "Tutorial Simulator Checklist" in checklist_sample_download.text
 
     public_html = app_client.get("/api/public/tutorial-simulator", headers={"Accept": "text/html"})
     assert public_html.status_code == 200
     assert public_html.headers.get("content-type", "").startswith("text/html")
     assert "Tutorial Simulator" in public_html.text
+    assert "Sample Files API" in public_html.text
+    assert "세션 실습 실행" in public_html.text
 
     simulator_html = app_client.get("/web/tutorial-simulator")
     assert simulator_html.status_code == 200
