@@ -599,8 +599,16 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         == "/api/ops/governance/gate/remediation/tracker/autopilot/history"
     )
     assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_history_csv_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/history.csv"
+    )
+    assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_summary_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/summary"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_summary_csv_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/summary.csv"
     )
     assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
@@ -5523,6 +5531,24 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert isinstance(summary_body["executed_action_counts"], dict)
     assert float(summary_body["success_rate_percent"]) >= 0.0
     assert float(summary_body["skipped_rate_percent"]) >= 0.0
+
+    history_csv = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/history.csv?limit=5",
+        headers=_owner_headers(),
+    )
+    assert history_csv.status_code == 200
+    assert history_csv.headers.get("content-type", "").startswith("text/csv")
+    assert "run_id,status,trigger,started_at,finished_at,dry_run,force,skipped,skip_reason" in history_csv.text
+
+    summary_csv = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/summary.csv?days=7",
+        headers=_owner_headers(),
+    )
+    assert summary_csv.status_code == 200
+    assert summary_csv.headers.get("content-type", "").startswith("text/csv")
+    assert "metric,value" in summary_csv.text
+    assert "success_rate_percent" in summary_csv.text
+    assert "latest_run_status" in summary_csv.text
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

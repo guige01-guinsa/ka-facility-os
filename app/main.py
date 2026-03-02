@@ -8044,6 +8044,124 @@ def _build_w28_remediation_autopilot_summary(*, days: int = 7) -> dict[str, Any]
     }
 
 
+def _build_w29_remediation_autopilot_history_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(
+        [
+            "run_id",
+            "status",
+            "trigger",
+            "started_at",
+            "finished_at",
+            "dry_run",
+            "force",
+            "skipped",
+            "skip_reason",
+            "planned_actions",
+            "actions",
+            "errors_count",
+            "open_items",
+            "overdue_count",
+            "unassigned_open_count",
+            "critical_open_count",
+        ]
+    )
+    for item in payload.get("items", []):
+        if not isinstance(item, dict):
+            continue
+        planned_actions = item.get("planned_actions", [])
+        if isinstance(planned_actions, list):
+            planned_actions_text = "|".join(str(v) for v in planned_actions)
+        else:
+            planned_actions_text = ""
+        actions = item.get("actions", [])
+        if isinstance(actions, list):
+            actions_text = "|".join(str(v) for v in actions)
+        else:
+            actions_text = ""
+        writer.writerow(
+            [
+                item.get("run_id"),
+                item.get("status"),
+                item.get("trigger"),
+                item.get("started_at"),
+                item.get("finished_at"),
+                bool(item.get("dry_run", False)),
+                bool(item.get("force", False)),
+                bool(item.get("skipped", False)),
+                item.get("skip_reason"),
+                planned_actions_text,
+                actions_text,
+                int(item.get("errors_count") or 0),
+                int(item.get("open_items") or 0),
+                int(item.get("overdue_count") or 0),
+                int(item.get("unassigned_open_count") or 0),
+                int(item.get("critical_open_count") or 0),
+            ]
+        )
+    return out.getvalue()
+
+
+def _build_w29_remediation_autopilot_summary_csv(payload: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["metric", "value"])
+    writer.writerow(["generated_at", payload.get("generated_at")])
+    writer.writerow(["window_days", int(payload.get("window_days") or 0)])
+    writer.writerow(["total_runs", int(payload.get("total_runs") or 0)])
+    writer.writerow(["executed_runs", int(payload.get("executed_runs") or 0)])
+    writer.writerow(["skipped_runs", int(payload.get("skipped_runs") or 0)])
+    writer.writerow(["cooldown_blocked_runs", int(payload.get("cooldown_blocked_runs") or 0)])
+    writer.writerow(["error_runs", int(payload.get("error_runs") or 0)])
+    writer.writerow(["success_rate_percent", float(payload.get("success_rate_percent") or 0.0)])
+    writer.writerow(["skipped_rate_percent", float(payload.get("skipped_rate_percent") or 0.0)])
+
+    status_counts = payload.get("status_counts", {})
+    if isinstance(status_counts, dict):
+        writer.writerow(["status_success", int(status_counts.get("success") or 0)])
+        writer.writerow(["status_warning", int(status_counts.get("warning") or 0)])
+        writer.writerow(["status_critical", int(status_counts.get("critical") or 0)])
+
+    planned_counts = payload.get("planned_action_counts", {})
+    if isinstance(planned_counts, dict):
+        writer.writerow(["planned_auto_assign", int(planned_counts.get("auto_assign") or 0)])
+        writer.writerow(["planned_escalation", int(planned_counts.get("escalation") or 0)])
+
+    executed_counts = payload.get("executed_action_counts", {})
+    if isinstance(executed_counts, dict):
+        writer.writerow(["executed_auto_assign", int(executed_counts.get("auto_assign") or 0)])
+        writer.writerow(["executed_escalation", int(executed_counts.get("escalation") or 0)])
+
+    latest_run = payload.get("latest_run", {})
+    if isinstance(latest_run, dict) and latest_run:
+        writer.writerow(["latest_run_id", latest_run.get("run_id")])
+        writer.writerow(["latest_run_status", latest_run.get("status")])
+        writer.writerow(["latest_run_finished_at", latest_run.get("finished_at")])
+        writer.writerow(["latest_run_skipped", bool(latest_run.get("skipped", False))])
+        writer.writerow(["latest_run_skip_reason", latest_run.get("skip_reason")])
+        latest_planned = latest_run.get("planned_actions", [])
+        writer.writerow(
+            [
+                "latest_run_planned_actions",
+                "|".join(str(v) for v in latest_planned) if isinstance(latest_planned, list) else "",
+            ]
+        )
+        latest_actions = latest_run.get("actions", [])
+        writer.writerow(
+            [
+                "latest_run_actions",
+                "|".join(str(v) for v in latest_actions) if isinstance(latest_actions, list) else "",
+            ]
+        )
+        writer.writerow(["latest_run_open_items", int(latest_run.get("open_items") or 0)])
+        writer.writerow(["latest_run_overdue_count", int(latest_run.get("overdue_count") or 0)])
+        writer.writerow(["latest_run_unassigned_open_count", int(latest_run.get("unassigned_open_count") or 0)])
+        writer.writerow(["latest_run_critical_open_count", int(latest_run.get("critical_open_count") or 0)])
+
+    return out.getvalue()
+
+
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
@@ -24007,7 +24125,9 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_autopilot_preview_api": "/api/ops/governance/gate/remediation/tracker/autopilot/preview",
         "ops_governance_remediation_tracker_autopilot_guard_api": "/api/ops/governance/gate/remediation/tracker/autopilot/guard",
         "ops_governance_remediation_tracker_autopilot_history_api": "/api/ops/governance/gate/remediation/tracker/autopilot/history",
+        "ops_governance_remediation_tracker_autopilot_history_csv_api": "/api/ops/governance/gate/remediation/tracker/autopilot/history.csv",
         "ops_governance_remediation_tracker_autopilot_summary_api": "/api/ops/governance/gate/remediation/tracker/autopilot/summary",
+        "ops_governance_remediation_tracker_autopilot_summary_csv_api": "/api/ops/governance/gate/remediation/tracker/autopilot/summary.csv",
         "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
         "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
@@ -46002,6 +46122,33 @@ def get_ops_governance_gate_remediation_tracker_autopilot_history(
     return payload
 
 
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/history.csv")
+def get_ops_governance_gate_remediation_tracker_autopilot_history_csv(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    payload = _build_w28_remediation_autopilot_history(limit=limit)
+    csv_text = _build_w29_remediation_autopilot_history_csv(payload)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-governance-remediation-autopilot-history-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_history_csv_export",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=file_name,
+        status="success",
+        detail={
+            "limit": int(payload.get("limit") or limit),
+            "count": int(payload.get("count") or 0),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
 @ops_router.get("/governance/gate/remediation/tracker/autopilot/summary")
 def get_ops_governance_gate_remediation_tracker_autopilot_summary(
     days: Annotated[int, Query(ge=1, le=90)] = 7,
@@ -46024,6 +46171,37 @@ def get_ops_governance_gate_remediation_tracker_autopilot_summary(
         },
     )
     return payload
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/summary.csv")
+def get_ops_governance_gate_remediation_tracker_autopilot_summary_csv(
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> Response:
+    payload = _build_w28_remediation_autopilot_summary(days=days)
+    csv_text = _build_w29_remediation_autopilot_summary_csv(payload)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-governance-remediation-autopilot-summary-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_summary_csv_export",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=file_name,
+        status="success",
+        detail={
+            "window_days": int(payload.get("window_days") or days),
+            "total_runs": int(payload.get("total_runs") or 0),
+            "executed_runs": int(payload.get("executed_runs") or 0),
+            "skipped_runs": int(payload.get("skipped_runs") or 0),
+            "cooldown_blocked_runs": int(payload.get("cooldown_blocked_runs") or 0),
+            "success_rate_percent": float(payload.get("success_rate_percent") or 0.0),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 @ops_router.get("/governance/gate/remediation/tracker/autopilot/latest")

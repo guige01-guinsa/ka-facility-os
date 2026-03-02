@@ -58,6 +58,10 @@
   - autopilot 이력 API(`.../tracker/autopilot/history`) 추가
   - autopilot 요약 API(`.../tracker/autopilot/summary`) 추가
   - 실행/스킵/쿨다운 차단 추세를 운영 지표로 집계
+- W29 착수 완료: Governance Remediation Autopilot Reporting Export
+  - autopilot 이력 CSV API(`.../tracker/autopilot/history.csv`) 추가
+  - autopilot 요약 CSV API(`.../tracker/autopilot/summary.csv`) 추가
+  - 운영 리포팅용 다운로드 포맷(지표/최신 실행 상태) 표준화
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -284,6 +288,22 @@
 완료 기준:
 - 최근 N회 이력 조회와 window 요약 값이 일관됨
 - summary가 최소 성공률/스킵률/행동 집계를 반환함
+- 회귀 테스트 전체 통과
+
+## W29: Governance Remediation Autopilot Reporting Export (우선순위 14)
+목표:
+- autopilot 분석 데이터를 다운로드 가능한 CSV로 표준 제공
+- 운영회의/감사보고에서 JSON 가공 없이 즉시 활용 가능하도록 보강
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/autopilot/history.csv` 제공
+2. `GET /api/ops/governance/gate/remediation/tracker/autopilot/summary.csv` 제공
+3. 실행 이력/요약 지표를 CSV 컬럼으로 정규화
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- history/summary JSON과 CSV 수치가 일관됨
+- CSV 다운로드 파일명/헤더가 운영 리포팅 용도에 맞게 고정됨
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)
