@@ -1539,6 +1539,18 @@ class AuthLoginResponse(BaseModel):
     profile: AuthMeRead
 
 
+class AuthMeUpdateRequest(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+class AuthSelfDeactivateResponse(BaseModel):
+    status: str
+    user_id: int
+    username: str
+    deactivated_at: datetime
+
+
 class AdminUserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     display_name: str = Field(default="", max_length=120)
@@ -1563,6 +1575,14 @@ class AdminUserRead(BaseModel):
 
 class AdminUserActiveUpdate(BaseModel):
     is_active: bool
+
+
+class AdminUserUpdate(BaseModel):
+    display_name: Optional[str] = Field(default=None, max_length=120)
+    role: Optional[AdminRole] = None
+    permissions: Optional[list[str]] = None
+    site_scope: Optional[list[str]] = None
+    is_active: Optional[bool] = None
 
 
 class AdminUserPasswordSetRequest(BaseModel):

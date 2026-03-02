@@ -97,11 +97,14 @@ from app.schemas import (
     AdminTokenRead,
     AdminUserActiveUpdate,
     AdminUserCreate,
+    AdminUserUpdate,
     AdminUserPasswordSetRequest,
     AdminUserRead,
+    AuthMeUpdateRequest,
     AuthLoginRequest,
     AuthLoginResponse,
     AuthMeRead,
+    AuthSelfDeactivateResponse,
     DashboardSummaryRead,
     DashboardTrendPoint,
     DashboardTrendsRead,
@@ -8876,6 +8879,70 @@ def _effective_permissions(role: str, custom: list[str]) -> list[str]:
     if role == "owner":
         perms.add("*")
     return sorted(perms)
+
+
+def _principal_role(principal: dict[str, Any]) -> str:
+    return str(principal.get("role") or "").strip().lower()
+
+
+def _require_user_management_access(principal: dict[str, Any]) -> None:
+    role = _principal_role(principal)
+    if role in {"owner", "manager"} or _has_permission(principal, "admins:manage"):
+        return
+    raise HTTPException(status_code=403, detail="User management requires owner or manager role")
+
+
+def _contains_admin_control_permissions(permissions: list[str]) -> bool:
+    for item in permissions:
+        normalized = str(item or "").strip()
+        if not normalized:
+            continue
+        if normalized == "*" or normalized.startswith("admins:"):
+            return True
+    return False
+
+
+def _site_scope_is_subset(scope: list[str], allowed_scope: list[str]) -> bool:
+    normalized_scope = _site_scope_text_to_list(scope, default_all=True)
+    normalized_allowed = _site_scope_text_to_list(allowed_scope, default_all=True)
+    if SITE_SCOPE_ALL in normalized_allowed:
+        return True
+    if SITE_SCOPE_ALL in normalized_scope:
+        return False
+    return set(normalized_scope).issubset(set(normalized_allowed))
+
+
+def _enforce_manager_user_mutation_guardrails(
+    principal: dict[str, Any],
+    *,
+    next_role: str,
+    next_permissions: list[str],
+    next_site_scope: list[str],
+    target_role: str | None = None,
+    target_site_scope: list[str] | None = None,
+) -> None:
+    if _principal_role(principal) != "manager":
+        return
+
+    actor_scope = _principal_site_scope(principal)
+    if target_role == "owner":
+        raise HTTPException(status_code=403, detail="Manager cannot manage owner accounts")
+    if target_site_scope is not None and not _site_scope_is_subset(target_site_scope, actor_scope):
+        raise HTTPException(status_code=403, detail="Manager cannot manage users outside their site scope")
+    if str(next_role).strip().lower() == "owner":
+        raise HTTPException(status_code=403, detail="Manager cannot assign owner role")
+    if _contains_admin_control_permissions(next_permissions):
+        raise HTTPException(status_code=403, detail="Manager cannot grant admin control permissions")
+    if not _site_scope_is_subset(next_site_scope, actor_scope):
+        raise HTTPException(status_code=403, detail="Manager cannot assign site scope outside their own scope")
+
+
+def _count_active_owner_users(conn: Any, *, exclude_user_id: int | None = None) -> int:
+    stmt = select(func.count()).select_from(admin_users).where(admin_users.c.role == "owner").where(admin_users.c.is_active.is_(True))
+    if exclude_user_id is not None:
+        stmt = stmt.where(admin_users.c.id != exclude_user_id)
+    value = conn.execute(stmt).scalar_one()
+    return int(value or 0)
 
 
 def _hash_token(token: str) -> str:
@@ -24532,6 +24599,11 @@ def _service_info_payload() -> dict[str, str]:
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
         "auth_login_api": "/api/auth/login",
         "auth_me_api": "/api/auth/me",
+        "auth_me_profile_api": "/api/auth/me/profile",
+        "auth_me_deactivate_api": "/api/auth/me",
+        "admin_users_api": "/api/admin/users",
+        "admin_user_update_api": "/api/admin/users/{user_id}",
+        "admin_user_delete_api": "/api/admin/users/{user_id}",
         "admin_user_password_api": "/api/admin/users/{user_id}/password",
         "admin_tokens_api": "/api/admin/tokens",
         "admin_token_rotate_api": "/api/admin/tokens/{token_id}/rotate",
@@ -44484,28 +44556,171 @@ def auth_me(
     return _principal_to_auth_me_model(principal)
 
 
+@app.patch("/api/auth/me/profile", response_model=AuthMeRead)
+def auth_me_update_profile(
+    payload: AuthMeUpdateRequest,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AuthMeRead:
+    if payload.display_name is None and payload.password is None:
+        raise HTTPException(status_code=400, detail="No profile update fields provided")
+
+    user_id_raw = principal.get("user_id")
+    if user_id_raw is None:
+        raise HTTPException(status_code=409, detail="Legacy token cannot update profile")
+    user_id = int(user_id_raw)
+    now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
+
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+        if row is None or not bool(row.get("is_active")):
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        next_display_name = str(row.get("display_name") or row.get("username") or "").strip() or str(row.get("username") or "")
+        values: dict[str, Any] = {"updated_at": now}
+
+        if payload.display_name is not None:
+            normalized_name = payload.display_name.strip()
+            next_display_name = normalized_name or str(row.get("username") or "")
+            values["display_name"] = next_display_name
+
+        if payload.password is not None:
+            values["password_hash"] = _hash_password(payload.password)
+            values["password_updated_at"] = now
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(**values)
+        )
+
+        updated = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update admin profile")
+
+    updated_role = str(updated.get("role") or "operator")
+    updated_permissions = _effective_permissions(
+        updated_role,
+        _permission_text_to_list(updated.get("permissions")),
+    )
+    profile = AuthMeRead(
+        user_id=user_id,
+        token_id=principal.get("token_id"),
+        token_label=principal.get("token_label"),
+        token_expires_at=principal.get("token_expires_at"),
+        token_rotate_due_at=principal.get("token_rotate_due_at"),
+        token_idle_due_at=principal.get("token_idle_due_at"),
+        token_must_rotate=bool(principal.get("token_must_rotate", False)),
+        username=str(updated.get("username") or actor_username),
+        display_name=str(updated.get("display_name") or updated.get("username") or actor_username),
+        role=updated_role,
+        permissions=updated_permissions,
+        site_scope=list(_principal_site_scope(principal)),
+        is_legacy=bool(principal.get("is_legacy", False)),
+    )
+    _write_audit_log(
+        principal=principal,
+        action="auth_profile_update",
+        resource_type="admin_user",
+        resource_id=str(user_id),
+        detail={
+            "updated_fields": sorted([key for key in ("display_name", "password") if getattr(payload, key) is not None]),
+            "actor": actor_username,
+        },
+    )
+    return profile
+
+
+@app.delete("/api/auth/me", response_model=AuthSelfDeactivateResponse)
+def auth_me_deactivate(
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AuthSelfDeactivateResponse:
+    user_id_raw = principal.get("user_id")
+    if user_id_raw is None:
+        raise HTTPException(status_code=409, detail="Legacy token cannot deactivate account")
+    user_id = int(user_id_raw)
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        role = str(row.get("role") or "operator")
+        if role == "owner" and _count_active_owner_users(conn, exclude_user_id=user_id) <= 0:
+            raise HTTPException(status_code=409, detail="At least one active owner must remain")
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(is_active=False, updated_at=now)
+        )
+        conn.execute(
+            update(admin_tokens)
+            .where(admin_tokens.c.user_id == user_id)
+            .values(is_active=False, last_used_at=now)
+        )
+
+    _write_audit_log(
+        principal=principal,
+        action="auth_self_deactivate",
+        resource_type="admin_user",
+        resource_id=str(user_id),
+        detail={"username": str(principal.get("username") or "")},
+    )
+    return AuthSelfDeactivateResponse(
+        status="deactivated",
+        user_id=user_id,
+        username=str(principal.get("username") or ""),
+        deactivated_at=now,
+    )
+
+
 @app.get("/api/admin/users", response_model=list[AdminUserRead])
 def list_admin_users(
-    _: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(get_current_admin),
 ) -> list[AdminUserRead]:
+    _require_user_management_access(principal)
     with get_conn() as conn:
         rows = conn.execute(
             select(admin_users).order_by(admin_users.c.created_at.desc(), admin_users.c.id.desc())
         ).mappings().all()
-    return [_row_to_admin_user_model(row) for row in rows]
+    if _principal_role(principal) != "manager":
+        return [_row_to_admin_user_model(row) for row in rows]
+
+    actor_scope = _principal_site_scope(principal)
+    models: list[AdminUserRead] = []
+    for row in rows:
+        role = str(row.get("role") or "")
+        user_scope = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        if role == "owner":
+            continue
+        if _site_scope_is_subset(user_scope, actor_scope):
+            models.append(_row_to_admin_user_model(row))
+    return models
 
 
 @app.post("/api/admin/users", response_model=AdminUserRead, status_code=201)
 def create_admin_user(
     payload: AdminUserCreate,
-    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+    principal: dict[str, Any] = Depends(get_current_admin),
 ) -> AdminUserRead:
+    _require_user_management_access(principal)
     now = datetime.now(timezone.utc)
     normalized_username = _normalize_admin_username(payload.username)
     if not normalized_username:
         raise HTTPException(status_code=400, detail="username is required")
-    permissions_text = _permission_list_to_text(payload.permissions)
-    site_scope_text = _site_scope_list_to_text(payload.site_scope)
+    requested_permissions = _permission_text_to_list(payload.permissions)
+    requested_site_scope = _site_scope_text_to_list(payload.site_scope, default_all=True)
+    _enforce_manager_user_mutation_guardrails(
+        principal,
+        next_role=str(payload.role),
+        next_permissions=requested_permissions,
+        next_site_scope=requested_site_scope,
+    )
+    permissions_text = _permission_list_to_text(requested_permissions)
+    site_scope_text = _site_scope_list_to_text(requested_site_scope)
     display_name = payload.display_name.strip() or normalized_username
     password_hash = _hash_password(payload.password) if payload.password is not None else None
     password_updated_at = now if password_hash else None
@@ -44549,6 +44764,154 @@ def create_admin_user(
             "is_active": model.is_active,
             "password_seeded": password_hash is not None,
         },
+    )
+    return model
+
+
+@app.patch("/api/admin/users/{user_id}", response_model=AdminUserRead)
+def update_admin_user(
+    user_id: int,
+    payload: AdminUserUpdate,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AdminUserRead:
+    _require_user_management_access(principal)
+    if (
+        payload.display_name is None
+        and payload.role is None
+        and payload.permissions is None
+        and payload.site_scope is None
+        and payload.is_active is None
+    ):
+        raise HTTPException(status_code=400, detail="No update fields provided")
+
+    now = datetime.now(timezone.utc)
+    actor_user_id = principal.get("user_id")
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        current_role = str(row.get("role") or "operator")
+        current_permissions = _permission_text_to_list(row.get("permissions"))
+        current_site_scope = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        current_is_active = bool(row.get("is_active"))
+
+        next_display_name = str(row.get("display_name") or row.get("username") or "").strip() or str(row.get("username") or "")
+        if payload.display_name is not None:
+            normalized_name = payload.display_name.strip()
+            next_display_name = normalized_name or str(row.get("username") or "")
+
+        next_role = str(payload.role or current_role)
+        next_permissions = current_permissions if payload.permissions is None else _permission_text_to_list(payload.permissions)
+        next_site_scope = current_site_scope if payload.site_scope is None else _site_scope_text_to_list(payload.site_scope, default_all=True)
+        next_is_active = current_is_active if payload.is_active is None else bool(payload.is_active)
+
+        _enforce_manager_user_mutation_guardrails(
+            principal,
+            next_role=next_role,
+            next_permissions=next_permissions,
+            next_site_scope=next_site_scope,
+            target_role=current_role,
+            target_site_scope=current_site_scope,
+        )
+
+        if actor_user_id is not None and int(actor_user_id) == user_id and next_is_active is False:
+            raise HTTPException(status_code=409, detail="Cannot deactivate current admin user")
+        if current_role == "owner" and (next_role != "owner" or not next_is_active):
+            if _count_active_owner_users(conn, exclude_user_id=user_id) <= 0:
+                raise HTTPException(status_code=409, detail="At least one active owner must remain")
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(
+                display_name=next_display_name,
+                role=next_role,
+                permissions=_permission_list_to_text(next_permissions),
+                site_scope=_site_scope_list_to_text(next_site_scope),
+                is_active=next_is_active,
+                updated_at=now,
+            )
+        )
+        if not next_is_active:
+            conn.execute(
+                update(admin_tokens)
+                .where(admin_tokens.c.user_id == user_id)
+                .values(is_active=False, last_used_at=now)
+            )
+
+        updated = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update admin user")
+    model = _row_to_admin_user_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="admin_user_update",
+        resource_type="admin_user",
+        resource_id=str(model.id),
+        detail={
+            "username": model.username,
+            "role": model.role,
+            "site_scope": model.site_scope,
+            "is_active": model.is_active,
+        },
+    )
+    return model
+
+
+@app.delete("/api/admin/users/{user_id}", response_model=AdminUserRead)
+def delete_admin_user(
+    user_id: int,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AdminUserRead:
+    _require_user_management_access(principal)
+    actor_user_id = principal.get("user_id")
+    if actor_user_id is not None and int(actor_user_id) == user_id:
+        raise HTTPException(status_code=409, detail="Current admin user must use /api/auth/me for self deactivation")
+
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        current_role = str(row.get("role") or "operator")
+        current_permissions = _permission_text_to_list(row.get("permissions"))
+        current_site_scope = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        _enforce_manager_user_mutation_guardrails(
+            principal,
+            next_role=current_role,
+            next_permissions=current_permissions,
+            next_site_scope=current_site_scope,
+            target_role=current_role,
+            target_site_scope=current_site_scope,
+        )
+
+        if current_role == "owner" and _count_active_owner_users(conn, exclude_user_id=user_id) <= 0:
+            raise HTTPException(status_code=409, detail="At least one active owner must remain")
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(is_active=False, updated_at=now)
+        )
+        conn.execute(
+            update(admin_tokens)
+            .where(admin_tokens.c.user_id == user_id)
+            .values(is_active=False, last_used_at=now)
+        )
+        updated = conn.execute(select(admin_users).where(admin_users.c.id == user_id).limit(1)).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to deactivate admin user")
+    model = _row_to_admin_user_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="admin_user_delete",
+        resource_type="admin_user",
+        resource_id=str(model.id),
+        detail={"username": model.username, "is_active": model.is_active},
     )
     return model
 

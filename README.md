@@ -50,8 +50,12 @@ Open:
 - Auth/RBAC
   - `POST /api/auth/login` (username/password login, issues admin token)
   - `GET /api/auth/me`
-  - `GET /api/admin/users` (permission: `admins:manage`)
-  - `POST /api/admin/users` (permission: `admins:manage`)
+  - `PATCH /api/auth/me/profile` (self profile update: `display_name` / `password`)
+  - `DELETE /api/auth/me` (self account deactivation)
+  - `GET /api/admin/users` (permission: `owner` or `manager`)
+  - `POST /api/admin/users` (permission: `owner` or `manager`)
+  - `PATCH /api/admin/users/{user_id}` (permission: `owner` or `manager`, access guardrails applied)
+  - `DELETE /api/admin/users/{user_id}` (permission: `owner` or `manager`, soft delete)
   - `PATCH /api/admin/users/{user_id}/active` (permission: `admins:manage`)
   - `POST /api/admin/users/{user_id}/password` (permission: `admins:manage`)
   - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)

@@ -1404,6 +1404,221 @@ def test_admin_set_password_then_auth_login(app_client: TestClient) -> None:
     assert login.json()["profile"]["username"] == "login_set_pw_ci"
     assert login.json()["profile"]["token_label"] == "ui-login"
 
+
+def test_manager_can_create_update_and_delete_user(app_client: TestClient) -> None:
+    manager_created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "mgr_user_admin_ci",
+            "display_name": "Manager User Admin CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["HQ"],
+            "password": "ManagerPass123!",
+        },
+    )
+    assert manager_created.status_code == 201
+    manager_id = manager_created.json()["id"]
+
+    manager_token_issue = app_client.post(
+        f"/api/admin/users/{manager_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "mgr-user-admin-token"},
+    )
+    assert manager_token_issue.status_code == 201
+    manager_headers = {"X-Admin-Token": manager_token_issue.json()["token"]}
+
+    created = app_client.post(
+        "/api/admin/users",
+        headers=manager_headers,
+        json={
+            "username": "ops_member_ci",
+            "display_name": "Ops Member CI",
+            "role": "operator",
+            "permissions": [],
+            "site_scope": ["HQ"],
+            "password": "OpsMemberPass123!",
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    updated = app_client.patch(
+        f"/api/admin/users/{user_id}",
+        headers=manager_headers,
+        json={
+            "display_name": "Ops Member Updated",
+            "permissions": ["work_orders:escalate"],
+            "site_scope": ["HQ"],
+        },
+    )
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert updated_body["display_name"] == "Ops Member Updated"
+    assert updated_body["role"] == "operator"
+    assert "work_orders:escalate" in updated_body["permissions"]
+
+    deleted = app_client.delete(
+        f"/api/admin/users/{user_id}",
+        headers=manager_headers,
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["is_active"] is False
+
+
+def test_manager_permission_update_guardrails(app_client: TestClient) -> None:
+    manager_created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "mgr_guard_ci",
+            "display_name": "Manager Guard CI",
+            "role": "manager",
+            "permissions": [],
+            "site_scope": ["HQ"],
+            "password": "ManagerGuard123!",
+        },
+    )
+    assert manager_created.status_code == 201
+    manager_id = manager_created.json()["id"]
+
+    manager_token_issue = app_client.post(
+        f"/api/admin/users/{manager_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": "mgr-guard-token"},
+    )
+    assert manager_token_issue.status_code == 201
+    manager_headers = {"X-Admin-Token": manager_token_issue.json()["token"]}
+
+    owner_list = app_client.get("/api/admin/users", headers=_owner_headers())
+    assert owner_list.status_code == 200
+    owner_row = next(item for item in owner_list.json() if item["role"] == "owner")
+
+    manager_edit_owner = app_client.patch(
+        f"/api/admin/users/{owner_row['id']}",
+        headers=manager_headers,
+        json={"display_name": "blocked"},
+    )
+    assert manager_edit_owner.status_code == 403
+
+    manager_grant_admin_perm = app_client.post(
+        "/api/admin/users",
+        headers=manager_headers,
+        json={
+            "username": "mgr_forbidden_perm_ci",
+            "display_name": "Forbidden Perm CI",
+            "role": "operator",
+            "permissions": ["admins:manage"],
+            "site_scope": ["HQ"],
+            "password": "ForbiddenPass123!",
+        },
+    )
+    assert manager_grant_admin_perm.status_code == 403
+
+    manager_out_of_scope = app_client.post(
+        "/api/admin/users",
+        headers=manager_headers,
+        json={
+            "username": "mgr_scope_forbidden_ci",
+            "display_name": "Scope Forbidden CI",
+            "role": "operator",
+            "permissions": [],
+            "site_scope": ["OUTSIDE"],
+            "password": "ScopeForbidden123!",
+        },
+    )
+    assert manager_out_of_scope.status_code == 403
+
+    owner_created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "mgr_target_ci",
+            "display_name": "Manager Target CI",
+            "role": "operator",
+            "permissions": [],
+            "site_scope": ["HQ"],
+            "password": "TargetPass123!",
+        },
+    )
+    assert owner_created.status_code == 201
+    target_id = owner_created.json()["id"]
+
+    manager_promote_owner = app_client.patch(
+        f"/api/admin/users/{target_id}",
+        headers=manager_headers,
+        json={"role": "owner"},
+    )
+    assert manager_promote_owner.status_code == 403
+
+
+def test_auth_me_profile_update_and_self_deactivate(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "self_manage_ci",
+            "display_name": "Self Manage CI",
+            "role": "operator",
+            "permissions": [],
+            "site_scope": ["HQ"],
+            "password": "SelfManagePass123!",
+        },
+    )
+    assert created.status_code == 201
+
+    login_old = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "self_manage_ci",
+            "password": "SelfManagePass123!",
+            "token_label": "self-token",
+        },
+    )
+    assert login_old.status_code == 200
+    token_old = login_old.json()["token"]
+    auth_headers = {"X-Admin-Token": token_old}
+
+    profile_update = app_client.patch(
+        "/api/auth/me/profile",
+        headers=auth_headers,
+        json={"display_name": "Self Updated CI", "password": "SelfManagePass456!"},
+    )
+    assert profile_update.status_code == 200
+    assert profile_update.json()["display_name"] == "Self Updated CI"
+
+    old_login_fail = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "self_manage_ci",
+            "password": "SelfManagePass123!",
+            "token_label": "self-token",
+        },
+    )
+    assert old_login_fail.status_code == 401
+
+    login_new = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "self_manage_ci",
+            "password": "SelfManagePass456!",
+            "token_label": "self-token-new",
+        },
+    )
+    assert login_new.status_code == 200
+    token_new = login_new.json()["token"]
+    new_headers = {"X-Admin-Token": token_new}
+
+    deactivate = app_client.delete("/api/auth/me", headers=new_headers)
+    assert deactivate.status_code == 200
+    assert deactivate.json()["status"] == "deactivated"
+    assert deactivate.json()["username"] == "self_manage_ci"
+
+    me_after_deactivate = app_client.get("/api/auth/me", headers=new_headers)
+    assert me_after_deactivate.status_code == 401
+
+
 def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import select, update
