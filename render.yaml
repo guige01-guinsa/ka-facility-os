@@ -97,6 +97,8 @@ services:
         value: "1"
       - key: GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER
         value: "1"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES
+        value: "30"
       - key: ALERT_NOISE_REVIEW_WINDOW_DAYS
         value: "14"
       - key: ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT
@@ -319,6 +321,8 @@ services:
         value: "1"
       - key: GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER
         value: "1"
+      - key: GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES
+        value: "30"
       - key: GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
         value: "14"
       - key: GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS

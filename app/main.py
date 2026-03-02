@@ -930,6 +930,11 @@ GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER = _env_int(
     1,
     min_value=0,
 )
+GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES = _env_int(
+    "GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES",
+    30,
+    min_value=0,
+)
 W23_OWNER_ROLE_TO_ADMIN_ROLES: dict[str, tuple[str, ...]] = {
     "Platform Owner": ("owner", "manager"),
     "Security Manager": ("owner", "manager"),
@@ -7531,6 +7536,8 @@ def _default_w26_remediation_autopilot_policy() -> dict[str, Any]:
         "notify_enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
         "unassigned_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
         "overdue_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
+        "cooldown_minutes": max(0, min(GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES, 1440)),
+        "skip_if_no_action": True,
         "kpi_window_days": max(1, min(GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS, 180)),
         "kpi_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS, 168)),
         "escalation_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS, 168)),
@@ -7564,6 +7571,13 @@ def _normalize_w26_remediation_autopilot_policy(value: Any) -> dict[str, Any]:
             min_value=0,
             max_value=100000,
         ),
+        "cooldown_minutes": _to_int(
+            source.get("cooldown_minutes"),
+            int(defaults["cooldown_minutes"]),
+            min_value=0,
+            max_value=1440,
+        ),
+        "skip_if_no_action": bool(source.get("skip_if_no_action", defaults["skip_if_no_action"])),
         "kpi_window_days": _to_int(
             source.get("kpi_window_days"),
             int(defaults["kpi_window_days"]),
@@ -7683,6 +7697,84 @@ def _evaluate_w26_remediation_autopilot(
     }
 
 
+def _latest_job_run_for_name(job_name: str) -> JobRunRead | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == job_name)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    if row is None:
+        return None
+    return _row_to_job_run_model(row)
+
+
+def _build_w27_remediation_autopilot_guard_state(
+    *,
+    policy: dict[str, Any],
+    now: datetime,
+    force: bool,
+) -> dict[str, Any]:
+    normalized_policy = _normalize_w26_remediation_autopilot_policy(policy)
+    cooldown_minutes = int(normalized_policy.get("cooldown_minutes") or 0)
+    latest = _latest_job_run_for_name(OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+    if bool(force):
+        return {
+            "checked_at": now.isoformat(),
+            "force": True,
+            "cooldown_minutes": cooldown_minutes,
+            "ready": True,
+            "blocked": False,
+            "reason": "force_override",
+            "last_run_id": latest.id if latest is not None else None,
+            "last_run_at": latest.finished_at.isoformat() if latest is not None else None,
+            "next_allowed_at": None,
+            "minutes_until_ready": 0,
+        }
+    if latest is None or cooldown_minutes <= 0:
+        return {
+            "checked_at": now.isoformat(),
+            "force": False,
+            "cooldown_minutes": cooldown_minutes,
+            "ready": True,
+            "blocked": False,
+            "reason": "no_recent_run",
+            "last_run_id": latest.id if latest is not None else None,
+            "last_run_at": latest.finished_at.isoformat() if latest is not None else None,
+            "next_allowed_at": None,
+            "minutes_until_ready": 0,
+        }
+
+    next_allowed = latest.finished_at + timedelta(minutes=cooldown_minutes)
+    remaining_minutes = int(math.ceil((next_allowed - now).total_seconds() / 60.0))
+    if remaining_minutes > 0:
+        return {
+            "checked_at": now.isoformat(),
+            "force": False,
+            "cooldown_minutes": cooldown_minutes,
+            "ready": False,
+            "blocked": True,
+            "reason": "cooldown_active",
+            "last_run_id": latest.id,
+            "last_run_at": latest.finished_at.isoformat(),
+            "next_allowed_at": next_allowed.isoformat(),
+            "minutes_until_ready": remaining_minutes,
+        }
+    return {
+        "checked_at": now.isoformat(),
+        "force": False,
+        "cooldown_minutes": cooldown_minutes,
+        "ready": True,
+        "blocked": False,
+        "reason": "cooldown_passed",
+        "last_run_id": latest.id,
+        "last_run_at": latest.finished_at.isoformat(),
+        "next_allowed_at": next_allowed.isoformat(),
+        "minutes_until_ready": 0,
+    }
+
+
 def run_ops_governance_remediation_autopilot_job(
     *,
     trigger: str = "manual",
@@ -7703,14 +7795,31 @@ def run_ops_governance_remediation_autopilot_job(
         now=started_at,
     )
     metrics = evaluation.get("metrics", {}) if isinstance(evaluation.get("metrics"), dict) else {}
+    guard = _build_w27_remediation_autopilot_guard_state(
+        policy=effective_policy,
+        now=started_at,
+        force=force,
+    )
 
     auto_assign_result: dict[str, Any] | None = None
     escalation_result: dict[str, Any] | None = None
-    actions = list(evaluation.get("planned_actions", []))
+    planned_actions = list(evaluation.get("planned_actions", []))
+    actions: list[str] = []
     errors: list[str] = []
+    skipped = False
+    skip_reason: str | None = None
 
-    if bool(effective_policy.get("enabled", True)):
-        if "auto_assign" in actions:
+    if not bool(effective_policy.get("enabled", True)):
+        errors.append("autopilot disabled by policy")
+    elif bool(guard.get("blocked", False)):
+        skipped = True
+        skip_reason = str(guard.get("reason") or "guard_blocked")
+    elif len(planned_actions) == 0 and bool(effective_policy.get("skip_if_no_action", True)):
+        skipped = True
+        skip_reason = "no_triggered_actions"
+    else:
+        if "auto_assign" in planned_actions:
+            actions.append("auto_assign")
             try:
                 auto_assign_result = run_ops_governance_remediation_auto_assign_job(
                     trigger="autopilot",
@@ -7719,7 +7828,8 @@ def run_ops_governance_remediation_autopilot_job(
                 )
             except Exception as exc:
                 errors.append(f"auto_assign failed: {exc}")
-        if "escalation" in actions:
+        if "escalation" in planned_actions:
+            actions.append("escalation")
             try:
                 escalation_result = run_ops_governance_remediation_escalation_job(
                     trigger="autopilot",
@@ -7729,8 +7839,6 @@ def run_ops_governance_remediation_autopilot_job(
                 )
             except Exception as exc:
                 errors.append(f"escalation failed: {exc}")
-    else:
-        errors.append("autopilot disabled by policy")
 
     overdue_count = int(metrics.get("overdue_count") or 0)
     critical_open_count = int(metrics.get("critical_open_count") or 0)
@@ -7741,7 +7849,7 @@ def run_ops_governance_remediation_autopilot_job(
         status = "critical"
     elif overdue_count > 0 or critical_open_count > 0:
         status = "warning"
-    elif unassigned_open_count > 0 and "auto_assign" not in actions:
+    elif unassigned_open_count > 0 and "auto_assign" not in planned_actions:
         status = "warning"
 
     finished_at = datetime.now(timezone.utc)
@@ -7753,6 +7861,10 @@ def run_ops_governance_remediation_autopilot_job(
         "policy_updated_at": policy_updated_at.isoformat(),
         "policy": effective_policy,
         "metrics": metrics,
+        "guard": guard,
+        "skipped": skipped,
+        "skip_reason": skip_reason,
+        "planned_actions": planned_actions,
         "actions": actions,
         "should_run_auto_assign": bool(evaluation.get("should_run_auto_assign", False)),
         "should_run_escalation": bool(evaluation.get("should_run_escalation", False)),
@@ -23763,6 +23875,7 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_kpi_latest_api": "/api/ops/governance/gate/remediation/tracker/kpi/latest",
         "ops_governance_remediation_tracker_autopilot_policy_api": "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
         "ops_governance_remediation_tracker_autopilot_preview_api": "/api/ops/governance/gate/remediation/tracker/autopilot/preview",
+        "ops_governance_remediation_tracker_autopilot_guard_api": "/api/ops/governance/gate/remediation/tracker/autopilot/guard",
         "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
         "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
@@ -45574,7 +45687,11 @@ def run_ops_governance_gate_remediation_tracker_autopilot(
         detail={
             "dry_run": bool(result.get("dry_run", dry_run)),
             "force": bool(result.get("force", force)),
+            "skipped": bool(result.get("skipped", False)),
+            "skip_reason": result.get("skip_reason"),
+            "planned_actions": result.get("planned_actions", []),
             "actions": result.get("actions", []),
+            "guard": result.get("guard", {}),
             "errors": result.get("errors", []),
             "open_items": int(metrics.get("open_items") or 0),
             "overdue_count": int(metrics.get("overdue_count") or 0),
@@ -45601,6 +45718,7 @@ def get_ops_governance_gate_remediation_tracker_autopilot_policy(
             "enabled": bool(policy.get("enabled", True)),
             "unassigned_trigger": int(policy.get("unassigned_trigger") or 0),
             "overdue_trigger": int(policy.get("overdue_trigger") or 0),
+            "cooldown_minutes": int(policy.get("cooldown_minutes") or 0),
         },
     )
     return {
@@ -45628,6 +45746,8 @@ def set_ops_governance_gate_remediation_tracker_autopilot_policy(
             "notify_enabled": bool(policy.get("notify_enabled", True)),
             "unassigned_trigger": int(policy.get("unassigned_trigger") or 0),
             "overdue_trigger": int(policy.get("overdue_trigger") or 0),
+            "cooldown_minutes": int(policy.get("cooldown_minutes") or 0),
+            "skip_if_no_action": bool(policy.get("skip_if_no_action", True)),
             "kpi_window_days": int(policy.get("kpi_window_days") or 0),
             "kpi_due_soon_hours": int(policy.get("kpi_due_soon_hours") or 0),
             "escalation_due_soon_hours": int(policy.get("escalation_due_soon_hours") or 0),
@@ -45655,6 +45775,12 @@ def preview_ops_governance_gate_remediation_tracker_autopilot(
         force=force,
         policy=effective_policy,
     )
+    checked_at = _as_optional_datetime(evaluation.get("checked_at")) or datetime.now(timezone.utc)
+    guard = _build_w27_remediation_autopilot_guard_state(
+        policy=effective_policy,
+        now=checked_at,
+        force=force,
+    )
     metrics = evaluation.get("metrics", {}) if isinstance(evaluation.get("metrics"), dict) else {}
     _write_audit_log(
         principal=principal,
@@ -45665,6 +45791,7 @@ def preview_ops_governance_gate_remediation_tracker_autopilot(
         detail={
             "force": force,
             "planned_actions": evaluation.get("planned_actions", []),
+            "guard": guard,
             "open_items": int(metrics.get("open_items") or 0),
             "overdue_count": int(metrics.get("overdue_count") or 0),
             "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
@@ -45673,7 +45800,53 @@ def preview_ops_governance_gate_remediation_tracker_autopilot(
     )
     return {
         "policy_key": policy_key,
+        "guard": guard,
         **evaluation,
+    }
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/guard")
+def get_ops_governance_gate_remediation_tracker_autopilot_guard(
+    force: Annotated[bool, Query()] = False,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    policy, updated_at, policy_key = _ensure_w26_remediation_autopilot_policy()
+    now = datetime.now(timezone.utc)
+    evaluation = _evaluate_w26_remediation_autopilot(
+        force=force,
+        policy=policy,
+        now=now,
+    )
+    guard = _build_w27_remediation_autopilot_guard_state(
+        policy=policy,
+        now=now,
+        force=force,
+    )
+    metrics = evaluation.get("metrics", {}) if isinstance(evaluation.get("metrics"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_guard_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id=policy_key,
+        status="success",
+        detail={
+            "force": force,
+            "ready": bool(guard.get("ready", True)),
+            "blocked": bool(guard.get("blocked", False)),
+            "reason": guard.get("reason"),
+            "planned_actions": evaluation.get("planned_actions", []),
+            "open_items": int(metrics.get("open_items") or 0),
+            "overdue_count": int(metrics.get("overdue_count") or 0),
+            "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+            "critical_open_count": int(metrics.get("critical_open_count") or 0),
+        },
+    )
+    return {
+        "policy_key": policy_key,
+        "policy_updated_at": updated_at.isoformat(),
+        "policy": policy,
+        "evaluation": evaluation,
+        "guard": guard,
     }
 
 
@@ -45692,7 +45865,11 @@ def get_ops_governance_gate_remediation_tracker_autopilot_latest(
         resource_id=str(payload.get("run_id") or "unknown"),
         status=str(payload.get("status") or "warning"),
         detail={
+            "skipped": bool(payload.get("skipped", False)),
+            "skip_reason": payload.get("skip_reason"),
+            "planned_actions": payload.get("planned_actions", []),
             "actions": payload.get("actions", []),
+            "guard": payload.get("guard", {}),
             "errors": payload.get("errors", []),
             "open_items": int(metrics.get("open_items") or 0),
             "overdue_count": int(metrics.get("overdue_count") or 0),

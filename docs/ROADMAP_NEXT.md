@@ -50,6 +50,10 @@
   - 자동조치 정책 조회/수정 API(`.../tracker/autopilot/policy`) 추가
   - 실행 전 판정 API(`.../tracker/autopilot/preview`) 추가
   - 정책 기반 임계치/윈도우/알림 설정 런타임 반영
+- W27 착수 완료: Governance Remediation Autopilot Guardrails
+  - 쿨다운/실행차단 가드 API(`.../tracker/autopilot/guard`) 추가
+  - autopilot 실행 응답에 `planned_actions`/`guard`/`skipped` 정보 표준화
+  - 정책(`cooldown_minutes`, `skip_if_no_action`) 기반 중복 실행 억제 적용
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -244,6 +248,22 @@
 완료 기준:
 - 정책 변경 후 다음 실행부터 설정이 반영됨
 - preview 결과와 실행 decision이 같은 규칙으로 계산됨
+- 회귀 테스트 전체 통과
+
+## W27: Governance Remediation Autopilot Guardrails (우선순위 12)
+목표:
+- 짧은 간격의 중복 autopilot 실행을 제한해 노이즈/과잉조치 방지
+- 실행 전/후 decision 근거를 guard 상태로 명시해 감사 추적성 강화
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/autopilot/guard` 제공
+2. autopilot 정책에 `cooldown_minutes`, `skip_if_no_action` 추가
+3. autopilot 실행 응답에 `planned_actions`, `guard`, `skipped`, `skip_reason` 추가
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- cooldown 활성 시 force=false 실행이 안전하게 차단됨
+- preview/guard/run이 동일 규칙으로 action 판단
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

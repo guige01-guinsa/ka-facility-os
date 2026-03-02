@@ -123,6 +123,7 @@ Open:
   - `GET /api/ops/governance/gate/remediation/tracker/autopilot/policy` (permission: `admins:manage`)
   - `PUT /api/ops/governance/gate/remediation/tracker/autopilot/policy` (permission: `admins:manage`)
   - `POST /api/ops/governance/gate/remediation/tracker/autopilot/preview` (permission: `admins:manage`)
+  - `GET /api/ops/governance/gate/remediation/tracker/autopilot/guard` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
@@ -480,6 +481,7 @@ Job monitoring:
 - `GET /api/ops/governance/gate/remediation/tracker/autopilot/policy`
 - `PUT /api/ops/governance/gate/remediation/tracker/autopilot/policy`
 - `POST /api/ops/governance/gate/remediation/tracker/autopilot/preview`
+- `GET /api/ops/governance/gate/remediation/tracker/autopilot/guard`
 - `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`

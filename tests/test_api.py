@@ -591,6 +591,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         == "/api/ops/governance/gate/remediation/tracker/autopilot/preview"
     )
     assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_guard_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/guard"
+    )
+    assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
     )
@@ -5368,6 +5372,13 @@ def test_ops_governance_remediation_tracker_autopilot_endpoints(app_client: Test
 
 
 def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(app_client: TestClient) -> None:
+    sync = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/sync",
+        headers=_owner_headers(),
+        json={"include_warnings": True, "max_items": 30},
+    )
+    assert sync.status_code == 200
+
     policy_get = app_client.get(
         "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
         headers=_owner_headers(),
@@ -5386,8 +5397,10 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
         json={
             "enabled": True,
             "notify_enabled": False,
-            "unassigned_trigger": 2,
-            "overdue_trigger": 3,
+            "unassigned_trigger": 0,
+            "overdue_trigger": 0,
+            "cooldown_minutes": 1440,
+            "skip_if_no_action": True,
             "kpi_window_days": 10,
             "kpi_due_soon_hours": 18,
             "escalation_due_soon_hours": 8,
@@ -5398,8 +5411,10 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     set_body = policy_set.json()
     assert set_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
     assert set_body["policy"]["notify_enabled"] is False
-    assert int(set_body["policy"]["unassigned_trigger"]) == 2
-    assert int(set_body["policy"]["overdue_trigger"]) == 3
+    assert int(set_body["policy"]["unassigned_trigger"]) == 0
+    assert int(set_body["policy"]["overdue_trigger"]) == 0
+    assert int(set_body["policy"]["cooldown_minutes"]) == 1440
+    assert set_body["policy"]["skip_if_no_action"] is True
     assert int(set_body["policy"]["kpi_window_days"]) == 10
     assert int(set_body["policy"]["kpi_due_soon_hours"]) == 18
     assert int(set_body["policy"]["escalation_due_soon_hours"]) == 8
@@ -5429,9 +5444,46 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert isinstance(preview_body["planned_actions"], list)
     assert "auto_assign" in preview_body["planned_actions"]
     assert "escalation" in preview_body["planned_actions"]
+    assert isinstance(preview_body["guard"], dict)
+    assert preview_body["guard"]["ready"] is True
+    assert preview_body["guard"]["reason"] == "force_override"
     assert int(preview_body["policy"]["kpi_window_days"]) == 7
     assert int(preview_body["policy"]["auto_assign_max_items"]) == 12
     assert int(preview_body["metrics"]["open_items"]) >= 0
+
+    guard = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/guard?force=false",
+        headers=_owner_headers(),
+    )
+    assert guard.status_code == 200
+    guard_body = guard.json()
+    assert guard_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert isinstance(guard_body["evaluation"], dict)
+    assert isinstance(guard_body["guard"], dict)
+    assert isinstance(guard_body["evaluation"]["planned_actions"], list)
+
+    run_force = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/run?dry_run=true&force=true",
+        headers=_owner_headers(),
+    )
+    assert run_force.status_code == 200
+    run_force_body = run_force.json()
+    assert run_force_body["force"] is True
+    assert run_force_body["skipped"] is False
+    assert "auto_assign" in run_force_body["actions"]
+    assert "escalation" in run_force_body["actions"]
+
+    run_blocked = app_client.post(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/run?dry_run=true&force=false",
+        headers=_owner_headers(),
+    )
+    assert run_blocked.status_code == 200
+    run_blocked_body = run_blocked.json()
+    assert run_blocked_body["force"] is False
+    assert run_blocked_body["skipped"] is True
+    assert run_blocked_body["skip_reason"] == "cooldown_active"
+    assert isinstance(run_blocked_body["guard"], dict)
+    assert run_blocked_body["guard"]["blocked"] is True
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:
