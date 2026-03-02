@@ -572,6 +572,7 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
 }
 ALERT_MTTR_SLO_POLICY_KEY = "alert_mttr_slo_default"
 OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY = "ops_governance_remediation_autopilot_policy"
+OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_HEALTH_POLICY_KEY = "ops_governance_remediation_autopilot_health_policy"
 ALERT_MTTR_SLO_RECOVER_STATE_SET = {"quarantined", "warning", "all"}
 W09_KPI_POLICY_KEY_DEFAULT = "adoption_w09_kpi_policy:default"
 W09_KPI_POLICY_KEY_SITE_PREFIX = "adoption_w09_kpi_policy:site:"
@@ -889,6 +890,8 @@ OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE = "ops_governance_remediation_e
 OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME = "ops_governance_remediation_auto_assign"
 OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME = "ops_governance_remediation_kpi"
 OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME = "ops_governance_remediation_autopilot"
+OPS_TUTORIAL_SIMULATOR_SESSION_JOB_NAME = "ops_tutorial_simulator_session"
+TUTORIAL_SIMULATOR_DEFAULT_SITE = "Tutorial-HQ"
 GOVERNANCE_REMEDIATION_ESCALATION_ENABLED = _env_bool("GOVERNANCE_REMEDIATION_ESCALATION_ENABLED", True)
 GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS = _env_int(
     "GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS",
@@ -3660,6 +3663,18 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "tutorial-simulator",
+        "name": "Tutorial Simulator",
+        "name_ko": "튜토리얼 시뮬레이터",
+        "description": "신규 사용자가 검증된 샘플데이터와 단계별 조건으로 실습하고 즉시 완료판정을 받을 수 있습니다.",
+        "kpi_hint": "First successful practice <= 20 min",
+        "links": [
+            {"label": "Tutorial Hub", "href": "/web/tutorial-simulator"},
+            {"label": "Tutorial API", "href": "/api/public/tutorial-simulator"},
+            {"label": "Start Session", "href": "/api/ops/tutorial-simulator/sessions/start"},
+        ],
+    },
+    {
         "id": "growth-roadmap",
         "name": "Growth and Post-MVP",
         "name_ko": "확장 로드맵",
@@ -3671,6 +3686,73 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "Release ICS", "href": "/api/public/post-mvp/releases.ics"},
         ],
     },
+]
+
+TUTORIAL_SIMULATOR_SCENARIOS: list[dict[str, Any]] = [
+    {
+        "id": "ts-core-01",
+        "name": "Core Lifecycle Starter",
+        "name_ko": "핵심 라이프사이클 입문",
+        "description": "점검 생성 -> 작업지시 ACK -> 작업지시 완료까지 실제 운영 흐름을 실습합니다.",
+        "estimated_minutes": 20,
+        "verified_sample_data": {
+            "inspection": {
+                "cycle": "daily",
+                "location": "MCC-A1",
+                "inspector": "Tutorial Bot",
+                "transformer_kva": 1250.0,
+                "winding_temp_c": 132.0,
+                "grounding_ohm": 11.2,
+                "insulation_mohm": 0.6,
+                "notes": "Tutorial scenario seeded high-risk sample.",
+            },
+            "work_order": {
+                "title": "Tutorial - transformer hotspot response",
+                "priority": "high",
+                "assignee": "Ops Trainee",
+                "description": "Acknowledge and complete this tutorial work order.",
+            },
+        },
+        "steps": [
+            {
+                "id": "seed_inspection_verified",
+                "name": "Seed inspection verified",
+                "name_ko": "샘플 점검 확인",
+                "condition": "inspection exists and risk_level in [warning, danger]",
+            },
+            {
+                "id": "seed_work_order_open",
+                "name": "Seed work-order open",
+                "name_ko": "샘플 작업지시 OPEN 확인",
+                "condition": "work-order exists and status=open",
+            },
+            {
+                "id": "ack_work_order",
+                "name": "Acknowledge work-order",
+                "name_ko": "작업지시 ACK 처리",
+                "condition": "work-order status in [acked, completed] and acknowledged_at is set",
+            },
+            {
+                "id": "complete_work_order",
+                "name": "Complete work-order",
+                "name_ko": "작업지시 완료 처리",
+                "condition": "work-order status=completed and completed_at is set",
+            },
+            {
+                "id": "report_data_ready",
+                "name": "Report data ready",
+                "name_ko": "리포트 데이터 준비 완료",
+                "condition": "monthly report source has >=1 inspection and >=1 work-order for session site",
+            },
+        ],
+        "practice_apis": [
+            {"label": "Create Inspection", "href": "/api/inspections", "method": "POST"},
+            {"label": "Create Work-Order", "href": "/api/work-orders", "method": "POST"},
+            {"label": "ACK Work-Order", "href": "/api/work-orders/{id}/ack", "method": "PATCH"},
+            {"label": "Complete Work-Order", "href": "/api/work-orders/{id}/complete", "method": "PATCH"},
+            {"label": "Monthly Report", "href": "/api/reports/monthly?month=YYYY-MM&site={site}", "method": "GET"},
+        ],
+    }
 ]
 
 POST_MVP_PLAN_START = date(2026, 6, 1)
@@ -24424,6 +24506,11 @@ def _service_info_payload() -> dict[str, str]:
         "handover_brief_api": "/api/ops/handover/brief",
         "handover_brief_csv_api": "/api/ops/handover/brief/csv",
         "handover_brief_pdf_api": "/api/ops/handover/brief/pdf",
+        "ops_tutorial_simulator_session_start_api": "/api/ops/tutorial-simulator/sessions/start",
+        "ops_tutorial_simulator_sessions_api": "/api/ops/tutorial-simulator/sessions",
+        "ops_tutorial_simulator_session_api": "/api/ops/tutorial-simulator/sessions/{session_id}",
+        "ops_tutorial_simulator_session_check_api": "/api/ops/tutorial-simulator/sessions/{session_id}/check",
+        "ops_tutorial_simulator_session_action_api": "/api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}",
         "public_adoption_plan_api": "/api/public/adoption-plan",
         "public_adoption_schedule_csv_api": "/api/public/adoption-plan/schedule.csv",
         "public_adoption_schedule_ics_api": "/api/public/adoption-plan/schedule.ics",
@@ -24576,6 +24663,8 @@ def _service_info_payload() -> dict[str, str]:
         "public_post_mvp_kpi_api": "/api/public/post-mvp/kpi-dashboard",
         "public_post_mvp_risks_api": "/api/public/post-mvp/risks",
         "public_modules_api": "/api/public/modules",
+        "public_tutorial_simulator_api": "/api/public/tutorial-simulator",
+        "tutorial_simulator_html": "/web/tutorial-simulator",
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
@@ -26888,6 +26977,645 @@ def _facility_modules_payload() -> dict[str, Any]:
         "main_page": "/",
         "console_html": "/web/console",
         "modules": FACILITY_WEB_MODULES,
+    }
+
+
+def _get_tutorial_simulator_scenario(scenario_id: str) -> dict[str, Any] | None:
+    lookup = scenario_id.strip().lower()
+    for scenario in TUTORIAL_SIMULATOR_SCENARIOS:
+        if str(scenario.get("id") or "").strip().lower() == lookup:
+            return scenario
+    return None
+
+
+def _build_tutorial_simulator_payload() -> dict[str, Any]:
+    return {
+        "title": "KA Facility OS Tutorial Simulator",
+        "published_on": "2026-03-02",
+        "public": True,
+        "simulator_html": "/web/tutorial-simulator",
+        "session_start_api": "/api/ops/tutorial-simulator/sessions/start",
+        "session_lookup_api": "/api/ops/tutorial-simulator/sessions/{session_id}",
+        "session_action_api": "/api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}",
+        "session_check_api": "/api/ops/tutorial-simulator/sessions/{session_id}/check",
+        "scenarios": TUTORIAL_SIMULATOR_SCENARIOS,
+        "usage": {
+            "steps": [
+                "1) Start session with scenario_id and site.",
+                "2) Execute practice actions (ACK -> complete) with existing Work-Order APIs or simulator action API.",
+                "3) Run session check and confirm completion_percent=100.",
+            ],
+            "verification": "All steps are validated against seeded IDs and current DB state.",
+        },
+    }
+
+
+def _build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
+    scenario_cards = []
+    for scenario in payload.get("scenarios", []):
+        if not isinstance(scenario, dict):
+            continue
+        steps = scenario.get("steps", [])
+        step_rows = []
+        if isinstance(steps, list):
+            for step in steps:
+                if not isinstance(step, dict):
+                    continue
+                step_rows.append(
+                    "<tr>"
+                    f"<td>{html.escape(str(step.get('id') or ''))}</td>"
+                    f"<td>{html.escape(str(step.get('name_ko') or step.get('name') or ''))}</td>"
+                    f"<td>{html.escape(str(step.get('condition') or ''))}</td>"
+                    "</tr>"
+                )
+        scenario_cards.append(
+            f"""
+            <section class="card">
+              <h2>{html.escape(str(scenario.get("name_ko") or scenario.get("name") or ""))}</h2>
+              <p>{html.escape(str(scenario.get("description") or ""))}</p>
+              <div class="meta">
+                <span>ID: <code>{html.escape(str(scenario.get("id") or ""))}</code></span>
+                <span>Estimated: {int(scenario.get("estimated_minutes") or 0)} min</span>
+              </div>
+              <table>
+                <thead><tr><th>Step ID</th><th>Step</th><th>Verification Condition</th></tr></thead>
+                <tbody>{''.join(step_rows) if step_rows else '<tr><td colspan="3">No steps</td></tr>'}</tbody>
+              </table>
+            </section>
+            """
+        )
+
+    return f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KA Facility OS Tutorial Simulator</title>
+  <style>
+    :root {{
+      --bg: #f4f7fb;
+      --panel: #ffffff;
+      --line: #c7d7ea;
+      --text: #0f2740;
+      --muted: #456581;
+      --accent: #126b57;
+    }}
+    body {{
+      margin: 0;
+      padding: 24px;
+      font-family: "Segoe UI", "Noto Sans KR", sans-serif;
+      background: linear-gradient(160deg, #eaf2fa 0%, var(--bg) 55%, #edf8f2 100%);
+      color: var(--text);
+    }}
+    main {{
+      max-width: 1120px;
+      margin: 0 auto;
+      display: grid;
+      gap: 16px;
+    }}
+    .hero, .card {{
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(8, 27, 52, 0.06);
+    }}
+    h1, h2 {{
+      margin: 0 0 8px;
+    }}
+    p {{
+      margin: 4px 0 10px;
+      color: var(--muted);
+    }}
+    .meta {{
+      display: flex;
+      gap: 14px;
+      margin-bottom: 10px;
+      font-size: 14px;
+    }}
+    a {{
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+    }}
+    code {{
+      background: #f3f6fa;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }}
+    table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }}
+    th, td {{
+      border: 1px solid var(--line);
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+    }}
+    th {{
+      background: #eff5fb;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>KA Facility OS Tutorial Simulator</h1>
+      <p>검증된 샘플데이터와 조건 기반 실습을 즉시 시작할 수 있는 온보딩 모듈입니다.</p>
+      <p>
+        <a href="/api/public/tutorial-simulator">JSON API</a> |
+        <a href="/api/public/modules">Facility Modules</a> |
+        <a href="/web/console">Operations Console</a>
+      </p>
+      <p>Session Start API: <code>/api/ops/tutorial-simulator/sessions/start</code></p>
+    </section>
+    {''.join(scenario_cards)}
+  </main>
+</body>
+</html>
+"""
+
+
+def _load_tutorial_simulator_session_row(session_id: int) -> dict[str, Any] | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.id == session_id)
+            .where(job_runs.c.job_name == OPS_TUTORIAL_SIMULATOR_SESSION_JOB_NAME)
+            .limit(1)
+        ).mappings().first()
+    return dict(row) if row is not None else None
+
+
+def _list_tutorial_simulator_sessions(*, limit: int = 20) -> list[dict[str, Any]]:
+    normalized_limit = max(1, min(int(limit), 100))
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_TUTORIAL_SIMULATOR_SESSION_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(normalized_limit)
+        ).mappings().all()
+    sessions: list[dict[str, Any]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        seed = detail.get("seed", {}) if isinstance(detail.get("seed"), dict) else {}
+        sessions.append(
+            {
+                "session_id": model.id,
+                "scenario_id": str(detail.get("scenario_id") or ""),
+                "scenario_name": str(detail.get("scenario_name") or ""),
+                "scenario_name_ko": str(detail.get("scenario_name_ko") or ""),
+                "site": str(detail.get("site") or TUTORIAL_SIMULATOR_DEFAULT_SITE),
+                "work_order_id": int(seed.get("work_order_id") or 0),
+                "inspection_id": int(seed.get("inspection_id") or 0),
+                "created_at": model.started_at.isoformat(),
+            }
+        )
+    return sessions
+
+
+def _evaluate_tutorial_simulator_session(*, session_id: int) -> dict[str, Any]:
+    row = _load_tutorial_simulator_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tutorial simulator session not found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    scenario_id = str(detail.get("scenario_id") or "")
+    scenario = _get_tutorial_simulator_scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Tutorial scenario not found")
+
+    site = str(detail.get("site") or TUTORIAL_SIMULATOR_DEFAULT_SITE)
+    seed = detail.get("seed", {}) if isinstance(detail.get("seed"), dict) else {}
+    inspection_id = int(seed.get("inspection_id") or 0)
+    work_order_id = int(seed.get("work_order_id") or 0)
+
+    period_anchor = model.started_at
+    period_start = datetime(period_anchor.year, period_anchor.month, 1, tzinfo=timezone.utc)
+    if period_anchor.month == 12:
+        period_end = datetime(period_anchor.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        period_end = datetime(period_anchor.year, period_anchor.month + 1, 1, tzinfo=timezone.utc)
+
+    with get_conn() as conn:
+        inspection_row = None
+        if inspection_id > 0:
+            inspection_row = conn.execute(
+                select(inspections).where(inspections.c.id == inspection_id).limit(1)
+            ).mappings().first()
+        work_order_row = None
+        if work_order_id > 0:
+            work_order_row = conn.execute(
+                select(work_orders).where(work_orders.c.id == work_order_id).limit(1)
+            ).mappings().first()
+        inspection_count = int(
+            conn.execute(
+                select(func.count())
+                .select_from(inspections)
+                .where(inspections.c.site == site)
+                .where(inspections.c.inspected_at >= period_start)
+                .where(inspections.c.inspected_at < period_end)
+            ).scalar_one()
+        )
+        work_order_count = int(
+            conn.execute(
+                select(func.count())
+                .select_from(work_orders)
+                .where(work_orders.c.site == site)
+                .where(work_orders.c.created_at >= period_start)
+                .where(work_orders.c.created_at < period_end)
+            ).scalar_one()
+        )
+
+    risk_level = str(inspection_row["risk_level"]) if inspection_row is not None else ""
+    step_states: list[dict[str, Any]] = []
+    step_states.append(
+        {
+            "id": "seed_inspection_verified",
+            "name": "Seed inspection verified",
+            "name_ko": "샘플 점검 확인",
+            "completed": bool(inspection_row is not None and risk_level in {"warning", "danger"}),
+            "observed": {"inspection_id": inspection_id, "risk_level": risk_level},
+        }
+    )
+    step_states.append(
+        {
+            "id": "seed_work_order_open",
+            "name": "Seed work-order open",
+            "name_ko": "샘플 작업지시 OPEN 확인",
+            "completed": bool(work_order_row is not None),
+            "observed": {
+                "work_order_id": work_order_id,
+                "status": str(work_order_row["status"]) if work_order_row is not None else None,
+            },
+        }
+    )
+    ack_completed = bool(
+        work_order_row is not None
+        and work_order_row.get("acknowledged_at") is not None
+        and str(work_order_row.get("status") or "") in {"acked", "completed"}
+    )
+    step_states.append(
+        {
+            "id": "ack_work_order",
+            "name": "Acknowledge work-order",
+            "name_ko": "작업지시 ACK 처리",
+            "completed": ack_completed,
+            "observed": {
+                "status": str(work_order_row["status"]) if work_order_row is not None else None,
+                "acknowledged_at": _as_optional_datetime(work_order_row["acknowledged_at"]).isoformat()
+                if work_order_row is not None and work_order_row.get("acknowledged_at") is not None
+                else None,
+            },
+        }
+    )
+    complete_completed = bool(
+        work_order_row is not None
+        and str(work_order_row.get("status") or "") == "completed"
+        and work_order_row.get("completed_at") is not None
+    )
+    step_states.append(
+        {
+            "id": "complete_work_order",
+            "name": "Complete work-order",
+            "name_ko": "작업지시 완료 처리",
+            "completed": complete_completed,
+            "observed": {
+                "status": str(work_order_row["status"]) if work_order_row is not None else None,
+                "completed_at": _as_optional_datetime(work_order_row["completed_at"]).isoformat()
+                if work_order_row is not None and work_order_row.get("completed_at") is not None
+                else None,
+            },
+        }
+    )
+    report_ready = bool(inspection_count >= 1 and work_order_count >= 1 and complete_completed)
+    step_states.append(
+        {
+            "id": "report_data_ready",
+            "name": "Report data ready",
+            "name_ko": "리포트 데이터 준비 완료",
+            "completed": report_ready,
+            "observed": {
+                "month": f"{period_start.year:04d}-{period_start.month:02d}",
+                "inspection_count": inspection_count,
+                "work_order_count": work_order_count,
+            },
+        }
+    )
+
+    completed_count = sum(1 for step in step_states if bool(step.get("completed", False)))
+    total_steps = len(step_states)
+    completion_percent = int(round((completed_count / total_steps) * 100)) if total_steps > 0 else 0
+    work_order_status = str(work_order_row["status"]) if work_order_row is not None else None
+    month_label = f"{period_start.year:04d}-{period_start.month:02d}"
+
+    return {
+        "session_id": model.id,
+        "job_name": model.job_name,
+        "created_at": model.started_at.isoformat(),
+        "site": site,
+        "scenario": {
+            "id": str(scenario.get("id") or ""),
+            "name": str(scenario.get("name") or ""),
+            "name_ko": str(scenario.get("name_ko") or ""),
+            "estimated_minutes": int(scenario.get("estimated_minutes") or 0),
+        },
+        "seed": {
+            "inspection_id": inspection_id,
+            "work_order_id": work_order_id,
+            "work_order_status": work_order_status,
+        },
+        "progress": {
+            "status": "completed" if completion_percent >= 100 else "active",
+            "completed_steps": completed_count,
+            "total_steps": total_steps,
+            "completion_percent": completion_percent,
+        },
+        "steps": step_states,
+        "practice_commands": {
+            "ack_work_order": {
+                "method": "PATCH",
+                "url": f"/api/work-orders/{work_order_id}/ack",
+                "body": {"assignee": "Ops Trainee"},
+            },
+            "complete_work_order": {
+                "method": "PATCH",
+                "url": f"/api/work-orders/{work_order_id}/complete",
+                "body": {"resolution_notes": "Tutorial completion"},
+            },
+            "monthly_report": {
+                "method": "GET",
+                "url": f"/api/reports/monthly?month={month_label}&site={site}",
+            },
+            "session_check": {
+                "method": "POST",
+                "url": f"/api/ops/tutorial-simulator/sessions/{model.id}/check",
+            },
+            "session_action_ack": {
+                "method": "POST",
+                "url": f"/api/ops/tutorial-simulator/sessions/{model.id}/actions/ack_work_order",
+            },
+            "session_action_complete": {
+                "method": "POST",
+                "url": f"/api/ops/tutorial-simulator/sessions/{model.id}/actions/complete_work_order",
+            },
+        },
+    }
+
+
+def _start_tutorial_simulator_session(
+    *,
+    scenario_id: str,
+    site: str,
+    actor_username: str,
+) -> dict[str, Any]:
+    scenario = _get_tutorial_simulator_scenario(scenario_id)
+    if scenario is None:
+        raise HTTPException(status_code=404, detail="Tutorial scenario not found")
+
+    normalized_site = site.strip() or TUTORIAL_SIMULATOR_DEFAULT_SITE
+    sample_data = scenario.get("verified_sample_data", {}) if isinstance(scenario.get("verified_sample_data"), dict) else {}
+    inspection_data = sample_data.get("inspection", {}) if isinstance(sample_data.get("inspection"), dict) else {}
+    work_order_data = sample_data.get("work_order", {}) if isinstance(sample_data.get("work_order"), dict) else {}
+
+    now = datetime.now(timezone.utc)
+    inspected_at = now - timedelta(minutes=10)
+    inspection_payload = InspectionCreate(
+        site=normalized_site,
+        location=str(inspection_data.get("location") or "MCC-A1"),
+        cycle=str(inspection_data.get("cycle") or "daily"),
+        inspector=str(inspection_data.get("inspector") or "Tutorial Bot"),
+        inspected_at=inspected_at,
+        transformer_kva=float(inspection_data.get("transformer_kva") or 1250.0),
+        winding_temp_c=float(inspection_data.get("winding_temp_c") or 132.0),
+        grounding_ohm=float(inspection_data.get("grounding_ohm") or 11.2),
+        insulation_mohm=float(inspection_data.get("insulation_mohm") or 0.6),
+        notes=str(inspection_data.get("notes") or "Tutorial simulator seeded sample."),
+    )
+    risk_level, risk_flags = _calculate_risk(inspection_payload)
+
+    with get_conn() as conn:
+        inspection_insert = conn.execute(
+            insert(inspections).values(
+                site=inspection_payload.site,
+                location=inspection_payload.location,
+                cycle=inspection_payload.cycle,
+                inspector=inspection_payload.inspector,
+                inspected_at=_to_utc(inspection_payload.inspected_at),
+                transformer_kva=inspection_payload.transformer_kva,
+                voltage_r=inspection_payload.voltage_r,
+                voltage_s=inspection_payload.voltage_s,
+                voltage_t=inspection_payload.voltage_t,
+                current_r=inspection_payload.current_r,
+                current_s=inspection_payload.current_s,
+                current_t=inspection_payload.current_t,
+                winding_temp_c=inspection_payload.winding_temp_c,
+                grounding_ohm=inspection_payload.grounding_ohm,
+                insulation_mohm=inspection_payload.insulation_mohm,
+                notes=inspection_payload.notes,
+                risk_level=risk_level,
+                risk_flags=",".join(risk_flags),
+                created_at=now,
+            )
+        )
+        inspection_id = int(inspection_insert.inserted_primary_key[0])
+
+        due_at = now + timedelta(hours=8)
+        work_order_insert = conn.execute(
+            insert(work_orders).values(
+                title=str(work_order_data.get("title") or "Tutorial - transformer hotspot response"),
+                description=str(work_order_data.get("description") or "Acknowledge and complete this tutorial work order."),
+                site=normalized_site,
+                location=inspection_payload.location,
+                priority=str(work_order_data.get("priority") or "high"),
+                status="open",
+                assignee=str(work_order_data.get("assignee") or "Ops Trainee"),
+                reporter="Tutorial Bot",
+                inspection_id=inspection_id,
+                due_at=due_at,
+                acknowledged_at=None,
+                completed_at=None,
+                resolution_notes="",
+                is_escalated=False,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        work_order_id = int(work_order_insert.inserted_primary_key[0])
+        _append_work_order_event(
+            conn,
+            work_order_id=work_order_id,
+            event_type="created",
+            actor_username=actor_username,
+            from_status=None,
+            to_status="open",
+            note="Tutorial simulator seeded work-order",
+            detail={
+                "scenario_id": scenario_id,
+                "seeded": True,
+                "inspection_id": inspection_id,
+            },
+        )
+
+    detail = {
+        "scenario_id": str(scenario.get("id") or scenario_id),
+        "scenario_name": str(scenario.get("name") or ""),
+        "scenario_name_ko": str(scenario.get("name_ko") or ""),
+        "site": normalized_site,
+        "seed": {
+            "inspection_id": inspection_id,
+            "work_order_id": work_order_id,
+            "risk_level": risk_level,
+            "risk_flags": risk_flags,
+        },
+        "actor_username": actor_username,
+    }
+    run_id = _write_job_run(
+        job_name=OPS_TUTORIAL_SIMULATOR_SESSION_JOB_NAME,
+        trigger="tutorial_start",
+        status="success",
+        started_at=now,
+        finished_at=now,
+        detail=detail,
+    )
+    if run_id is None:
+        raise HTTPException(status_code=500, detail="Failed to create tutorial simulator session")
+    return _evaluate_tutorial_simulator_session(session_id=run_id)
+
+
+def _run_tutorial_simulator_action(
+    *,
+    session_id: int,
+    action: str,
+    actor_username: str,
+    assignee: str | None = None,
+    resolution_notes: str | None = None,
+) -> dict[str, Any]:
+    row = _load_tutorial_simulator_session_row(session_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Tutorial simulator session not found")
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    seed = detail.get("seed", {}) if isinstance(detail.get("seed"), dict) else {}
+    work_order_id = int(seed.get("work_order_id") or 0)
+    if work_order_id <= 0:
+        raise HTTPException(status_code=409, detail="Tutorial session seed is invalid")
+
+    normalized_action = action.strip().lower()
+    now = datetime.now(timezone.utc)
+    status_after: str | None = None
+    action_result = "noop"
+    with get_conn() as conn:
+        work_order_row = conn.execute(
+            select(work_orders).where(work_orders.c.id == work_order_id).limit(1)
+        ).mappings().first()
+        if work_order_row is None:
+            raise HTTPException(status_code=404, detail="Seeded work-order not found")
+        current_status = str(work_order_row.get("status") or "open")
+        if normalized_action == "ack_work_order":
+            if current_status == "open":
+                next_assignee = assignee if assignee is not None else str(work_order_row.get("assignee") or "Ops Trainee")
+                conn.execute(
+                    update(work_orders)
+                    .where(work_orders.c.id == work_order_id)
+                    .values(
+                        status="acked",
+                        assignee=next_assignee,
+                        acknowledged_at=now,
+                        updated_at=now,
+                    )
+                )
+                _append_work_order_event(
+                    conn,
+                    work_order_id=work_order_id,
+                    event_type="status_changed",
+                    actor_username=actor_username,
+                    from_status="open",
+                    to_status="acked",
+                    note="Tutorial simulator action: ACK work-order",
+                    detail={"scenario_session_id": session_id},
+                )
+                action_result = "updated"
+                status_after = "acked"
+            elif current_status in {"acked", "completed"}:
+                action_result = "already_applied"
+                status_after = current_status
+            else:
+                raise HTTPException(status_code=409, detail="Work-order cannot be ACKed from current status")
+        elif normalized_action == "complete_work_order":
+            if current_status == "open":
+                raise HTTPException(status_code=409, detail="ACK the work-order before completion")
+            if current_status == "acked":
+                note = resolution_notes if resolution_notes is not None else "Tutorial simulator completion"
+                conn.execute(
+                    update(work_orders)
+                    .where(work_orders.c.id == work_order_id)
+                    .values(
+                        status="completed",
+                        completed_at=now,
+                        resolution_notes=note,
+                        updated_at=now,
+                    )
+                )
+                _append_work_order_event(
+                    conn,
+                    work_order_id=work_order_id,
+                    event_type="status_changed",
+                    actor_username=actor_username,
+                    from_status="acked",
+                    to_status="completed",
+                    note="Tutorial simulator action: complete work-order",
+                    detail={"scenario_session_id": session_id},
+                )
+                action_result = "updated"
+                status_after = "completed"
+            elif current_status == "completed":
+                action_result = "already_applied"
+                status_after = current_status
+            else:
+                raise HTTPException(status_code=409, detail="Work-order cannot be completed from current status")
+        elif normalized_action == "reset_work_order":
+            conn.execute(
+                update(work_orders)
+                .where(work_orders.c.id == work_order_id)
+                .values(
+                    status="open",
+                    acknowledged_at=None,
+                    completed_at=None,
+                    resolution_notes="",
+                    updated_at=now,
+                )
+            )
+            _append_work_order_event(
+                conn,
+                work_order_id=work_order_id,
+                event_type="status_changed",
+                actor_username=actor_username,
+                from_status=current_status,
+                to_status="open",
+                note="Tutorial simulator action: reset work-order",
+                detail={"scenario_session_id": session_id},
+            )
+            action_result = "updated"
+            status_after = "open"
+        else:
+            raise HTTPException(status_code=422, detail="Unsupported tutorial action")
+
+    session = _evaluate_tutorial_simulator_session(session_id=session_id)
+    return {
+        "session_id": session_id,
+        "action": normalized_action,
+        "result": action_result,
+        "work_order_status": status_after,
+        "session": session,
     }
 
 
@@ -36945,6 +37673,11 @@ def adoption_portal() -> HTMLResponse:
     return HTMLResponse(_build_public_main_page_html(_service_info_payload(), _adoption_plan_payload()))
 
 
+@app.get("/web/tutorial-simulator", response_model=None)
+def tutorial_simulator_portal() -> HTMLResponse:
+    return HTMLResponse(_build_tutorial_simulator_html(_build_tutorial_simulator_payload()))
+
+
 @app.get("/", response_model=None)
 def root(request: Request) -> Any:
     accept = request.headers.get("accept", "").lower()
@@ -37048,6 +37781,15 @@ def get_public_modules(request: Request) -> Any:
     accept = request.headers.get("accept", "").lower()
     if "text/html" in accept:
         return HTMLResponse(_build_public_modules_html(payload))
+    return payload
+
+
+@app.get("/api/public/tutorial-simulator", response_model=None)
+def get_public_tutorial_simulator(request: Request) -> Any:
+    payload = _build_tutorial_simulator_payload()
+    accept = request.headers.get("accept", "").lower()
+    if "text/html" in accept:
+        return HTMLResponse(_build_tutorial_simulator_html(payload))
     return payload
 
 
@@ -46579,6 +47321,150 @@ def get_ops_governance_gate_remediation_tracker_autopilot_latest(
         },
     )
     return payload
+
+
+@ops_router.post("/tutorial-simulator/sessions/start")
+def start_ops_tutorial_simulator_session(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    scenario_id = str(body.get("scenario_id") or "ts-core-01").strip()
+    site = str(body.get("site") or TUTORIAL_SIMULATOR_DEFAULT_SITE).strip() or TUTORIAL_SIMULATOR_DEFAULT_SITE
+    _require_site_access(principal, site)
+    actor_username = str(principal.get("username") or "system")
+    session = _start_tutorial_simulator_session(
+        scenario_id=scenario_id,
+        site=site,
+        actor_username=actor_username,
+    )
+    progress = session.get("progress", {}) if isinstance(session.get("progress"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_tutorial_simulator_session_start",
+        resource_type="ops_tutorial_simulator_session",
+        resource_id=str(session.get("session_id") or "unknown"),
+        status="success",
+        detail={
+            "scenario_id": session.get("scenario", {}).get("id") if isinstance(session.get("scenario"), dict) else scenario_id,
+            "site": session.get("site"),
+            "completion_percent": int(progress.get("completion_percent") or 0),
+        },
+    )
+    return session
+
+
+@ops_router.get("/tutorial-simulator/sessions")
+def list_ops_tutorial_simulator_sessions(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    items = _list_tutorial_simulator_sessions(limit=limit)
+    allowed_sites = _allowed_sites_for_principal(principal)
+    if allowed_sites is not None:
+        allowed_set = {str(site).strip() for site in allowed_sites}
+        items = [item for item in items if str(item.get("site") or "").strip() in allowed_set]
+    _write_audit_log(
+        principal=principal,
+        action="ops_tutorial_simulator_sessions_view",
+        resource_type="ops_tutorial_simulator_session",
+        resource_id="list",
+        status="success",
+        detail={"limit": limit, "count": len(items)},
+    )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "limit": int(limit),
+        "count": len(items),
+        "items": items,
+    }
+
+
+@ops_router.get("/tutorial-simulator/sessions/{session_id}")
+def get_ops_tutorial_simulator_session(
+    session_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    session = _evaluate_tutorial_simulator_session(session_id=session_id)
+    _require_site_access(principal, str(session.get("site") or ""))
+    progress = session.get("progress", {}) if isinstance(session.get("progress"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_tutorial_simulator_session_view",
+        resource_type="ops_tutorial_simulator_session",
+        resource_id=str(session_id),
+        status="success",
+        detail={
+            "site": session.get("site"),
+            "completion_percent": int(progress.get("completion_percent") or 0),
+            "status": progress.get("status"),
+        },
+    )
+    return session
+
+
+@ops_router.post("/tutorial-simulator/sessions/{session_id}/check")
+def check_ops_tutorial_simulator_session(
+    session_id: int,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    session = _evaluate_tutorial_simulator_session(session_id=session_id)
+    _require_site_access(principal, str(session.get("site") or ""))
+    progress = session.get("progress", {}) if isinstance(session.get("progress"), dict) else {}
+    response = {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        **session,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_tutorial_simulator_session_check",
+        resource_type="ops_tutorial_simulator_session",
+        resource_id=str(session_id),
+        status="success",
+        detail={
+            "site": session.get("site"),
+            "completion_percent": int(progress.get("completion_percent") or 0),
+            "status": progress.get("status"),
+        },
+    )
+    return response
+
+
+@ops_router.post("/tutorial-simulator/sessions/{session_id}/actions/{action}")
+def run_ops_tutorial_simulator_session_action(
+    session_id: int,
+    action: str,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    current_session = _evaluate_tutorial_simulator_session(session_id=session_id)
+    _require_site_access(principal, str(current_session.get("site") or ""))
+    body = payload if isinstance(payload, dict) else {}
+    result = _run_tutorial_simulator_action(
+        session_id=session_id,
+        action=action,
+        actor_username=str(principal.get("username") or "system"),
+        assignee=str(body.get("assignee")) if body.get("assignee") is not None else None,
+        resolution_notes=str(body.get("resolution_notes")) if body.get("resolution_notes") is not None else None,
+    )
+    session = result.get("session", {}) if isinstance(result.get("session"), dict) else {}
+    progress = session.get("progress", {}) if isinstance(session.get("progress"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_tutorial_simulator_session_action",
+        resource_type="ops_tutorial_simulator_session",
+        resource_id=str(session_id),
+        status="success",
+        detail={
+            "action": str(result.get("action") or action),
+            "result": result.get("result"),
+            "work_order_status": result.get("work_order_status"),
+            "site": session.get("site"),
+            "completion_percent": int(progress.get("completion_percent") or 0),
+            "progress_status": progress.get("status"),
+        },
+    )
+    return result
 
 
 @app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)

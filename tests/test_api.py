@@ -259,6 +259,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w07_tracker_items_api" in root_json.json()
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
+    assert "public_tutorial_simulator_api" in root_json.json()
+    assert "tutorial_simulator_html" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
     assert "public_post_mvp_plan_api" in root_json.json()
@@ -622,6 +624,26 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
     )
+    assert (
+        service_info.json()["ops_tutorial_simulator_session_start_api"]
+        == "/api/ops/tutorial-simulator/sessions/start"
+    )
+    assert (
+        service_info.json()["ops_tutorial_simulator_sessions_api"]
+        == "/api/ops/tutorial-simulator/sessions"
+    )
+    assert (
+        service_info.json()["ops_tutorial_simulator_session_api"]
+        == "/api/ops/tutorial-simulator/sessions/{session_id}"
+    )
+    assert (
+        service_info.json()["ops_tutorial_simulator_session_check_api"]
+        == "/api/ops/tutorial-simulator/sessions/{session_id}/check"
+    )
+    assert (
+        service_info.json()["ops_tutorial_simulator_session_action_api"]
+        == "/api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}"
+    )
     assert service_info.json()["ops_security_posture_api"] == "/api/ops/security/posture"
     assert service_info.json()["ops_api_latency_api"] == "/api/ops/performance/api-latency"
     assert service_info.json()["ops_evidence_archive_integrity_api"] == "/api/ops/integrity/evidence-archive"
@@ -639,6 +661,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["alert_retention_policy_api"] == "/api/ops/alerts/retention/policy"
     assert service_info.json()["alert_retention_latest_api"] == "/api/ops/alerts/retention/latest"
     assert service_info.json()["alert_retention_run_api"] == "/api/ops/alerts/retention/run"
+    assert service_info.json()["public_tutorial_simulator_api"] == "/api/public/tutorial-simulator"
+    assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -669,6 +693,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W15 Operations Efficiency" in adoption_html.text
     assert "W02 Sample Files" in adoption_html.text
     assert "Facility Web Modules" in adoption_html.text
+    assert "Tutorial Simulator" in adoption_html.text
     assert "Operations Console HTML" in adoption_html.text
     assert "요약 모드 (핵심 5줄): OFF" in adoption_html.text
     assert "핵심 5줄 요약" in adoption_html.text
@@ -681,12 +706,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert modules_body["main_page"] == "/"
     assert modules_body["console_html"] == "/web/console"
     assert len(modules_body["modules"]) >= 7
+    assert any(item.get("id") == "tutorial-simulator" for item in modules_body["modules"])
 
     modules_html = app_client.get("/api/public/modules", headers={"Accept": "text/html"})
     assert modules_html.status_code == 200
     assert modules_html.headers["content-type"].startswith("text/html")
     assert "Facility Web Modules" in modules_html.text
     assert "Operations Console" in modules_html.text
+    assert "Tutorial Simulator" in modules_html.text
 
     public_plan = app_client.get("/api/public/adoption-plan")
     assert public_plan.status_code == 200
@@ -5578,6 +5605,87 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert anomalies_csv.headers.get("content-type", "").startswith("text/csv")
     assert "generated_at,window_days,health_status,total_runs,success_rate_percent,skipped_rate_percent" in anomalies_csv.text
     assert "recommendation" in anomalies_csv.text
+
+
+def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
+    public_payload = app_client.get("/api/public/tutorial-simulator")
+    assert public_payload.status_code == 200
+    body = public_payload.json()
+    assert body["public"] is True
+    assert body["simulator_html"] == "/web/tutorial-simulator"
+    assert any(item["id"] == "ts-core-01" for item in body["scenarios"])
+
+    public_html = app_client.get("/api/public/tutorial-simulator", headers={"Accept": "text/html"})
+    assert public_html.status_code == 200
+    assert public_html.headers.get("content-type", "").startswith("text/html")
+    assert "Tutorial Simulator" in public_html.text
+
+    simulator_html = app_client.get("/web/tutorial-simulator")
+    assert simulator_html.status_code == 200
+    assert simulator_html.headers.get("content-type", "").startswith("text/html")
+    assert "Tutorial Simulator" in simulator_html.text
+
+    start = app_client.post(
+        "/api/ops/tutorial-simulator/sessions/start",
+        headers=_owner_headers(),
+        json={"scenario_id": "ts-core-01", "site": "Tutorial Site"},
+    )
+    assert start.status_code == 200
+    start_body = start.json()
+    session_id = int(start_body["session_id"])
+    work_order_id = int(start_body["seed"]["work_order_id"])
+    assert start_body["site"] == "Tutorial Site"
+    assert start_body["scenario"]["id"] == "ts-core-01"
+    assert int(start_body["progress"]["completion_percent"]) >= 40
+    assert start_body["practice_commands"]["ack_work_order"]["url"].endswith(f"/api/work-orders/{work_order_id}/ack")
+
+    session_view = app_client.get(
+        f"/api/ops/tutorial-simulator/sessions/{session_id}",
+        headers=_owner_headers(),
+    )
+    assert session_view.status_code == 200
+    assert int(session_view.json()["session_id"]) == session_id
+
+    check_before = app_client.post(
+        f"/api/ops/tutorial-simulator/sessions/{session_id}/check",
+        headers=_owner_headers(),
+    )
+    assert check_before.status_code == 200
+    assert "checked_at" in check_before.json()
+
+    ack_result = app_client.post(
+        f"/api/ops/tutorial-simulator/sessions/{session_id}/actions/ack_work_order",
+        headers=_owner_headers(),
+        json={"assignee": "Ops QA"},
+    )
+    assert ack_result.status_code == 200
+    assert ack_result.json()["work_order_status"] in {"acked", "completed"}
+
+    complete_result = app_client.post(
+        f"/api/ops/tutorial-simulator/sessions/{session_id}/actions/complete_work_order",
+        headers=_owner_headers(),
+        json={"resolution_notes": "tutorial finished"},
+    )
+    assert complete_result.status_code == 200
+    assert complete_result.json()["work_order_status"] == "completed"
+
+    check_after = app_client.post(
+        f"/api/ops/tutorial-simulator/sessions/{session_id}/check",
+        headers=_owner_headers(),
+    )
+    assert check_after.status_code == 200
+    check_after_body = check_after.json()
+    assert check_after_body["progress"]["status"] == "completed"
+    assert int(check_after_body["progress"]["completion_percent"]) == 100
+
+    list_resp = app_client.get(
+        "/api/ops/tutorial-simulator/sessions?limit=5",
+        headers=_owner_headers(),
+    )
+    assert list_resp.status_code == 200
+    list_body = list_resp.json()
+    assert int(list_body["count"]) >= 1
+    assert any(int(item["session_id"]) == session_id for item in list_body["items"])
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

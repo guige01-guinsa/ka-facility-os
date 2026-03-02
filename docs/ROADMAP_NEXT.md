@@ -66,6 +66,10 @@
   - autopilot 이상징후 API(`.../tracker/autopilot/anomalies`) 추가
   - autopilot 이상징후 CSV API(`.../tracker/autopilot/anomalies.csv`) 추가
   - 성공률/스킵률/쿨다운 차단/에러런 기반 건강상태 자동 판정
+- W31 착수 완료: Tutorial Simulator for New Users
+  - 공개 튜토리얼 허브(`/api/public/tutorial-simulator`, `/web/tutorial-simulator`) 추가
+  - 검증 샘플데이터 기반 세션 시작/조회/체크/실행 API(`.../ops/tutorial-simulator/sessions/*`) 추가
+  - 점검→작업지시 ACK→완료→리포트 준비 조건을 실습/자동판정으로 제공
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -324,6 +328,23 @@
 완료 기준:
 - 동일 window에서 anomalies JSON과 CSV 결과가 일관됨
 - health_status(healthy/warning/critical)가 규칙 기반으로 재현 가능
+- 회귀 테스트 전체 통과
+
+## W31: Tutorial Simulator for New Users (우선순위 16)
+목표:
+- 신규 사용자가 운영 API를 실제처럼 실습하면서 첫 성공을 빠르게 달성
+- 검증된 샘플데이터와 완료 조건을 표준화해 교육 품질 편차를 축소
+
+주요 작업:
+1. `GET /api/public/tutorial-simulator` + `GET /web/tutorial-simulator` 공개 허브 제공
+2. `POST /api/ops/tutorial-simulator/sessions/start`로 시나리오/샘플데이터 세션 시작
+3. `GET/POST /api/ops/tutorial-simulator/sessions/{session_id}(/check)`로 진행률/완료판정 조회
+4. `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}`로 ACK/완료/리셋 실습 지원
+5. 서비스 정보/문서/테스트/모듈 허브 동기화
+
+완료 기준:
+- 세션 시작 후 단계별 조건(ACK/완료/리포트 준비) 판정이 API로 재현 가능
+- completion_percent=100 완료 흐름이 자동 검증됨
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)

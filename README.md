@@ -131,6 +131,11 @@ Open:
   - `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv` (permission: `admins:manage`)
   - `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest` (permission: `admins:manage`)
+  - `POST /api/ops/tutorial-simulator/sessions/start` (permission: `admins:manage`)
+  - `GET /api/ops/tutorial-simulator/sessions` (permission: `admins:manage`)
+  - `GET /api/ops/tutorial-simulator/sessions/{session_id}` (permission: `admins:manage`)
+  - `POST /api/ops/tutorial-simulator/sessions/{session_id}/check` (permission: `admins:manage`)
+  - `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/csv` (permission: `admins:manage`)
   - `GET /api/ops/handover/brief/pdf` (permission: `admins:manage`)
@@ -495,6 +500,13 @@ Job monitoring:
 - `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies`
 - `GET /api/ops/governance/gate/remediation/tracker/autopilot/anomalies.csv`
 - `GET /api/ops/governance/gate/remediation/tracker/autopilot/latest`
+- `POST /api/ops/tutorial-simulator/sessions/start`
+- `GET /api/ops/tutorial-simulator/sessions?limit=20`
+- `GET /api/ops/tutorial-simulator/sessions/{session_id}`
+- `POST /api/ops/tutorial-simulator/sessions/{session_id}/check`
+- `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/ack_work_order`
+- `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/complete_work_order`
+- `POST /api/ops/tutorial-simulator/sessions/{session_id}/actions/reset_work_order`
 - `GET /api/ops/security/posture`
 - `GET /api/ops/handover/brief?window_hours=12&due_soon_hours=6&max_items=10`
 - `GET /api/ops/handover/brief/csv?window_hours=12&due_soon_hours=6&max_items=10`
@@ -502,8 +514,10 @@ Job monitoring:
 - `GET /api/public/adoption-plan`
 - `GET /api/public/adoption-plan/campaign`
 - `GET /api/public/modules`
+- `GET /api/public/tutorial-simulator`
 - `GET /web/adoption`
 - `GET /web/console`
+- `GET /web/tutorial-simulator`
 - `GET /api/public/adoption-plan/schedule.csv`
 - `GET /api/public/adoption-plan/schedule.ics`
 - `GET /api/public/adoption-plan/w02`
