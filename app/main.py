@@ -31481,15 +31481,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       gap: 8px;
       margin-bottom: 9px;
     }}
-    .login-row {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 180px) auto;
-      gap: 8px;
-      margin-bottom: 9px;
-    }}
-    .signup-row {{
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 140px) minmax(0, 160px) auto;
+    .auth-actions {{
+      display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 9px;
     }}
@@ -31502,7 +31496,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       color: var(--ink);
       background: #fff;
     }}
-    .login-row input {{
+    .auth-dialog-grid input, .auth-dialog-grid select {{
       width: 100%;
       border: 1px solid #c8d8ec;
       border-radius: 10px;
@@ -31511,14 +31505,53 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       color: var(--ink);
       background: #fff;
     }}
-    .signup-row input, .signup-row select {{
-      width: 100%;
-      border: 1px solid #c8d8ec;
-      border-radius: 10px;
-      padding: 8px 10px;
-      font-size: 13px;
-      color: var(--ink);
+    .auth-backdrop {{
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 21, 37, 0.45);
+      z-index: 10000;
+    }}
+    .auth-dialog {{
+      position: fixed;
+      inset: 0;
+      z-index: 10001;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }}
+    .auth-backdrop[hidden], .auth-dialog[hidden] {{
+      display: none;
+    }}
+    .auth-dialog-card {{
+      width: min(760px, 100%);
+      border: 1px solid #c5d8ed;
+      border-radius: 12px;
       background: #fff;
+      box-shadow: 0 20px 36px rgba(10, 33, 59, 0.24);
+      padding: 14px;
+    }}
+    .auth-dialog-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .auth-dialog-head h3 {{
+      margin: 0;
+      font-size: 16px;
+      color: #0c614f;
+    }}
+    .auth-dialog-grid {{
+      display: grid;
+      gap: 8px;
+    }}
+    .auth-dialog-grid.login {{
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 180px) auto;
+    }}
+    .auth-dialog-grid.signup {{
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 140px) minmax(0, 160px) auto;
     }}
     .btn {{
       border: 1px solid #97badf;
@@ -31769,11 +31802,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       .hero h1 {{ font-size: 21px; }}
       .tab-btn {{ font-size: 13px; padding: 10px; }}
       .auth-row {{ grid-template-columns: 1fr; }}
-      .login-row {{ grid-template-columns: 1fr; }}
-      .signup-row {{ grid-template-columns: 1fr; }}
       .filter-row {{ grid-template-columns: 1fr; }}
       .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .adopt-grid {{ grid-template-columns: 1fr; }}
+      .auth-dialog-grid.login {{ grid-template-columns: 1fr; }}
+      .auth-dialog-grid.signup {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -31807,26 +31840,47 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <button id="testTokenBtn" class="btn run" type="button">권한 확인</button>
           <button id="clearTokenBtn" class="btn" type="button">토큰 지우기</button>
         </div>
-        <div class="login-row">
-          <input id="loginUsernameInput" placeholder="username" autocomplete="username" />
-          <input id="loginPasswordInput" type="password" placeholder="password" autocomplete="current-password" />
-          <input id="loginTokenLabelInput" value="web-login" placeholder="token label" />
-          <button id="loginBtn" class="btn run" type="button">ID/PW 로그인</button>
-        </div>
-        <div class="signup-row">
-          <input id="signupUsernameInput" placeholder="new username" autocomplete="username" />
-          <input id="signupPasswordInput" type="password" placeholder="new password" autocomplete="new-password" />
-          <input id="signupDisplayNameInput" placeholder="display name (optional)" />
-          <select id="signupRoleInput">
-            <option value="operator">operator</option>
-            <option value="auditor">auditor</option>
-            <option value="manager">manager</option>
-            <option value="owner">owner</option>
-          </select>
-          <input id="signupSiteScopeInput" value="*" placeholder="site scope (comma, e.g. HQ,B1)" />
-          <button id="signupBtn" class="btn run" type="button">사용자 신규가입</button>
+        <div class="auth-actions">
+          <button id="openLoginModalBtn" class="btn run" type="button">ID/PW 로그인</button>
+          <button id="openSignupModalBtn" class="btn run" type="button">사용자 신규가입</button>
         </div>
         <div id="authState" class="auth-state">토큰 상태: 없음</div>
+        <div id="authModalBackdrop" class="auth-backdrop" hidden></div>
+        <section id="authLoginModal" class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="authLoginModalTitle" hidden>
+          <div class="auth-dialog-card">
+            <div class="auth-dialog-head">
+              <h3 id="authLoginModalTitle">ID/PW 로그인</h3>
+              <button id="closeLoginModalBtn" class="btn" type="button">닫기</button>
+            </div>
+            <div class="auth-dialog-grid login">
+              <input id="loginUsernameInput" placeholder="username" autocomplete="username" />
+              <input id="loginPasswordInput" type="password" placeholder="password" autocomplete="current-password" />
+              <input id="loginTokenLabelInput" value="web-login" placeholder="token label" />
+              <button id="loginBtn" class="btn run" type="button">로그인 실행</button>
+            </div>
+          </div>
+        </section>
+        <section id="authSignupModal" class="auth-dialog" role="dialog" aria-modal="true" aria-labelledby="authSignupModalTitle" hidden>
+          <div class="auth-dialog-card">
+            <div class="auth-dialog-head">
+              <h3 id="authSignupModalTitle">사용자 신규가입</h3>
+              <button id="closeSignupModalBtn" class="btn" type="button">닫기</button>
+            </div>
+            <div class="auth-dialog-grid signup">
+              <input id="signupUsernameInput" placeholder="new username" autocomplete="username" />
+              <input id="signupPasswordInput" type="password" placeholder="new password" autocomplete="new-password" />
+              <input id="signupDisplayNameInput" placeholder="display name (optional)" />
+              <select id="signupRoleInput">
+                <option value="operator">operator</option>
+                <option value="auditor">auditor</option>
+                <option value="manager">manager</option>
+                <option value="owner">owner</option>
+              </select>
+              <input id="signupSiteScopeInput" value="*" placeholder="site scope (comma, e.g. HQ,B1)" />
+              <button id="signupBtn" class="btn run" type="button">가입 실행</button>
+            </div>
+          </div>
+        </section>
 
         <div id="panelOverview" class="tab-panel" role="tabpanel">
           <p class="tab-caption">SLA/점검/알림 상태를 한 화면에서 확인합니다.</p>
@@ -32658,6 +32712,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       const signupDisplayNameInput = document.getElementById("signupDisplayNameInput");
       const signupRoleInput = document.getElementById("signupRoleInput");
       const signupSiteScopeInput = document.getElementById("signupSiteScopeInput");
+      const openLoginModalBtn = document.getElementById("openLoginModalBtn");
+      const openSignupModalBtn = document.getElementById("openSignupModalBtn");
+      const closeLoginModalBtn = document.getElementById("closeLoginModalBtn");
+      const closeSignupModalBtn = document.getElementById("closeSignupModalBtn");
+      const authModalBackdrop = document.getElementById("authModalBackdrop");
+      const authLoginModal = document.getElementById("authLoginModal");
+      const authSignupModal = document.getElementById("authSignupModal");
+      let activeAuthModal = null;
       let authProfile = null;
       let w07TrackerItemsCache = [];
       let w07TrackerFilter = "all";
@@ -32699,6 +32761,39 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           return;
         }}
         setAuthState("토큰 상태: 저장됨 (연결 테스트 전)");
+      }}
+
+      function closeAuthModal() {{
+        if (authLoginModal) {{
+          authLoginModal.hidden = true;
+        }}
+        if (authSignupModal) {{
+          authSignupModal.hidden = true;
+        }}
+        if (authModalBackdrop) {{
+          authModalBackdrop.hidden = true;
+        }}
+        activeAuthModal = null;
+      }}
+
+      function openAuthModal(mode) {{
+        closeAuthModal();
+        if (mode === "signup" && authSignupModal) {{
+          authSignupModal.hidden = false;
+          activeAuthModal = "signup";
+          if (signupUsernameInput) {{
+            signupUsernameInput.focus();
+          }}
+        }} else if (authLoginModal) {{
+          authLoginModal.hidden = false;
+          activeAuthModal = "login";
+          if (loginUsernameInput) {{
+            loginUsernameInput.focus();
+          }}
+        }}
+        if (authModalBackdrop) {{
+          authModalBackdrop.hidden = false;
+        }}
       }}
 
       function escapeHtml(value) {{
@@ -33317,9 +33412,11 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           updateAuthStateFromToken();
           if (authProfile) {{
             setAuthState("로그인 성공 | 사용자: " + authProfile.username + " | 역할: " + authProfile.role);
+            closeAuthModal();
             activate(roleDefaultTab(authProfile), true);
           }} else {{
             setAuthState("로그인 성공 | 토큰 발급 완료");
+            closeAuthModal();
           }}
         }} catch (err) {{
           authProfile = null;
@@ -33389,6 +33486,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             + " | 역할: " + String(created.role || role)
             + " | 이제 ID/PW 로그인 버튼으로 확인하세요."
           );
+          openAuthModal("login");
         }} catch (err) {{
           setAuthState("가입 실패 | " + err.message);
         }}
@@ -37771,6 +37869,26 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           }}
         }} catch (err) {{
           setAuthState("토큰 상태: 연결 실패 | " + err.message);
+        }}
+      }});
+      if (openLoginModalBtn) {{
+        openLoginModalBtn.addEventListener("click", () => openAuthModal("login"));
+      }}
+      if (openSignupModalBtn) {{
+        openSignupModalBtn.addEventListener("click", () => openAuthModal("signup"));
+      }}
+      if (closeLoginModalBtn) {{
+        closeLoginModalBtn.addEventListener("click", closeAuthModal);
+      }}
+      if (closeSignupModalBtn) {{
+        closeSignupModalBtn.addEventListener("click", closeAuthModal);
+      }}
+      if (authModalBackdrop) {{
+        authModalBackdrop.addEventListener("click", closeAuthModal);
+      }}
+      document.addEventListener("keydown", (event) => {{
+        if (event.key === "Escape" && activeAuthModal) {{
+          closeAuthModal();
         }}
       }});
       document.getElementById("loginBtn").addEventListener("click", runAuthLogin);
