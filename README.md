@@ -429,6 +429,7 @@ Optional alert webhook env:
 - `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_FILES` (default `200`; max evidence files included in W07 completion package ZIP)
 - `W07_COMPLETION_PACKAGE_MAX_EVIDENCE_BYTES` (default `52428800` = 50MB; max total evidence bytes included in W07 completion package ZIP)
 - `AUDIT_ARCHIVE_SIGNING_KEY` (HMAC key for signed monthly audit archive)
+- `AUDIT_ARCHIVE_SIGNING_REQUIRED` (default `false`; when `true`, startup preflight blocks if signing key is missing)
 - `API_LATENCY_MONITOR_ENABLED` (default `true`)
 - `API_LATENCY_MONITOR_WINDOW` (default `300`; in-memory sample window per critical API)
 - `API_LATENCY_MIN_SAMPLES` (default `8`)

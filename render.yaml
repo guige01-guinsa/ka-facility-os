@@ -51,6 +51,10 @@ services:
         value: DATABASE_URL
       - key: PREFLIGHT_FAIL_ON_ERROR
         value: "true"
+      - key: AUDIT_ARCHIVE_SIGNING_KEY
+        sync: false
+      - key: AUDIT_ARCHIVE_SIGNING_REQUIRED
+        value: "false"
       - key: GOVERNANCE_GATE_ALLOW_WARNING
         value: "true"
       - key: GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL

@@ -5043,6 +5043,76 @@ def test_ops_preflight_and_alert_noise_policy_endpoints(app_client: TestClient) 
     assert noise_policy_body["false_negative_threshold_percent"] == 1.0
 
 
+def test_startup_preflight_signing_key_warning_when_not_required(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "preflight_signing_warning.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "1")
+    monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_REQUIRED", "0")
+    monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
+    monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+
+    import app.database as database_module
+    import app.main as main_module
+
+    importlib.reload(database_module)
+    importlib.reload(main_module)
+    snapshot = main_module._run_startup_preflight_snapshot()
+    signing_check = next(item for item in snapshot["checks"] if item["id"] == "audit_archive_signing_key")
+
+    assert signing_check["severity"] == "warning"
+    assert signing_check["status"] == "warning"
+    assert snapshot["has_error"] is False
+
+
+def test_startup_preflight_signing_key_error_when_required(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "preflight_signing_error.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "1")
+    monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_REQUIRED", "1")
+    monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
+    monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+
+    import app.database as database_module
+    import app.main as main_module
+
+    importlib.reload(database_module)
+    importlib.reload(main_module)
+    snapshot = main_module._run_startup_preflight_snapshot()
+    signing_check = next(item for item in snapshot["checks"] if item["id"] == "audit_archive_signing_key")
+
+    assert signing_check["severity"] == "error"
+    assert signing_check["status"] == "error"
+    assert snapshot["has_error"] is True
+
+
+def test_startup_preflight_failure_reports_blocking_check_id(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "preflight_blocking_error.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
+    monkeypatch.setenv("ENV", "production")
+    monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "1")
+    monkeypatch.setenv("AUDIT_ARCHIVE_SIGNING_REQUIRED", "1")
+    monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
+    monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
+    monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+
+    import app.database as database_module
+    import app.main as main_module
+
+    importlib.reload(database_module)
+    importlib.reload(main_module)
+
+    with pytest.raises(RuntimeError, match="audit_archive_signing_key"):
+        with TestClient(main_module.app):
+            pass
+
+
 def test_ops_admin_security_dashboard_endpoint(app_client: TestClient) -> None:
     dashboard = app_client.get("/api/ops/admin/security-dashboard?days=30", headers=_owner_headers())
     assert dashboard.status_code == 200

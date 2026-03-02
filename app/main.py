@@ -386,6 +386,7 @@ EVIDENCE_STORAGE_PATH = getenv("EVIDENCE_STORAGE_PATH", "data/evidence-objects")
 EVIDENCE_SCAN_MODE = getenv("EVIDENCE_SCAN_MODE", "basic").strip().lower() or "basic"
 EVIDENCE_SCAN_BLOCK_SUSPICIOUS = _env_bool("EVIDENCE_SCAN_BLOCK_SUSPICIOUS", False)
 AUDIT_ARCHIVE_SIGNING_KEY = getenv("AUDIT_ARCHIVE_SIGNING_KEY", "").strip()
+AUDIT_ARCHIVE_SIGNING_REQUIRED = _env_bool("AUDIT_ARCHIVE_SIGNING_REQUIRED", False)
 API_LATENCY_MONITOR_ENABLED = _env_bool("API_LATENCY_MONITOR_ENABLED", True)
 API_LATENCY_MONITOR_WINDOW = _env_int("API_LATENCY_MONITOR_WINDOW", 300, min_value=20)
 API_LATENCY_MIN_SAMPLES = _env_int("API_LATENCY_MIN_SAMPLES", 8, min_value=1)
@@ -4191,7 +4192,13 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
     _init_rate_limit_backend()
     preflight = _refresh_startup_preflight_snapshot()
     if bool(preflight.get("has_error")) and PREFLIGHT_FAIL_ON_ERROR:
-        raise RuntimeError("Startup preflight failed with blocking errors.")
+        blocking_checks = [
+            str(item.get("id") or "unknown")
+            for item in preflight.get("checks", [])
+            if item.get("status") == "error"
+        ]
+        detail = ", ".join(blocking_checks) if blocking_checks else "unknown"
+        raise RuntimeError(f"Startup preflight failed with blocking errors: {detail}")
     yield
 
 
@@ -5117,7 +5124,7 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
         }
     )
 
-    signing_required = ENV_NAME in {"prod", "production", "staging"}
+    signing_required = AUDIT_ARCHIVE_SIGNING_REQUIRED
     signing_ok = bool(AUDIT_ARCHIVE_SIGNING_KEY)
     checks.append(
         {
@@ -5127,7 +5134,11 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
             "message": (
                 "Audit archive signing key is configured."
                 if signing_ok
-                else "AUDIT_ARCHIVE_SIGNING_KEY is not configured."
+                else (
+                    "AUDIT_ARCHIVE_SIGNING_KEY is required but not configured."
+                    if signing_required
+                    else "AUDIT_ARCHIVE_SIGNING_KEY is not configured."
+                )
             ),
         }
     )
