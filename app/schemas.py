@@ -1528,12 +1528,24 @@ class AuthMeRead(BaseModel):
     is_legacy: bool = False
 
 
+class AuthLoginRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=80)
+    password: str = Field(min_length=8, max_length=128)
+    token_label: str = Field(default="web-login", min_length=1, max_length=120)
+
+
+class AuthLoginResponse(BaseModel):
+    token: str
+    profile: AuthMeRead
+
+
 class AdminUserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=80)
     display_name: str = Field(default="", max_length=120)
     role: AdminRole = "operator"
     permissions: list[str] = Field(default_factory=list)
     site_scope: list[str] = Field(default_factory=lambda: ["*"])
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
     is_active: bool = True
 
 
@@ -1551,6 +1563,10 @@ class AdminUserRead(BaseModel):
 
 class AdminUserActiveUpdate(BaseModel):
     is_active: bool
+
+
+class AdminUserPasswordSetRequest(BaseModel):
+    password: str = Field(min_length=8, max_length=128)
 
 
 class AdminTokenIssueRequest(BaseModel):

@@ -48,10 +48,12 @@ Open:
   - `GET /api/public/post-mvp/kpi-dashboard` (post-MVP KPI dashboard specification)
   - `GET /api/public/post-mvp/risks` (post-MVP risk register)
 - Auth/RBAC
+  - `POST /api/auth/login` (username/password login, issues admin token)
   - `GET /api/auth/me`
   - `GET /api/admin/users` (permission: `admins:manage`)
   - `POST /api/admin/users` (permission: `admins:manage`)
   - `PATCH /api/admin/users/{user_id}/active` (permission: `admins:manage`)
+  - `POST /api/admin/users/{user_id}/password` (permission: `admins:manage`)
   - `POST /api/admin/users/{user_id}/tokens` (permission: `admins:manage`)
   - `GET /api/admin/tokens` (permission: `admins:manage`)
   - `POST /api/admin/tokens/{token_id}/rotate` (permission: `admins:manage`)
@@ -249,7 +251,11 @@ Open:
 ## RBAC and token auth
 
 - Header key: `X-Admin-Token`
+- Login modes:
+  - direct token mode: send `X-Admin-Token` header
+  - username/password mode: call `POST /api/auth/login` and use returned token
 - Tokens are stored as hash in DB (`admin_tokens`), linked to users (`admin_users`).
+- User passwords are stored as PBKDF2 hash in DB (`admin_users.password_hash`).
 - Site scope:
   - `admin_users.site_scope`: allowed sites (`["*"]` means all sites)
   - `admin_tokens.site_scope`: optional override (if omitted, inherits user scope)
@@ -292,7 +298,24 @@ Create admin user:
 curl -X POST "http://127.0.0.1:8001/api/admin/users" `
   -H "X-Admin-Token: <owner-token>" `
   -H "Content-Type: application/json" `
-  -d "{\"username\":\"ops_manager\",\"display_name\":\"Ops Manager\",\"role\":\"manager\",\"permissions\":[],\"site_scope\":[\"Site A\",\"Site B\"]}"
+  -d "{\"username\":\"ops_manager\",\"display_name\":\"Ops Manager\",\"role\":\"manager\",\"permissions\":[],\"site_scope\":[\"Site A\",\"Site B\"],\"password\":\"StrongPass123!\"}"
+```
+
+Set/reset admin user password:
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/admin/users/2/password" `
+  -H "X-Admin-Token: <owner-token>" `
+  -H "Content-Type: application/json" `
+  -d "{\"password\":\"StrongPass123!\"}"
+```
+
+Login with username/password (token issued in response):
+
+```powershell
+curl -X POST "http://127.0.0.1:8001/api/auth/login" `
+  -H "Content-Type: application/json" `
+  -d "{\"username\":\"ops_manager\",\"password\":\"StrongPass123!\",\"token_label\":\"web-login\"}"
 ```
 
 Issue token for user:
@@ -395,6 +418,10 @@ Optional alert webhook env:
 - `ADMIN_TOKEN_ROTATE_WARNING_DAYS` (default `7`)
 - `ADMIN_TOKEN_MAX_IDLE_DAYS` (default `30`; auto-disable by inactivity)
 - `ADMIN_TOKEN_MAX_ACTIVE_PER_USER` (default `5`)
+- `ADMIN_PASSWORD_MIN_LENGTH` (default `8`)
+- `ADMIN_PASSWORD_MAX_LENGTH` (default `128`)
+- `ADMIN_PASSWORD_PBKDF2_ITERATIONS` (default `210000`)
+- `AUTH_LOGIN_TOKEN_LABEL_DEFAULT` (default `web-login`)
 - `EVIDENCE_STORAGE_BACKEND` (`fs|db`, default `fs`)
 - `EVIDENCE_STORAGE_PATH` (default `data/evidence-objects`)
 - `EVIDENCE_SCAN_MODE` (`basic|off`, default `basic`)
@@ -430,6 +457,7 @@ Security hardening:
 - common response headers enabled (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`, `Permissions-Policy`)
 - HTML endpoints (`/`, `/web/*`, `/api/*` browser view) include CSP header
 - authenticated API responses include `Cache-Control: no-store`
+- `/api/auth/login` response also returns `Cache-Control: no-store` with issued token payload
 - W02/W03/W04/W07/W09/W10 evidence upload blocks unsupported content types and empty files, max size 5MB
 - API rate limit returns `429` with `Retry-After`, `X-RateLimit-*`, `X-RateLimit-Policy`, `X-RateLimit-Backend`
 - admin token policy enforces bounded TTL, inactivity disable, rotate warning metadata, and rotate API

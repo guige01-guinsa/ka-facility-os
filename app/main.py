@@ -1,4 +1,5 @@
 import csv
+import base64
 import hashlib
 import html
 import hmac
@@ -96,7 +97,10 @@ from app.schemas import (
     AdminTokenRead,
     AdminUserActiveUpdate,
     AdminUserCreate,
+    AdminUserPasswordSetRequest,
     AdminUserRead,
+    AuthLoginRequest,
+    AuthLoginResponse,
     AuthMeRead,
     DashboardSummaryRead,
     DashboardTrendPoint,
@@ -315,6 +319,10 @@ ADMIN_TOKEN_ROTATE_AFTER_DAYS = _env_int("ADMIN_TOKEN_ROTATE_AFTER_DAYS", 45, mi
 ADMIN_TOKEN_ROTATE_WARNING_DAYS = _env_int("ADMIN_TOKEN_ROTATE_WARNING_DAYS", 7, min_value=0)
 ADMIN_TOKEN_MAX_IDLE_DAYS = _env_int("ADMIN_TOKEN_MAX_IDLE_DAYS", 30, min_value=1)
 ADMIN_TOKEN_MAX_ACTIVE_PER_USER = _env_int("ADMIN_TOKEN_MAX_ACTIVE_PER_USER", 5, min_value=1)
+ADMIN_PASSWORD_MIN_LENGTH = _env_int("ADMIN_PASSWORD_MIN_LENGTH", 8, min_value=8)
+ADMIN_PASSWORD_MAX_LENGTH = _env_int("ADMIN_PASSWORD_MAX_LENGTH", 128, min_value=ADMIN_PASSWORD_MIN_LENGTH)
+ADMIN_PASSWORD_PBKDF2_ITERATIONS = _env_int("ADMIN_PASSWORD_PBKDF2_ITERATIONS", 210000, min_value=120000)
+AUTH_LOGIN_TOKEN_LABEL_DEFAULT = getenv("AUTH_LOGIN_TOKEN_LABEL_DEFAULT", "web-login").strip() or "web-login"
 W07_QUALITY_ALERT_ENABLED = _env_bool("W07_QUALITY_ALERT_ENABLED", True)
 W07_QUALITY_ALERT_COOLDOWN_MINUTES = _env_int("W07_QUALITY_ALERT_COOLDOWN_MINUTES", 180, min_value=0)
 W07_QUALITY_ALERT_MIN_WINDOW_DAYS = _env_int("W07_QUALITY_ALERT_MIN_WINDOW_DAYS", 7, min_value=7)
@@ -8752,7 +8760,7 @@ async def security_headers_middleware(request: Request, call_next: Callable[[Req
     if ENV_NAME == "production" or request.url.scheme.lower() == "https":
         response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains; preload")
 
-    if request.headers.get("x-admin-token", "").strip():
+    if request.headers.get("x-admin-token", "").strip() or request.url.path == "/api/auth/login":
         response.headers.setdefault("Cache-Control", "no-store")
         response.headers.setdefault("Pragma", "no-cache")
 
@@ -8861,6 +8869,82 @@ def _effective_permissions(role: str, custom: list[str]) -> list[str]:
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _normalize_admin_username(value: str) -> str:
+    return value.strip()
+
+
+def _validate_admin_password_value(password: str) -> str:
+    candidate = str(password or "")
+    if len(candidate) < ADMIN_PASSWORD_MIN_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at least {ADMIN_PASSWORD_MIN_LENGTH} characters",
+        )
+    if len(candidate) > ADMIN_PASSWORD_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be at most {ADMIN_PASSWORD_MAX_LENGTH} characters",
+        )
+    return candidate
+
+
+def _b64_url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+
+
+def _b64_url_decode(value: str) -> bytes:
+    text = str(value or "").strip()
+    if not text:
+        return b""
+    padding = "=" * ((4 - (len(text) % 4)) % 4)
+    return base64.urlsafe_b64decode((text + padding).encode("utf-8"))
+
+
+def _hash_password(password: str) -> str:
+    normalized = _validate_admin_password_value(password)
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        normalized.encode("utf-8"),
+        salt,
+        ADMIN_PASSWORD_PBKDF2_ITERATIONS,
+    )
+    return "pbkdf2_sha256${iterations}${salt}${digest}".format(
+        iterations=ADMIN_PASSWORD_PBKDF2_ITERATIONS,
+        salt=_b64_url_encode(salt),
+        digest=_b64_url_encode(digest),
+    )
+
+
+def _verify_password(password: str, encoded_hash: str) -> bool:
+    raw = str(encoded_hash or "").strip()
+    if not raw:
+        return False
+    parts = raw.split("$")
+    if len(parts) != 4:
+        return False
+    algorithm, iterations_text, salt_text, digest_text = parts
+    if algorithm != "pbkdf2_sha256":
+        return False
+    try:
+        iterations = int(iterations_text)
+        if iterations <= 0:
+            return False
+        salt = _b64_url_decode(salt_text)
+        expected_digest = _b64_url_decode(digest_text)
+        if not salt or not expected_digest:
+            return False
+        computed_digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            str(password or "").encode("utf-8"),
+            salt,
+            iterations,
+        )
+    except Exception:
+        return False
+    return hmac.compare_digest(computed_digest, expected_digest)
 
 
 def _has_active_admin_tokens() -> bool:
@@ -24435,7 +24519,9 @@ def _service_info_payload() -> dict[str, str]:
         "monthly_report_api": "/api/reports/monthly",
         "monthly_report_csv_api": "/api/reports/monthly/csv",
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
+        "auth_login_api": "/api/auth/login",
         "auth_me_api": "/api/auth/me",
+        "admin_user_password_api": "/api/admin/users/{user_id}/password",
         "admin_tokens_api": "/api/admin/tokens",
         "admin_token_rotate_api": "/api/admin/tokens/{token_id}/rotate",
         "admin_token_policy_api": "/api/admin/token-policy",
@@ -31214,7 +31300,7 @@ def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) 
 
 
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
-    allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption"}
+    allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
     w09_tracker_box_html = _build_shared_tracker_execution_box_html("w09", "W09")
     w10_tracker_box_html = _build_shared_tracker_execution_box_html("w10", "W10")
@@ -31312,7 +31398,22 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       gap: 8px;
       margin-bottom: 9px;
     }}
+    .login-row {{
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 180px) auto;
+      gap: 8px;
+      margin-bottom: 9px;
+    }}
     .auth-row input, .filter-row input {{
+      width: 100%;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }}
+    .login-row input {{
       width: 100%;
       border: 1px solid #c8d8ec;
       border-radius: 10px;
@@ -31570,6 +31671,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       .hero h1 {{ font-size: 21px; }}
       .tab-btn {{ font-size: 13px; padding: 10px; }}
       .auth-row {{ grid-template-columns: 1fr; }}
+      .login-row {{ grid-template-columns: 1fr; }}
       .filter-row {{ grid-template-columns: 1fr; }}
       .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .adopt-grid {{ grid-template-columns: 1fr; }}
@@ -31586,6 +31688,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         <a href="/api/service-info">Service Info</a>
         <a href="/web/console">Legacy Console</a>
         <a href="/web/adoption">Legacy Adoption</a>
+        <a href="/web/tutorial-simulator">튜토리얼</a>
       </div>
     </header>
 
@@ -31596,6 +31699,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         <button class="tab-btn" type="button" role="tab" data-tab="inspections">점검</button>
         <button class="tab-btn" type="button" role="tab" data-tab="reports">월간리포트</button>
         <button class="tab-btn" type="button" role="tab" data-tab="adoption">사용자 정착 계획</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="tutorial">튜토리얼</button>
       </div>
       <div class="shell">
         <div class="auth-row">
@@ -31603,6 +31707,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           <button id="saveTokenBtn" class="btn" type="button">토큰 저장</button>
           <button id="testTokenBtn" class="btn run" type="button">권한 확인</button>
           <button id="clearTokenBtn" class="btn" type="button">토큰 지우기</button>
+        </div>
+        <div class="login-row">
+          <input id="loginUsernameInput" placeholder="username" autocomplete="username" />
+          <input id="loginPasswordInput" type="password" placeholder="password" autocomplete="current-password" />
+          <input id="loginTokenLabelInput" value="web-login" placeholder="token label" />
+          <button id="loginBtn" class="btn run" type="button">ID/PW 로그인</button>
         </div>
         <div id="authState" class="auth-state">토큰 상태: 없음</div>
 
@@ -32380,6 +32490,36 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             </div>
           </div>
         </div>
+
+        <div id="panelTutorial" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">신규 사용자용 검증 샘플데이터 실습 모듈입니다.</p>
+          <div class="box">
+            <h3>튜토리얼 시뮬레이터</h3>
+            <div class="meta">검증된 시나리오 기준: 점검 생성 → 작업지시 ACK → 작업지시 완료 → 리포트 데이터 준비</div>
+            <div class="mini-links">
+              <a href="/web/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 화면 열기</a>
+              <a href="/api/public/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 JSON API</a>
+              <a href="/api/ops/tutorial-simulator/sessions/start" target="_blank" rel="noopener">세션 시작 API</a>
+              <a href="/api/ops/tutorial-simulator/sessions" target="_blank" rel="noopener">세션 목록 API</a>
+            </div>
+          </div>
+          <div class="box">
+            <h3>빠른 실습 순서</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Step</th><th>Action</th><th>API</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>1</td><td>세션 시작</td><td>POST `/api/ops/tutorial-simulator/sessions/start`</td></tr>
+                  <tr><td>2</td><td>ACK 실습</td><td>POST `/api/ops/tutorial-simulator/sessions/{{session_id}}/actions/ack_work_order`</td></tr>
+                  <tr><td>3</td><td>완료 실습</td><td>POST `/api/ops/tutorial-simulator/sessions/{{session_id}}/actions/complete_work_order`</td></tr>
+                  <tr><td>4</td><td>완료 판정</td><td>POST `/api/ops/tutorial-simulator/sessions/{{session_id}}/check`</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </div>
@@ -32392,11 +32532,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         workorders: document.getElementById("panelWorkorders"),
         inspections: document.getElementById("panelInspections"),
         reports: document.getElementById("panelReports"),
-        adoption: document.getElementById("panelAdoption")
+        adoption: document.getElementById("panelAdoption"),
+        tutorial: document.getElementById("panelTutorial")
       }};
       const url = new URL(window.location.href);
       const authState = document.getElementById("authState");
       const tokenInput = document.getElementById("adminTokenInput");
+      const loginUsernameInput = document.getElementById("loginUsernameInput");
+      const loginPasswordInput = document.getElementById("loginPasswordInput");
+      const loginTokenLabelInput = document.getElementById("loginTokenLabelInput");
       let authProfile = null;
       let w07TrackerItemsCache = [];
       let w07TrackerFilter = "all";
@@ -33016,6 +33160,54 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           authProfile = null;
           updateAuthStateFromToken();
           throw err;
+        }}
+      }}
+
+      async function runAuthLogin() {{
+        const username = (loginUsernameInput && loginUsernameInput.value ? loginUsernameInput.value : "").trim();
+        const password = (loginPasswordInput && loginPasswordInput.value ? loginPasswordInput.value : "").trim();
+        const tokenLabelInputValue = (loginTokenLabelInput && loginTokenLabelInput.value ? loginTokenLabelInput.value : "").trim();
+        const tokenLabel = tokenLabelInputValue || "web-login";
+        if (!username) {{
+          setAuthState("로그인 실패: username을 입력하세요.");
+          return;
+        }}
+        if (!password) {{
+          setAuthState("로그인 실패: password를 입력하세요.");
+          return;
+        }}
+        setAuthState("로그인 중...");
+        try {{
+          const result = await fetchJson("/api/auth/login", false, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+              username,
+              password,
+              token_label: tokenLabel,
+            }}),
+          }});
+          if (!result || !result.token) {{
+            throw new Error("로그인 응답에 token이 없습니다.");
+          }}
+          window.sessionStorage.setItem(TOKEN_KEY, String(result.token));
+          window.localStorage.removeItem(TOKEN_KEY);
+          tokenInput.value = String(result.token);
+          if (loginPasswordInput) {{
+            loginPasswordInput.value = "";
+          }}
+          authProfile = result.profile || null;
+          updateAuthStateFromToken();
+          if (authProfile) {{
+            setAuthState("로그인 성공 | 사용자: " + authProfile.username + " | 역할: " + authProfile.role);
+            activate(roleDefaultTab(authProfile), true);
+          }} else {{
+            setAuthState("로그인 성공 | 토큰 발급 완료");
+          }}
+        }} catch (err) {{
+          authProfile = null;
+          updateAuthStateFromToken();
+          setAuthState("로그인 실패 | " + err.message);
         }}
       }}
 
@@ -37398,6 +37590,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           setAuthState("토큰 상태: 연결 실패 | " + err.message);
         }}
       }});
+      document.getElementById("loginBtn").addEventListener("click", runAuthLogin);
+      if (loginPasswordInput) {{
+        loginPasswordInput.addEventListener("keydown", (event) => {{
+          if (event.key === "Enter") {{
+            event.preventDefault();
+            runAuthLogin();
+          }}
+        }});
+      }}
 
       const w07TrackerTableContainer = document.getElementById("w07TrackerTable");
       if (w07TrackerTableContainer) {{
@@ -44134,10 +44335,7 @@ def meta() -> dict[str, str]:
     return {"env": getenv("ENV", "local"), "db": db_backend}
 
 
-@app.get("/api/auth/me", response_model=AuthMeRead)
-def auth_me(
-    principal: dict[str, Any] = Depends(get_current_admin),
-) -> AuthMeRead:
+def _principal_to_auth_me_model(principal: dict[str, Any]) -> AuthMeRead:
     return AuthMeRead(
         user_id=principal.get("user_id"),
         token_id=principal.get("token_id"),
@@ -44146,13 +44344,133 @@ def auth_me(
         token_rotate_due_at=principal.get("token_rotate_due_at"),
         token_idle_due_at=principal.get("token_idle_due_at"),
         token_must_rotate=bool(principal.get("token_must_rotate", False)),
-        username=principal["username"],
-        display_name=principal["display_name"],
-        role=principal["role"],
+        username=str(principal.get("username") or "unknown"),
+        display_name=str(principal.get("display_name") or principal.get("username") or "unknown"),
+        role=str(principal.get("role") or "operator"),
         permissions=list(principal.get("permissions", [])),
         site_scope=list(_principal_site_scope(principal)),
         is_legacy=bool(principal.get("is_legacy", False)),
     )
+
+
+@app.post("/api/auth/login", response_model=AuthLoginResponse)
+def auth_login(
+    payload: AuthLoginRequest,
+    response: Response,
+) -> AuthLoginResponse:
+    now = datetime.now(timezone.utc)
+    username = _normalize_admin_username(payload.username)
+    if not username:
+        raise HTTPException(status_code=400, detail="username is required")
+    _validate_admin_password_value(payload.password)
+
+    token_plain = f"kaos_{secrets.token_urlsafe(24)}"
+    token_hash = _hash_token(token_plain)
+    token_label = payload.token_label.strip() or AUTH_LOGIN_TOKEN_LABEL_DEFAULT
+    if len(token_label) > 120:
+        token_label = token_label[:120]
+
+    max_allowed_expires_at = now + timedelta(days=ADMIN_TOKEN_MAX_TTL_DAYS)
+    expires_at = max_allowed_expires_at if ADMIN_TOKEN_REQUIRE_EXPIRY else None
+
+    revoked_ids: list[int] = []
+    user_id: int | None = None
+    user_scope: list[str] = [SITE_SCOPE_ALL]
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(
+                admin_users.c.id,
+                admin_users.c.username,
+                admin_users.c.site_scope,
+                admin_users.c.is_active,
+                admin_users.c.password_hash,
+            )
+            .where(admin_users.c.username == username)
+            .limit(1)
+        ).mappings().first()
+
+        if row is None or not bool(row.get("is_active")):
+            _write_audit_log(
+                principal=None,
+                action="auth_login_failed",
+                resource_type="admin_user",
+                resource_id=username,
+                status="denied",
+                detail={"username": username, "reason": "invalid_credentials"},
+            )
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        stored_password_hash = str(row.get("password_hash") or "")
+        if not _verify_password(payload.password, stored_password_hash):
+            _write_audit_log(
+                principal=None,
+                action="auth_login_failed",
+                resource_type="admin_user",
+                resource_id=username,
+                status="denied",
+                detail={"username": username, "reason": "invalid_credentials"},
+            )
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+
+        user_id = int(row["id"])
+        user_scope = _site_scope_text_to_list(row.get("site_scope"), default_all=True)
+        conn.execute(
+            insert(admin_tokens).values(
+                user_id=user_id,
+                label=token_label,
+                token_hash=token_hash,
+                is_active=True,
+                site_scope=None,
+                expires_at=expires_at,
+                last_used_at=None,
+                created_at=now,
+            )
+        )
+        revoked_ids = _enforce_active_token_quota(conn=conn, user_id=user_id, now=now)
+
+    principal = _load_principal_by_token(token_plain)
+    if principal is None:
+        raise HTTPException(status_code=500, detail="Failed to issue login token")
+
+    _write_audit_log(
+        principal=principal,
+        action="auth_login_success",
+        resource_type="admin_token",
+        resource_id=str(principal.get("token_id") or ""),
+        detail={
+            "username": username,
+            "token_label": token_label,
+            "site_scope": _resolve_effective_site_scope(user_scope=user_scope, token_scope=None),
+            "expires_at": expires_at.isoformat() if expires_at is not None else None,
+        },
+    )
+    if revoked_ids and user_id is not None:
+        _write_audit_log(
+            principal=principal,
+            action="admin_token_auto_revoke_quota",
+            resource_type="admin_token",
+            resource_id=",".join(str(tid) for tid in revoked_ids),
+            detail={
+                "user_id": user_id,
+                "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+                "revoked_token_ids": revoked_ids,
+            },
+        )
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return AuthLoginResponse(
+        token=token_plain,
+        profile=_principal_to_auth_me_model(principal),
+    )
+
+
+@app.get("/api/auth/me", response_model=AuthMeRead)
+def auth_me(
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AuthMeRead:
+    return _principal_to_auth_me_model(principal)
 
 
 @app.get("/api/admin/users", response_model=list[AdminUserRead])
@@ -44172,24 +44490,31 @@ def create_admin_user(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> AdminUserRead:
     now = datetime.now(timezone.utc)
+    normalized_username = _normalize_admin_username(payload.username)
+    if not normalized_username:
+        raise HTTPException(status_code=400, detail="username is required")
     permissions_text = _permission_list_to_text(payload.permissions)
     site_scope_text = _site_scope_list_to_text(payload.site_scope)
-    display_name = payload.display_name.strip() or payload.username
+    display_name = payload.display_name.strip() or normalized_username
+    password_hash = _hash_password(payload.password) if payload.password is not None else None
+    password_updated_at = now if password_hash else None
 
     with get_conn() as conn:
         existing = conn.execute(
-            select(admin_users.c.id).where(admin_users.c.username == payload.username)
+            select(admin_users.c.id).where(admin_users.c.username == normalized_username)
         ).first()
         if existing is not None:
             raise HTTPException(status_code=409, detail="username already exists")
 
         result = conn.execute(
             insert(admin_users).values(
-                username=payload.username,
+                username=normalized_username,
                 display_name=display_name,
                 role=payload.role,
                 permissions=permissions_text,
                 site_scope=site_scope_text,
+                password_hash=password_hash,
+                password_updated_at=password_updated_at,
                 is_active=payload.is_active,
                 created_at=now,
                 updated_at=now,
@@ -44211,6 +44536,7 @@ def create_admin_user(
             "role": model.role,
             "site_scope": model.site_scope,
             "is_active": model.is_active,
+            "password_seeded": password_hash is not None,
         },
     )
     return model
@@ -44256,6 +44582,40 @@ def set_admin_user_active(
         resource_type="admin_user",
         resource_id=str(model.id),
         detail={"username": model.username, "is_active": model.is_active},
+    )
+    return model
+
+
+@app.post("/api/admin/users/{user_id}/password", response_model=AdminUserRead)
+def set_admin_user_password(
+    user_id: int,
+    payload: AdminUserPasswordSetRequest,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> AdminUserRead:
+    now = datetime.now(timezone.utc)
+    password_hash = _hash_password(payload.password)
+
+    with get_conn() as conn:
+        row = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Admin user not found")
+
+        conn.execute(
+            update(admin_users)
+            .where(admin_users.c.id == user_id)
+            .values(password_hash=password_hash, password_updated_at=now, updated_at=now)
+        )
+        updated = conn.execute(select(admin_users).where(admin_users.c.id == user_id)).mappings().first()
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update admin user password")
+    model = _row_to_admin_user_model(updated)
+    _write_audit_log(
+        principal=principal,
+        action="admin_user_set_password",
+        resource_type="admin_user",
+        resource_id=str(model.id),
+        detail={"username": model.username},
     )
     return model
 

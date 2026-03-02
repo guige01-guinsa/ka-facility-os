@@ -115,6 +115,8 @@ admin_users = Table(
     Column("role", String(20), nullable=False, default="operator"),
     Column("permissions", Text, nullable=False, default=""),
     Column("site_scope", Text, nullable=False, default="*"),
+    Column("password_hash", String(255), nullable=True),
+    Column("password_updated_at", DateTime(timezone=True), nullable=True),
     Column("is_active", Boolean, nullable=False, default=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),

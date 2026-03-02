@@ -311,6 +311,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "알림 채널 KPI" in root_html.text
     assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
+    assert "ID/PW 로그인" in root_html.text
     assert "요약 새로고침" in root_html.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})
@@ -320,6 +321,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     assert service_info.json()["service"] == "ka-facility-os"
+    assert service_info.json()["auth_login_api"] == "/api/auth/login"
+    assert service_info.json()["admin_user_password_api"] == "/api/admin/users/{user_id}/password"
     assert "public_modules_api" in service_info.json()
     assert service_info.json()["adoption_portal_html"] == "/web/adoption"
     assert service_info.json()["facility_console_html"] == "/web/console"
@@ -1309,6 +1312,97 @@ def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me3 = app_client.get("/api/auth/me", headers={"X-Admin-Token": issued_token})
     assert me3.status_code == 401
 
+
+def test_auth_login_with_seeded_password_user(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "login_seeded_ci",
+            "display_name": "Login Seeded CI",
+            "role": "manager",
+            "permissions": [],
+            "password": "SeededPass123!",
+        },
+    )
+    assert created.status_code == 201
+
+    login = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "login_seeded_ci",
+            "password": "SeededPass123!",
+            "token_label": "web-login-ci",
+        },
+    )
+    assert login.status_code == 200
+    assert login.headers.get("cache-control") == "no-store"
+    assert login.headers.get("pragma") == "no-cache"
+    body = login.json()
+    assert body["token"].startswith("kaos_")
+    assert body["profile"]["username"] == "login_seeded_ci"
+    assert body["profile"]["role"] == "manager"
+    assert body["profile"]["token_label"] == "web-login-ci"
+
+    me = app_client.get("/api/auth/me", headers={"X-Admin-Token": body["token"]})
+    assert me.status_code == 200
+    assert me.json()["username"] == "login_seeded_ci"
+
+    wrong = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "login_seeded_ci",
+            "password": "wrong-password",
+            "token_label": "web-login-ci",
+        },
+    )
+    assert wrong.status_code == 401
+    assert wrong.json()["detail"] == "Invalid username or password"
+
+
+def test_admin_set_password_then_auth_login(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "login_set_pw_ci",
+            "display_name": "Login Set PW CI",
+            "role": "operator",
+            "permissions": [],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+
+    missing_pw_login = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "login_set_pw_ci",
+            "password": "FirstPass123!",
+            "token_label": "web-login-ci",
+        },
+    )
+    assert missing_pw_login.status_code == 401
+
+    set_pw = app_client.post(
+        f"/api/admin/users/{user_id}/password",
+        headers=_owner_headers(),
+        json={"password": "FirstPass123!"},
+    )
+    assert set_pw.status_code == 200
+    assert set_pw.json()["username"] == "login_set_pw_ci"
+
+    login = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "login_set_pw_ci",
+            "password": "FirstPass123!",
+            "token_label": "ui-login",
+        },
+    )
+    assert login.status_code == 200
+    assert login.json()["profile"]["username"] == "login_set_pw_ci"
+    assert login.json()["profile"]["token_label"] == "ui-login"
 
 def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
     import app.database as db_module
