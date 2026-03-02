@@ -7914,6 +7914,136 @@ def _latest_ops_governance_remediation_autopilot_payload() -> dict[str, Any] | N
     }
 
 
+def _build_w28_remediation_autopilot_history(*, limit: int = 20) -> dict[str, Any]:
+    normalized_limit = max(1, min(int(limit), 100))
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(normalized_limit)
+        ).mappings().all()
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        metrics = detail.get("metrics", {}) if isinstance(detail.get("metrics"), dict) else {}
+        items.append(
+            {
+                "run_id": model.id,
+                "status": model.status,
+                "trigger": model.trigger,
+                "started_at": model.started_at.isoformat(),
+                "finished_at": model.finished_at.isoformat(),
+                "dry_run": bool(detail.get("dry_run", False)),
+                "force": bool(detail.get("force", False)),
+                "skipped": bool(detail.get("skipped", False)),
+                "skip_reason": detail.get("skip_reason"),
+                "planned_actions": detail.get("planned_actions", []),
+                "actions": detail.get("actions", []),
+                "errors_count": len(detail.get("errors", []) if isinstance(detail.get("errors"), list) else []),
+                "open_items": int(metrics.get("open_items") or 0),
+                "overdue_count": int(metrics.get("overdue_count") or 0),
+                "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+                "critical_open_count": int(metrics.get("critical_open_count") or 0),
+            }
+        )
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "count": len(items),
+        "limit": normalized_limit,
+        "items": items,
+    }
+
+
+def _build_w28_remediation_autopilot_summary(*, days: int = 7) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    normalized_days = max(1, min(int(days), 90))
+    cutoff = now - timedelta(days=normalized_days)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+            .where(job_runs.c.finished_at >= cutoff)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(500)
+        ).mappings().all()
+
+    status_counts: dict[str, int] = {"success": 0, "warning": 0, "critical": 0}
+    planned_action_counts: dict[str, int] = {"auto_assign": 0, "escalation": 0}
+    executed_action_counts: dict[str, int] = {"auto_assign": 0, "escalation": 0}
+    skipped_count = 0
+    cooldown_blocked_count = 0
+    error_run_count = 0
+    latest_run: dict[str, Any] | None = None
+
+    for idx, row in enumerate(rows):
+        model = _row_to_job_run_model(row)
+        detail = model.detail if isinstance(model.detail, dict) else {}
+        status = model.status if model.status in status_counts else "warning"
+        status_counts[status] = status_counts.get(status, 0) + 1
+        planned_actions = detail.get("planned_actions", [])
+        if isinstance(planned_actions, list):
+            for action in planned_actions:
+                action_name = str(action or "")
+                if action_name in planned_action_counts:
+                    planned_action_counts[action_name] += 1
+        actions = detail.get("actions", [])
+        if isinstance(actions, list):
+            for action in actions:
+                action_name = str(action or "")
+                if action_name in executed_action_counts:
+                    executed_action_counts[action_name] += 1
+        if bool(detail.get("skipped", False)):
+            skipped_count += 1
+            if str(detail.get("skip_reason") or "") == "cooldown_active":
+                cooldown_blocked_count += 1
+        errors = detail.get("errors", [])
+        if isinstance(errors, list) and len(errors) > 0:
+            error_run_count += 1
+        if idx == 0:
+            metrics = detail.get("metrics", {}) if isinstance(detail.get("metrics"), dict) else {}
+            latest_run = {
+                "run_id": model.id,
+                "status": model.status,
+                "finished_at": model.finished_at.isoformat(),
+                "skipped": bool(detail.get("skipped", False)),
+                "skip_reason": detail.get("skip_reason"),
+                "planned_actions": planned_actions if isinstance(planned_actions, list) else [],
+                "actions": actions if isinstance(actions, list) else [],
+                "open_items": int(metrics.get("open_items") or 0),
+                "overdue_count": int(metrics.get("overdue_count") or 0),
+                "unassigned_open_count": int(metrics.get("unassigned_open_count") or 0),
+                "critical_open_count": int(metrics.get("critical_open_count") or 0),
+            }
+
+    total_runs = len(rows)
+    executed_runs = max(0, total_runs - skipped_count)
+    success_rate_percent = (
+        round((status_counts.get("success", 0) / total_runs) * 100.0, 1) if total_runs > 0 else 100.0
+    )
+    skipped_rate_percent = (
+        round((skipped_count / total_runs) * 100.0, 1) if total_runs > 0 else 0.0
+    )
+
+    return {
+        "generated_at": now.isoformat(),
+        "window_days": normalized_days,
+        "total_runs": total_runs,
+        "executed_runs": executed_runs,
+        "skipped_runs": skipped_count,
+        "status_counts": status_counts,
+        "planned_action_counts": planned_action_counts,
+        "executed_action_counts": executed_action_counts,
+        "cooldown_blocked_runs": cooldown_blocked_count,
+        "error_runs": error_run_count,
+        "success_rate_percent": success_rate_percent,
+        "skipped_rate_percent": skipped_rate_percent,
+        "latest_run": latest_run,
+    }
+
+
 def _rate_limit_identity(request: Request) -> tuple[str, bool]:
     token = request.headers.get("x-admin-token", "").strip()
     if token:
@@ -23876,6 +24006,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_governance_remediation_tracker_autopilot_policy_api": "/api/ops/governance/gate/remediation/tracker/autopilot/policy",
         "ops_governance_remediation_tracker_autopilot_preview_api": "/api/ops/governance/gate/remediation/tracker/autopilot/preview",
         "ops_governance_remediation_tracker_autopilot_guard_api": "/api/ops/governance/gate/remediation/tracker/autopilot/guard",
+        "ops_governance_remediation_tracker_autopilot_history_api": "/api/ops/governance/gate/remediation/tracker/autopilot/history",
+        "ops_governance_remediation_tracker_autopilot_summary_api": "/api/ops/governance/gate/remediation/tracker/autopilot/summary",
         "ops_governance_remediation_tracker_autopilot_run_api": "/api/ops/governance/gate/remediation/tracker/autopilot/run",
         "ops_governance_remediation_tracker_autopilot_latest_api": "/api/ops/governance/gate/remediation/tracker/autopilot/latest",
         "ops_security_posture_api": "/api/ops/security/posture",
@@ -45848,6 +45980,50 @@ def get_ops_governance_gate_remediation_tracker_autopilot_guard(
         "evaluation": evaluation,
         "guard": guard,
     }
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/history")
+def get_ops_governance_gate_remediation_tracker_autopilot_history(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _build_w28_remediation_autopilot_history(limit=limit)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_history_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id="autopilot_history",
+        status="success",
+        detail={
+            "limit": int(payload.get("limit") or limit),
+            "count": int(payload.get("count") or 0),
+        },
+    )
+    return payload
+
+
+@ops_router.get("/governance/gate/remediation/tracker/autopilot/summary")
+def get_ops_governance_gate_remediation_tracker_autopilot_summary(
+    days: Annotated[int, Query(ge=1, le=90)] = 7,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    payload = _build_w28_remediation_autopilot_summary(days=days)
+    _write_audit_log(
+        principal=principal,
+        action="ops_governance_remediation_tracker_autopilot_summary_view",
+        resource_type="ops_governance_remediation_tracker",
+        resource_id="autopilot_summary",
+        status="success",
+        detail={
+            "window_days": int(payload.get("window_days") or days),
+            "total_runs": int(payload.get("total_runs") or 0),
+            "executed_runs": int(payload.get("executed_runs") or 0),
+            "skipped_runs": int(payload.get("skipped_runs") or 0),
+            "cooldown_blocked_runs": int(payload.get("cooldown_blocked_runs") or 0),
+            "success_rate_percent": float(payload.get("success_rate_percent") or 0.0),
+        },
+    )
+    return payload
 
 
 @ops_router.get("/governance/gate/remediation/tracker/autopilot/latest")

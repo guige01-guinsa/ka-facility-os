@@ -595,6 +595,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         == "/api/ops/governance/gate/remediation/tracker/autopilot/guard"
     )
     assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_history_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/history"
+    )
+    assert (
+        service_info.json()["ops_governance_remediation_tracker_autopilot_summary_api"]
+        == "/api/ops/governance/gate/remediation/tracker/autopilot/summary"
+    )
+    assert (
         service_info.json()["ops_governance_remediation_tracker_autopilot_latest_api"]
         == "/api/ops/governance/gate/remediation/tracker/autopilot/latest"
     )
@@ -5484,6 +5492,37 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert run_blocked_body["skip_reason"] == "cooldown_active"
     assert isinstance(run_blocked_body["guard"], dict)
     assert run_blocked_body["guard"]["blocked"] is True
+
+    history = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/history?limit=5",
+        headers=_owner_headers(),
+    )
+    assert history.status_code == 200
+    history_body = history.json()
+    assert int(history_body["limit"]) == 5
+    assert int(history_body["count"]) >= 1
+    assert isinstance(history_body["items"], list)
+    if history_body["items"]:
+        top = history_body["items"][0]
+        assert top["status"] in {"success", "warning", "critical"}
+        assert isinstance(top["planned_actions"], list)
+        assert isinstance(top["actions"], list)
+
+    summary = app_client.get(
+        "/api/ops/governance/gate/remediation/tracker/autopilot/summary?days=7",
+        headers=_owner_headers(),
+    )
+    assert summary.status_code == 200
+    summary_body = summary.json()
+    assert int(summary_body["window_days"]) == 7
+    assert int(summary_body["total_runs"]) >= 1
+    assert int(summary_body["executed_runs"]) >= 0
+    assert int(summary_body["skipped_runs"]) >= 0
+    assert isinstance(summary_body["status_counts"], dict)
+    assert isinstance(summary_body["planned_action_counts"], dict)
+    assert isinstance(summary_body["executed_action_counts"], dict)
+    assert float(summary_body["success_rate_percent"]) >= 0.0
+    assert float(summary_body["skipped_rate_percent"]) >= 0.0
 
 
 def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monkeypatch) -> None:

@@ -54,6 +54,10 @@
   - 쿨다운/실행차단 가드 API(`.../tracker/autopilot/guard`) 추가
   - autopilot 실행 응답에 `planned_actions`/`guard`/`skipped` 정보 표준화
   - 정책(`cooldown_minutes`, `skip_if_no_action`) 기반 중복 실행 억제 적용
+- W28 착수 완료: Governance Remediation Autopilot Analytics
+  - autopilot 이력 API(`.../tracker/autopilot/history`) 추가
+  - autopilot 요약 API(`.../tracker/autopilot/summary`) 추가
+  - 실행/스킵/쿨다운 차단 추세를 운영 지표로 집계
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
@@ -264,6 +268,22 @@
 완료 기준:
 - cooldown 활성 시 force=false 실행이 안전하게 차단됨
 - preview/guard/run이 동일 규칙으로 action 판단
+- 회귀 테스트 전체 통과
+
+## W28: Governance Remediation Autopilot Analytics (우선순위 13)
+목표:
+- autopilot 운영 품질(성공률/스킵률/실행행동 분포)을 기간 단위로 가시화
+- 운영자가 API만으로 최근 실행흐름과 병목(쿨다운 차단/오류)을 빠르게 파악
+
+주요 작업:
+1. `GET /api/ops/governance/gate/remediation/tracker/autopilot/history` 제공
+2. `GET /api/ops/governance/gate/remediation/tracker/autopilot/summary` 제공
+3. run payload(`planned_actions/actions/skipped/skip_reason/metrics`) 기반 집계 로직 추가
+4. 서비스 정보/문서/테스트 동기화
+
+완료 기준:
+- 최근 N회 이력 조회와 window 요약 값이 일관됨
+- summary가 최소 성공률/스킵률/행동 집계를 반환함
 - 회귀 테스트 전체 통과
 
 ## 기술부채 정리 원칙(지속)
