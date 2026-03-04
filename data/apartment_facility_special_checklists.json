@@ -1,0 +1,865 @@
+{
+  "source_file": "c:\\guige\\시설관리자료\\apartment_facility_special_checklists.xlsx",
+  "version": "2026-03-05",
+  "checklist_sets": [
+    {
+      "set_id": "electrical_60",
+      "label": "전기직무고시60항목",
+      "task_type": "전기점검",
+      "items": [
+        {
+          "seq": 1,
+          "item": "수변전실 출입통제 상태 확인"
+        },
+        {
+          "seq": 2,
+          "item": "수변전실 청결 상태 확인"
+        },
+        {
+          "seq": 3,
+          "item": "수변전실 환기 상태 확인"
+        },
+        {
+          "seq": 4,
+          "item": "수변전실 조명 상태 확인"
+        },
+        {
+          "seq": 5,
+          "item": "수변전실 누수 여부 확인"
+        },
+        {
+          "seq": 6,
+          "item": "수변전실 안전표지 상태 확인"
+        },
+        {
+          "seq": 7,
+          "item": "변압기 외관 점검"
+        },
+        {
+          "seq": 8,
+          "item": "변압기 온도 상승 여부 확인"
+        },
+        {
+          "seq": 9,
+          "item": "변압기 이상 소음 확인"
+        },
+        {
+          "seq": 10,
+          "item": "변압기 진동 상태 확인"
+        },
+        {
+          "seq": 11,
+          "item": "변압기 접지 상태 확인"
+        },
+        {
+          "seq": 12,
+          "item": "변압기 단자 발열 여부"
+        },
+        {
+          "seq": 13,
+          "item": "고압반 외관 점검"
+        },
+        {
+          "seq": 14,
+          "item": "고압차단기 동작 상태 확인"
+        },
+        {
+          "seq": 15,
+          "item": "계전기 설정값 확인"
+        },
+        {
+          "seq": 16,
+          "item": "전압계 표시 상태 확인"
+        },
+        {
+          "seq": 17,
+          "item": "전류계 표시 상태 확인"
+        },
+        {
+          "seq": 18,
+          "item": "보호계전기 동작 상태"
+        },
+        {
+          "seq": 19,
+          "item": "배전반 외관 점검"
+        },
+        {
+          "seq": 20,
+          "item": "차단기 작동 상태 확인"
+        },
+        {
+          "seq": 21,
+          "item": "차단기 라벨 상태 확인"
+        },
+        {
+          "seq": 22,
+          "item": "케이블 단자 체결 상태"
+        },
+        {
+          "seq": 23,
+          "item": "케이블 발열 여부"
+        },
+        {
+          "seq": 24,
+          "item": "버스바 절연 상태"
+        },
+        {
+          "seq": 25,
+          "item": "분전반 외관 상태 확인"
+        },
+        {
+          "seq": 26,
+          "item": "분전반 내부 먼지 확인"
+        },
+        {
+          "seq": 27,
+          "item": "분전반 누전차단기 시험"
+        },
+        {
+          "seq": 28,
+          "item": "분전반 접지 상태 확인"
+        },
+        {
+          "seq": 29,
+          "item": "분전반 라벨 상태 확인"
+        },
+        {
+          "seq": 30,
+          "item": "전기실 소화기 상태"
+        },
+        {
+          "seq": 31,
+          "item": "접지선 연결 상태 확인"
+        },
+        {
+          "seq": 32,
+          "item": "접지선 부식 여부 확인"
+        },
+        {
+          "seq": 33,
+          "item": "접지저항 측정"
+        },
+        {
+          "seq": 34,
+          "item": "접지바 체결 상태"
+        },
+        {
+          "seq": 35,
+          "item": "SPD 상태 확인"
+        },
+        {
+          "seq": 36,
+          "item": "전기설비 절연 상태 확인"
+        },
+        {
+          "seq": 37,
+          "item": "비상발전기 외관 점검"
+        },
+        {
+          "seq": 38,
+          "item": "발전기 연료 상태 확인"
+        },
+        {
+          "seq": 39,
+          "item": "발전기 오일 상태 확인"
+        },
+        {
+          "seq": 40,
+          "item": "발전기 배터리 전압 확인"
+        },
+        {
+          "seq": 41,
+          "item": "발전기 자동기동 시험"
+        },
+        {
+          "seq": 42,
+          "item": "발전기 배기 상태 확인"
+        },
+        {
+          "seq": 43,
+          "item": "UPS 외관 상태 확인"
+        },
+        {
+          "seq": 44,
+          "item": "UPS 배터리 상태 확인"
+        },
+        {
+          "seq": 45,
+          "item": "UPS 알람 상태 확인"
+        },
+        {
+          "seq": 46,
+          "item": "UPS 온도 상태 확인"
+        },
+        {
+          "seq": 47,
+          "item": "전력계측기 상태 확인"
+        },
+        {
+          "seq": 48,
+          "item": "역률 상태 확인"
+        },
+        {
+          "seq": 49,
+          "item": "콘덴서 설비 상태 확인"
+        },
+        {
+          "seq": 50,
+          "item": "케이블 트레이 상태 확인"
+        },
+        {
+          "seq": 51,
+          "item": "전기실 환기팬 작동"
+        },
+        {
+          "seq": 52,
+          "item": "전기실 출입문 잠금 상태"
+        },
+        {
+          "seq": 53,
+          "item": "비상조명 작동 상태"
+        },
+        {
+          "seq": 54,
+          "item": "전기실 누전 여부 확인"
+        },
+        {
+          "seq": 55,
+          "item": "전기실 절연매트 상태"
+        },
+        {
+          "seq": 56,
+          "item": "전기실 안전장비 비치"
+        },
+        {
+          "seq": 57,
+          "item": "전기설비 이상 소음 확인"
+        },
+        {
+          "seq": 58,
+          "item": "전기설비 과열 여부"
+        },
+        {
+          "seq": 59,
+          "item": "전기설비 이상 냄새 여부"
+        },
+        {
+          "seq": 60,
+          "item": "전기설비 점검기록 확인"
+        }
+      ]
+    },
+    {
+      "set_id": "fire_legal",
+      "label": "소방법정점검",
+      "task_type": "소방점검",
+      "items": [
+        {
+          "seq": 1,
+          "item": "소화기 압력 확인"
+        },
+        {
+          "seq": 2,
+          "item": "소화기 위치 확인"
+        },
+        {
+          "seq": 3,
+          "item": "소화기 봉인 상태 확인"
+        },
+        {
+          "seq": 4,
+          "item": "옥내소화전 호스 상태"
+        },
+        {
+          "seq": 5,
+          "item": "옥내소화전 노즐 상태"
+        },
+        {
+          "seq": 6,
+          "item": "옥내소화전 방수 시험"
+        },
+        {
+          "seq": 7,
+          "item": "스프링클러 헤드 막힘 여부"
+        },
+        {
+          "seq": 8,
+          "item": "스프링클러 배관 누수 여부"
+        },
+        {
+          "seq": 9,
+          "item": "소방펌프 작동 시험"
+        },
+        {
+          "seq": 10,
+          "item": "소방펌프 압력 상태"
+        },
+        {
+          "seq": 11,
+          "item": "화재수신기 정상 작동"
+        },
+        {
+          "seq": 12,
+          "item": "화재감지기 작동 시험"
+        },
+        {
+          "seq": 13,
+          "item": "비상방송 설비 점검"
+        },
+        {
+          "seq": 14,
+          "item": "유도등 점등 상태"
+        },
+        {
+          "seq": 15,
+          "item": "비상조명 작동 상태"
+        },
+        {
+          "seq": 16,
+          "item": "피난통로 장애물 여부"
+        },
+        {
+          "seq": 17,
+          "item": "방화문 작동 상태"
+        },
+        {
+          "seq": 18,
+          "item": "소방배관 누수 여부"
+        }
+      ]
+    },
+    {
+      "set_id": "mechanical_ops",
+      "label": "기계설비점검",
+      "task_type": "기계점검",
+      "items": [
+        {
+          "seq": 1,
+          "item": "급수펌프 외관 상태 확인"
+        },
+        {
+          "seq": 2,
+          "item": "급수펌프 진동 및 소음 확인"
+        },
+        {
+          "seq": 3,
+          "item": "급수펌프 압력 상태 확인"
+        },
+        {
+          "seq": 4,
+          "item": "배수펌프 자동운전 상태 확인"
+        },
+        {
+          "seq": 5,
+          "item": "배수펌프 역회전 여부 확인"
+        },
+        {
+          "seq": 6,
+          "item": "저수조 수위 및 누수 확인"
+        },
+        {
+          "seq": 7,
+          "item": "저수조 보온 상태 확인"
+        },
+        {
+          "seq": 8,
+          "item": "기계실 배관 누수 여부 확인"
+        },
+        {
+          "seq": 9,
+          "item": "기계실 밸브 개폐 상태 확인"
+        },
+        {
+          "seq": 10,
+          "item": "환기팬 작동 상태 확인"
+        },
+        {
+          "seq": 11,
+          "item": "급탕순환펌프 운전 상태 확인"
+        },
+        {
+          "seq": 12,
+          "item": "기계설비 이상 진동 확인"
+        }
+      ]
+    },
+    {
+      "set_id": "building_ops",
+      "label": "건축시설점검",
+      "task_type": "건축점검",
+      "items": [
+        {
+          "seq": 1,
+          "item": "외벽 균열 및 박락 여부 확인"
+        },
+        {
+          "seq": 2,
+          "item": "옥상 방수층 손상 여부 확인"
+        },
+        {
+          "seq": 3,
+          "item": "옥상 배수구 막힘 여부 확인"
+        },
+        {
+          "seq": 4,
+          "item": "공용부 천장 누수 흔적 확인"
+        },
+        {
+          "seq": 5,
+          "item": "방화문 개폐 상태 확인"
+        },
+        {
+          "seq": 6,
+          "item": "계단실 난간 고정 상태 확인"
+        },
+        {
+          "seq": 7,
+          "item": "출입문 도어클로저 상태 확인"
+        },
+        {
+          "seq": 8,
+          "item": "지하주차장 바닥 균열 여부 확인"
+        },
+        {
+          "seq": 9,
+          "item": "창호 파손 여부 확인"
+        },
+        {
+          "seq": 10,
+          "item": "외부 난간 부식 여부 확인"
+        }
+      ]
+    },
+    {
+      "set_id": "safety_ops",
+      "label": "안전시설점검",
+      "task_type": "안전점검",
+      "items": [
+        {
+          "seq": 1,
+          "item": "CCTV 전원 및 녹화 상태 확인"
+        },
+        {
+          "seq": 2,
+          "item": "CCTV 렌즈 오염 여부 확인"
+        },
+        {
+          "seq": 3,
+          "item": "주차장 조명 점등 상태 확인"
+        },
+        {
+          "seq": 4,
+          "item": "비상벨 작동 상태 확인"
+        },
+        {
+          "seq": 5,
+          "item": "비상방송 스피커 출력 확인"
+        },
+        {
+          "seq": 6,
+          "item": "유도등 점등 상태 확인"
+        },
+        {
+          "seq": 7,
+          "item": "비상조명 작동 상태 확인"
+        },
+        {
+          "seq": 8,
+          "item": "피난통로 장애물 여부 확인"
+        },
+        {
+          "seq": 9,
+          "item": "안전표지 부착 상태 확인"
+        },
+        {
+          "seq": 10,
+          "item": "출입통제 시스템 작동 확인"
+        }
+      ]
+    }
+  ],
+  "ops_codes": [
+    {
+      "code": "E01",
+      "category": "전기",
+      "description": "수변전설비 점검"
+    },
+    {
+      "code": "E02",
+      "category": "전기",
+      "description": "변압기 점검"
+    },
+    {
+      "code": "E03",
+      "category": "전기",
+      "description": "배전반 점검"
+    },
+    {
+      "code": "E04",
+      "category": "전기",
+      "description": "분전반 점검"
+    },
+    {
+      "code": "E05",
+      "category": "전기",
+      "description": "접지설비 점검"
+    },
+    {
+      "code": "F01",
+      "category": "소방",
+      "description": "소화기 점검"
+    },
+    {
+      "code": "F02",
+      "category": "소방",
+      "description": "옥내소화전 점검"
+    },
+    {
+      "code": "F03",
+      "category": "소방",
+      "description": "스프링클러 점검"
+    },
+    {
+      "code": "F04",
+      "category": "소방",
+      "description": "소방펌프 시험"
+    },
+    {
+      "code": "M01",
+      "category": "기계",
+      "description": "급수펌프 점검"
+    },
+    {
+      "code": "M02",
+      "category": "기계",
+      "description": "배수펌프 점검"
+    },
+    {
+      "code": "M03",
+      "category": "기계",
+      "description": "저수조 점검"
+    },
+    {
+      "code": "B01",
+      "category": "건축",
+      "description": "외벽 점검"
+    },
+    {
+      "code": "B02",
+      "category": "건축",
+      "description": "옥상 방수 점검"
+    },
+    {
+      "code": "S01",
+      "category": "안전",
+      "description": "CCTV 점검"
+    },
+    {
+      "code": "S02",
+      "category": "안전",
+      "description": "주차장 조명 점검"
+    }
+  ],
+  "qr_assets": [
+    {
+      "qr_id": "QR-001",
+      "equipment": "TR-01 변압기 1호기",
+      "location": "B1 수변전실",
+      "default_item": "변압기 외관 점검"
+    },
+    {
+      "qr_id": "QR-002",
+      "equipment": "TR-02 변압기 2호기",
+      "location": "B1 수변전실",
+      "default_item": "변압기 온도 상승 여부 확인"
+    },
+    {
+      "qr_id": "QR-003",
+      "equipment": "HV-01 고압반 A",
+      "location": "B1 수변전실",
+      "default_item": "변압기 이상 소음 확인"
+    },
+    {
+      "qr_id": "QR-004",
+      "equipment": "HV-02 고압반 B",
+      "location": "B1 수변전실",
+      "default_item": "고압차단기 동작 상태 확인"
+    },
+    {
+      "qr_id": "QR-005",
+      "equipment": "LV-01 배전반 A",
+      "location": "B1 전기실",
+      "default_item": "차단기 작동 상태 확인"
+    },
+    {
+      "qr_id": "QR-006",
+      "equipment": "LV-02 배전반 B",
+      "location": "B1 전기실",
+      "default_item": "분전반 누전차단기 시험"
+    },
+    {
+      "qr_id": "QR-007",
+      "equipment": "DB-01 분전반 A",
+      "location": "지상 1층 EPS실",
+      "default_item": "접지선 연결 상태 확인"
+    },
+    {
+      "qr_id": "QR-008",
+      "equipment": "DB-02 분전반 B",
+      "location": "지상 2층 EPS실",
+      "default_item": "발전기 자동기동 시험"
+    },
+    {
+      "qr_id": "QR-009",
+      "equipment": "GEN-01 비상발전기",
+      "location": "지상 1층 발전기실",
+      "default_item": "UPS 알람 상태 확인"
+    },
+    {
+      "qr_id": "QR-010",
+      "equipment": "UPS-01 UPS 1호기",
+      "location": "B1 UPS실",
+      "default_item": "전기실 절연매트 상태"
+    },
+    {
+      "qr_id": "QR-011",
+      "equipment": "TR-01 변압기 1호기",
+      "location": "B1 수변전실",
+      "default_item": "변압기 외관 점검"
+    },
+    {
+      "qr_id": "QR-012",
+      "equipment": "TR-02 변압기 2호기",
+      "location": "B1 수변전실",
+      "default_item": "변압기 온도 상승 여부 확인"
+    },
+    {
+      "qr_id": "QR-013",
+      "equipment": "HV-01 고압반 A",
+      "location": "B1 수변전실",
+      "default_item": "변압기 이상 소음 확인"
+    },
+    {
+      "qr_id": "QR-014",
+      "equipment": "HV-02 고압반 B",
+      "location": "B1 수변전실",
+      "default_item": "고압차단기 동작 상태 확인"
+    },
+    {
+      "qr_id": "QR-015",
+      "equipment": "LV-01 배전반 A",
+      "location": "B1 전기실",
+      "default_item": "차단기 작동 상태 확인"
+    },
+    {
+      "qr_id": "QR-016",
+      "equipment": "LV-02 배전반 B",
+      "location": "B1 전기실",
+      "default_item": "분전반 누전차단기 시험"
+    },
+    {
+      "qr_id": "QR-017",
+      "equipment": "DB-01 분전반 A",
+      "location": "지상 1층 EPS실",
+      "default_item": "접지선 연결 상태 확인"
+    },
+    {
+      "qr_id": "QR-018",
+      "equipment": "DB-02 분전반 B",
+      "location": "지상 2층 EPS실",
+      "default_item": "발전기 자동기동 시험"
+    },
+    {
+      "qr_id": "QR-019",
+      "equipment": "GEN-01 비상발전기",
+      "location": "지상 1층 발전기실",
+      "default_item": "UPS 알람 상태 확인"
+    },
+    {
+      "qr_id": "QR-020",
+      "equipment": "UPS-01 UPS 1호기",
+      "location": "B1 UPS실",
+      "default_item": "전기실 절연매트 상태"
+    },
+    {
+      "qr_id": "QR-021",
+      "equipment": "FEX-01 소화기 구역1",
+      "location": "지상 1층 복도",
+      "default_item": "소화기 압력 확인"
+    },
+    {
+      "qr_id": "QR-022",
+      "equipment": "FEX-02 소화기 구역2",
+      "location": "지상 2층 복도",
+      "default_item": "소화기 봉인 상태 확인"
+    },
+    {
+      "qr_id": "QR-023",
+      "equipment": "HYD-01 옥내소화전 A",
+      "location": "지상 1층 계단실",
+      "default_item": "옥내소화전 호스 상태"
+    },
+    {
+      "qr_id": "QR-024",
+      "equipment": "HYD-02 옥내소화전 B",
+      "location": "지상 2층 계단실",
+      "default_item": "옥내소화전 방수 시험"
+    },
+    {
+      "qr_id": "QR-025",
+      "equipment": "SPK-01 스프링클러 구역1",
+      "location": "지상 1층",
+      "default_item": "스프링클러 헤드 막힘 여부"
+    },
+    {
+      "qr_id": "QR-026",
+      "equipment": "SPK-02 스프링클러 구역2",
+      "location": "지상 2층",
+      "default_item": "스프링클러 배관 누수 여부"
+    },
+    {
+      "qr_id": "QR-027",
+      "equipment": "FP-01 소방펌프 주펌프",
+      "location": "B1 기계실",
+      "default_item": "소방펌프 작동 시험"
+    },
+    {
+      "qr_id": "QR-028",
+      "equipment": "FP-02 소방펌프 충압펌프",
+      "location": "B1 기계실",
+      "default_item": "소방펌프 압력 상태"
+    },
+    {
+      "qr_id": "QR-029",
+      "equipment": "FACP-01 화재수신기",
+      "location": "1층 방재실",
+      "default_item": "화재수신기 정상 작동"
+    },
+    {
+      "qr_id": "QR-030",
+      "equipment": "FD-01 화재감지기 구역A",
+      "location": "지상 1층 복도",
+      "default_item": "화재감지기 작동 시험"
+    },
+    {
+      "qr_id": "QR-031",
+      "equipment": "HWP-01 급탕순환펌프",
+      "location": "B1 기계실",
+      "default_item": "환기팬 작동 상태 확인"
+    },
+    {
+      "qr_id": "QR-032",
+      "equipment": "MV-01 기계실 배관라인",
+      "location": "B1 기계실",
+      "default_item": "기계설비 이상 진동 확인"
+    },
+    {
+      "qr_id": "QR-033",
+      "equipment": "WP-01 급수펌프 1호기",
+      "location": "B1 기계실",
+      "default_item": "급수펌프 외관 상태 확인"
+    },
+    {
+      "qr_id": "QR-034",
+      "equipment": "WP-02 급수펌프 2호기",
+      "location": "B1 기계실",
+      "default_item": "급수펌프 압력 상태 확인"
+    },
+    {
+      "qr_id": "QR-035",
+      "equipment": "DP-01 배수펌프 1호기",
+      "location": "B2 집수정",
+      "default_item": "배수펌프 자동운전 상태 확인"
+    },
+    {
+      "qr_id": "QR-036",
+      "equipment": "DP-02 배수펌프 2호기",
+      "location": "B2 집수정",
+      "default_item": "저수조 수위 및 누수 확인"
+    },
+    {
+      "qr_id": "QR-037",
+      "equipment": "WT-01 저수조 A",
+      "location": "B2 저수조실",
+      "default_item": "기계실 배관 누수 여부 확인"
+    },
+    {
+      "qr_id": "QR-038",
+      "equipment": "WT-02 저수조 B",
+      "location": "B2 저수조실",
+      "default_item": "급탕순환펌프 운전 상태 확인"
+    },
+    {
+      "qr_id": "QR-039",
+      "equipment": "ROOF-01 옥상 방수 구역A",
+      "location": "옥상",
+      "default_item": "옥상 배수구 막힘 여부 확인"
+    },
+    {
+      "qr_id": "QR-040",
+      "equipment": "ROOF-02 옥상 배수구 구역B",
+      "location": "옥상",
+      "default_item": "방화문 개폐 상태 확인"
+    },
+    {
+      "qr_id": "QR-041",
+      "equipment": "FIRE-DOOR-01 방화문 A",
+      "location": "지상 1층 계단실",
+      "default_item": "공용부 천장 누수 흔적 확인"
+    },
+    {
+      "qr_id": "QR-042",
+      "equipment": "COMMON-CEIL-01 공용부 천장",
+      "location": "지상 2층 복도",
+      "default_item": "지하주차장 바닥 균열 여부 확인"
+    },
+    {
+      "qr_id": "QR-043",
+      "equipment": "BLD-OUTER-01 외벽 구역A",
+      "location": "동측 외벽",
+      "default_item": "외벽 균열 및 박락 여부 확인"
+    },
+    {
+      "qr_id": "QR-044",
+      "equipment": "BLD-OUTER-02 외벽 구역B",
+      "location": "서측 외벽",
+      "default_item": "옥상 방수층 손상 여부 확인"
+    },
+    {
+      "qr_id": "QR-045",
+      "equipment": "LIGHT-01 주차장 조명라인",
+      "location": "B1 주차장",
+      "default_item": "주차장 조명 점등 상태 확인"
+    },
+    {
+      "qr_id": "QR-046",
+      "equipment": "BELL-01 비상벨 구역A",
+      "location": "지상 1층 복도",
+      "default_item": "비상벨 작동 상태 확인"
+    },
+    {
+      "qr_id": "QR-047",
+      "equipment": "EVAC-01 유도등 라인A",
+      "location": "지상 2층 복도",
+      "default_item": "유도등 점등 상태 확인"
+    },
+    {
+      "qr_id": "QR-048",
+      "equipment": "ACCESS-01 출입통제 장치",
+      "location": "지상 1층 출입구",
+      "default_item": "출입통제 시스템 작동 확인"
+    },
+    {
+      "qr_id": "QR-049",
+      "equipment": "CCTV-01 현관 카메라",
+      "location": "지상 1층 현관",
+      "default_item": "CCTV 전원 및 녹화 상태 확인"
+    },
+    {
+      "qr_id": "QR-050",
+      "equipment": "CCTV-02 주차장 카메라",
+      "location": "B1 주차장",
+      "default_item": "CCTV 렌즈 오염 여부 확인"
+    }
+  ]
+}

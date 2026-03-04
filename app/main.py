@@ -79,6 +79,7 @@ from app.database import (
     ensure_database,
     get_conn,
     inspections,
+    inspection_evidence_files,
     job_runs,
     sla_policies,
     sla_policy_proposals,
@@ -109,6 +110,7 @@ from app.schemas import (
     DashboardTrendPoint,
     DashboardTrendsRead,
     InspectionCreate,
+    InspectionEvidenceRead,
     InspectionRead,
     JobRunRead,
     MonthlyReportRead,
@@ -460,6 +462,7 @@ _PREFLIGHT_LOCK = Lock()
 _PREFLIGHT_SNAPSHOT: dict[str, Any] = {}
 
 EVIDENCE_INTEGRITY_TABLES: list[tuple[str, Any]] = [
+    ("inspection", inspection_evidence_files),
     ("w02", adoption_w02_evidence_files),
     ("w03", adoption_w03_evidence_files),
     ("w04", adoption_w04_evidence_files),
@@ -582,6 +585,31 @@ SLA_DEFAULT_DUE_HOURS: dict[str, int] = {
     "high": 8,
     "critical": 2,
 }
+OPS_CHECKLIST_NOTE_TAGS = ("[OPS_CHECKLIST_V1]", "[OPS_ELECTRICAL_V1]")
+OPS_CHECKLIST_RESULT_SET = {"normal", "abnormal", "na"}
+OPS_CHECKLIST_META_REQUIRED_FIELDS = (
+    "task_type",
+    "equipment",
+    "equipment_location",
+    "checklist_set_id",
+)
+OPS_QR_PLACEHOLDER_VALUES = {"설비", "위치", "점검항목"}
+OPS_QR_MUTABLE_FIELDS = ("equipment", "location", "default_item")
+WORK_ORDER_PRIORITY_RANK: dict[str, int] = {
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+INSPECTION_SLA_PRIORITY_BY_RISK: dict[str, str] = {
+    "normal": "medium",
+    "warning": "high",
+    "danger": "critical",
+}
+INSPECTION_SLA_PRIORITY_BY_ABNORMAL: list[tuple[int, str]] = [
+    (3, "critical"),
+    (1, "high"),
+]
 ALERT_MTTR_SLO_POLICY_KEY = "alert_mttr_slo_default"
 OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY = "ops_governance_remediation_autopilot_policy"
 OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_HEALTH_POLICY_KEY = "ops_governance_remediation_autopilot_health_policy"
@@ -861,6 +889,7 @@ W15_SITE_COMPLETION_STATUS_SET = {
 }
 W15_EVIDENCE_REQUIRED_ITEM_TYPES = {"self_serve_guide", "troubleshooting_runbook"}
 W15_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
+INSPECTION_EVIDENCE_MAX_BYTES = 5 * 1024 * 1024
 W21_TRACKER_STATUS_PENDING = "pending"
 W21_TRACKER_STATUS_IN_PROGRESS = "in_progress"
 W21_TRACKER_STATUS_DONE = "done"
@@ -8673,6 +8702,7 @@ def _rate_limit_policy_for_request(request: Request, *, is_auth: bool) -> tuple[
             or ("/api/adoption/w04/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w07/tracker/items/" in path and path.endswith("/evidence"))
             or ("/api/adoption/w09/tracker/items/" in path and path.endswith("/evidence"))
+            or ("/api/inspections/" in path and path.endswith("/evidence"))
         ):
             return "auth-upload", API_RATE_LIMIT_MAX_AUTH_UPLOAD
         if path.startswith("/api/admin/"):
@@ -9188,7 +9218,298 @@ def ensure_legacy_admin_token_seed() -> None:
         )
 
 
-def _calculate_risk(payload: InspectionCreate) -> tuple[str, list[str]]:
+def _parse_ops_checklist_notes(note_text: str) -> dict[str, Any] | None:
+    text = str(note_text or "")
+    if not any(tag in text for tag in OPS_CHECKLIST_NOTE_TAGS):
+        return None
+    meta: dict[str, Any] = {}
+    checklist: list[Any] = []
+    memo = ""
+    parse_errors: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("meta="):
+            raw = line[5:].strip()
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parse_errors.append("meta JSON parse failed")
+                continue
+            if isinstance(parsed, dict):
+                meta = parsed
+            else:
+                parse_errors.append("meta must be a JSON object")
+            continue
+        if line.startswith("checklist="):
+            raw = line[10:].strip()
+            try:
+                parsed = json.loads(raw)
+            except Exception:
+                parse_errors.append("checklist JSON parse failed")
+                continue
+            if isinstance(parsed, list):
+                checklist = parsed
+            else:
+                parse_errors.append("checklist must be a JSON list")
+            continue
+        if line.startswith("memo="):
+            memo = line[5:]
+    return {
+        "meta": meta,
+        "checklist": checklist,
+        "memo": memo,
+        "parse_errors": parse_errors,
+    }
+
+
+def _priority_rank(priority: str) -> int:
+    return WORK_ORDER_PRIORITY_RANK.get(str(priority or "").strip().lower(), WORK_ORDER_PRIORITY_RANK["medium"])
+
+
+def _higher_priority(left: str, right: str) -> str:
+    return left if _priority_rank(left) >= _priority_rank(right) else right
+
+
+def _extract_ops_abnormal_count(parsed_ops_notes: dict[str, Any] | None) -> int:
+    if not parsed_ops_notes:
+        return 0
+    meta = parsed_ops_notes.get("meta") if isinstance(parsed_ops_notes, dict) else None
+    summary = meta.get("summary") if isinstance(meta, dict) else None
+    if isinstance(summary, dict):
+        try:
+            return max(0, int(summary.get("abnormal", 0)))
+        except (TypeError, ValueError):
+            pass
+
+    checklist_rows = parsed_ops_notes.get("checklist") if isinstance(parsed_ops_notes, dict) else None
+    if not isinstance(checklist_rows, list):
+        return 0
+    abnormal_count = 0
+    for row in checklist_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("result") or "").strip().lower() == "abnormal":
+            abnormal_count += 1
+    return abnormal_count
+
+
+def _derive_inspection_work_order_sla_context(inspection_row: dict[str, Any] | None) -> dict[str, Any]:
+    if not inspection_row:
+        return {
+            "priority_floor": "medium",
+            "risk_level": "normal",
+            "abnormal_count": 0,
+            "rules_applied": [],
+        }
+    risk_level = str(inspection_row.get("risk_level") or "normal").strip().lower()
+    priority_floor = INSPECTION_SLA_PRIORITY_BY_RISK.get(risk_level, "medium")
+    rules_applied: list[str] = []
+    if priority_floor != "medium":
+        rules_applied.append(f"risk_level={risk_level}->{priority_floor}")
+
+    parsed_notes = _parse_ops_checklist_notes(str(inspection_row.get("notes") or ""))
+    abnormal_count = _extract_ops_abnormal_count(parsed_notes)
+    for threshold, target_priority in INSPECTION_SLA_PRIORITY_BY_ABNORMAL:
+        if abnormal_count >= threshold:
+            next_floor = _higher_priority(priority_floor, target_priority)
+            if next_floor != priority_floor:
+                rules_applied.append(f"abnormal_count>={threshold}->{target_priority}")
+                priority_floor = next_floor
+            break
+
+    return {
+        "priority_floor": priority_floor,
+        "risk_level": risk_level,
+        "abnormal_count": abnormal_count,
+        "rules_applied": rules_applied,
+    }
+
+
+def _inspection_to_work_order_sla_rule_payload() -> dict[str, Any]:
+    return {
+        "version": "2026-03-04",
+        "applies_when": {
+            "inspection_id_provided": True,
+            "site_must_match_inspection": True,
+        },
+        "priority_floor_by_risk_level": INSPECTION_SLA_PRIORITY_BY_RISK,
+        "priority_floor_by_abnormal_count": [
+            {"min_abnormal_count": threshold, "priority_floor": priority}
+            for threshold, priority in INSPECTION_SLA_PRIORITY_BY_ABNORMAL
+        ],
+        "due_at_policy": {
+            "manual_due_at_respected": True,
+            "auto_due_at_if_missing": True,
+            "auto_due_hours_source": "sla_policy.default_due_hours[effective_priority]",
+        },
+    }
+
+
+def _qr_asset_placeholder_flags(row: dict[str, Any]) -> list[str]:
+    flags: list[str] = []
+    equipment = str(row.get("equipment") or "").strip()
+    location = str(row.get("location") or "").strip()
+    default_item = str(row.get("default_item") or "").strip()
+    if not equipment:
+        flags.append("missing_equipment")
+    elif equipment in OPS_QR_PLACEHOLDER_VALUES:
+        flags.append("placeholder_equipment")
+    if not location:
+        flags.append("missing_location")
+    elif location in OPS_QR_PLACEHOLDER_VALUES:
+        flags.append("placeholder_location")
+    if not default_item:
+        flags.append("missing_default_item")
+    elif default_item in OPS_QR_PLACEHOLDER_VALUES:
+        flags.append("placeholder_default_item")
+    return flags
+
+
+def _validate_ops_inspection_payload(payload: InspectionCreate) -> dict[str, Any] | None:
+    parsed_notes = _parse_ops_checklist_notes(payload.notes)
+    if parsed_notes is None:
+        return None
+
+    errors: list[str] = []
+    parse_errors = parsed_notes.get("parse_errors")
+    if isinstance(parse_errors, list):
+        for parse_error in parse_errors:
+            msg = str(parse_error or "").strip()
+            if msg:
+                errors.append(msg)
+
+    meta = parsed_notes.get("meta") if isinstance(parsed_notes.get("meta"), dict) else {}
+    checklist_rows_raw = parsed_notes.get("checklist") if isinstance(parsed_notes.get("checklist"), list) else []
+
+    for field in OPS_CHECKLIST_META_REQUIRED_FIELDS:
+        value = str(meta.get(field) or "").strip()
+        if not value:
+            errors.append(f"meta.{field} is required")
+
+    equipment_location = str(meta.get("equipment_location") or "").strip()
+    if equipment_location and equipment_location != payload.location:
+        errors.append("meta.equipment_location must match payload.location")
+
+    if not checklist_rows_raw:
+        errors.append("checklist must contain at least one row")
+
+    normalized_rows: list[dict[str, str]] = []
+    for idx, row in enumerate(checklist_rows_raw, start=1):
+        if not isinstance(row, dict):
+            errors.append(f"checklist[{idx}] must be an object")
+            continue
+        group = str(row.get("group") or "").strip()
+        item = str(row.get("item") or "").strip()
+        result = str(row.get("result") or "").strip().lower() or "normal"
+        action = str(row.get("action") or "").strip()
+        if not group:
+            errors.append(f"checklist[{idx}].group is required")
+        if not item:
+            errors.append(f"checklist[{idx}].item is required")
+        if result not in OPS_CHECKLIST_RESULT_SET:
+            errors.append(f"checklist[{idx}].result must be one of {sorted(OPS_CHECKLIST_RESULT_SET)}")
+        normalized_rows.append(
+            {
+                "group": group,
+                "item": item,
+                "result": result,
+                "action": action,
+            }
+        )
+
+    set_id = str(meta.get("checklist_set_id") or "").strip()
+    task_type = str(meta.get("task_type") or "").strip()
+    checklist_catalog = _load_ops_special_checklists_payload()
+    set_map: dict[str, dict[str, Any]] = {}
+    for row in checklist_catalog.get("checklist_sets", []):
+        if isinstance(row, dict):
+            key = str(row.get("set_id") or "").strip()
+            if key:
+                set_map[key] = row
+
+    set_obj = set_map.get(set_id) if set_id else None
+    if set_id and set_obj is None:
+        errors.append(f"meta.checklist_set_id is unknown: {set_id}")
+    if set_obj is not None:
+        expected_task_type = str(set_obj.get("task_type") or "").strip()
+        if expected_task_type and task_type and task_type != expected_task_type:
+            errors.append(
+                "meta.task_type does not match checklist_set_id "
+                f"(expected={expected_task_type}, received={task_type})"
+            )
+        allowed_items = {
+            str(item.get("item") or "").strip()
+            for item in set_obj.get("items", [])
+            if isinstance(item, dict) and str(item.get("item") or "").strip()
+        }
+        for idx, row in enumerate(normalized_rows, start=1):
+            item = row.get("item", "")
+            if item and item not in allowed_items:
+                errors.append(f"checklist[{idx}].item is not registered in checklist_set_id={set_id}")
+
+    abnormal_action = str(meta.get("abnormal_action") or "").strip()
+    abnormal_count = 0
+    abnormal_missing_action_indexes: list[int] = []
+    normal_count = 0
+    na_count = 0
+    for idx, row in enumerate(normalized_rows, start=1):
+        result = row.get("result", "normal")
+        if result == "abnormal":
+            abnormal_count += 1
+            if not row.get("action") and not abnormal_action:
+                abnormal_missing_action_indexes.append(idx)
+            continue
+        if result == "na":
+            na_count += 1
+            continue
+        normal_count += 1
+    if abnormal_missing_action_indexes:
+        errors.append(
+            "abnormal checklist rows require row action or meta.abnormal_action "
+            f"(rows={abnormal_missing_action_indexes})"
+        )
+
+    summary = meta.get("summary")
+    if not isinstance(summary, dict):
+        errors.append("meta.summary is required")
+    else:
+        expected = {
+            "total": len(normalized_rows),
+            "normal": normal_count,
+            "abnormal": abnormal_count,
+            "na": na_count,
+        }
+        for key, expected_value in expected.items():
+            raw_value = summary.get(key)
+            try:
+                value = int(raw_value)
+            except (TypeError, ValueError):
+                errors.append(f"meta.summary.{key} must be an integer")
+                continue
+            if value != expected_value:
+                errors.append(
+                    f"meta.summary.{key} mismatch (expected={expected_value}, received={value})"
+                )
+
+    if errors:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "OPS checklist payload validation failed",
+                "error_count": len(errors),
+                "errors": errors,
+            },
+        )
+    return {
+        "meta": meta,
+        "checklist": normalized_rows,
+    }
+
+
+def _calculate_risk(
+    payload: InspectionCreate,
+    *,
+    parsed_ops_notes: dict[str, Any] | None = None,
+) -> tuple[str, list[str]]:
     flags: list[str] = []
 
     if payload.insulation_mohm is not None and payload.insulation_mohm <= 1:
@@ -9204,6 +9525,11 @@ def _calculate_risk(payload: InspectionCreate) -> tuple[str, list[str]]:
             max_unbalance = max(abs(v - avg) / avg * 100 for v in values)
             if max_unbalance > 3:
                 flags.append("voltage_unbalance")
+
+    parsed_notes = parsed_ops_notes or _parse_ops_checklist_notes(str(payload.notes or ""))
+    abnormal_count = _extract_ops_abnormal_count(parsed_notes)
+    if abnormal_count > 0:
+        flags.append("ops_check_abnormal")
 
     if "insulation_low" in flags or "temp_high" in flags:
         return "danger", flags
@@ -9394,6 +9720,25 @@ def _row_to_read_model(row: dict[str, Any]) -> InspectionRead:
         risk_level=row["risk_level"],
         risk_flags=risk_flags,
         created_at=_as_datetime(row["created_at"]),
+    )
+
+
+def _row_to_inspection_evidence_model(row: dict[str, Any]) -> InspectionEvidenceRead:
+    return InspectionEvidenceRead(
+        id=int(row["id"]),
+        inspection_id=int(row["inspection_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_as_optional_datetime(row.get("malware_scanned_at")),
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_as_datetime(row["uploaded_at"]),
     )
 
 
@@ -9940,6 +10285,61 @@ def build_monthly_audit_archive(
         "latest_before_window_end": dr_latest_before_window_end,
     }
 
+    import_validation_report = _build_ops_checklists_import_validation_report()
+    import_generated_at = _as_optional_datetime(import_validation_report.get("generated_at"))
+    import_summary_raw = import_validation_report.get("summary")
+    import_summary = import_summary_raw if isinstance(import_summary_raw, dict) else {}
+    import_issues_raw = import_validation_report.get("issues")
+    import_issues = import_issues_raw if isinstance(import_issues_raw, list) else []
+    import_suggestions_raw = import_validation_report.get("suggestions")
+    import_suggestions = (
+        [str(item or "") for item in import_suggestions_raw if str(item or "").strip()]
+        if isinstance(import_suggestions_raw, list)
+        else []
+    )
+    import_in_month = (
+        import_generated_at is not None and import_generated_at >= start and import_generated_at < end
+    )
+    import_attachment = {
+        "required": True,
+        "month": normalized,
+        "included": True,
+        "status": str(import_validation_report.get("status") or "warning"),
+        "message": (
+            "Checklist import validation snapshot generated in target month."
+            if import_in_month
+            else "Checklist import validation snapshot attached (generated outside target month)."
+        ),
+        "generated_at": import_generated_at.isoformat() if import_generated_at is not None else None,
+        "generated_in_target_month": import_in_month,
+        "source_file": str(import_validation_report.get("source_file") or ""),
+        "source_file_exists": bool(import_validation_report.get("source_file_exists", False)),
+        "version": str(import_validation_report.get("version") or ""),
+        "summary": {
+            "checklist_set_count": int(import_summary.get("checklist_set_count") or 0),
+            "checklist_item_count": int(import_summary.get("checklist_item_count") or 0),
+            "ops_code_count": int(import_summary.get("ops_code_count") or 0),
+            "qr_asset_count": int(import_summary.get("qr_asset_count") or 0),
+            "task_type_count": int(import_summary.get("task_type_count") or 0),
+            "error_count": int(import_summary.get("error_count") or 0),
+            "warning_count": int(import_summary.get("warning_count") or 0),
+            "issue_bucket_count": int(import_summary.get("issue_bucket_count") or 0),
+        },
+        "top_issues": [
+            {
+                "severity": str(item.get("severity") or ""),
+                "category": str(item.get("category") or ""),
+                "code": str(item.get("code") or ""),
+                "count": int(item.get("count") or 0),
+                "message": str(item.get("message") or ""),
+                "references": item.get("references") if isinstance(item.get("references"), list) else [],
+            }
+            for item in import_issues[:10]
+            if isinstance(item, dict)
+        ],
+        "suggestions": import_suggestions[:5],
+    }
+
     payload = {
         "month": normalized,
         "window_start": start.isoformat(),
@@ -9949,6 +10349,7 @@ def build_monthly_audit_archive(
         "max_entries": max_entries,
         "chain": chain,
         "dr_rehearsal_attachment": dr_attachment,
+        "ops_checklists_import_validation_attachment": import_attachment,
         "entries": archive_rows if include_entries else [],
     }
     payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
@@ -24685,7 +25086,15 @@ def _service_info_payload() -> dict[str, str]:
         "main_html": "/",
         "docs": "/docs",
         "inspection_api": "/api/inspections",
+        "inspection_evidence_upload_api": "/api/inspections/{inspection_id}/evidence",
+        "inspection_evidence_list_api": "/api/inspections/{inspection_id}/evidence",
+        "inspection_evidence_download_api": "/api/inspections/evidence/{evidence_id}/download",
+        "ops_inspection_checklists_import_validation_api": "/api/ops/inspections/checklists/import-validation",
+        "ops_inspection_checklists_import_validation_csv_api": "/api/ops/inspections/checklists/import-validation.csv",
+        "ops_inspection_checklists_qr_placeholders_api": "/api/ops/inspections/checklists/qr-assets/placeholders",
+        "ops_inspection_checklists_qr_bulk_update_api": "/api/ops/inspections/checklists/qr-assets/bulk-update",
         "work_order_api": "/api/work-orders",
+        "work_order_sla_rules_api": "/api/work-orders/sla/rules",
         "work_order_events_api": "/api/work-orders/{id}/events",
         "escalation_api": "/api/work-orders/escalations/run",
         "monthly_report_api": "/api/reports/monthly",
@@ -31715,6 +32124,939 @@ def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) 
 """
 
 
+def _default_ops_special_checklists_payload() -> dict[str, Any]:
+    return {
+        "source_file": "fallback",
+        "version": "fallback",
+        "checklist_sets": [
+            {
+                "set_id": "electrical_60",
+                "label": "전기직무고시60항목",
+                "task_type": "전기점검",
+                "items": [
+                    {"seq": 1, "item": "수변전실 출입통제 상태 확인"},
+                    {"seq": 2, "item": "변압기 외관 점검"},
+                    {"seq": 3, "item": "수전반 차단기 동작 상태"},
+                    {"seq": 4, "item": "분전반 누전차단기 상태"},
+                    {"seq": 5, "item": "접지설비 연결 상태"},
+                ],
+            },
+            {
+                "set_id": "fire_legal",
+                "label": "소방법정점검",
+                "task_type": "소방점검",
+                "items": [
+                    {"seq": 1, "item": "소화기 압력 확인"},
+                    {"seq": 2, "item": "옥내소화전 방수 시험"},
+                    {"seq": 3, "item": "스프링클러 헤드 막힘 여부"},
+                ],
+            },
+            {
+                "set_id": "mechanical_ops",
+                "label": "기계설비점검",
+                "task_type": "기계점검",
+                "items": [
+                    {"seq": 1, "item": "급수펌프 외관 상태 확인"},
+                    {"seq": 2, "item": "배수펌프 자동운전 상태 확인"},
+                    {"seq": 3, "item": "저수조 수위 및 누수 확인"},
+                ],
+            },
+            {
+                "set_id": "building_ops",
+                "label": "건축시설점검",
+                "task_type": "건축점검",
+                "items": [
+                    {"seq": 1, "item": "외벽 균열 및 박락 여부 확인"},
+                    {"seq": 2, "item": "옥상 방수층 손상 여부 확인"},
+                    {"seq": 3, "item": "방화문 개폐 상태 확인"},
+                ],
+            },
+            {
+                "set_id": "safety_ops",
+                "label": "안전시설점검",
+                "task_type": "안전점검",
+                "items": [
+                    {"seq": 1, "item": "CCTV 전원 및 녹화 상태 확인"},
+                    {"seq": 2, "item": "주차장 조명 점등 상태 확인"},
+                    {"seq": 3, "item": "비상벨 작동 상태 확인"},
+                ],
+            },
+        ],
+        "ops_codes": [
+            {"code": "E01", "category": "전기", "description": "수변전설비 점검"},
+            {"code": "F01", "category": "소방", "description": "소화기 점검"},
+            {"code": "M01", "category": "기계", "description": "급수펌프 점검"},
+            {"code": "B01", "category": "건축", "description": "외벽 점검"},
+            {"code": "S01", "category": "안전", "description": "CCTV 점검"},
+        ],
+        "qr_assets": [],
+    }
+
+
+def _resolve_ops_special_checklists_data_path() -> Path:
+    raw_path = getenv(
+        "OPS_SPECIAL_CHECKLISTS_DATA_PATH",
+        "data/apartment_facility_special_checklists.json",
+    ).strip() or "data/apartment_facility_special_checklists.json"
+    target = Path(raw_path)
+    if not target.is_absolute():
+        target = Path(__file__).resolve().parent.parent / target
+    return target
+
+
+def _persist_ops_special_checklists_payload(payload: dict[str, Any]) -> Path:
+    target = _resolve_ops_special_checklists_data_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    serialized = json.dumps(payload, ensure_ascii=False, indent=2)
+    target.write_text(serialized + "\n", encoding="utf-8")
+    return target
+
+
+def _load_ops_special_checklists_payload() -> dict[str, Any]:
+    default_payload = _default_ops_special_checklists_payload()
+    target = _resolve_ops_special_checklists_data_path()
+    if not target.exists():
+        return default_payload
+    try:
+        loaded = json.loads(target.read_text(encoding="utf-8"))
+    except Exception:
+        return default_payload
+    if not isinstance(loaded, dict):
+        return default_payload
+
+    checklist_sets_raw = loaded.get("checklist_sets")
+    ops_codes_raw = loaded.get("ops_codes")
+    qr_assets_raw = loaded.get("qr_assets")
+    checklist_sets: list[dict[str, Any]] = []
+    if isinstance(checklist_sets_raw, list):
+        for item in checklist_sets_raw:
+            if not isinstance(item, dict):
+                continue
+            set_id = str(item.get("set_id") or "").strip()
+            label = str(item.get("label") or "").strip()
+            if not set_id or not label:
+                continue
+            task_type = str(item.get("task_type") or "점검").strip() or "점검"
+            items_raw = item.get("items")
+            items: list[dict[str, Any]] = []
+            if isinstance(items_raw, list):
+                for idx, entry in enumerate(items_raw, start=1):
+                    if not isinstance(entry, dict):
+                        continue
+                    text = str(entry.get("item") or "").strip()
+                    if not text:
+                        continue
+                    seq_raw = entry.get("seq")
+                    try:
+                        seq = int(seq_raw)
+                    except Exception:
+                        seq = idx
+                    items.append({"seq": max(1, seq), "item": text})
+            if items:
+                checklist_sets.append(
+                    {
+                        "set_id": set_id,
+                        "label": label,
+                        "task_type": task_type,
+                        "items": items,
+                    }
+                )
+    if not checklist_sets:
+        checklist_sets = list(default_payload["checklist_sets"])
+
+    ops_codes: list[dict[str, str]] = []
+    if isinstance(ops_codes_raw, list):
+        for row in ops_codes_raw:
+            if not isinstance(row, dict):
+                continue
+            code = str(row.get("code") or "").strip()
+            category = str(row.get("category") or "").strip()
+            description = str(row.get("description") or "").strip()
+            if not code:
+                continue
+            ops_codes.append({"code": code, "category": category, "description": description})
+
+    qr_assets: list[dict[str, str]] = []
+    if isinstance(qr_assets_raw, list):
+        for row in qr_assets_raw:
+            if not isinstance(row, dict):
+                continue
+            qr_id = str(row.get("qr_id") or "").strip()
+            if not qr_id:
+                continue
+            qr_assets.append(
+                {
+                    "qr_id": qr_id,
+                    "equipment": str(row.get("equipment") or "").strip(),
+                    "location": str(row.get("location") or "").strip(),
+                    "default_item": str(row.get("default_item") or "").strip(),
+                }
+            )
+
+    return {
+        "source_file": str(loaded.get("source_file") or target.as_posix()),
+        "version": str(loaded.get("version") or "unknown"),
+        "checklist_sets": checklist_sets,
+        "ops_codes": ops_codes,
+        "qr_assets": qr_assets,
+    }
+
+
+def _append_ops_import_validation_issue(
+    buckets: dict[tuple[str, str, str, str], dict[str, Any]],
+    *,
+    severity: str,
+    category: str,
+    code: str,
+    message: str,
+    reference: str = "",
+) -> None:
+    normalized_severity = str(severity or "warning").strip().lower() or "warning"
+    normalized_category = str(category or "general").strip() or "general"
+    normalized_code = str(code or "issue").strip() or "issue"
+    normalized_message = str(message or "").strip() or "issue detected"
+    normalized_reference = str(reference or "").strip()
+    key = (normalized_severity, normalized_category, normalized_code, normalized_message)
+    bucket = buckets.get(key)
+    if bucket is None:
+        bucket = {
+            "severity": normalized_severity,
+            "category": normalized_category,
+            "code": normalized_code,
+            "message": normalized_message,
+            "count": 0,
+            "references": [],
+        }
+        buckets[key] = bucket
+    bucket["count"] = int(bucket["count"]) + 1
+    references = bucket.get("references")
+    if normalized_reference and isinstance(references, list) and len(references) < 5:
+        references.append(normalized_reference)
+
+
+def _build_ops_checklists_import_validation_report() -> dict[str, Any]:
+    payload = _load_ops_special_checklists_payload()
+    generated_at = datetime.now(timezone.utc)
+    checklist_sets = payload.get("checklist_sets") if isinstance(payload.get("checklist_sets"), list) else []
+    ops_codes = payload.get("ops_codes") if isinstance(payload.get("ops_codes"), list) else []
+    qr_assets = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    source_file = str(payload.get("source_file") or "")
+    source_exists = False
+    if source_file:
+        source_path = Path(source_file)
+        source_exists = source_path.exists()
+
+    issue_buckets: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    task_types: set[str] = set()
+    global_item_to_set: dict[str, str] = {}
+    checklist_item_total = 0
+
+    seen_set_ids: set[str] = set()
+    for set_idx, set_row in enumerate(checklist_sets, start=1):
+        if not isinstance(set_row, dict):
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="checklist_sets",
+                code="invalid_set",
+                message="checklist set row must be an object",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+            continue
+        set_id = str(set_row.get("set_id") or "").strip()
+        label = str(set_row.get("label") or "").strip()
+        task_type = str(set_row.get("task_type") or "").strip()
+        if not set_id:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="checklist_sets",
+                code="missing_set_id",
+                message="checklist set id is missing",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+        elif set_id in seen_set_ids:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="checklist_sets",
+                code="duplicate_set_id",
+                message=f"duplicate checklist set id: {set_id}",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+        else:
+            seen_set_ids.add(set_id)
+        if not label:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="checklist_sets",
+                code="missing_label",
+                message="checklist set label is missing",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+        if not task_type:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="checklist_sets",
+                code="missing_task_type",
+                message="checklist set task_type is missing",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+        else:
+            task_types.add(task_type)
+
+        items = set_row.get("items")
+        if not isinstance(items, list) or len(items) == 0:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="checklist_items",
+                code="empty_items",
+                message="checklist set has no items",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+            continue
+
+        if set_id == "electrical_60" and len(items) != 60:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="checklist_items",
+                code="electrical_60_count_mismatch",
+                message=f"electrical_60 expected 60 items, found {len(items)}",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+        if set_id == "fire_legal" and len(items) != 18:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="checklist_items",
+                code="fire_legal_count_mismatch",
+                message=f"fire_legal expected 18 items, found {len(items)}",
+                reference=f"checklist_sets[{set_idx}]",
+            )
+
+        seen_seq: set[int] = set()
+        seen_item_text: set[str] = set()
+        for item_idx, item_row in enumerate(items, start=1):
+            if not isinstance(item_row, dict):
+                _append_ops_import_validation_issue(
+                    issue_buckets,
+                    severity="error",
+                    category="checklist_items",
+                    code="invalid_item_row",
+                    message="checklist item row must be an object",
+                    reference=f"{set_id}.items[{item_idx}]",
+                )
+                continue
+            checklist_item_total += 1
+            item_text = str(item_row.get("item") or "").strip()
+            seq_raw = item_row.get("seq")
+            try:
+                seq = int(seq_raw)
+            except (TypeError, ValueError):
+                seq = -1
+            if seq <= 0:
+                _append_ops_import_validation_issue(
+                    issue_buckets,
+                    severity="warning",
+                    category="checklist_items",
+                    code="invalid_seq",
+                    message="item seq should be a positive integer",
+                    reference=f"{set_id}.items[{item_idx}]",
+                )
+            elif seq in seen_seq:
+                _append_ops_import_validation_issue(
+                    issue_buckets,
+                    severity="warning",
+                    category="checklist_items",
+                    code="duplicate_seq",
+                    message=f"duplicate seq in set {set_id}: {seq}",
+                    reference=f"{set_id}.items[{item_idx}]",
+                )
+            else:
+                seen_seq.add(seq)
+
+            if not item_text:
+                _append_ops_import_validation_issue(
+                    issue_buckets,
+                    severity="error",
+                    category="checklist_items",
+                    code="missing_item_text",
+                    message="item text is missing",
+                    reference=f"{set_id}.items[{item_idx}]",
+                )
+                continue
+            if item_text in seen_item_text:
+                _append_ops_import_validation_issue(
+                    issue_buckets,
+                    severity="warning",
+                    category="checklist_items",
+                    code="duplicate_item_text",
+                    message=f"duplicate item text in set {set_id}: {item_text}",
+                    reference=f"{set_id}.items[{item_idx}]",
+                )
+            else:
+                seen_item_text.add(item_text)
+            global_item_to_set.setdefault(item_text, set_id)
+
+    category_to_set: dict[str, str] = {}
+    for set_row in checklist_sets:
+        if not isinstance(set_row, dict):
+            continue
+        set_id = str(set_row.get("set_id") or "").strip()
+        task_type = str(set_row.get("task_type") or "").strip()
+        if set_id and task_type:
+            if "전기" in task_type and "전기" not in category_to_set:
+                category_to_set["전기"] = set_id
+            if "소방" in task_type and "소방" not in category_to_set:
+                category_to_set["소방"] = set_id
+            if "기계" in task_type and "기계" not in category_to_set:
+                category_to_set["기계"] = set_id
+            if "건축" in task_type and "건축" not in category_to_set:
+                category_to_set["건축"] = set_id
+            if "안전" in task_type and "안전" not in category_to_set:
+                category_to_set["안전"] = set_id
+
+    seen_ops_codes: set[str] = set()
+    for idx, row in enumerate(ops_codes, start=1):
+        if not isinstance(row, dict):
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="ops_codes",
+                code="invalid_code_row",
+                message="ops code row must be an object",
+                reference=f"ops_codes[{idx}]",
+            )
+            continue
+        code = str(row.get("code") or "").strip()
+        category = str(row.get("category") or "").strip()
+        description = str(row.get("description") or "").strip()
+        if not code:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="ops_codes",
+                code="missing_code",
+                message="ops code is missing",
+                reference=f"ops_codes[{idx}]",
+            )
+            continue
+        if code in seen_ops_codes:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="ops_codes",
+                code="duplicate_code",
+                message=f"duplicate ops code: {code}",
+                reference=f"ops_codes[{idx}]",
+            )
+        else:
+            seen_ops_codes.add(code)
+        if not category:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="ops_codes",
+                code="missing_category",
+                message=f"ops code category is missing: {code}",
+                reference=f"ops_codes[{idx}]",
+            )
+            continue
+        normalized = f"{category} {description}".lower()
+        mapped = False
+        if "전기" in normalized and category_to_set.get("전기"):
+            mapped = True
+        if "소방" in normalized and category_to_set.get("소방"):
+            mapped = True
+        if "기계" in normalized and category_to_set.get("기계"):
+            mapped = True
+        if "건축" in normalized and category_to_set.get("건축"):
+            mapped = True
+        if "안전" in normalized and category_to_set.get("안전"):
+            mapped = True
+        if not mapped:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="ops_codes",
+                code="unmapped_category",
+                message=f"ops code category is not mapped to checklist set: {code}",
+                reference=f"ops_codes[{idx}]",
+            )
+
+    seen_qr_ids: set[str] = set()
+    for idx, row in enumerate(qr_assets, start=1):
+        if not isinstance(row, dict):
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="qr_assets",
+                code="invalid_qr_row",
+                message="qr asset row must be an object",
+                reference=f"qr_assets[{idx}]",
+            )
+            continue
+        qr_id = str(row.get("qr_id") or "").strip()
+        equipment = str(row.get("equipment") or "").strip()
+        location = str(row.get("location") or "").strip()
+        default_item = str(row.get("default_item") or "").strip()
+        if not qr_id:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="qr_assets",
+                code="missing_qr_id",
+                message="qr_id is missing",
+                reference=f"qr_assets[{idx}]",
+            )
+            continue
+        if qr_id in seen_qr_ids:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="error",
+                category="qr_assets",
+                code="duplicate_qr_id",
+                message=f"duplicate qr_id: {qr_id}",
+                reference=f"qr_assets[{idx}]",
+            )
+        else:
+            seen_qr_ids.add(qr_id)
+
+        placeholder_flags = _qr_asset_placeholder_flags(
+            {
+                "equipment": equipment,
+                "location": location,
+                "default_item": default_item,
+            }
+        )
+        for flag in placeholder_flags:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="qr_assets",
+                code=flag,
+                message=f"{flag.replace('_', ' ')} for {qr_id}",
+                reference=f"qr_assets[{idx}]",
+            )
+        if default_item and default_item not in global_item_to_set:
+            _append_ops_import_validation_issue(
+                issue_buckets,
+                severity="warning",
+                category="qr_assets",
+                code="unknown_default_item",
+                message=f"default_item is not registered in checklist sets for {qr_id}",
+                reference=f"qr_assets[{idx}]",
+            )
+
+    if source_file and not source_exists:
+        _append_ops_import_validation_issue(
+            issue_buckets,
+            severity="warning",
+            category="source",
+            code="source_file_not_found",
+            message=f"source file path does not exist: {source_file}",
+            reference="source_file",
+        )
+
+    severity_order = {"error": 0, "warning": 1, "info": 2}
+    issues = sorted(
+        issue_buckets.values(),
+        key=lambda row: (
+            severity_order.get(str(row.get("severity") or "warning"), 9),
+            str(row.get("category") or ""),
+            str(row.get("code") or ""),
+            str(row.get("message") or ""),
+        ),
+    )
+
+    error_count = sum(int(row.get("count") or 0) for row in issues if str(row.get("severity")) == "error")
+    warning_count = sum(int(row.get("count") or 0) for row in issues if str(row.get("severity")) == "warning")
+    status = "ok"
+    if error_count > 0:
+        status = "error"
+    elif warning_count > 0:
+        status = "warning"
+
+    suggestions: list[str] = []
+    issue_codes = {str(row.get("code") or "") for row in issues}
+    if "placeholder_equipment" in issue_codes or "placeholder_location" in issue_codes or "placeholder_default_item" in issue_codes:
+        suggestions.append("QR설비관리 시트의 placeholder 값(설비/위치/점검항목)을 실제 설비 데이터로 치환하세요.")
+    if "unknown_default_item" in issue_codes:
+        suggestions.append("QR default_item을 checklist set 항목명과 1:1로 맞추고 오탈자를 제거하세요.")
+    if "unmapped_category" in issue_codes:
+        suggestions.append("OPS코드 분류(기계/건축/안전 등)별 checklist_set을 추가하거나 category 매핑 규칙을 확정하세요.")
+    if "duplicate_set_id" in issue_codes or "duplicate_code" in issue_codes or "duplicate_qr_id" in issue_codes:
+        suggestions.append("중복 key(set_id/code/qr_id)를 제거하고 마스터키 유일성을 보장하세요.")
+    if not suggestions:
+        suggestions.append("치명적 정합성 이슈가 없으며 현재 데이터로 운영을 진행할 수 있습니다.")
+
+    return {
+        "generated_at": generated_at.isoformat(),
+        "source_file": source_file,
+        "source_file_exists": source_exists,
+        "version": str(payload.get("version") or ""),
+        "status": status,
+        "summary": {
+            "checklist_set_count": len(checklist_sets),
+            "checklist_item_count": checklist_item_total,
+            "ops_code_count": len(ops_codes),
+            "qr_asset_count": len(qr_assets),
+            "task_type_count": len(task_types),
+            "error_count": error_count,
+            "warning_count": warning_count,
+            "issue_bucket_count": len(issues),
+        },
+        "task_types": sorted(task_types),
+        "issues": issues,
+        "suggestions": suggestions,
+    }
+
+
+def _build_ops_checklists_import_validation_csv(report: dict[str, Any]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["generated_at", str(report.get("generated_at") or "")])
+    writer.writerow(["status", str(report.get("status") or "")])
+    writer.writerow(["source_file", str(report.get("source_file") or "")])
+    writer.writerow(["version", str(report.get("version") or "")])
+
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    writer.writerow([])
+    writer.writerow(["summary_key", "value"])
+    for key in (
+        "checklist_set_count",
+        "checklist_item_count",
+        "ops_code_count",
+        "qr_asset_count",
+        "task_type_count",
+        "error_count",
+        "warning_count",
+        "issue_bucket_count",
+    ):
+        writer.writerow([key, summary.get(key, "")])
+
+    writer.writerow([])
+    writer.writerow(["severity", "category", "code", "count", "message", "references"])
+    issues = report.get("issues") if isinstance(report.get("issues"), list) else []
+    for issue in issues:
+        if not isinstance(issue, dict):
+            continue
+        references = issue.get("references")
+        if isinstance(references, list):
+            references_text = " | ".join(str(item) for item in references if str(item).strip())
+        else:
+            references_text = str(references or "")
+        writer.writerow(
+            [
+                issue.get("severity", ""),
+                issue.get("category", ""),
+                issue.get("code", ""),
+                issue.get("count", ""),
+                issue.get("message", ""),
+                references_text,
+            ]
+        )
+
+    suggestions = report.get("suggestions") if isinstance(report.get("suggestions"), list) else []
+    writer.writerow([])
+    writer.writerow(["suggestions"])
+    for suggestion in suggestions:
+        writer.writerow([str(suggestion or "")])
+    return out.getvalue()
+
+
+def _build_ops_checklist_item_set(payload: dict[str, Any]) -> set[str]:
+    checklist_sets = payload.get("checklist_sets") if isinstance(payload.get("checklist_sets"), list) else []
+    item_set: set[str] = set()
+    for set_row in checklist_sets:
+        if not isinstance(set_row, dict):
+            continue
+        items = set_row.get("items")
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("item") or "").strip()
+            if text:
+                item_set.add(text)
+    return item_set
+
+
+def _build_ops_qr_placeholder_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    qr_assets = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    rows: list[dict[str, Any]] = []
+    for row in qr_assets:
+        if not isinstance(row, dict):
+            continue
+        qr_id = str(row.get("qr_id") or "").strip()
+        if not qr_id:
+            continue
+        flags = _qr_asset_placeholder_flags(row)
+        if not flags:
+            continue
+        rows.append(
+            {
+                "qr_id": qr_id,
+                "equipment": str(row.get("equipment") or "").strip(),
+                "location": str(row.get("location") or "").strip(),
+                "default_item": str(row.get("default_item") or "").strip(),
+                "flags": flags,
+            }
+        )
+    rows.sort(key=lambda item: str(item.get("qr_id") or ""))
+    return rows
+
+
+def _coerce_request_bool(value: Any, *, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "y", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "n", "no", "off"}:
+        return False
+    return default
+
+
+def _build_ops_qr_placeholder_report(payload: dict[str, Any]) -> dict[str, Any]:
+    rows = _build_ops_qr_placeholder_snapshot(payload)
+    flag_counts: dict[str, int] = {}
+    for row in rows:
+        flags = row.get("flags")
+        if not isinstance(flags, list):
+            continue
+        for flag in flags:
+            key = str(flag or "").strip()
+            if not key:
+                continue
+            flag_counts[key] = flag_counts.get(key, 0) + 1
+    qr_assets = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "source_file": str(payload.get("source_file") or ""),
+        "version": str(payload.get("version") or ""),
+        "status": "warning" if rows else "ok",
+        "summary": {
+            "qr_asset_count": len(qr_assets),
+            "placeholder_row_count": len(rows),
+            "placeholder_flag_counts": flag_counts,
+        },
+        "rows": rows,
+        "suggestions": (
+            ["placeholder 행이 남아 있습니다. bulk-update API로 실제 설비값으로 치환하세요."]
+            if rows
+            else ["placeholder 행이 없습니다. 현재 QR 자산 데이터는 운영 가능한 상태입니다."]
+        ),
+    }
+
+
+def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> dict[str, Any]:
+    body = request_payload if isinstance(request_payload, dict) else {}
+    updates_raw = body.get("updates")
+    if not isinstance(updates_raw, list) or not updates_raw:
+        raise HTTPException(status_code=422, detail="updates must be a non-empty array")
+
+    dry_run = _coerce_request_bool(body.get("dry_run"), default=True)
+    create_missing = _coerce_request_bool(body.get("create_missing"), default=False)
+    allow_placeholder_values = _coerce_request_bool(body.get("allow_placeholder_values"), default=False)
+
+    payload = _load_ops_special_checklists_payload()
+    qr_assets_raw = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    qr_assets: list[dict[str, str]] = []
+    for row in qr_assets_raw:
+        if not isinstance(row, dict):
+            continue
+        qr_id = str(row.get("qr_id") or "").strip()
+        if not qr_id:
+            continue
+        qr_assets.append(
+            {
+                "qr_id": qr_id,
+                "equipment": str(row.get("equipment") or "").strip(),
+                "location": str(row.get("location") or "").strip(),
+                "default_item": str(row.get("default_item") or "").strip(),
+            }
+        )
+
+    before_payload = {**payload, "qr_assets": [dict(row) for row in qr_assets]}
+    before_placeholder_rows = _build_ops_qr_placeholder_snapshot(before_payload)
+    checklist_item_set = _build_ops_checklist_item_set(payload)
+    unknown_default_before = sum(
+        1
+        for row in qr_assets
+        if str(row.get("default_item") or "").strip()
+        and str(row.get("default_item") or "").strip() not in checklist_item_set
+    )
+
+    index_by_qr_id: dict[str, int] = {str(row.get("qr_id") or ""): idx for idx, row in enumerate(qr_assets)}
+    seen_request_qr_ids: set[str] = set()
+    changed_rows: list[dict[str, Any]] = []
+    skipped_rows: list[dict[str, Any]] = []
+    invalid_rows: list[dict[str, Any]] = []
+    updated_count = 0
+    created_count = 0
+
+    for idx, raw in enumerate(updates_raw, start=1):
+        if not isinstance(raw, dict):
+            invalid_rows.append({"index": idx, "reason": "invalid_row_type", "message": "row must be an object"})
+            continue
+
+        qr_id = str(raw.get("qr_id") or "").strip()
+        if not qr_id:
+            invalid_rows.append({"index": idx, "reason": "missing_qr_id", "message": "qr_id is required"})
+            continue
+        if qr_id in seen_request_qr_ids:
+            skipped_rows.append(
+                {
+                    "index": idx,
+                    "qr_id": qr_id,
+                    "reason": "duplicate_qr_id_in_request",
+                    "message": "duplicate qr_id in updates array",
+                }
+            )
+            continue
+        seen_request_qr_ids.add(qr_id)
+
+        requested_fields = [field for field in OPS_QR_MUTABLE_FIELDS if field in raw]
+        update_fields: dict[str, str] = {}
+        blocked_placeholder_fields: list[str] = []
+        for field in requested_fields:
+            value = str(raw.get(field) or "").strip()
+            if not value:
+                continue
+            if (not allow_placeholder_values) and value in OPS_QR_PLACEHOLDER_VALUES:
+                blocked_placeholder_fields.append(field)
+                continue
+            update_fields[field] = value
+        if not update_fields:
+            reason = "no_effective_fields"
+            message = "no updatable non-empty fields"
+            if blocked_placeholder_fields:
+                reason = "blocked_placeholder_values"
+                message = "placeholder values are blocked for fields: " + ", ".join(blocked_placeholder_fields)
+            skipped_rows.append(
+                {
+                    "index": idx,
+                    "qr_id": qr_id,
+                    "reason": reason,
+                    "message": message,
+                }
+            )
+            continue
+
+        existing_index = index_by_qr_id.get(qr_id)
+        if existing_index is None and not create_missing:
+            skipped_rows.append(
+                {
+                    "index": idx,
+                    "qr_id": qr_id,
+                    "reason": "qr_id_not_found",
+                    "message": "qr_id does not exist (create_missing=false)",
+                }
+            )
+            continue
+
+        action = "updated" if existing_index is not None else "created"
+        before_row = (
+            dict(qr_assets[existing_index])
+            if existing_index is not None
+            else {"qr_id": qr_id, "equipment": "", "location": "", "default_item": ""}
+        )
+        after_row = dict(before_row)
+        changed_fields: list[str] = []
+        for field, value in update_fields.items():
+            if str(after_row.get(field) or "").strip() == value:
+                continue
+            after_row[field] = value
+            changed_fields.append(field)
+        if not changed_fields:
+            skipped_rows.append(
+                {
+                    "index": idx,
+                    "qr_id": qr_id,
+                    "reason": "unchanged",
+                    "message": "all provided values already match current row",
+                }
+            )
+            continue
+
+        if existing_index is not None:
+            qr_assets[existing_index] = after_row
+            updated_count += 1
+        else:
+            index_by_qr_id[qr_id] = len(qr_assets)
+            qr_assets.append(after_row)
+            created_count += 1
+
+        quality_flags = _qr_asset_placeholder_flags(after_row)
+        default_item = str(after_row.get("default_item") or "").strip()
+        if default_item and default_item not in checklist_item_set:
+            quality_flags.append("unknown_default_item")
+        changed_rows.append(
+            {
+                "index": idx,
+                "qr_id": qr_id,
+                "action": action,
+                "changed_fields": changed_fields,
+                "before": before_row,
+                "after": after_row,
+                "quality_flags": quality_flags,
+            }
+        )
+
+    after_payload = {**payload, "qr_assets": qr_assets}
+    after_placeholder_rows = _build_ops_qr_placeholder_snapshot(after_payload)
+    unknown_default_after = sum(
+        1
+        for row in qr_assets
+        if str(row.get("default_item") or "").strip()
+        and str(row.get("default_item") or "").strip() not in checklist_item_set
+    )
+    applied_count = updated_count + created_count
+
+    saved = False
+    saved_path = ""
+    if (not dry_run) and applied_count > 0:
+        next_payload = {**after_payload}
+        next_payload["version"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        persisted = _persist_ops_special_checklists_payload(next_payload)
+        saved = True
+        saved_path = persisted.as_posix()
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "dry_run": dry_run,
+        "create_missing": create_missing,
+        "allow_placeholder_values": allow_placeholder_values,
+        "saved": saved,
+        "saved_path": saved_path,
+        "summary": {
+            "requested_count": len(updates_raw),
+            "applied_count": applied_count,
+            "updated_count": updated_count,
+            "created_count": created_count,
+            "skipped_count": len(skipped_rows),
+            "invalid_count": len(invalid_rows),
+            "placeholder_row_count_before": len(before_placeholder_rows),
+            "placeholder_row_count_after": len(after_placeholder_rows),
+            "placeholder_row_resolved": max(0, len(before_placeholder_rows) - len(after_placeholder_rows)),
+            "unknown_default_item_count_before": unknown_default_before,
+            "unknown_default_item_count_after": unknown_default_after,
+        },
+        "changes": changed_rows,
+        "skipped": skipped_rows,
+        "invalid_rows": invalid_rows,
+        "remaining_placeholder_rows": after_placeholder_rows[:20],
+    }
+
+
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
     allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
@@ -31722,6 +33064,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     w10_tracker_box_html = _build_shared_tracker_execution_box_html("w10", "W10")
     w11_tracker_box_html = _build_shared_tracker_execution_box_html("w11", "W11")
     w15_tracker_box_html = _build_shared_tracker_execution_box_html("w15", "W15")
+    ops_special_checklists_payload = _load_ops_special_checklists_payload()
+    ops_special_checklists_json = json.dumps(ops_special_checklists_payload, ensure_ascii=False)
     return f"""
 <!doctype html>
 <html lang="ko">
@@ -31821,6 +33165,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       margin-bottom: 9px;
     }}
     .auth-row input, .filter-row input {{
+      width: 100%;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }}
+    .filter-row select {{
       width: 100%;
       border: 1px solid #c8d8ec;
       border-radius: 10px;
@@ -31934,6 +33287,61 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
       gap: 8px;
       margin-bottom: 10px;
+    }}
+    .ops-form-grid {{
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .ops-form-grid input, .ops-form-grid select, .ops-form-grid textarea {{
+      width: 100%;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-size: 13px;
+      color: var(--ink);
+      background: #fff;
+    }}
+    .ops-form-grid textarea {{
+      min-height: 74px;
+      resize: vertical;
+    }}
+    .ops-form-grid .span-2 {{
+      grid-column: span 2;
+    }}
+    .ops-form-grid .span-3 {{
+      grid-column: span 3;
+    }}
+    .ops-form-grid .span-5 {{
+      grid-column: span 5;
+    }}
+    .ops-inline-label {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #2b4f77;
+      border: 1px solid #c8d8ec;
+      border-radius: 10px;
+      background: #f8fbff;
+      padding: 8px 10px;
+      min-height: 36px;
+      white-space: nowrap;
+    }}
+    .ops-inline-label input[type="checkbox"] {{
+      margin: 0;
+    }}
+    .ops-checklist-actions {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }}
+    .ops-checklist-summary {{
+      margin-bottom: 8px;
+      font-size: 12px;
+      color: #32567b;
     }}
     .cards {{
       display: grid;
@@ -32136,6 +33544,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       .tab-btn {{ font-size: 13px; padding: 10px; }}
       .auth-row {{ grid-template-columns: 1fr; }}
       .filter-row {{ grid-template-columns: 1fr; }}
+      .ops-form-grid {{ grid-template-columns: 1fr; }}
+      .ops-form-grid .span-2, .ops-form-grid .span-3, .ops-form-grid .span-5 {{ grid-column: auto; }}
       .cards {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
       .adopt-grid {{ grid-template-columns: 1fr; }}
       .auth-dialog-grid.login {{ grid-template-columns: 1fr; }}
@@ -32287,16 +33697,121 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         </div>
 
         <div id="panelInspections" class="tab-panel" role="tabpanel">
-          <p class="tab-caption">점검 목록과 위험도 추이를 확인합니다.</p>
-          <div class="filter-row">
-            <input id="inSite" placeholder="site (optional)" />
-            <input id="inLimit" value="20" placeholder="limit" />
-            <input id="inOffset" value="0" placeholder="offset" />
-            <input id="inReserved" value="inspections" disabled />
-            <button id="runInspectionsBtn" class="btn run" type="button">점검 조회</button>
+          <p class="tab-caption">OPS 법정점검(전기/소방) 입력 화면과 점검 이력 조회를 한 곳에서 운영합니다.</p>
+          <div class="box">
+            <h3>OPS 법정점검 입력 (체크리스트/OPS코드/QR 연동)</h3>
+            <div class="ops-form-grid">
+              <input id="inCreateInspectedAt" type="datetime-local" />
+              <select id="inCreateTaskType">
+                <option value="전기점검">업무구분: 전기점검</option>
+                <option value="소방점검">업무구분: 소방점검</option>
+                <option value="전기안전점검">업무구분: 전기안전점검</option>
+                <option value="법정점검">업무구분: 법정점검</option>
+              </select>
+              <select id="inCreateCycle">
+                <option value="daily">주기: 일일점검</option>
+                <option value="monthly">주기: 월간점검</option>
+              </select>
+              <input id="inCreateSite" placeholder="site (예: HQ)" />
+              <input id="inCreateInspector" placeholder="점검자 (예: kim.ops)" />
+            </div>
+            <div class="ops-form-grid">
+              <select id="inChecklistSet">
+                <option value="electrical_60">체크리스트 세트: 전기직무고시60항목</option>
+              </select>
+              <select id="inCreateEquipmentGroup">
+                <option value="all">설비군: 전체</option>
+              </select>
+              <select id="inTemplateGroup">
+                <option value="all">체크리스트: 전체</option>
+              </select>
+              <select id="inCreateOpsCode">
+                <option value="">OPS코드: 선택(선택)</option>
+              </select>
+              <select id="inCreateQrId">
+                <option value="">QR설비: 선택(선택)</option>
+              </select>
+            </div>
+            <div class="ops-form-grid">
+              <input id="inCreateEquipment" placeholder="설비명 (예: 변압기 #1)" />
+              <input id="inCreateEquipmentCode" placeholder="설비코드 (예: TR-001)" />
+              <input id="inCreateLocation" placeholder="설비위치 (예: B1 수변전실)" />
+              <input id="inCreateQrLocation" placeholder="QR설비위치 자동참조(읽기용)" disabled />
+              <input id="inCreateDefaultItem" placeholder="QR기본점검항목 자동참조(읽기용)" disabled />
+            </div>
+            <div class="ops-form-grid">
+              <input id="inCreateWindingTemp" placeholder="권선온도 C (선택)" />
+              <input id="inCreateGroundingOhm" placeholder="접지저항 ohm (선택)" />
+              <input id="inCreateInsulationMohm" placeholder="절연저항 Mohm (선택)" />
+              <input id="inCreatePhotoFiles" type="file" multiple />
+              <input id="inCreateWorkOrderAssignee" placeholder="이상조치 담당자(선택)" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="inCreatePhotoNote" class="span-5" placeholder="사진 메모(선택): 예) 단자부 열화상 / 변압기 외관 / 절연매트 상태" />
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="inCreateAbnormalAction" class="span-3" placeholder="이상조치 등록(예: 단자 재체결 후 열화상 재점검 예정)"></textarea>
+              <label class="ops-inline-label">
+                <input id="inCreateAutoWorkOrder" type="checkbox" />
+                이상 시 작업지시 자동 등록
+              </label>
+              <select id="inCreateWorkOrderPriority">
+                <option value="high">WO 우선순위: high</option>
+                <option value="critical">WO 우선순위: critical</option>
+                <option value="medium">WO 우선순위: medium</option>
+                <option value="low">WO 우선순위: low</option>
+              </select>
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="inCreateMemo" class="span-5" placeholder="추가 메모(선택): 환기상태/소화기 상태/작업지시 요청사항 등을 기록"></textarea>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="inChecklistAllNormalBtn" class="btn" type="button">전체 정상</button>
+              <button id="inChecklistAllNaBtn" class="btn" type="button">전체 N/A</button>
+              <button id="inChecklistResetBtn" class="btn" type="button">체크리스트 재구성</button>
+              <button id="inCreateInspectionBtn" class="btn run" type="button">점검 저장</button>
+            </div>
+            <div id="inspectionChecklistSummary" class="ops-checklist-summary">체크리스트 준비 중...</div>
+            <div id="inspectionChecklistTable" class="empty">체크리스트 준비 중...</div>
+            <div id="inspectionCreateMeta" class="meta">입력 대기</div>
+          </div>
+          <div class="box">
+            <h3>점검 이력 조회</h3>
+            <div class="filter-row">
+              <input id="inSite" placeholder="site (optional)" />
+              <input id="inLimit" value="20" placeholder="limit" />
+              <input id="inOffset" value="0" placeholder="offset" />
+              <input id="inReserved" value="inspections" disabled />
+              <button id="runInspectionsBtn" class="btn run" type="button">점검 조회</button>
+            </div>
           </div>
           <div id="inspectionsMeta" class="meta">조회 전</div>
           <div id="inspectionsTable" class="empty">데이터 없음</div>
+          <div class="box">
+            <h3>점검 사진/증빙 파일</h3>
+            <div class="filter-row">
+              <input id="inEvidenceInspectionId" placeholder="inspection_id (숫자)" />
+              <input id="inEvidenceReserved1" value="POST /api/inspections/{id}/evidence" disabled />
+              <input id="inEvidenceReserved2" value="GET /api/inspections/{id}/evidence" disabled />
+              <input id="inEvidenceReserved3" value="download headers: X-Evidence-SHA256" disabled />
+              <button id="runInspectionEvidenceBtn" class="btn run" type="button">증빙 목록 조회</button>
+            </div>
+            <div id="inspectionEvidenceMeta" class="meta">조회 전</div>
+            <div id="inspectionEvidenceTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>엑셀 Import 검증 리포트</h3>
+            <div class="filter-row">
+              <input id="inImportValidationReserved1" value="GET /api/ops/inspections/checklists/import-validation" disabled />
+              <input id="inImportValidationReserved2" value="GET /api/ops/inspections/checklists/import-validation.csv" disabled />
+              <button id="runInspectionImportValidationBtn" class="btn run" type="button">검증 리포트 조회</button>
+              <a id="inspectionImportValidationCsvLink" href="/api/ops/inspections/checklists/import-validation.csv" target="_blank" rel="noopener">CSV 다운로드</a>
+            </div>
+            <div id="inspectionImportValidationMeta" class="meta">조회 전</div>
+            <div id="inspectionImportValidationSummary" class="cards"></div>
+            <div id="inspectionImportValidationTable" class="empty">데이터 없음</div>
+            <div id="inspectionImportValidationSuggestions" class="empty">데이터 없음</div>
+          </div>
         </div>
 
         <div id="panelReports" class="tab-panel" role="tabpanel">
@@ -33063,6 +34578,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       let w07LastCompletion = null;
       let w07ActionResults = [];
       let w07CompleteModalResolver = null;
+      const OPS_SPECIAL_CHECKLISTS = {ops_special_checklists_json};
+      const OPS_RESULT_OPTIONS = [
+        {{ value: "normal", label: "정상" }},
+        {{ value: "abnormal", label: "이상" }},
+        {{ value: "na", label: "N/A" }},
+      ];
+      let opsElectricalChecklistRows = [];
 
       function getToken() {{
         const sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || "";
@@ -33700,6 +35222,10 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       async function runAuthMe() {{
         try {{
           authProfile = await fetchJson("/api/auth/me", true);
+          const inspectorNode = document.getElementById("inCreateInspector");
+          if (inspectorNode && !(inspectorNode.value || "").trim()) {{
+            inspectorNode.value = String(authProfile && authProfile.username ? authProfile.username : "");
+          }}
           updateAuthStateFromToken();
           return authProfile;
         }} catch (err) {{
@@ -34117,6 +35643,1054 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      function currentLocalDatetimeInputValue() {{
+        const now = new Date();
+        const offsetMs = now.getTimezoneOffset() * 60000;
+        return new Date(now.getTime() - offsetMs).toISOString().slice(0, 16);
+      }}
+
+      function parseOptionalNumberInput(id, label) {{
+        const node = document.getElementById(id);
+        if (!node) return null;
+        const raw = String(node.value || "").trim();
+        if (!raw) return null;
+        const value = Number(raw);
+        if (!Number.isFinite(value)) {{
+          throw new Error(label + " 값이 숫자가 아닙니다: " + raw);
+        }}
+        return value;
+      }}
+
+      function getOpsChecklistSets() {{
+        const sets = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.checklist_sets)
+          ? OPS_SPECIAL_CHECKLISTS.checklist_sets
+          : [];
+        return sets.filter((row) => row && row.set_id && row.label && Array.isArray(row.items) && row.items.length > 0);
+      }}
+
+      function getSelectedOpsChecklistSetId() {{
+        const node = document.getElementById("inChecklistSet");
+        const sets = getOpsChecklistSets();
+        const fallback = sets.length > 0 ? String(sets[0].set_id) : "electrical_60";
+        if (!node) {{
+          return fallback;
+        }}
+        const selected = String(node.value || "").trim();
+        if (!selected) {{
+          return fallback;
+        }}
+        return selected;
+      }}
+
+      function getOpsChecklistSetById(setId) {{
+        const target = String(setId || "").trim();
+        const sets = getOpsChecklistSets();
+        if (sets.length === 0) {{
+          return null;
+        }}
+        const found = sets.find((row) => String(row.set_id) === target);
+        if (found) {{
+          return found;
+        }}
+        return sets[0];
+      }}
+
+      function deriveOpsChecklistGroupLabel(setId, itemText) {{
+        const setKey = String(setId || "").trim().toLowerCase();
+        const text = String(itemText || "").trim();
+        if (!text) {{
+          return "기타";
+        }}
+        const upper = text.toUpperCase();
+        const token = text.split(/\\s+/)[0] || text;
+
+        if (setKey.includes("electrical")) {{
+          if (text.startsWith("수변전실")) return "수변전실";
+          if (text.startsWith("변압기")) return "변압기";
+          if (text.startsWith("수전반") || text.startsWith("고압반")) return "수전반 / 고압반";
+          if (text.startsWith("배전반") || text.startsWith("분전반")) return "배전반 / 분전반";
+          if (text.startsWith("접지")) return "접지 설비";
+          if (text.startsWith("발전기") || text.startsWith("비상발전기")) return "비상발전기";
+          if (upper.startsWith("UPS")) return "UPS";
+        }}
+        if (setKey.includes("fire")) {{
+          if (text.startsWith("소화기")) return "소화기";
+          if (text.startsWith("옥내소화전")) return "옥내소화전";
+          if (text.startsWith("스프링클러")) return "스프링클러";
+          if (text.startsWith("감지기")) return "감지기";
+          if (text.startsWith("수신기") || text.startsWith("화재수신반")) return "수신설비";
+          if (text.startsWith("유도등") || text.startsWith("비상조명")) return "유도/비상조명";
+          if (text.startsWith("비상방송")) return "비상방송";
+        }}
+        return token;
+      }}
+
+      function buildOpsChecklistGroups(setObj) {{
+        if (!setObj || !Array.isArray(setObj.items)) {{
+          return [];
+        }}
+        const byGroup = new Map();
+        const setId = String(setObj.set_id || "");
+        setObj.items.forEach((entry, idx) => {{
+          if (!entry || typeof entry !== "object") {{
+            return;
+          }}
+          const itemText = String(entry.item || "").trim();
+          if (!itemText) {{
+            return;
+          }}
+          const group = deriveOpsChecklistGroupLabel(setId, itemText);
+          const bucket = byGroup.get(group) || [];
+          bucket.push(itemText);
+          byGroup.set(group, bucket);
+        }});
+        const groups = [];
+        byGroup.forEach((items, group) => {{
+          groups.push({{ group, items }});
+        }});
+        return groups;
+      }}
+
+      function populateOpsChecklistSetSelector() {{
+        const node = document.getElementById("inChecklistSet");
+        if (!node) {{
+          return;
+        }}
+        const previous = String(node.value || "").trim();
+        const sets = getOpsChecklistSets();
+        if (sets.length === 0) {{
+          node.innerHTML = '<option value="electrical_60">체크리스트 세트: 기본</option>';
+          return;
+        }}
+        const defaultSet = sets.find((item) => String(item.set_id || "") === "electrical_60") || sets[0];
+        node.innerHTML = sets.map((item) => (
+          '<option value="' + escapeHtml(item.set_id) + '">체크리스트 세트: ' + escapeHtml(item.label) + "</option>"
+        )).join("");
+        if (previous && sets.some((item) => String(item.set_id || "") === previous)) {{
+          node.value = previous;
+        }} else {{
+          node.value = String(defaultSet.set_id || "electrical_60");
+        }}
+      }}
+
+      function selectNodeHasOptionValue(node, value) {{
+        if (!node) {{
+          return false;
+        }}
+        const target = String(value || "").trim();
+        if (!target) {{
+          return false;
+        }}
+        return Array.from(node.options || []).some((opt) => String(opt.value || "") === target);
+      }}
+
+      function setSelectValueIfAvailable(node, value, fallbackValue = "") {{
+        if (!node) {{
+          return;
+        }}
+        const target = String(value || "").trim();
+        if (target && selectNodeHasOptionValue(node, target)) {{
+          node.value = target;
+          return;
+        }}
+        const fallback = String(fallbackValue || "").trim();
+        if (fallback && selectNodeHasOptionValue(node, fallback)) {{
+          node.value = fallback;
+          return;
+        }}
+        if (node.options && node.options.length > 0) {{
+          node.value = String(node.options[0].value || "");
+        }}
+      }}
+
+      function setOpsTaskTypeFromChecklistSet(setObj) {{
+        const node = document.getElementById("inCreateTaskType");
+        if (!node || !setObj) {{
+          return;
+        }}
+        const taskType = String(setObj.task_type || "").trim();
+        if (!taskType) {{
+          return;
+        }}
+        if (!selectNodeHasOptionValue(node, taskType)) {{
+          const option = document.createElement("option");
+          option.value = taskType;
+          option.textContent = "업무구분: " + taskType;
+          node.appendChild(option);
+        }}
+        node.value = taskType;
+      }}
+
+      function findChecklistSetIdByTaskType(taskType) {{
+        const target = String(taskType || "").trim();
+        if (!target) {{
+          return "";
+        }}
+        const sets = getOpsChecklistSets();
+        const found = sets.find((item) => String(item.task_type || "").trim() === target);
+        return found ? String(found.set_id || "") : "";
+      }}
+
+      function findChecklistSetIdByCategory(categoryText, descriptionText = "") {{
+        const category = String(categoryText || "").trim();
+        const description = String(descriptionText || "").trim();
+        const normalized = (category + " " + description).toLowerCase();
+        if (normalized.includes("전기")) {{
+          return (
+            findChecklistSetIdByTaskType("전기점검")
+            || String((getOpsChecklistSets().find((item) => String(item.set_id || "").toLowerCase().includes("electrical")) || {{}}).set_id || "")
+          );
+        }}
+        if (normalized.includes("소방")) {{
+          return (
+            findChecklistSetIdByTaskType("소방점검")
+            || String((getOpsChecklistSets().find((item) => String(item.set_id || "").toLowerCase().includes("fire")) || {{}}).set_id || "")
+          );
+        }}
+        return "";
+      }}
+
+      function findChecklistSetIdByItemText(itemText) {{
+        const target = String(itemText || "").trim();
+        if (!target) {{
+          return "";
+        }}
+        const sets = getOpsChecklistSets();
+        for (const setObj of sets) {{
+          const items = Array.isArray(setObj.items) ? setObj.items : [];
+          const matched = items.some((entry) => String((entry && entry.item) || "").trim() === target);
+          if (matched) {{
+            return String(setObj.set_id || "");
+          }}
+        }}
+        return "";
+      }}
+
+      function populateOpsChecklistGroupSelectors() {{
+        const setObj = getOpsChecklistSetById(getSelectedOpsChecklistSetId());
+        const previousEquipmentGroup = String((document.getElementById("inCreateEquipmentGroup") || {{ value: "all" }}).value || "all");
+        const previousTemplateGroup = String((document.getElementById("inTemplateGroup") || {{ value: "all" }}).value || "all");
+        const groups = buildOpsChecklistGroups(setObj);
+        const options = ['<option value="all">전체</option>'].concat(
+          groups.map((group) => (
+            '<option value="' + escapeHtml(group.group) + '">' + escapeHtml(group.group) + "</option>"
+          ))
+        ).join("");
+        const equipmentGroupNode = document.getElementById("inCreateEquipmentGroup");
+        const templateGroupNode = document.getElementById("inTemplateGroup");
+        if (equipmentGroupNode) {{
+          equipmentGroupNode.innerHTML = options;
+          setSelectValueIfAvailable(equipmentGroupNode, previousEquipmentGroup, "all");
+        }}
+        if (templateGroupNode) {{
+          templateGroupNode.innerHTML = options;
+          setSelectValueIfAvailable(templateGroupNode, previousTemplateGroup || previousEquipmentGroup, "all");
+        }}
+      }}
+
+      function populateOpsCodeSelector() {{
+        const node = document.getElementById("inCreateOpsCode");
+        if (!node) {{
+          return;
+        }}
+        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.ops_codes)
+          ? OPS_SPECIAL_CHECKLISTS.ops_codes
+          : [];
+        const options = ['<option value="">OPS코드: 선택(선택)</option>'].concat(
+          rows
+            .filter((row) => row && row.code)
+            .map((row) => (
+              '<option value="' + escapeHtml(row.code) + '">'
+              + escapeHtml(String(row.code || ""))
+              + " | "
+              + escapeHtml(String(row.category || ""))
+              + " | "
+              + escapeHtml(String(row.description || ""))
+              + "</option>"
+            ))
+        );
+        node.innerHTML = options.join("");
+      }}
+
+      function populateOpsQrSelector() {{
+        const node = document.getElementById("inCreateQrId");
+        if (!node) {{
+          return;
+        }}
+        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.qr_assets)
+          ? OPS_SPECIAL_CHECKLISTS.qr_assets
+          : [];
+        const options = ['<option value="">QR설비: 선택(선택)</option>'].concat(
+          rows
+            .filter((row) => row && row.qr_id)
+            .map((row) => (
+              '<option value="' + escapeHtml(row.qr_id) + '">'
+              + escapeHtml(String(row.qr_id || ""))
+              + " | "
+              + escapeHtml(String(row.equipment || "-"))
+              + " | "
+              + escapeHtml(String(row.location || "-"))
+              + "</option>"
+            ))
+        );
+        node.innerHTML = options.join("");
+      }}
+
+      function getSelectedOpsCodeRecord() {{
+        const node = document.getElementById("inCreateOpsCode");
+        const code = String(node && node.value ? node.value : "").trim();
+        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.ops_codes)
+          ? OPS_SPECIAL_CHECKLISTS.ops_codes
+          : [];
+        if (!code) {{
+          return null;
+        }}
+        return rows.find((row) => String((row && row.code) || "") === code) || null;
+      }}
+
+      function getSelectedQrAssetRecord() {{
+        const node = document.getElementById("inCreateQrId");
+        const qrId = String(node && node.value ? node.value : "").trim();
+        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.qr_assets)
+          ? OPS_SPECIAL_CHECKLISTS.qr_assets
+          : [];
+        if (!qrId) {{
+          return null;
+        }}
+        return rows.find((row) => String((row && row.qr_id) || "") === qrId) || null;
+      }}
+
+      function applyChecklistSetSelection(options = {{}}) {{
+        const setObj = getOpsChecklistSetById(getSelectedOpsChecklistSetId());
+        if (setObj) {{
+          setOpsTaskTypeFromChecklistSet(setObj);
+        }}
+        populateOpsChecklistGroupSelectors();
+        if (options.syncTemplateFromEquipment !== false) {{
+          syncOpsTemplateGroupFromEquipmentGroup();
+        }}
+        if (options.resetChecklist !== false) {{
+          resetOpsElectricalChecklistRows({{ preserve: Boolean(options.preserveChecklist) }});
+        }}
+      }}
+
+      function applySelectedOpsCodeToForm() {{
+        const codeRecord = getSelectedOpsCodeRecord();
+        if (!codeRecord) {{
+          return;
+        }}
+        const setNode = document.getElementById("inChecklistSet");
+        const targetSetId = findChecklistSetIdByCategory(codeRecord.category, codeRecord.description);
+        if (setNode && targetSetId && String(setNode.value || "") !== targetSetId) {{
+          setNode.value = targetSetId;
+          applyChecklistSetSelection({{ preserveChecklist: false }});
+        }} else {{
+          const selectedSet = getOpsChecklistSetById(getSelectedOpsChecklistSetId());
+          if (selectedSet) {{
+            setOpsTaskTypeFromChecklistSet(selectedSet);
+          }}
+        }}
+        const equipmentCodeNode = document.getElementById("inCreateEquipmentCode");
+        if (equipmentCodeNode && !(equipmentCodeNode.value || "").trim()) {{
+          equipmentCodeNode.value = String(codeRecord.code || "").trim();
+        }}
+        const equipmentNode = document.getElementById("inCreateEquipment");
+        const equipmentHint = String(codeRecord.description || "").trim().replace(/\\s*점검\\s*$/, "");
+        if (equipmentNode && equipmentHint && !(equipmentNode.value || "").trim()) {{
+          equipmentNode.value = equipmentHint;
+        }}
+      }}
+
+      function applySelectedQrAssetToForm(options = {{}}) {{
+        const overwriteFields = Boolean(options.overwriteFields);
+        const qrRecord = getSelectedQrAssetRecord();
+        const qrLocationNode = document.getElementById("inCreateQrLocation");
+        const defaultItemNode = document.getElementById("inCreateDefaultItem");
+        if (!qrRecord) {{
+          if (qrLocationNode) qrLocationNode.value = "";
+          if (defaultItemNode) defaultItemNode.value = "";
+          return;
+        }}
+        const qrId = String(qrRecord.qr_id || "").trim();
+        const qrEquipment = String(qrRecord.equipment || "").trim();
+        const qrLocation = String(qrRecord.location || "").trim();
+        const defaultItem = String(qrRecord.default_item || "").trim();
+        if (qrLocationNode) {{
+          qrLocationNode.value = qrLocation;
+        }}
+        if (defaultItemNode) {{
+          defaultItemNode.value = defaultItem;
+        }}
+        const equipmentNode = document.getElementById("inCreateEquipment");
+        if (equipmentNode && qrEquipment && (overwriteFields || !(equipmentNode.value || "").trim())) {{
+          equipmentNode.value = qrEquipment;
+        }}
+        const locationNode = document.getElementById("inCreateLocation");
+        if (locationNode && qrLocation && (overwriteFields || !(locationNode.value || "").trim())) {{
+          locationNode.value = qrLocation;
+        }}
+        const equipmentCodeNode = document.getElementById("inCreateEquipmentCode");
+        if (equipmentCodeNode && qrId && !(equipmentCodeNode.value || "").trim()) {{
+          equipmentCodeNode.value = qrId;
+        }}
+        if (!defaultItem) {{
+          return;
+        }}
+        const setNode = document.getElementById("inChecklistSet");
+        const targetSetId = findChecklistSetIdByItemText(defaultItem);
+        if (setNode && targetSetId && String(setNode.value || "") !== targetSetId) {{
+          setNode.value = targetSetId;
+          applyChecklistSetSelection({{ preserveChecklist: true }});
+        }}
+        const equipmentGroupNode = document.getElementById("inCreateEquipmentGroup");
+        const targetGroup = deriveOpsChecklistGroupLabel(getSelectedOpsChecklistSetId(), defaultItem);
+        if (equipmentGroupNode && selectNodeHasOptionValue(equipmentGroupNode, targetGroup)) {{
+          equipmentGroupNode.value = targetGroup;
+          syncOpsTemplateGroupFromEquipmentGroup();
+          resetOpsElectricalChecklistRows({{ preserve: true }});
+        }}
+      }}
+
+      function getOpsElectricalChecklistGroups(selectedGroup) {{
+        const group = String(selectedGroup || "all");
+        const setObj = getOpsChecklistSetById(getSelectedOpsChecklistSetId());
+        const groups = buildOpsChecklistGroups(setObj);
+        if (!group || group === "all") {{
+          return groups;
+        }}
+        return groups.filter((item) => item.group === group);
+      }}
+
+      function summarizeOpsElectricalChecklistRows(rows) {{
+        const source = Array.isArray(rows) ? rows : [];
+        const summary = {{
+          total: source.length,
+          normal: 0,
+          abnormal: 0,
+          na: 0,
+        }};
+        source.forEach((row) => {{
+          const result = String((row && row.result) || "normal");
+          if (result === "abnormal") {{
+            summary.abnormal += 1;
+            return;
+          }}
+          if (result === "na") {{
+            summary.na += 1;
+            return;
+          }}
+          summary.normal += 1;
+        }});
+        return summary;
+      }}
+
+      function renderOpsElectricalChecklist() {{
+        const table = document.getElementById("inspectionChecklistTable");
+        const summaryNode = document.getElementById("inspectionChecklistSummary");
+        if (!table || !summaryNode) {{
+          return;
+        }}
+        if (!Array.isArray(opsElectricalChecklistRows) || opsElectricalChecklistRows.length === 0) {{
+          summaryNode.textContent = "표시할 점검 항목이 없습니다.";
+          table.innerHTML = renderEmpty("체크리스트가 비어 있습니다.");
+          return;
+        }}
+        const summary = summarizeOpsElectricalChecklistRows(opsElectricalChecklistRows);
+        summaryNode.textContent =
+          "항목 " + String(summary.total)
+          + "건 | 정상 " + String(summary.normal)
+          + " | 이상 " + String(summary.abnormal)
+          + " | N/A " + String(summary.na);
+        const head = "<th>#</th><th>구분</th><th>점검내용</th><th>결과</th><th>조치</th>";
+        const body = opsElectricalChecklistRows.map((row, index) => {{
+          const options = OPS_RESULT_OPTIONS.map((opt) => {{
+            const selected = opt.value === row.result ? " selected" : "";
+            return '<option value="' + escapeHtml(opt.value) + '"' + selected + ">" + escapeHtml(opt.label) + "</option>";
+          }}).join("");
+          return (
+            "<tr>"
+            + "<td>" + escapeHtml(row.seq) + "</td>"
+            + "<td>" + escapeHtml(row.group) + "</td>"
+            + "<td>" + escapeHtml(row.item) + "</td>"
+            + '<td><select class="ops-check-result" data-row-index="' + escapeHtml(index) + '">' + options + "</select></td>"
+            + '<td><input class="ops-check-action" data-row-index="' + escapeHtml(index) + '" placeholder="조치 내용(선택)" value="' + escapeHtml(row.action || "") + '" /></td>'
+            + "</tr>"
+          );
+        }}).join("");
+        table.innerHTML = '<div class="table-wrap"><table><thead><tr>' + head + "</tr></thead><tbody>" + body + "</tbody></table></div>";
+      }}
+
+      function bindOpsElectricalChecklistHandlers() {{
+        const table = document.getElementById("inspectionChecklistTable");
+        if (!table) {{
+          return;
+        }}
+        table.addEventListener("change", (event) => {{
+          const target = event.target;
+          if (!(target instanceof Element)) {{
+            return;
+          }}
+          const selectNode = target.closest(".ops-check-result");
+          if (!selectNode) {{
+            return;
+          }}
+          const rowIndex = asInt(selectNode.getAttribute("data-row-index"), -1);
+          if (rowIndex < 0 || rowIndex >= opsElectricalChecklistRows.length) {{
+            return;
+          }}
+          const value = String(selectNode.value || "normal");
+          opsElectricalChecklistRows[rowIndex].result = value;
+          renderOpsElectricalChecklist();
+        }});
+        table.addEventListener("input", (event) => {{
+          const target = event.target;
+          if (!(target instanceof Element)) {{
+            return;
+          }}
+          const inputNode = target.closest(".ops-check-action");
+          if (!inputNode) {{
+            return;
+          }}
+          const rowIndex = asInt(inputNode.getAttribute("data-row-index"), -1);
+          if (rowIndex < 0 || rowIndex >= opsElectricalChecklistRows.length) {{
+            return;
+          }}
+          opsElectricalChecklistRows[rowIndex].action = String(inputNode.value || "");
+        }});
+      }}
+
+      function resetOpsElectricalChecklistRows(options = {{}}) {{
+        const templateNode = document.getElementById("inTemplateGroup");
+        const selectedGroup = String(options.selectedGroup || (templateNode ? templateNode.value : "all") || "all");
+        const preserve = Boolean(options.preserve);
+        const previous = new Map();
+        if (preserve) {{
+          (opsElectricalChecklistRows || []).forEach((row) => {{
+            const key = String(row.group || "") + "|" + String(row.item || "");
+            previous.set(key, {{
+              result: String(row.result || "normal"),
+              action: String(row.action || ""),
+            }});
+          }});
+        }}
+        const nextRows = [];
+        let seq = 1;
+        getOpsElectricalChecklistGroups(selectedGroup).forEach((groupItem) => {{
+          (groupItem.items || []).forEach((item) => {{
+            const key = String(groupItem.group || "") + "|" + String(item || "");
+            const prev = previous.get(key) || null;
+            nextRows.push({{
+              seq: seq,
+              group: String(groupItem.group || ""),
+              item: String(item || ""),
+              result: prev ? prev.result : "normal",
+              action: prev ? prev.action : "",
+            }});
+            seq += 1;
+          }});
+        }});
+        opsElectricalChecklistRows = nextRows;
+        renderOpsElectricalChecklist();
+      }}
+
+      function setOpsChecklistAllResult(resultValue) {{
+        const target = String(resultValue || "normal");
+        if (!Array.isArray(opsElectricalChecklistRows) || opsElectricalChecklistRows.length === 0) {{
+          return;
+        }}
+        opsElectricalChecklistRows = opsElectricalChecklistRows.map((row) => {{
+          return {{
+            seq: row.seq,
+            group: row.group,
+            item: row.item,
+            result: target,
+            action: target === "abnormal" ? String(row.action || "") : (target === "na" ? "" : String(row.action || "")),
+          }};
+        }});
+        renderOpsElectricalChecklist();
+      }}
+
+      function syncOpsTemplateGroupFromEquipmentGroup() {{
+        const equipmentGroupNode = document.getElementById("inCreateEquipmentGroup");
+        const templateGroupNode = document.getElementById("inTemplateGroup");
+        if (!equipmentGroupNode || !templateGroupNode) {{
+          return;
+        }}
+        const value = String(equipmentGroupNode.value || "all");
+        setSelectValueIfAvailable(templateGroupNode, value || "all", "all");
+      }}
+
+      function collectOpsPhotoFiles() {{
+        const fileInput = document.getElementById("inCreatePhotoFiles");
+        if (!fileInput || !fileInput.files) {{
+          return [];
+        }}
+        return Array.from(fileInput.files);
+      }}
+
+      function collectOpsPhotoFileNames() {{
+        return collectOpsPhotoFiles()
+          .map((file) => String((file && file.name) || "").trim())
+          .filter((name) => name !== "");
+      }}
+
+      function buildOpsInspectionNotes(meta, checklistRows, memoText) {{
+        const compactRows = (Array.isArray(checklistRows) ? checklistRows : []).map((row) => {{
+          return {{
+            group: String(row.group || ""),
+            item: String(row.item || ""),
+            result: String(row.result || "normal"),
+            action: String(row.action || "").trim(),
+          }};
+        }});
+        const lines = [
+          "[OPS_CHECKLIST_V1]",
+          "meta=" + JSON.stringify(meta || {{}}),
+          "checklist=" + JSON.stringify(compactRows),
+        ];
+        const memo = String(memoText || "").trim();
+        if (memo) {{
+          lines.push("memo=" + memo.replace(/\\r?\\n/g, " / "));
+        }}
+        return lines.join("\\n");
+      }}
+
+      function parseOpsInspectionNotes(noteText) {{
+        const text = String(noteText || "");
+        if (!text.includes("[OPS_CHECKLIST_V1]") && !text.includes("[OPS_ELECTRICAL_V1]")) {{
+          return null;
+        }}
+        const lines = text.split(/\\r?\\n/);
+        let meta = null;
+        let checklist = null;
+        let memo = "";
+        lines.forEach((line) => {{
+          if (line.startsWith("meta=")) {{
+            try {{
+              const parsed = JSON.parse(line.slice(5));
+              if (parsed && typeof parsed === "object") {{
+                meta = parsed;
+              }}
+            }} catch (err) {{
+              meta = null;
+            }}
+            return;
+          }}
+          if (line.startsWith("checklist=")) {{
+            try {{
+              const parsed = JSON.parse(line.slice(10));
+              if (Array.isArray(parsed)) {{
+                checklist = parsed;
+              }}
+            }} catch (err) {{
+              checklist = null;
+            }}
+            return;
+          }}
+          if (line.startsWith("memo=")) {{
+            memo = line.slice(5);
+          }}
+        }});
+        return {{
+          meta: meta && typeof meta === "object" ? meta : {{}},
+          checklist: Array.isArray(checklist) ? checklist : [],
+          memo: memo,
+        }};
+      }}
+
+      function buildOpsInspectionDisplayRow(row) {{
+        const parsed = parseOpsInspectionNotes(row.notes);
+        const hasOps = !!parsed;
+        const meta = parsed ? (parsed.meta || {{}}) : {{}};
+        const summary = meta && typeof meta.summary === "object" && meta.summary ? meta.summary : {{}};
+        const normalCount = asInt(summary.normal, 0);
+        const abnormalCount = asInt(summary.abnormal, 0);
+        const naCount = asInt(summary.na, 0);
+        const photoFiles = Array.isArray(meta.photo_files) ? meta.photo_files : [];
+        const actionText = String(meta.abnormal_action || "").trim();
+        const inspectedAtLabel = formatDateLocal(row.inspected_at);
+        return {{
+          id: row.id,
+          site: row.site,
+          task_type: hasOps ? (meta.task_type || row.cycle || "-") : (row.cycle || "-"),
+          equipment: hasOps ? (meta.equipment || "-") : "-",
+          equipment_code: hasOps ? (meta.equipment_code || "-") : "-",
+          equipment_location: hasOps ? (meta.equipment_location || row.location || "-") : (row.location || "-"),
+          inspector: row.inspector || "-",
+          result_summary: hasOps ? ("정상 " + String(normalCount) + " / 이상 " + String(abnormalCount) + " / N/A " + String(naCount)) : "-",
+          action: hasOps ? (actionText || "-") : "-",
+          photos: hasOps ? (photoFiles.length > 0 ? String(photoFiles.length) + " files" : "-") : "-",
+          risk_level: row.risk_level || "-",
+          inspected_at: inspectedAtLabel,
+          _ops_record: hasOps ? "yes" : "no",
+        }};
+      }}
+
+      async function runCreateOpsInspection() {{
+        const meta = document.getElementById("inspectionCreateMeta");
+        const site = (document.getElementById("inCreateSite").value || "").trim();
+        const location = (document.getElementById("inCreateLocation").value || "").trim();
+        const inspectorInput = (document.getElementById("inCreateInspector").value || "").trim();
+        const inspector = inspectorInput || String((authProfile && authProfile.username) || "").trim();
+        const inspectedAtRaw = (document.getElementById("inCreateInspectedAt").value || "").trim() || currentLocalDatetimeInputValue();
+        const inspectedAt = new Date(inspectedAtRaw);
+        if (!site) {{
+          meta.textContent = "실패: site 값을 입력하세요.";
+          return;
+        }}
+        if (!location) {{
+          meta.textContent = "실패: 설비위치를 입력하세요.";
+          return;
+        }}
+        if (!inspector) {{
+          meta.textContent = "실패: 점검자 값을 입력하세요.";
+          return;
+        }}
+        if (Number.isNaN(inspectedAt.getTime())) {{
+          meta.textContent = "실패: 점검일시 형식이 올바르지 않습니다.";
+          return;
+        }}
+        if (!Array.isArray(opsElectricalChecklistRows) || opsElectricalChecklistRows.length === 0) {{
+          meta.textContent = "실패: 체크리스트 항목이 없습니다.";
+          return;
+        }}
+
+        const checklistSetObj = getOpsChecklistSetById(getSelectedOpsChecklistSetId());
+        const checklistSetId = String((checklistSetObj && checklistSetObj.set_id) || "").trim();
+        const checklistSetLabel = String((checklistSetObj && checklistSetObj.label) || "").trim();
+        const checklistTaskType = String((checklistSetObj && checklistSetObj.task_type) || "").trim();
+        const selectedOpsCode = getSelectedOpsCodeRecord();
+        const selectedQrAsset = getSelectedQrAssetRecord();
+        const taskType = (document.getElementById("inCreateTaskType").value || "").trim() || checklistTaskType || "전기점검";
+        const cycle = (document.getElementById("inCreateCycle").value || "").trim() || "daily";
+        const equipmentGroup = (document.getElementById("inCreateEquipmentGroup").value || "").trim() || "all";
+        const equipmentRaw = (document.getElementById("inCreateEquipment").value || "").trim();
+        if (!checklistSetId) {{
+          meta.textContent = "실패: checklist_set_id가 비어 있습니다. 체크리스트 세트를 선택하세요.";
+          return;
+        }}
+        if (!taskType) {{
+          meta.textContent = "실패: 업무구분(task_type)을 선택하세요.";
+          return;
+        }}
+        const qrEquipment = String((selectedQrAsset && selectedQrAsset.equipment) || "").trim();
+        const defaultEquipment = taskType.includes("소방") ? "소방설비" : "전기설비";
+        const equipment = equipmentRaw || qrEquipment || (equipmentGroup === "all" ? defaultEquipment : equipmentGroup);
+        const equipmentCodeRaw = (document.getElementById("inCreateEquipmentCode").value || "").trim();
+        const selectedOpsCodeValue = String((selectedOpsCode && selectedOpsCode.code) || "").trim();
+        const selectedQrId = String((selectedQrAsset && selectedQrAsset.qr_id) || "").trim();
+        const equipmentCode = equipmentCodeRaw || selectedOpsCodeValue || selectedQrId;
+        const abnormalAction = (document.getElementById("inCreateAbnormalAction").value || "").trim();
+        const memo = (document.getElementById("inCreateMemo").value || "").trim();
+        const templateGroup = (document.getElementById("inTemplateGroup").value || "").trim() || "all";
+        const photoFiles = collectOpsPhotoFiles();
+        const photoFileNames = photoFiles
+          .map((file) => String((file && file.name) || "").trim())
+          .filter((name) => name !== "");
+        const photoNote = (document.getElementById("inCreatePhotoNote").value || "").trim();
+        const checklistDataVersion = String((OPS_SPECIAL_CHECKLISTS && OPS_SPECIAL_CHECKLISTS.version) || "").trim();
+        const checklistSourceFile = String((OPS_SPECIAL_CHECKLISTS && OPS_SPECIAL_CHECKLISTS.source_file) || "").trim();
+        const checklistRows = opsElectricalChecklistRows.map((row) => {{
+          return {{
+            seq: row.seq,
+            group: row.group,
+            item: row.item,
+            result: String(row.result || "normal"),
+            action: String(row.action || "").trim(),
+          }};
+        }});
+        const summary = summarizeOpsElectricalChecklistRows(checklistRows);
+        const abnormalRows = checklistRows.filter((row) => String(row.result || "") === "abnormal");
+        const abnormalRowsWithoutAction = abnormalRows.filter((row) => !String(row.action || "").trim());
+        if (abnormalRowsWithoutAction.length > 0 && !abnormalAction) {{
+          meta.textContent =
+            "실패: 이상 항목의 조치내용이 누락되었습니다. "
+            + String(abnormalRowsWithoutAction.length)
+            + "건의 이상 항목에 대해 행 조치 또는 이상조치 등록을 입력하세요.";
+          return;
+        }}
+        const notes = buildOpsInspectionNotes(
+          {{
+            task_type: taskType,
+            equipment_group: equipmentGroup,
+            equipment: equipment,
+            equipment_code: equipmentCode,
+            equipment_location: location,
+            template_group: templateGroup,
+            checklist_set_id: checklistSetId,
+            checklist_set_label: checklistSetLabel,
+            checklist_task_type: checklistTaskType,
+            checklist_data_version: checklistDataVersion,
+            checklist_source_file: checklistSourceFile,
+            ops_code: selectedOpsCodeValue,
+            ops_code_category: String((selectedOpsCode && selectedOpsCode.category) || "").trim(),
+            ops_code_description: String((selectedOpsCode && selectedOpsCode.description) || "").trim(),
+            qr_id: selectedQrId,
+            qr_equipment: qrEquipment,
+            qr_location: String((selectedQrAsset && selectedQrAsset.location) || "").trim(),
+            qr_default_item: String((selectedQrAsset && selectedQrAsset.default_item) || "").trim(),
+            summary: summary,
+            abnormal_action: abnormalAction,
+            photo_files: photoFileNames,
+            photo_note: photoNote,
+            auto_work_order_requested: !!document.getElementById("inCreateAutoWorkOrder").checked,
+          }},
+          checklistRows,
+          memo,
+        );
+
+        const payload = {{
+          site: site,
+          location: location,
+          cycle: cycle,
+          inspector: inspector,
+          inspected_at: inspectedAt.toISOString(),
+          notes: notes,
+        }};
+        try {{
+          const windingTempC = parseOptionalNumberInput("inCreateWindingTemp", "권선온도");
+          const groundingOhm = parseOptionalNumberInput("inCreateGroundingOhm", "접지저항");
+          const insulationMohm = parseOptionalNumberInput("inCreateInsulationMohm", "절연저항");
+          if (windingTempC !== null) payload.winding_temp_c = windingTempC;
+          if (groundingOhm !== null) payload.grounding_ohm = groundingOhm;
+          if (insulationMohm !== null) payload.insulation_mohm = insulationMohm;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          return;
+        }}
+
+        try {{
+          meta.textContent = "점검 저장 중...";
+          const created = await fetchJson(
+            "/api/inspections",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify(payload),
+            }}
+          );
+          let createdWorkOrder = null;
+          const autoWorkOrder = !!document.getElementById("inCreateAutoWorkOrder").checked;
+          if (autoWorkOrder && summary.abnormal > 0) {{
+            const workOrderPriority = (document.getElementById("inCreateWorkOrderPriority").value || "high").trim() || "high";
+            const workOrderAssignee = (document.getElementById("inCreateWorkOrderAssignee").value || "").trim();
+            const descriptionLines = [
+              "자동 생성: OPS " + taskType + " 이상 항목 조치",
+              "업무구분: " + taskType,
+              "설비: " + equipment,
+              "설비코드: " + (equipmentCode || "-"),
+              "체크리스트세트: " + (checklistSetLabel || checklistSetId || "-"),
+              "OPS코드: " + (selectedOpsCodeValue || "-"),
+              "QR설비ID: " + (selectedQrId || "-"),
+              "이상 항목 수: " + String(summary.abnormal),
+              "점검ID: " + String(created.id),
+            ];
+            abnormalRows.slice(0, 10).forEach((row, idx) => {{
+              const actionLabel = row.action ? (" / 조치: " + row.action) : "";
+              descriptionLines.push(String(idx + 1) + ". " + row.item + actionLabel);
+            }});
+            if (abnormalAction) {{
+              descriptionLines.push("이상조치 등록: " + abnormalAction);
+            }}
+            const workOrderPayload = {{
+              title: "[" + taskType + "] 이상조치 필요 - " + equipment,
+              description: descriptionLines.join("\\n"),
+              site: site,
+              location: location,
+              priority: workOrderPriority,
+              inspection_id: created.id,
+              reporter: inspector,
+            }};
+            if (workOrderAssignee) {{
+              workOrderPayload.assignee = workOrderAssignee;
+            }}
+            createdWorkOrder = await fetchJson(
+              "/api/work-orders",
+              true,
+              {{
+                method: "POST",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify(workOrderPayload),
+              }}
+            );
+          }}
+          let uploadedEvidenceCount = 0;
+          const evidenceUploadErrors = [];
+          if (photoFiles.length > 0) {{
+            for (const photoFile of photoFiles) {{
+              const formData = new FormData();
+              formData.append("file", photoFile);
+              formData.append("note", photoNote);
+              try {{
+                const uploadedEvidence = await fetchJson(
+                  "/api/inspections/" + encodeURIComponent(String(created.id)) + "/evidence",
+                  true,
+                  {{
+                    method: "POST",
+                    body: formData,
+                  }}
+                );
+                if (uploadedEvidence && uploadedEvidence.id) {{
+                  uploadedEvidenceCount += 1;
+                }}
+              }} catch (err) {{
+                const fileName = String((photoFile && photoFile.name) || "unknown-file");
+                evidenceUploadErrors.push(fileName + ": " + err.message);
+              }}
+            }}
+            const photoFilesNode = document.getElementById("inCreatePhotoFiles");
+            if (photoFilesNode) {{
+              photoFilesNode.value = "";
+            }}
+          }}
+          const inSiteNode = document.getElementById("inSite");
+          if (inSiteNode && !(inSiteNode.value || "").trim()) {{
+            inSiteNode.value = site;
+          }}
+          const inEvidenceInspectionIdNode = document.getElementById("inEvidenceInspectionId");
+          if (inEvidenceInspectionIdNode) {{
+            inEvidenceInspectionIdNode.value = String(created.id);
+          }}
+          const workOrderText = createdWorkOrder ? (" | WO #" + String(createdWorkOrder.id) + " 자동 생성") : "";
+          const evidenceText = photoFiles.length > 0
+            ? (" | 사진증빙 " + String(uploadedEvidenceCount) + "/" + String(photoFiles.length) + "건 업로드")
+            : "";
+          const evidenceErrorText = evidenceUploadErrors.length > 0
+            ? (" | 업로드실패 " + String(evidenceUploadErrors.length) + "건")
+            : "";
+          meta.textContent = "성공: 점검 #" + String(created.id) + " 저장" + workOrderText + evidenceText + evidenceErrorText;
+          await runInspections();
+          if (inEvidenceInspectionIdNode) {{
+            await runInspectionEvidenceList().catch(() => null);
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      function renderInspectionEvidenceTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("증빙 파일이 없습니다.");
+        }}
+        const body = rows.map((row) => {{
+          const evidenceId = row.id ?? "";
+          const downloadHref = "/api/inspections/evidence/" + encodeURIComponent(String(evidenceId)) + "/download";
+          return (
+            "<tr>"
+              + "<td>" + escapeHtml(evidenceId) + "</td>"
+              + "<td>" + escapeHtml(row.file_name ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.file_size ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.content_type ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.uploaded_by ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.uploaded_at ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.note ?? "") + "</td>"
+              + "<td>" + escapeHtml(row.sha256 ?? "") + "</td>"
+              + '<td><a href="' + downloadHref + '" target="_blank" rel="noopener">download</a></td>'
+            + "</tr>"
+          );
+        }}).join("");
+        return (
+          '<div class="table-wrap"><table><thead><tr>'
+          + "<th>ID</th><th>File</th><th>Size</th><th>Type</th><th>Uploaded By</th><th>Uploaded At</th><th>Note</th><th>SHA256</th><th>Download</th>"
+          + "</tr></thead><tbody>" + body + "</tbody></table></div>"
+        );
+      }}
+
+      async function runInspectionEvidenceList() {{
+        const meta = document.getElementById("inspectionEvidenceMeta");
+        const table = document.getElementById("inspectionEvidenceTable");
+        const inspectionIdRaw = (document.getElementById("inEvidenceInspectionId").value || "").trim();
+        const inspectionId = Number(inspectionIdRaw);
+        if (!inspectionIdRaw || !Number.isFinite(inspectionId) || inspectionId <= 0) {{
+          meta.textContent = "inspection_id를 입력하세요.";
+          table.innerHTML = renderEmpty("유효한 inspection_id가 필요합니다.");
+          return;
+        }}
+        const path = "/api/inspections/" + encodeURIComponent(String(Math.trunc(inspectionId))) + "/evidence";
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const rows = await fetchJson(path, true);
+          const items = Array.isArray(rows) ? rows : [];
+          meta.textContent = "성공: " + path + " | count=" + String(items.length);
+          table.innerHTML = renderInspectionEvidenceTable(items);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runInspectionImportValidation() {{
+        const path = "/api/ops/inspections/checklists/import-validation";
+        const meta = document.getElementById("inspectionImportValidationMeta");
+        const summaryNode = document.getElementById("inspectionImportValidationSummary");
+        const table = document.getElementById("inspectionImportValidationTable");
+        const suggestionsNode = document.getElementById("inspectionImportValidationSuggestions");
+        try {{
+          meta.textContent = "조회 중... " + path;
+          const data = await fetchJson(path, true);
+          const summary = data && typeof data.summary === "object" && data.summary ? data.summary : {{}};
+          const issues = Array.isArray(data.issues) ? data.issues : [];
+          const suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+          meta.textContent =
+            "성공: " + path
+            + " | status=" + String(data.status || "-")
+            + " | errors=" + String(summary.error_count || 0)
+            + " | warnings=" + String(summary.warning_count || 0)
+            + " | issue_buckets=" + String(summary.issue_bucket_count || 0);
+          const summaryItems = [
+            ["Status", String(data.status || "-")],
+            ["Checklist Sets", String(summary.checklist_set_count || 0)],
+            ["Checklist Items", String(summary.checklist_item_count || 0)],
+            ["OPS Codes", String(summary.ops_code_count || 0)],
+            ["QR Assets", String(summary.qr_asset_count || 0)],
+            ["Error Count", String(summary.error_count || 0)],
+            ["Warning Count", String(summary.warning_count || 0)],
+            ["Source Exists", String(Boolean(data.source_file_exists)).toUpperCase()],
+          ];
+          summaryNode.innerHTML = summaryItems.map((item) => (
+            '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + "</div></div>"
+          )).join("");
+          const rows = issues.map((item) => {{
+            const refs = Array.isArray(item.references) ? item.references.join(" | ") : String(item.references || "");
+            return {{
+              severity: item.severity || "-",
+              category: item.category || "-",
+              code: item.code || "-",
+              count: item.count ?? 0,
+              message: item.message || "-",
+              references: refs || "-",
+            }};
+          }});
+          table.innerHTML = rows.length > 0
+            ? renderTable(rows, [
+              {{ key: "severity", label: "Severity" }},
+              {{ key: "category", label: "Category" }},
+              {{ key: "code", label: "Code" }},
+              {{ key: "count", label: "Count" }},
+              {{ key: "message", label: "Message" }},
+              {{ key: "references", label: "References" }},
+            ])
+            : renderEmpty("이슈 없음");
+          if (suggestions.length > 0) {{
+            suggestionsNode.innerHTML = (
+              '<div class="table-wrap"><table><thead><tr><th>#</th><th>Suggestion</th></tr></thead><tbody>'
+              + suggestions.map((item, idx) => (
+                "<tr><td>" + escapeHtml(idx + 1) + "</td><td>" + escapeHtml(item) + "</td></tr>"
+              )).join("")
+              + "</tbody></table></div>"
+            );
+          }} else {{
+            suggestionsNode.innerHTML = renderEmpty("권고사항 없음");
+          }}
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          summaryNode.innerHTML = "";
+          table.innerHTML = renderEmpty(err.message);
+          suggestionsNode.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
       async function runWorkorders() {{
         const query = buildQuery([
           {{ key: "status", id: "woStatus" }},
@@ -34162,14 +36736,26 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         try {{
           meta.textContent = "조회 중... " + path;
           const data = await fetchJson(path, true);
-          meta.textContent = "성공: " + path + " | count=" + data.length;
+          const rows = (Array.isArray(data) ? data : []).map((row) => buildOpsInspectionDisplayRow(row));
+          const opsRows = rows.filter((row) => row._ops_record === "yes");
+          meta.textContent = "성공: " + path + " | count=" + rows.length + " | ops_format=" + opsRows.length;
+          const evidenceInspectionIdNode = document.getElementById("inEvidenceInspectionId");
+          if (evidenceInspectionIdNode && rows.length > 0 && !(evidenceInspectionIdNode.value || "").trim()) {{
+            evidenceInspectionIdNode.value = String(rows[0].id);
+          }}
           table.innerHTML = renderTable(
-            data,
+            rows,
             [
               {{ key: "id", label: "ID" }},
               {{ key: "site", label: "Site" }},
-              {{ key: "location", label: "Location" }},
+              {{ key: "task_type", label: "업무구분" }},
+              {{ key: "equipment", label: "설비" }},
+              {{ key: "equipment_code", label: "설비코드" }},
+              {{ key: "equipment_location", label: "설비위치" }},
               {{ key: "inspector", label: "Inspector" }},
+              {{ key: "result_summary", label: "결과요약" }},
+              {{ key: "action", label: "조치" }},
+              {{ key: "photos", label: "사진" }},
               {{ key: "risk_level", label: "Risk" }},
               {{ key: "inspected_at", label: "Inspected At" }}
             ]
@@ -38352,6 +40938,27 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("runOverviewGuardRecoverLatestBtn").addEventListener("click", runOverviewGuardRecoverLatest);
       document.getElementById("runWorkordersBtn").addEventListener("click", runWorkorders);
       document.getElementById("runInspectionsBtn").addEventListener("click", runInspections);
+      document.getElementById("runInspectionEvidenceBtn").addEventListener("click", runInspectionEvidenceList);
+      document.getElementById("runInspectionImportValidationBtn").addEventListener("click", runInspectionImportValidation);
+      document.getElementById("inCreateInspectionBtn").addEventListener("click", runCreateOpsInspection);
+      document.getElementById("inChecklistAllNormalBtn").addEventListener("click", () => setOpsChecklistAllResult("normal"));
+      document.getElementById("inChecklistAllNaBtn").addEventListener("click", () => setOpsChecklistAllResult("na"));
+      document.getElementById("inChecklistResetBtn").addEventListener("click", () => resetOpsElectricalChecklistRows({{ preserve: false }}));
+      document.getElementById("inChecklistSet").addEventListener("change", () => applyChecklistSetSelection({{ preserveChecklist: false }}));
+      document.getElementById("inTemplateGroup").addEventListener("change", () => resetOpsElectricalChecklistRows({{ preserve: true }}));
+      document.getElementById("inCreateEquipmentGroup").addEventListener("change", () => {{
+        syncOpsTemplateGroupFromEquipmentGroup();
+        resetOpsElectricalChecklistRows({{ preserve: true }});
+        const equipmentNode = document.getElementById("inCreateEquipment");
+        if (equipmentNode && !(equipmentNode.value || "").trim()) {{
+          const selectedGroup = document.getElementById("inCreateEquipmentGroup").value || "";
+          if (selectedGroup && selectedGroup !== "all") {{
+            equipmentNode.value = selectedGroup;
+          }}
+        }}
+      }});
+      document.getElementById("inCreateOpsCode").addEventListener("change", applySelectedOpsCodeToForm);
+      document.getElementById("inCreateQrId").addEventListener("change", () => applySelectedQrAssetToForm({{ overwriteFields: true }}));
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("w02TrackBootstrapBtn").addEventListener("click", runW02TrackerBootstrap);
@@ -38447,6 +41054,34 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
       updateAuthStateFromToken();
       updateReportLinks();
+      bindOpsElectricalChecklistHandlers();
+      populateOpsChecklistSetSelector();
+      populateOpsCodeSelector();
+      populateOpsQrSelector();
+      applyChecklistSetSelection({{ preserveChecklist: false }});
+      applySelectedQrAssetToForm();
+      const inCreateInspectedAtNode = document.getElementById("inCreateInspectedAt");
+      if (inCreateInspectedAtNode && !(inCreateInspectedAtNode.value || "").trim()) {{
+        inCreateInspectedAtNode.value = currentLocalDatetimeInputValue();
+      }}
+      if (!document.getElementById("inCreateSite").value) {{
+        document.getElementById("inCreateSite").value = "HQ";
+      }}
+      if (!document.getElementById("inCreateLocation").value) {{
+        document.getElementById("inCreateLocation").value = "B1 수변전실";
+      }}
+      if (!document.getElementById("inCreateEquipment").value) {{
+        document.getElementById("inCreateEquipment").value = "변압기";
+      }}
+      if (!document.getElementById("inCreateInspector").value && authProfile && authProfile.username) {{
+        document.getElementById("inCreateInspector").value = String(authProfile.username);
+      }}
+      if ((document.getElementById("inCreateOpsCode").value || "").trim()) {{
+        applySelectedOpsCodeToForm();
+      }}
+      if ((document.getElementById("inCreateQrId").value || "").trim()) {{
+        applySelectedQrAssetToForm({{ overwriteFields: false }});
+      }}
       if (!document.getElementById("w02TrackSite").value) {{
         document.getElementById("w02TrackSite").value = "HQ";
       }}
@@ -45893,9 +48528,51 @@ def list_admin_audit_logs(
     return [_row_to_admin_audit_log_model(row) for row in rows]
 
 
-def _build_audit_archive_csv(entries: list[dict[str, Any]]) -> str:
+def _build_audit_archive_csv(entries: list[dict[str, Any]], *, archive: dict[str, Any] | None = None) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
+    if isinstance(archive, dict):
+        chain = archive.get("chain") if isinstance(archive.get("chain"), dict) else {}
+        writer.writerow(["section", "key", "value"])
+        writer.writerow(["meta", "month", archive.get("month", "")])
+        writer.writerow(["meta", "generated_at", archive.get("generated_at", "")])
+        writer.writerow(["meta", "entry_count", archive.get("entry_count", 0)])
+        writer.writerow(["meta", "chain_ok", chain.get("chain_ok", False)])
+
+        dr_attachment = (
+            archive.get("dr_rehearsal_attachment")
+            if isinstance(archive.get("dr_rehearsal_attachment"), dict)
+            else {}
+        )
+        writer.writerow(["attachment.dr_rehearsal", "status", dr_attachment.get("status", "")])
+        writer.writerow(["attachment.dr_rehearsal", "included", dr_attachment.get("included", False)])
+
+        import_attachment = (
+            archive.get("ops_checklists_import_validation_attachment")
+            if isinstance(archive.get("ops_checklists_import_validation_attachment"), dict)
+            else {}
+        )
+        import_summary = import_attachment.get("summary") if isinstance(import_attachment.get("summary"), dict) else {}
+        writer.writerow(["attachment.ops_checklists_import_validation", "status", import_attachment.get("status", "")])
+        writer.writerow(
+            ["attachment.ops_checklists_import_validation", "generated_at", import_attachment.get("generated_at", "")]
+        )
+        writer.writerow(
+            [
+                "attachment.ops_checklists_import_validation",
+                "error_count",
+                import_summary.get("error_count", 0),
+            ]
+        )
+        writer.writerow(
+            [
+                "attachment.ops_checklists_import_validation",
+                "warning_count",
+                import_summary.get("warning_count", 0),
+            ]
+        )
+        writer.writerow([])
+
     writer.writerow(
         [
             "id",
@@ -46029,7 +48706,7 @@ def get_admin_monthly_audit_archive_csv(
         max_entries=max_entries,
         include_entries=True,
     )
-    csv_text = _build_audit_archive_csv(archive["entries"])
+    csv_text = _build_audit_archive_csv(archive["entries"], archive=archive)
     file_name = f"audit-archive-{archive['month']}.csv"
     _write_audit_log(
         principal=principal,
@@ -47424,6 +50101,100 @@ def get_ops_quality_report_weekly_streak(
         detail=snapshot,
     )
     return snapshot
+
+
+@ops_router.get("/inspections/checklists/import-validation")
+def get_ops_inspection_checklists_import_validation(
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    report = _build_ops_checklists_import_validation_report()
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklists_import_validation_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="import_validation",
+        detail={
+            "status": report.get("status"),
+            "error_count": summary.get("error_count"),
+            "warning_count": summary.get("warning_count"),
+            "issue_bucket_count": summary.get("issue_bucket_count"),
+        },
+    )
+    return report
+
+
+@ops_router.get("/inspections/checklists/import-validation.csv")
+def get_ops_inspection_checklists_import_validation_csv(
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> Response:
+    report = _build_ops_checklists_import_validation_report()
+    csv_text = _build_ops_checklists_import_validation_csv(report)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    file_name = f"ops-inspection-checklists-import-validation-{stamp}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklists_import_validation_csv_export",
+        resource_type="ops_inspection_checklists",
+        resource_id=file_name,
+        detail={"status": report.get("status")},
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@ops_router.get("/inspections/checklists/qr-assets/placeholders")
+def get_ops_inspection_checklists_qr_asset_placeholders(
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    payload = _load_ops_special_checklists_payload()
+    report = _build_ops_qr_placeholder_report(payload)
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklists_qr_placeholders_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="qr_assets_placeholders",
+        detail={
+            "status": report.get("status"),
+            "qr_asset_count": summary.get("qr_asset_count"),
+            "placeholder_row_count": summary.get("placeholder_row_count"),
+        },
+    )
+    return report
+
+
+@ops_router.post("/inspections/checklists/qr-assets/bulk-update")
+def post_ops_inspection_checklists_qr_asset_bulk_update(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    result = _apply_ops_qr_asset_bulk_update_request(body)
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    placeholder_after = int(summary.get("placeholder_row_count_after") or 0)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklists_qr_bulk_update",
+        resource_type="ops_inspection_checklists",
+        resource_id="qr_assets",
+        status="warning" if placeholder_after > 0 else "success",
+        detail={
+            "dry_run": bool(result.get("dry_run", True)),
+            "saved": bool(result.get("saved", False)),
+            "requested_count": int(summary.get("requested_count") or 0),
+            "applied_count": int(summary.get("applied_count") or 0),
+            "updated_count": int(summary.get("updated_count") or 0),
+            "created_count": int(summary.get("created_count") or 0),
+            "invalid_count": int(summary.get("invalid_count") or 0),
+            "placeholder_row_count_before": int(summary.get("placeholder_row_count_before") or 0),
+            "placeholder_row_count_after": placeholder_after,
+        },
+    )
+    return result
 
 
 @ops_router.post("/dr/rehearsal/run")
@@ -51842,7 +54613,8 @@ def create_inspection(
     principal: dict[str, Any] = Depends(require_permission("inspections:write")),
 ) -> InspectionRead:
     _require_site_access(principal, payload.site)
-    risk_level, flags = _calculate_risk(payload)
+    parsed_ops_notes = _validate_ops_inspection_payload(payload)
+    risk_level, flags = _calculate_risk(payload, parsed_ops_notes=parsed_ops_notes)
     now = datetime.now(timezone.utc)
     inspected_at = _to_utc(payload.inspected_at)
 
@@ -51931,6 +54703,169 @@ def get_inspection(
     return _row_to_read_model(row)
 
 
+@app.post("/api/inspections/{inspection_id}/evidence", response_model=InspectionEvidenceRead, status_code=201)
+async def upload_inspection_evidence(
+    inspection_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> InspectionEvidenceRead:
+    file_name = _safe_download_filename(file.filename or "", fallback="inspection-evidence.bin", max_length=120)
+    content_type = (file.content_type or "application/octet-stream").strip() or "application/octet-stream"
+    content_type = content_type[:120].lower()
+    if not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Unsupported evidence content type")
+
+    file_bytes = await file.read(INSPECTION_EVIDENCE_MAX_BYTES + 1)
+    await file.close()
+    if len(file_bytes) == 0:
+        raise HTTPException(status_code=400, detail="Empty evidence file is not allowed")
+    if len(file_bytes) > INSPECTION_EVIDENCE_MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Evidence file too large (max {INSPECTION_EVIDENCE_MAX_BYTES} bytes)",
+        )
+
+    sha256_digest = hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(
+        file_bytes=file_bytes,
+        content_type=content_type,
+    )
+    if scan_status == "infected" or (scan_status == "suspicious" and EVIDENCE_SCAN_BLOCK_SUSPICIOUS):
+        raise HTTPException(status_code=422, detail=f"Evidence scan blocked upload: {scan_reason or scan_status}")
+
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file_name,
+        file_bytes=file_bytes,
+        sha256_digest=sha256_digest,
+    )
+
+    actor_username = str(principal.get("username") or "unknown")
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        inspection_row = conn.execute(
+            select(inspections).where(inspections.c.id == inspection_id).limit(1)
+        ).mappings().first()
+        if inspection_row is None:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+
+        site = str(inspection_row["site"])
+        _require_site_access(principal, site)
+
+        result = conn.execute(
+            insert(inspection_evidence_files).values(
+                inspection_id=inspection_id,
+                site=site,
+                file_name=file_name,
+                content_type=content_type,
+                file_size=len(file_bytes),
+                file_bytes=stored_bytes,
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                sha256=sha256_digest,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=note.strip(),
+                uploaded_by=actor_username,
+                uploaded_at=now,
+            )
+        )
+        evidence_id = int(result.inserted_primary_key[0])
+        evidence_row = conn.execute(
+            select(inspection_evidence_files).where(inspection_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+
+    if evidence_row is None:
+        raise HTTPException(status_code=500, detail="Failed to save inspection evidence")
+    model = _row_to_inspection_evidence_model(evidence_row)
+    _write_audit_log(
+        principal=principal,
+        action="inspection_evidence_upload",
+        resource_type="inspection_evidence",
+        resource_id=str(model.id),
+        detail={
+            "inspection_id": model.inspection_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "file_size": model.file_size,
+            "storage_backend": model.storage_backend,
+            "sha256": model.sha256,
+            "malware_scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@app.get("/api/inspections/{inspection_id}/evidence", response_model=list[InspectionEvidenceRead])
+def list_inspection_evidence(
+    inspection_id: int,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> list[InspectionEvidenceRead]:
+    with get_conn() as conn:
+        inspection_row = conn.execute(
+            select(inspections).where(inspections.c.id == inspection_id).limit(1)
+        ).mappings().first()
+        if inspection_row is None:
+            raise HTTPException(status_code=404, detail="Inspection not found")
+
+        _require_site_access(principal, str(inspection_row["site"]))
+        rows = conn.execute(
+            select(inspection_evidence_files)
+            .where(inspection_evidence_files.c.inspection_id == inspection_id)
+            .order_by(inspection_evidence_files.c.uploaded_at.desc(), inspection_evidence_files.c.id.desc())
+        ).mappings().all()
+    return [_row_to_inspection_evidence_model(row) for row in rows]
+
+
+@app.get("/api/inspections/evidence/{evidence_id}/download", response_model=None)
+def download_inspection_evidence(
+    evidence_id: int,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> Response:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(inspection_evidence_files).where(inspection_evidence_files.c.id == evidence_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Inspection evidence not found")
+
+    site = str(row["site"])
+    _require_site_access(principal, site)
+    content_type = str(row.get("content_type") or "application/octet-stream")
+    file_name = _safe_download_filename(
+        str(row.get("file_name") or ""),
+        fallback="inspection-evidence.bin",
+        max_length=120,
+    )
+    data = _read_evidence_blob(row=row)
+    if data is None:
+        raise HTTPException(status_code=410, detail="Evidence file is unavailable")
+    sha256_digest = hashlib.sha256(data).hexdigest()
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != sha256_digest:
+        raise HTTPException(status_code=409, detail="Evidence integrity check failed")
+    storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
+
+    _write_audit_log(
+        principal=principal,
+        action="inspection_evidence_download",
+        resource_type="inspection_evidence",
+        resource_id=str(evidence_id),
+        detail={"site": site, "file_name": file_name, "sha256": sha256_digest, "storage_backend": storage_backend},
+    )
+    return Response(
+        content=data,
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Download-Options": "noopen",
+            "X-Evidence-SHA256": sha256_digest,
+        },
+    )
+
+
 @app.get("/inspections/{inspection_id}/print", response_class=HTMLResponse)
 def print_inspection(
     inspection_id: int,
@@ -51985,6 +54920,21 @@ def print_inspection(
 """
 
 
+@app.get("/api/work-orders/sla/rules")
+def get_work_order_sla_rules(
+    principal: dict[str, Any] = Depends(require_permission("work_orders:read")),
+) -> dict[str, Any]:
+    payload = _inspection_to_work_order_sla_rule_payload()
+    _write_audit_log(
+        principal=principal,
+        action="work_order_sla_rules_view",
+        resource_type="work_order_sla",
+        resource_id="rules",
+        detail=payload,
+    )
+    return payload
+
+
 @app.post("/api/work-orders", response_model=WorkOrderRead, status_code=201)
 def create_work_order(
     payload: WorkOrderCreate,
@@ -51996,21 +54946,53 @@ def create_work_order(
     due_at = _as_optional_datetime(payload.due_at)
     auto_due_applied = False
     policy_source = "manual"
-    if due_at is None:
-        policy, _, source, _, _ = _load_sla_policy(site=payload.site)
-        due_hours = int(policy["default_due_hours"].get(payload.priority, SLA_DEFAULT_DUE_HOURS["medium"]))
-        due_at = now + timedelta(hours=due_hours)
-        auto_due_applied = True
-        policy_source = source
+    due_hours_applied: int | None = None
+    requested_priority = str(payload.priority or "medium").strip().lower() or "medium"
+    effective_priority = requested_priority
+    priority_upgraded = False
+    priority_upgrade_reasons: list[str] = []
+    inspection_sla_context: dict[str, Any] | None = None
 
     with get_conn() as conn:
+        if payload.inspection_id is not None:
+            inspection_row = conn.execute(
+                select(inspections)
+                .where(inspections.c.id == int(payload.inspection_id))
+                .limit(1)
+            ).mappings().first()
+            if inspection_row is None:
+                raise HTTPException(status_code=404, detail="Inspection not found")
+            inspection_site = str(inspection_row["site"])
+            _require_site_access(principal, inspection_site)
+            if inspection_site != payload.site:
+                raise HTTPException(status_code=400, detail="inspection_id site must match work order site")
+            inspection_sla_context = _derive_inspection_work_order_sla_context(inspection_row)
+            floor_priority = str(inspection_sla_context.get("priority_floor") or "medium").strip().lower() or "medium"
+            upgraded_priority = _higher_priority(effective_priority, floor_priority)
+            if upgraded_priority != effective_priority:
+                effective_priority = upgraded_priority
+                priority_upgraded = True
+            priority_upgrade_reasons = [
+                str(item).strip()
+                for item in (inspection_sla_context.get("rules_applied") or [])
+                if str(item).strip()
+            ]
+        if due_at is None:
+            policy, _, source, _, _ = _load_sla_policy(site=payload.site)
+            due_hours_applied = int(
+                policy["default_due_hours"].get(effective_priority, SLA_DEFAULT_DUE_HOURS["medium"])
+            )
+            due_at = now + timedelta(hours=due_hours_applied)
+            auto_due_applied = True
+            policy_source = source
+
         result = conn.execute(
             insert(work_orders).values(
                 title=payload.title,
                 description=payload.description,
                 site=payload.site,
                 location=payload.location,
-                priority=payload.priority,
+                priority=effective_priority,
                 status="open",
                 assignee=payload.assignee,
                 reporter=payload.reporter,
@@ -52033,7 +55015,19 @@ def create_work_order(
             from_status=None,
             to_status="open",
             note=payload.description or "",
-            detail={"priority": payload.priority, "assignee": payload.assignee, "reporter": payload.reporter},
+            detail={
+                "priority": effective_priority,
+                "requested_priority": requested_priority,
+                "priority_upgraded": priority_upgraded,
+                "priority_upgrade_reasons": priority_upgrade_reasons,
+                "assignee": payload.assignee,
+                "reporter": payload.reporter,
+                "inspection_id": payload.inspection_id,
+                "inspection_sla_context": inspection_sla_context,
+                "auto_due_applied": auto_due_applied,
+                "due_hours_applied": due_hours_applied,
+                "policy_source": policy_source,
+            },
         )
         row = conn.execute(
             select(work_orders).where(work_orders.c.id == work_order_id)
@@ -52050,9 +55044,15 @@ def create_work_order(
         detail={
             "site": model.site,
             "priority": model.priority,
+            "requested_priority": requested_priority,
+            "priority_upgraded": priority_upgraded,
+            "priority_upgrade_reasons": priority_upgrade_reasons,
             "due_at": model.due_at,
             "auto_due_applied": auto_due_applied,
+            "due_hours_applied": due_hours_applied,
             "policy_source": policy_source,
+            "inspection_id": payload.inspection_id,
+            "inspection_sla_context": inspection_sla_context,
         },
     )
     return model

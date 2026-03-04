@@ -70,6 +70,27 @@ inspections = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+inspection_evidence_files = Table(
+    "inspection_evidence_files",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("inspection_id", Integer, nullable=False),
+    Column("site", String(120), nullable=False),
+    Column("file_name", String(255), nullable=False),
+    Column("content_type", String(120), nullable=False, default="application/octet-stream"),
+    Column("file_size", Integer, nullable=False, default=0),
+    Column("file_bytes", LargeBinary, nullable=False),
+    Column("storage_backend", String(20), nullable=False, default="db"),
+    Column("storage_key", String(400), nullable=True),
+    Column("sha256", String(64), nullable=True),
+    Column("malware_scan_status", String(20), nullable=False, default="unknown"),
+    Column("malware_scan_engine", String(80), nullable=True),
+    Column("malware_scanned_at", DateTime(timezone=True), nullable=True),
+    Column("note", Text, nullable=False, default=""),
+    Column("uploaded_by", String(80), nullable=False, default="system"),
+    Column("uploaded_at", DateTime(timezone=True), nullable=False),
+)
+
 work_orders = Table(
     "work_orders",
     metadata,

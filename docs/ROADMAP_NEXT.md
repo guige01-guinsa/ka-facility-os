@@ -2,6 +2,48 @@
 
 기준일: 2026-03-01
 
+## 즉시 실행 체크리스트 (2026-03-04 착수)
+
+### 1. 필수값 강제 + 누락 방지
+- [x] OPS 점검 저장 API(`POST /api/inspections`)에 서버측 필수검증 추가
+  - 태그: `[OPS_CHECKLIST_V1]`, `[OPS_ELECTRICAL_V1]` 모두 인식
+  - 필수 메타: `task_type`, `equipment`, `equipment_location`, `checklist_set_id`
+  - 필수 구조: `checklist` 배열/행 `group,item,result`
+- [x] 이상(`abnormal`) 항목에 조치 누락 시 저장 차단
+  - 행 조치(`row.action`) 또는 `meta.abnormal_action` 중 최소 1개 필수
+- [x] 체크리스트-요약 정합성 검증
+  - `summary.total/normal/abnormal/na`와 실제 행 집계 불일치 시 422 반환
+
+### 2. 엑셀 Import 검증 리포트
+- [x] Import 검증 API 추가
+  - `GET /api/ops/inspections/checklists/import-validation`
+- [x] Import 검증 CSV Export API 추가
+  - `GET /api/ops/inspections/checklists/import-validation.csv`
+- [x] 검증 규칙 적용
+  - checklist set/item 중복/누락
+  - OPS 코드 중복/분류-세트 매핑 불일치
+  - QR 자산 중복/placeholder/기본점검항목 매핑 누락
+- [x] 메인 점검 화면에 검증 리포트 조회 UI 추가
+
+### 3. 점검 -> 작업지시 SLA 자동화 룰 확정
+- [x] 룰 공개 API 추가
+  - `GET /api/work-orders/sla/rules`
+- [x] 점검 연계 작업지시 생성 시 자동 우선순위 하한 적용
+  - 입력: `inspection_id`가 있는 `POST /api/work-orders`
+  - 룰: 위험도(`risk_level`) + 이상건수(`abnormal`) 기반 `priority` 상향
+- [x] 사이트 정합성 강제
+  - `inspection.site`와 `work_order.site` 불일치 시 생성 차단(400)
+- [x] due_at 자동 계산 시 상향된 우선순위 기준으로 SLA 시간 반영
+
+### 남은 후속 작업
+- [x] QR placeholder 탐지/일괄치환 API 추가
+  - `GET /api/ops/inspections/checklists/qr-assets/placeholders`
+  - `POST /api/ops/inspections/checklists/qr-assets/bulk-update` (`dry_run`, `create_missing` 지원)
+- [x] QR설비관리 원본 placeholder 데이터(`설비/위치/점검항목`) 실제값 대량 치환 실행
+- [x] OPS코드 `기계/건축/안전` 카테고리 매핑 규칙 확장(Import 검증룰 + fallback checklist_set)
+- [x] 원본 데이터셋(`data/apartment_facility_special_checklists.json`)에 `기계/건축/안전` checklist_set 전량 반영
+- [x] Import 검증 결과를 월간 감사 리포트와 자동 연동
+
 ## 최근 완료(2026-03-01)
 - 안정화 스프린트 3대 과제 완료
   - 성능: 주요 API P95 지연 모니터/런북 체크 반영

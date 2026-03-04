@@ -12,10 +12,74 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+def _seed_ops_special_checklists_json(target_path: Path) -> None:
+    source_path = Path(__file__).resolve().parents[1] / "data" / "apartment_facility_special_checklists.json"
+    if source_path.exists():
+        target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
+        return
+    payload = {
+        "source_file": "tests-fixture",
+        "version": "tests-fixture",
+        "checklist_sets": [
+            {
+                "set_id": "electrical_60",
+                "label": "전기직무고시60항목",
+                "task_type": "전기점검",
+                "items": [
+                    {"seq": 1, "item": "수변전실 출입통제 상태 확인"},
+                    {"seq": 2, "item": "변압기 외관 점검"},
+                    {"seq": 3, "item": "변압기 온도 상승 여부 확인"},
+                    {"seq": 4, "item": "변압기 이상 소음 확인"},
+                    {"seq": 5, "item": "수전반 차단기 동작 상태"},
+                    {"seq": 6, "item": "분전반 누전차단기 상태"},
+                    {"seq": 7, "item": "접지설비 연결 상태"},
+                ],
+            },
+            {
+                "set_id": "fire_legal",
+                "label": "소방법정점검",
+                "task_type": "소방점검",
+                "items": [
+                    {"seq": 1, "item": "소화기 압력 확인"},
+                    {"seq": 2, "item": "옥내소화전 방수 시험"},
+                    {"seq": 3, "item": "스프링클러 헤드 막힘 여부"},
+                ],
+            },
+            {
+                "set_id": "mechanical_ops",
+                "label": "기계설비점검",
+                "task_type": "기계점검",
+                "items": [
+                    {"seq": 1, "item": "급수펌프 외관 상태 확인"},
+                    {"seq": 2, "item": "배수펌프 자동운전 상태 확인"},
+                    {"seq": 3, "item": "저수조 수위 및 누수 확인"},
+                ],
+            },
+        ],
+        "ops_codes": [
+            {"code": "E01", "category": "전기", "description": "수변전설비 점검"},
+            {"code": "F01", "category": "소방", "description": "소화기 점검"},
+            {"code": "M01", "category": "기계", "description": "급수펌프 점검"},
+        ],
+        "qr_assets": [
+            {"qr_id": "QR-001", "equipment": "설비", "location": "위치", "default_item": "점검항목"},
+            {
+                "qr_id": "QR-002",
+                "equipment": "변압기 1호기",
+                "location": "B1 수변전실",
+                "default_item": "변압기 외관 점검",
+            },
+        ],
+    }
+    target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 @pytest.fixture()
 def app_client(tmp_path, monkeypatch):
     db_path = tmp_path / "test.db"
     evidence_path = tmp_path / "evidence"
+    checklists_path = tmp_path / "apartment_facility_special_checklists.json"
+    _seed_ops_special_checklists_json(checklists_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
@@ -44,6 +108,7 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+    monkeypatch.setenv("OPS_SPECIAL_CHECKLISTS_DATA_PATH", checklists_path.as_posix())
     monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
@@ -60,6 +125,8 @@ def app_client(tmp_path, monkeypatch):
 def strict_rate_limit_client(tmp_path, monkeypatch):
     db_path = tmp_path / "test_rate_limit.db"
     evidence_path = tmp_path / "evidence_rate_limit"
+    checklists_path = tmp_path / "apartment_facility_special_checklists.json"
+    _seed_ops_special_checklists_json(checklists_path)
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
     monkeypatch.setenv("ENV", "test")
     monkeypatch.setenv("ALLOW_INSECURE_LOCAL_AUTH", "0")
@@ -88,6 +155,7 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
+    monkeypatch.setenv("OPS_SPECIAL_CHECKLISTS_DATA_PATH", checklists_path.as_posix())
     monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
@@ -322,6 +390,26 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     assert service_info.json()["service"] == "ka-facility-os"
+    assert service_info.json()["inspection_evidence_upload_api"] == "/api/inspections/{inspection_id}/evidence"
+    assert service_info.json()["inspection_evidence_list_api"] == "/api/inspections/{inspection_id}/evidence"
+    assert service_info.json()["inspection_evidence_download_api"] == "/api/inspections/evidence/{evidence_id}/download"
+    assert (
+        service_info.json()["ops_inspection_checklists_import_validation_api"]
+        == "/api/ops/inspections/checklists/import-validation"
+    )
+    assert (
+        service_info.json()["ops_inspection_checklists_import_validation_csv_api"]
+        == "/api/ops/inspections/checklists/import-validation.csv"
+    )
+    assert (
+        service_info.json()["ops_inspection_checklists_qr_placeholders_api"]
+        == "/api/ops/inspections/checklists/qr-assets/placeholders"
+    )
+    assert (
+        service_info.json()["ops_inspection_checklists_qr_bulk_update_api"]
+        == "/api/ops/inspections/checklists/qr-assets/bulk-update"
+    )
+    assert service_info.json()["work_order_sla_rules_api"] == "/api/work-orders/sla/rules"
     assert service_info.json()["auth_login_api"] == "/api/auth/login"
     assert service_info.json()["admin_user_password_api"] == "/api/admin/users/{user_id}/password"
     assert "public_modules_api" in service_info.json()
@@ -1833,6 +1921,407 @@ def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:
         headers=scoped_headers,
     )
     assert forbidden_report.status_code == 403
+
+
+def test_inspection_evidence_upload_list_download(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    created = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Inspection Evidence Site",
+            "location": "B1 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": inspected_at,
+            "notes": "inspection evidence upload test",
+        },
+    )
+    assert created.status_code == 201
+    inspection_id = created.json()["id"]
+
+    blocked_upload = app_client.post(
+        f"/api/inspections/{inspection_id}/evidence",
+        headers=headers,
+        data={"note": "html not allowed"},
+        files={"file": ("bad.html", b"<script>alert(1)</script>", "text/html")},
+    )
+    assert blocked_upload.status_code == 415
+
+    uploaded = app_client.post(
+        f"/api/inspections/{inspection_id}/evidence",
+        headers=headers,
+        data={"note": "inspection photo evidence"},
+        files={"file": ("inspection-photo.txt", b"inspection evidence", "text/plain")},
+    )
+    assert uploaded.status_code == 201
+    evidence = uploaded.json()
+    evidence_id = evidence["id"]
+    assert evidence["inspection_id"] == inspection_id
+    assert evidence["site"] == "Inspection Evidence Site"
+    assert evidence["file_name"] == "inspection-photo.txt"
+    assert evidence["file_size"] == len(b"inspection evidence")
+    assert evidence["storage_backend"] in {"fs", "db"}
+    assert len(evidence["sha256"]) == 64
+    assert evidence["malware_scan_status"] in {"clean", "skipped", "suspicious"}
+
+    evidence_list = app_client.get(
+        f"/api/inspections/{inspection_id}/evidence",
+        headers=headers,
+    )
+    assert evidence_list.status_code == 200
+    evidence_rows = evidence_list.json()
+    assert len(evidence_rows) >= 1
+    assert any(int(row["id"]) == int(evidence_id) for row in evidence_rows)
+
+    downloaded = app_client.get(
+        f"/api/inspections/evidence/{evidence_id}/download",
+        headers=headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"].startswith("text/plain")
+    assert downloaded.content == b"inspection evidence"
+    assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    missing_list = app_client.get(
+        "/api/inspections/999999/evidence",
+        headers=headers,
+    )
+    assert missing_list.status_code == 404
+
+
+def test_ops_inspection_payload_validation_blocks_missing_required_fields(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    invalid_meta = {
+        "task_type": "전기점검",
+        "equipment": "변압기",
+        "equipment_location": "B1 수변전실",
+        "summary": {"total": 1, "normal": 0, "abnormal": 1, "na": 0},
+    }
+    checklist = [
+        {
+            "group": "변압기",
+            "item": "변압기 외관 점검",
+            "result": "abnormal",
+            "action": "",
+        }
+    ]
+    notes = "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(invalid_meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
+
+    created = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Validation Site",
+            "location": "B1 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": inspected_at,
+            "notes": notes,
+        },
+    )
+    assert created.status_code == 422
+    body = created.json()
+    assert body["detail"]["message"] == "OPS checklist payload validation failed"
+    errors = body["detail"]["errors"]
+    assert any("meta.checklist_set_id is required" in msg for msg in errors)
+    assert any("abnormal checklist rows require row action or meta.abnormal_action" in msg for msg in errors)
+
+
+def test_ops_inspection_import_validation_report_endpoints(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    report = app_client.get(
+        "/api/ops/inspections/checklists/import-validation",
+        headers=headers,
+    )
+    assert report.status_code == 200
+    body = report.json()
+    assert body["status"] in {"ok", "warning", "error"}
+    assert body["summary"]["checklist_set_count"] >= 2
+    assert body["summary"]["checklist_item_count"] >= 10
+    assert body["summary"]["ops_code_count"] >= 1
+    assert body["summary"]["qr_asset_count"] >= 1
+    assert isinstance(body["issues"], list)
+    assert isinstance(body["suggestions"], list)
+
+    export = app_client.get(
+        "/api/ops/inspections/checklists/import-validation.csv",
+        headers=headers,
+    )
+    assert export.status_code == 200
+    assert export.headers["content-type"].startswith("text/csv")
+    assert "severity,category,code,count,message,references" in export.text
+
+
+def test_ops_inspection_qr_placeholder_snapshot_endpoint(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    response = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    summary = body["summary"]
+    assert body["status"] in {"ok", "warning"}
+    assert summary["qr_asset_count"] >= 1
+    assert summary["placeholder_row_count"] >= 0
+    assert isinstance(summary["placeholder_flag_counts"], dict)
+    assert isinstance(body["rows"], list)
+    if body["rows"]:
+        first = body["rows"][0]
+        assert first["qr_id"]
+        assert isinstance(first["flags"], list)
+
+
+def test_ops_inspection_qr_bulk_update_dry_run_does_not_persist(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    seed_placeholder = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=headers,
+        json={
+            "dry_run": False,
+            "create_missing": False,
+            "allow_placeholder_values": True,
+            "updates": [
+                {
+                    "qr_id": "QR-001",
+                    "equipment": "설비",
+                    "location": "위치",
+                    "default_item": "점검항목",
+                }
+            ],
+        },
+    )
+    assert seed_placeholder.status_code == 200
+
+    before = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert before.status_code == 200
+    before_body = before.json()
+    before_summary = before_body["summary"]
+    assert before_summary["placeholder_row_count"] >= 1
+    target_qr_id = "QR-001"
+
+    result = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=headers,
+        json={
+            "dry_run": True,
+            "create_missing": False,
+            "updates": [
+                {
+                    "qr_id": target_qr_id,
+                    "equipment": "변압기 1호기",
+                    "location": "B1 수변전실",
+                    "default_item": "변압기 외관 점검",
+                },
+                {
+                    "qr_id": "QR-404",
+                    "equipment": "비상발전기",
+                    "location": "지상 1층 발전기실",
+                    "default_item": "발전기 외관 상태 확인",
+                },
+            ],
+        },
+    )
+    assert result.status_code == 200
+    body = result.json()
+    summary = body["summary"]
+    assert body["dry_run"] is True
+    assert body["saved"] is False
+    assert summary["requested_count"] == 2
+    assert summary["applied_count"] == 1
+    assert summary["updated_count"] == 1
+    assert summary["created_count"] == 0
+    assert summary["placeholder_row_count_before"] == before_summary["placeholder_row_count"]
+    assert summary["placeholder_row_count_after"] == before_summary["placeholder_row_count"] - 1
+
+    after = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert after.status_code == 200
+    after_body = after.json()
+    assert after_body["summary"]["placeholder_row_count"] == before_summary["placeholder_row_count"]
+    assert after_body["summary"]["qr_asset_count"] == before_summary["qr_asset_count"]
+
+
+def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    seed_placeholder = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=headers,
+        json={
+            "dry_run": False,
+            "create_missing": False,
+            "allow_placeholder_values": True,
+            "updates": [
+                {
+                    "qr_id": "QR-002",
+                    "equipment": "설비",
+                    "location": "위치",
+                    "default_item": "점검항목",
+                }
+            ],
+        },
+    )
+    assert seed_placeholder.status_code == 200
+
+    before = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert before.status_code == 200
+    before_body = before.json()
+    before_summary = before_body["summary"]
+    assert before_summary["placeholder_row_count"] >= 1
+    target_qr_id = "QR-002"
+
+    result = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=headers,
+        json={
+            "dry_run": False,
+            "create_missing": True,
+            "updates": [
+                {
+                    "qr_id": target_qr_id,
+                    "equipment": "변압기 1호기",
+                    "location": "B1 수변전실",
+                    "default_item": "변압기 외관 점검",
+                },
+                {
+                    "qr_id": "QR-900",
+                    "equipment": "UPS 1호기",
+                    "location": "전기실",
+                    "default_item": "UPS 알람 상태 확인",
+                },
+            ],
+        },
+    )
+    assert result.status_code == 200
+    body = result.json()
+    summary = body["summary"]
+    assert body["dry_run"] is False
+    assert body["saved"] is True
+    assert body["saved_path"]
+    assert summary["requested_count"] == 2
+    assert summary["applied_count"] == 2
+    assert summary["updated_count"] == 1
+    assert summary["created_count"] == 1
+    assert summary["placeholder_row_count_before"] == before_summary["placeholder_row_count"]
+    assert summary["placeholder_row_count_after"] == before_summary["placeholder_row_count"] - 1
+
+    after = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert after.status_code == 200
+    after_body = after.json()
+    after_summary = after_body["summary"]
+    assert after_summary["placeholder_row_count"] == before_summary["placeholder_row_count"] - 1
+    assert after_summary["qr_asset_count"] == before_summary["qr_asset_count"] + 1
+    assert all(row["qr_id"] != target_qr_id for row in after_body["rows"])
+
+
+def test_work_order_sla_rules_and_inspection_priority_floor(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    rules = app_client.get("/api/work-orders/sla/rules", headers=headers)
+    assert rules.status_code == 200
+    rules_body = rules.json()
+    assert rules_body["applies_when"]["inspection_id_provided"] is True
+    assert rules_body["priority_floor_by_risk_level"]["danger"] == "critical"
+
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "task_type": "전기점검",
+        "equipment": "변압기",
+        "equipment_location": "B1 수변전실",
+        "checklist_set_id": "electrical_60",
+        "summary": {"total": 3, "normal": 0, "abnormal": 3, "na": 0},
+        "abnormal_action": "단자 체결 상태 및 발열 재점검",
+    }
+    checklist = [
+        {"group": "변압기", "item": "변압기 외관 점검", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 온도 상승 여부 확인", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 이상 소음 확인", "result": "abnormal", "action": ""},
+    ]
+    notes = "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "SLA Rule Site",
+            "location": "B1 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": inspected_at,
+            "notes": notes,
+        },
+    )
+    assert inspection.status_code == 201
+    inspection_id = int(inspection.json()["id"])
+
+    created = app_client.post(
+        "/api/work-orders",
+        headers=headers,
+        json={
+            "title": "Inspection-linked work order",
+            "description": "auto priority floor check",
+            "site": "SLA Rule Site",
+            "location": "B1 수변전실",
+            "priority": "low",
+            "inspection_id": inspection_id,
+        },
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["priority"] == "critical"
+    assert body["inspection_id"] == inspection_id
+    assert body["due_at"] is not None
+
+    events = app_client.get(
+        f"/api/work-orders/{body['id']}/events",
+        headers=headers,
+    )
+    assert events.status_code == 200
+    created_event = events.json()[0]
+    assert created_event["event_type"] == "created"
+    assert created_event["detail"]["requested_priority"] == "low"
+    assert created_event["detail"]["priority"] == "critical"
+    assert created_event["detail"]["priority_upgraded"] is True
+
+    mismatch = app_client.post(
+        "/api/work-orders",
+        headers=headers,
+        json={
+            "title": "Inspection site mismatch",
+            "description": "should fail",
+            "site": "Other Site",
+            "location": "B1",
+            "priority": "medium",
+            "inspection_id": inspection_id,
+        },
+    )
+    assert mismatch.status_code == 400
+    assert "inspection_id site must match work order site" in mismatch.json()["detail"]
 
 
 def test_workflow_lock_matrix_enforcement(app_client: TestClient) -> None:
@@ -4836,6 +5325,14 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_body["dr_rehearsal_attachment"]["month"] == month
     assert archive_body["dr_rehearsal_attachment"]["included"] is True
     assert archive_body["dr_rehearsal_attachment"]["latest_in_month"]["run_id"] == dr_run_body["run_id"]
+    assert "ops_checklists_import_validation_attachment" in archive_body
+    import_attachment = archive_body["ops_checklists_import_validation_attachment"]
+    assert import_attachment["month"] == month
+    assert import_attachment["included"] is True
+    assert import_attachment["status"] in {"ok", "warning", "error"}
+    assert isinstance(import_attachment["summary"], dict)
+    assert "error_count" in import_attachment["summary"]
+    assert "warning_count" in import_attachment["summary"]
 
     archive_csv = app_client.get(
         f"/api/admin/audit-archive/monthly/csv?month={month}",
@@ -4844,6 +5341,7 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_csv.status_code == 200
     assert archive_csv.headers["content-type"].startswith("text/csv")
     assert len(archive_csv.headers.get("x-audit-archive-sha256", "")) == 64
+    assert "attachment.ops_checklists_import_validation,status" in archive_csv.text
 
     with db_module.get_conn() as conn:
         first_row = conn.execute(

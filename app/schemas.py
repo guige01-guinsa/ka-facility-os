@@ -46,6 +46,23 @@ class InspectionRead(BaseModel):
     created_at: datetime
 
 
+class InspectionEvidenceRead(BaseModel):
+    id: int
+    inspection_id: int
+    site: str
+    file_name: str
+    content_type: str
+    file_size: int
+    storage_backend: str = "db"
+    sha256: str = ""
+    malware_scan_status: str = "unknown"
+    malware_scan_engine: Optional[str] = None
+    malware_scanned_at: Optional[datetime] = None
+    note: str
+    uploaded_by: str
+    uploaded_at: datetime
+
+
 WorkOrderPriority = Literal["low", "medium", "high", "critical"]
 WorkOrderStatus = Literal["open", "acked", "completed", "canceled"]
 AdminRole = Literal["owner", "manager", "operator", "auditor"]
