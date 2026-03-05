@@ -51510,25 +51510,37 @@ def _build_adoption_policy_response(
     policy_site: str | None,
 ) -> dict[str, Any]:
     scope_type = "site" if policy_site else "global"
-    return {
-        "site": policy_site,
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-        "version": ADOPTION_POLICY_RESPONSE_VERSION,
-        "scope": {
-            "type": scope_type,
-            "site": policy_site,
-            "policy_key": policy_key,
-        },
-        "meta": {
+    applies_to = policy_site or "global"
+    base_payload = _build_policy_response_payload(
+        policy_key=policy_key,
+        updated_at=updated_at,
+        policy=policy,
+        scope=scope_type,
+        applies_to=applies_to,
+        version=ADOPTION_POLICY_RESPONSE_VERSION,
+    )
+    meta = dict(base_payload.get("meta", {}))
+    meta.update(
+        {
             "schema": ADOPTION_POLICY_RESPONSE_SCHEMA,
             "schema_version": ADOPTION_POLICY_RESPONSE_VERSION,
             "phase": phase,
             "policy_kind": policy_kind,
             "endpoint": endpoint,
             "scope_type": scope_type,
+        }
+    )
+    return {
+        **base_payload,
+        "site": policy_site,
+        "version": ADOPTION_POLICY_RESPONSE_VERSION,
+        "applies_to": applies_to,
+        "scope": {
+            "type": scope_type,
+            "site": policy_site,
+            "policy_key": policy_key,
         },
+        "meta": meta,
     }
 
 

@@ -183,6 +183,7 @@ def _assert_adoption_policy_response_shape(
 ) -> None:
     assert body["version"] == "v1"
     assert body["site"] == site
+    assert body["applies_to"] == site
     assert str(body["policy_key"]).startswith(policy_key_prefix)
     assert isinstance(body.get("policy"), dict)
 
@@ -200,6 +201,11 @@ def _assert_adoption_policy_response_shape(
     assert meta["policy_kind"] == policy_kind
     assert meta["endpoint"] == endpoint
     assert meta["scope_type"] == "site"
+    assert meta["version"] == "v1"
+    assert meta["scope"] == "site"
+    assert meta["applies_to"] == site
+    assert meta["policy_key"] == body["policy_key"]
+    assert meta["updated_at"] == body["updated_at"]
 
 
 def test_health_and_meta(app_client: TestClient) -> None:

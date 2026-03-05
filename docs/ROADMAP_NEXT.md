@@ -142,6 +142,10 @@
   - deploy: `dep-d6krog7tskes73ar8n70` (`live`)
   - commit: `5863cc5` (`Consolidate tracker UI templates and route API domains via routers`)
   - smoke: `SMOKE_OK`
+- [x] 정책 API(W09~W15) 메타 스키마 표준화 2차 적용
+  - 공통 메타 확장: `meta.version`, `meta.scope`, `meta.applies_to`, `meta.policy_key`, `meta.updated_at`
+  - 적용 경로: `/api/ops/adoption/w09~w15/*-policy` GET/PUT
+  - 테스트: `test_w09_to_w15_policy_response_schema_standardized`에서 메타 필드 검증 강화
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
