@@ -146,6 +146,10 @@
   - 공통 메타 확장: `meta.version`, `meta.scope`, `meta.applies_to`, `meta.policy_key`, `meta.updated_at`
   - 적용 경로: `/api/ops/adoption/w09~w15/*-policy` GET/PUT
   - 테스트: `test_w09_to_w15_policy_response_schema_standardized`에서 메타 필드 검증 강화
+- [x] 정책 API 표준화 2차 운영 반영 배포 + AdminToken 스모크 완료 (2026-03-06)
+  - deploy: `dep-d6ks12fpm1nc73f6a3t0` (`live`)
+  - commit: `2082005` (`Standardize W09-W15 policy meta fields and tighten schema tests`)
+  - smoke: `SMOKE_OK`
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
