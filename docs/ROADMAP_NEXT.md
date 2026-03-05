@@ -138,6 +138,10 @@
   - `/api/adoption/*` -> `adoption_router`
   - `/api/public/*` -> `public_router`
   - 비고: `/`, `/web/*`, `/health`, `/meta`, `/api/auth/*`는 현재 `app` 직결 유지
+- [x] W16 1~2번 운영 반영 배포 + AdminToken 스모크 완료 (2026-03-06)
+  - deploy: `dep-d6krog7tskes73ar8n70` (`live`)
+  - commit: `5863cc5` (`Consolidate tracker UI templates and route API domains via routers`)
+  - smoke: `SMOKE_OK`
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
