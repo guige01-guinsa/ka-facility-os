@@ -5066,15 +5066,11 @@ def _build_evidence_archive_integrity_batch(
             )
 
     archive = build_monthly_audit_archive(month=None, include_entries=False, max_entries=10000)
+    # Verify digest/signature against the exact payload shape used by build_monthly_audit_archive.
     archive_payload = {
-        "month": archive["month"],
-        "window_start": archive["window_start"],
-        "window_end": archive["window_end"],
-        "generated_at": archive["generated_at"],
-        "entry_count": archive["entry_count"],
-        "max_entries": archive["max_entries"],
-        "chain": archive["chain"],
-        "entries": archive["entries"],
+        key: value
+        for key, value in archive.items()
+        if key not in {"archive_sha256", "signature", "signature_algorithm"}
     }
     archive_payload_text = json.dumps(archive_payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     computed_archive_sha = hashlib.sha256(archive_payload_text.encode("utf-8")).hexdigest()

@@ -5609,6 +5609,8 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert integrity_body["sample_per_table"] == 1
     assert "archive" in integrity_body
     assert "chain_ok" in integrity_body["archive"]
+    assert integrity_body["archive"]["archive_sha_ok"] is True
+    assert integrity_body["archive"]["signature_ok"] is True
 
     smoke_record = app_client.post(
         "/api/ops/deploy/smoke/record",
