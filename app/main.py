@@ -31674,6 +31674,7 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
   <script>
     (function() {
       const TOKEN_KEY = 'kaFacilityAdminToken';
+      const TOKEN_KEY_ALIASES = ['kaFacilityAdminToken', 'kaFacilityMainToken'];
       const tokenInput = document.getElementById('adminTokenInput');
       const tokenState = document.getElementById('tokenState');
       const resultMeta = document.getElementById('resultMeta');
@@ -31771,15 +31772,29 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
       }
 
       function getToken() {
-        const sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || '';
-        if (sessionToken) return sessionToken;
-        const legacyLocalToken = window.localStorage.getItem(TOKEN_KEY) || '';
-        if (legacyLocalToken) {
-          // Migrate legacy persistent token to session-only storage.
-          window.sessionStorage.setItem(TOKEN_KEY, legacyLocalToken);
-          window.localStorage.removeItem(TOKEN_KEY);
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        for (const key of keys) {
+          const sessionToken = window.sessionStorage.getItem(key) || '';
+          if (!sessionToken) continue;
+          if (key !== TOKEN_KEY) {
+            window.sessionStorage.setItem(TOKEN_KEY, sessionToken);
+            window.sessionStorage.removeItem(key);
+          }
+          return sessionToken;
         }
-        return legacyLocalToken;
+        for (const key of keys) {
+          const localToken = window.localStorage.getItem(key) || '';
+          if (!localToken) continue;
+          window.sessionStorage.setItem(TOKEN_KEY, localToken);
+          keys.forEach((aliasKey) => window.localStorage.removeItem(aliasKey));
+          keys.forEach((aliasKey) => {
+            if (aliasKey !== TOKEN_KEY) {
+              window.sessionStorage.removeItem(aliasKey);
+            }
+          });
+          return localToken;
+        }
+        return '';
       }
 
       function updateTokenState() {
@@ -31925,13 +31940,20 @@ def _build_facility_console_html(service_info: dict[str, str], modules_payload: 
           return;
         }
         window.sessionStorage.setItem(TOKEN_KEY, token);
-        window.localStorage.removeItem(TOKEN_KEY);
+        TOKEN_KEY_ALIASES.forEach((key) => {
+          if (key !== TOKEN_KEY) {
+            window.sessionStorage.removeItem(key);
+          }
+          window.localStorage.removeItem(key);
+        });
         updateTokenState();
       });
 
       document.getElementById('clearTokenBtn').addEventListener('click', () => {
-        window.sessionStorage.removeItem(TOKEN_KEY);
-        window.localStorage.removeItem(TOKEN_KEY);
+        TOKEN_KEY_ALIASES.forEach((key) => {
+          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
+        });
         tokenInput.value = '';
         updateTokenState();
       });
@@ -34423,7 +34445,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
   </div>
   <script>
     (function() {{
-      const TOKEN_KEY = "kaFacilityMainToken";
+      const TOKEN_KEY = "kaFacilityAdminToken";
+      const TOKEN_KEY_ALIASES = ["kaFacilityAdminToken", "kaFacilityMainToken"];
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
       const panels = {{
         overview: document.getElementById("panelOverview"),
@@ -34470,17 +34493,29 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       let opsElectricalChecklistRows = [];
 
       function getToken() {{
-        const sessionToken = window.sessionStorage.getItem(TOKEN_KEY) || "";
-        if (sessionToken) {{
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        for (const key of keys) {{
+          const sessionToken = window.sessionStorage.getItem(key) || "";
+          if (!sessionToken) continue;
+          if (key !== TOKEN_KEY) {{
+            window.sessionStorage.setItem(TOKEN_KEY, sessionToken);
+            window.sessionStorage.removeItem(key);
+          }}
           return sessionToken;
         }}
-        const legacyLocalToken = window.localStorage.getItem(TOKEN_KEY) || "";
-        if (legacyLocalToken) {{
-          // Migrate legacy persistent token to session-only storage.
-          window.sessionStorage.setItem(TOKEN_KEY, legacyLocalToken);
-          window.localStorage.removeItem(TOKEN_KEY);
+        for (const key of keys) {{
+          const localToken = window.localStorage.getItem(key) || "";
+          if (!localToken) continue;
+          window.sessionStorage.setItem(TOKEN_KEY, localToken);
+          keys.forEach((aliasKey) => window.localStorage.removeItem(aliasKey));
+          keys.forEach((aliasKey) => {{
+            if (aliasKey !== TOKEN_KEY) {{
+              window.sessionStorage.removeItem(aliasKey);
+            }}
+          }});
+          return localToken;
         }}
-        return legacyLocalToken;
+        return "";
       }}
 
       function setAuthState(text) {{
@@ -40505,13 +40540,20 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           return;
         }}
         window.sessionStorage.setItem(TOKEN_KEY, token);
-        window.localStorage.removeItem(TOKEN_KEY);
+        TOKEN_KEY_ALIASES.forEach((key) => {{
+          if (key !== TOKEN_KEY) {{
+            window.sessionStorage.removeItem(key);
+          }}
+          window.localStorage.removeItem(key);
+        }});
         authProfile = null;
         updateAuthStateFromToken();
       }});
       document.getElementById("clearTokenBtn").addEventListener("click", () => {{
-        window.sessionStorage.removeItem(TOKEN_KEY);
-        window.localStorage.removeItem(TOKEN_KEY);
+        TOKEN_KEY_ALIASES.forEach((key) => {{
+          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
+        }});
         tokenInput.value = "";
         authProfile = null;
         updateAuthStateFromToken();
