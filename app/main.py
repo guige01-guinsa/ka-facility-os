@@ -33093,6 +33093,9 @@ def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> 
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
     allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
+    w02_tracker_box_html = _build_shared_tracker_execution_box_html("w02", "W02")
+    w03_tracker_box_html = _build_shared_tracker_execution_box_html("w03", "W03")
+    w04_tracker_box_html = _build_shared_tracker_execution_box_html("w04", "W04")
     w09_tracker_box_html = _build_shared_tracker_execution_box_html("w09", "W09")
     w10_tracker_box_html = _build_shared_tracker_execution_box_html("w10", "W10")
     w11_tracker_box_html = _build_shared_tracker_execution_box_html("w11", "W11")
@@ -33924,110 +33927,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="adoptW04MistakesHtml" href="/web/adoption/w04/common-mistakes">W04 자주 하는 실수 HTML</a>
             </div>
           </div>
-          <div class="box">
-            <h3>W02 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w02TrackSite" placeholder="site (필수, 예: HQ)" />
-              <input id="w02TrackItemId" placeholder="tracker_item_id(숫자)" />
-              <input id="w02TrackAssignee" placeholder="담당자" />
-              <select id="w02TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w02TrackBootstrapBtn" class="btn run" type="button">W02 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w02TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w02TrackNote" placeholder="완료 메모(선택)" />
-              <input id="w02EvidenceNote" placeholder="증빙 메모(선택)" />
-              <input id="w02EvidenceFile" type="file" />
-              <button id="w02TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w02EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
-              <input id="w02Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
-              <input id="w02Reserved2" value="site 범위 권한 적용" disabled />
-              <input id="w02Reserved3" value="파일 최대 5MB" disabled />
-              <button id="w02TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w02CompletionNote" placeholder="완료 메모(선택)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w02CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w02Reserved4" value="준비도 게이트 필요" disabled />
-              <button id="w02ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w02CompleteBtn" class="btn" type="button">W02 완료 확정</button>
-            </div>
-            <div id="w02TrackerMeta" class="meta">조회 전</div>
-            <div id="w02TrackerSummary" class="cards"></div>
-            <div id="w02TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W02 완료 판정 결과</h4>
-            <div id="w02ReadinessMeta" class="meta">조회 전</div>
-            <div id="w02ReadinessCards" class="cards"></div>
-            <div id="w02ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w02EvidenceTable" class="empty">데이터 없음</div>
-          </div>
-          <div class="box">
-            <h3>W03 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w03TrackSite" placeholder="site (필수, 예: HQ)" />
-              <input id="w03TrackItemId" placeholder="tracker_item_id(숫자)" />
-              <input id="w03TrackAssignee" placeholder="담당자" />
-              <select id="w03TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w03TrackBootstrapBtn" class="btn run" type="button">W03 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w03TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w03TrackNote" placeholder="완료 메모(선택)" />
-              <input id="w03EvidenceNote" placeholder="증빙 메모(선택)" />
-              <input id="w03EvidenceFile" type="file" />
-              <button id="w03TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w03EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
-              <input id="w03Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
-              <input id="w03Reserved2" value="site 범위 권한 적용" disabled />
-              <input id="w03Reserved3" value="파일 최대 5MB" disabled />
-              <button id="w03TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w03CompletionNote" placeholder="완료 메모(선택)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w03CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w03Reserved4" value="준비도 게이트 필요" disabled />
-              <button id="w03ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w03CompleteBtn" class="btn" type="button">W03 완료 확정</button>
-            </div>
-            <div id="w03TrackerMeta" class="meta">조회 전</div>
-            <div id="w03TrackerSummary" class="cards"></div>
-            <div id="w03TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W03 완료 판정 결과</h4>
-            <div id="w03ReadinessMeta" class="meta">조회 전</div>
-            <div id="w03ReadinessCards" class="cards"></div>
-            <div id="w03ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w03EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w02_tracker_box_html}
+          {w03_tracker_box_html}
           <div class="box">
             <h3>W04 First-Success Funnel + Top Blockers</h3>
             <div class="filter-row">
@@ -34044,58 +33945,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             <h4 style="margin:10px 0 6px;">Top Blockers</h4>
             <div id="w04BlockerTable" class="empty">데이터 없음</div>
           </div>
-          <div class="box">
-            <h3>W04 실행 추적 (완료 체크 / 담당자 / 증빙 업로드)</h3>
-            <div class="filter-row">
-              <input id="w04TrackSite" placeholder="site (필수, 예: HQ)" />
-              <input id="w04TrackItemId" placeholder="tracker_item_id(숫자)" />
-              <input id="w04TrackAssignee" placeholder="담당자" />
-              <select id="w04TrackStatus">
-                <option value="">status(선택)</option>
-                <option value="pending">pending</option>
-                <option value="in_progress">in_progress</option>
-                <option value="done">done</option>
-                <option value="blocked">blocked</option>
-              </select>
-              <button id="w04TrackBootstrapBtn" class="btn run" type="button">W04 항목 생성</button>
-            </div>
-            <div class="filter-row">
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w04TrackCompleted" type="checkbox" />
-                완료 체크
-              </label>
-              <input id="w04TrackNote" placeholder="완료 메모(선택)" />
-              <input id="w04EvidenceNote" placeholder="증빙 메모(선택)" />
-              <input id="w04EvidenceFile" type="file" />
-              <button id="w04TrackUpdateBtn" class="btn" type="button">상태 저장</button>
-            </div>
-            <div class="filter-row">
-              <input id="w04EvidenceListItemId" placeholder="evidence 조회용 tracker_item_id(숫자)" />
-              <input id="w04Reserved1" value="쓰기 작업에는 토큰 필요" disabled />
-              <input id="w04Reserved2" value="site 범위 권한 적용" disabled />
-              <input id="w04Reserved3" value="파일 최대 5MB" disabled />
-              <button id="w04TrackRefreshBtn" class="btn run" type="button">추적현황 새로고침</button>
-            </div>
-            <div class="filter-row">
-              <input id="w04CompletionNote" placeholder="완료 메모(선택)" />
-              <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
-                <input id="w04CompletionForce" type="checkbox" />
-                강제 완료(owner/admin)
-              </label>
-              <input id="w04Reserved4" value="준비도 게이트 필요" disabled />
-              <button id="w04ReadinessBtn" class="btn run" type="button">완료 판정</button>
-              <button id="w04CompleteBtn" class="btn" type="button">W04 완료 확정</button>
-            </div>
-            <div id="w04TrackerMeta" class="meta">조회 전</div>
-            <div id="w04TrackerSummary" class="cards"></div>
-            <div id="w04TrackerTable" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">W04 완료 판정 결과</h4>
-            <div id="w04ReadinessMeta" class="meta">조회 전</div>
-            <div id="w04ReadinessCards" class="cards"></div>
-            <div id="w04ReadinessBlockers" class="empty">데이터 없음</div>
-            <h4 style="margin:10px 0 6px;">증빙 파일 목록</h4>
-            <div id="w04EvidenceTable" class="empty">데이터 없음</div>
-          </div>
+          {w04_tracker_box_html}
           <div class="box">
             <h3>W05 Usage Consistency</h3>
             <div id="adoptionW05Top" class="cards"></div>
@@ -41053,12 +40903,12 @@ def root(request: Request) -> Any:
     return _service_info_payload()
 
 
-@app.get("/api/public/adoption-plan")
+@public_router.get("/adoption-plan")
 def get_public_adoption_plan() -> dict[str, Any]:
     return _adoption_plan_payload()
 
 
-@app.get("/api/public/adoption-plan/campaign")
+@public_router.get("/adoption-plan/campaign")
 def get_public_adoption_campaign() -> dict[str, Any]:
     plan = _adoption_plan_payload()
     return {
@@ -41068,80 +40918,80 @@ def get_public_adoption_campaign() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/adoption-plan/w02")
+@public_router.get("/adoption-plan/w02")
 def get_public_adoption_w02() -> dict[str, Any]:
     return _adoption_w02_payload()
 
 
-@app.get("/api/public/adoption-plan/w03")
+@public_router.get("/adoption-plan/w03")
 def get_public_adoption_w03() -> dict[str, Any]:
     return _adoption_w03_payload()
 
 
-@app.get("/api/public/adoption-plan/w04")
+@public_router.get("/adoption-plan/w04")
 def get_public_adoption_w04() -> dict[str, Any]:
     return _adoption_w04_payload()
 
 
-@app.get("/api/public/adoption-plan/w05")
+@public_router.get("/adoption-plan/w05")
 def get_public_adoption_w05() -> dict[str, Any]:
     return _adoption_w05_payload()
 
 
-@app.get("/api/public/adoption-plan/w06")
+@public_router.get("/adoption-plan/w06")
 def get_public_adoption_w06() -> dict[str, Any]:
     return _adoption_w06_payload()
 
 
-@app.get("/api/public/adoption-plan/w07")
+@public_router.get("/adoption-plan/w07")
 def get_public_adoption_w07() -> dict[str, Any]:
     return _adoption_w07_payload()
 
 
-@app.get("/api/public/adoption-plan/w08")
+@public_router.get("/adoption-plan/w08")
 def get_public_adoption_w08() -> dict[str, Any]:
     return _adoption_w08_payload()
 
 
-@app.get("/api/public/adoption-plan/w09")
+@public_router.get("/adoption-plan/w09")
 def get_public_adoption_w09() -> dict[str, Any]:
     return _adoption_w09_payload()
 
 
-@app.get("/api/public/adoption-plan/w10")
+@public_router.get("/adoption-plan/w10")
 def get_public_adoption_w10() -> dict[str, Any]:
     return _adoption_w10_payload()
 
 
-@app.get("/api/public/adoption-plan/w11")
+@public_router.get("/adoption-plan/w11")
 def get_public_adoption_w11() -> dict[str, Any]:
     return _adoption_w11_payload()
 
 
-@app.get("/api/public/adoption-plan/w12")
+@public_router.get("/adoption-plan/w12")
 def get_public_adoption_w12() -> dict[str, Any]:
     return _adoption_w12_payload()
 
 
-@app.get("/api/public/adoption-plan/w13")
+@public_router.get("/adoption-plan/w13")
 def get_public_adoption_w13() -> dict[str, Any]:
     return _adoption_w13_payload()
 
 
-@app.get("/api/public/adoption-plan/w14")
+@public_router.get("/adoption-plan/w14")
 def get_public_adoption_w14() -> dict[str, Any]:
     return _adoption_w14_payload()
 
 
 
-@app.get("/api/public/adoption-plan/w15")
+@public_router.get("/adoption-plan/w15")
 def get_public_adoption_w15() -> dict[str, Any]:
     return _adoption_w15_payload()
 
 
 
 
-@app.get("/api/public/modules", response_model=None)
+@public_router.get("/modules", response_model=None)
 def get_public_modules(request: Request) -> Any:
     payload = _facility_modules_payload()
     accept = request.headers.get("accept", "").lower()
@@ -41150,7 +41000,7 @@ def get_public_modules(request: Request) -> Any:
     return payload
 
 
-@app.get("/api/public/tutorial-simulator", response_model=None)
+@public_router.get("/tutorial-simulator", response_model=None)
 def get_public_tutorial_simulator(request: Request) -> Any:
     payload = _build_tutorial_simulator_payload()
     accept = request.headers.get("accept", "").lower()
@@ -41159,12 +41009,12 @@ def get_public_tutorial_simulator(request: Request) -> Any:
     return payload
 
 
-@app.get("/api/public/tutorial-simulator/sample-files")
+@public_router.get("/tutorial-simulator/sample-files")
 def get_public_tutorial_simulator_sample_files() -> dict[str, Any]:
     return _tutorial_simulator_sample_files_payload()
 
 
-@app.get("/api/public/tutorial-simulator/sample-files/{sample_id}", response_model=None)
+@public_router.get("/tutorial-simulator/sample-files/{sample_id}", response_model=None)
 def download_public_tutorial_simulator_sample_file(sample_id: str) -> Response:
     artifact = _find_tutorial_simulator_sample_file(sample_id)
     if artifact is None:
@@ -41189,7 +41039,7 @@ def download_public_tutorial_simulator_sample_file(sample_id: str) -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/schedule.csv")
+@public_router.get("/adoption-plan/schedule.csv")
 def get_public_adoption_plan_schedule_csv() -> Response:
     plan = _adoption_plan_payload()
     csv_text = _build_adoption_plan_schedule_csv(plan)
@@ -41201,7 +41051,7 @@ def get_public_adoption_plan_schedule_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/schedule.ics")
+@public_router.get("/adoption-plan/schedule.ics")
 def get_public_adoption_plan_schedule_ics() -> Response:
     plan = _adoption_plan_payload()
     ics_text = _build_adoption_plan_schedule_ics(plan)
@@ -41213,7 +41063,7 @@ def get_public_adoption_plan_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w02/checklist.csv")
+@public_router.get("/adoption-plan/w02/checklist.csv")
 def get_public_adoption_w02_checklist_csv() -> Response:
     payload = _adoption_w02_payload()
     csv_text = _build_adoption_w02_checklist_csv(payload)
@@ -41225,7 +41075,7 @@ def get_public_adoption_w02_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w02/schedule.ics")
+@public_router.get("/adoption-plan/w02/schedule.ics")
 def get_public_adoption_w02_schedule_ics() -> Response:
     payload = _adoption_w02_payload()
     ics_text = _build_adoption_w02_schedule_ics(payload)
@@ -41237,7 +41087,7 @@ def get_public_adoption_w02_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w03/checklist.csv")
+@public_router.get("/adoption-plan/w03/checklist.csv")
 def get_public_adoption_w03_checklist_csv() -> Response:
     payload = _adoption_w03_payload()
     csv_text = _build_adoption_w03_checklist_csv(payload)
@@ -41249,7 +41099,7 @@ def get_public_adoption_w03_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w03/schedule.ics")
+@public_router.get("/adoption-plan/w03/schedule.ics")
 def get_public_adoption_w03_schedule_ics() -> Response:
     payload = _adoption_w03_payload()
     ics_text = _build_adoption_w03_schedule_ics(payload)
@@ -41261,7 +41111,7 @@ def get_public_adoption_w03_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w04/checklist.csv")
+@public_router.get("/adoption-plan/w04/checklist.csv")
 def get_public_adoption_w04_checklist_csv() -> Response:
     payload = _adoption_w04_payload()
     csv_text = _build_adoption_w04_checklist_csv(payload)
@@ -41273,7 +41123,7 @@ def get_public_adoption_w04_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w04/schedule.ics")
+@public_router.get("/adoption-plan/w04/schedule.ics")
 def get_public_adoption_w04_schedule_ics() -> Response:
     payload = _adoption_w04_payload()
     ics_text = _build_adoption_w04_schedule_ics(payload)
@@ -41285,7 +41135,7 @@ def get_public_adoption_w04_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w04/common-mistakes")
+@public_router.get("/adoption-plan/w04/common-mistakes")
 def get_public_adoption_w04_common_mistakes(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -41302,7 +41152,7 @@ def get_public_adoption_w04_common_mistakes_html(
     return HTMLResponse(_build_w04_common_mistakes_html(payload))
 
 
-@app.get("/api/public/adoption-plan/w05/missions.csv")
+@public_router.get("/adoption-plan/w05/missions.csv")
 def get_public_adoption_w05_missions_csv() -> Response:
     payload = _adoption_w05_payload()
     csv_text = _build_adoption_w05_missions_csv(payload)
@@ -41314,7 +41164,7 @@ def get_public_adoption_w05_missions_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w05/schedule.ics")
+@public_router.get("/adoption-plan/w05/schedule.ics")
 def get_public_adoption_w05_schedule_ics() -> Response:
     payload = _adoption_w05_payload()
     ics_text = _build_adoption_w05_schedule_ics(payload)
@@ -41326,7 +41176,7 @@ def get_public_adoption_w05_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w05/help-docs")
+@public_router.get("/adoption-plan/w05/help-docs")
 def get_public_adoption_w05_help_docs() -> dict[str, Any]:
     payload = _adoption_w05_payload()
     return {
@@ -41337,7 +41187,7 @@ def get_public_adoption_w05_help_docs() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/adoption-plan/w06/checklist.csv")
+@public_router.get("/adoption-plan/w06/checklist.csv")
 def get_public_adoption_w06_checklist_csv() -> Response:
     payload = _adoption_w06_payload()
     csv_text = _build_adoption_w06_checklist_csv(payload)
@@ -41349,7 +41199,7 @@ def get_public_adoption_w06_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w06/schedule.ics")
+@public_router.get("/adoption-plan/w06/schedule.ics")
 def get_public_adoption_w06_schedule_ics() -> Response:
     payload = _adoption_w06_payload()
     ics_text = _build_adoption_w06_schedule_ics(payload)
@@ -41361,7 +41211,7 @@ def get_public_adoption_w06_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w06/rbac-audit-template")
+@public_router.get("/adoption-plan/w06/rbac-audit-template")
 def get_public_adoption_w06_rbac_audit_template() -> dict[str, Any]:
     payload = _adoption_w06_payload()
     return {
@@ -41372,7 +41222,7 @@ def get_public_adoption_w06_rbac_audit_template() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/adoption-plan/w07/checklist.csv")
+@public_router.get("/adoption-plan/w07/checklist.csv")
 def get_public_adoption_w07_checklist_csv() -> Response:
     payload = _adoption_w07_payload()
     csv_text = _build_adoption_w07_checklist_csv(payload)
@@ -41384,7 +41234,7 @@ def get_public_adoption_w07_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w07/schedule.ics")
+@public_router.get("/adoption-plan/w07/schedule.ics")
 def get_public_adoption_w07_schedule_ics() -> Response:
     payload = _adoption_w07_payload()
     ics_text = _build_adoption_w07_schedule_ics(payload)
@@ -41396,7 +41246,7 @@ def get_public_adoption_w07_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w07/coaching-playbook")
+@public_router.get("/adoption-plan/w07/coaching-playbook")
 def get_public_adoption_w07_coaching_playbook() -> dict[str, Any]:
     payload = _adoption_w07_payload()
     return {
@@ -41407,7 +41257,7 @@ def get_public_adoption_w07_coaching_playbook() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/adoption-plan/w08/checklist.csv")
+@public_router.get("/adoption-plan/w08/checklist.csv")
 def get_public_adoption_w08_checklist_csv() -> Response:
     payload = _adoption_w08_payload()
     csv_text = _build_adoption_w08_checklist_csv(payload)
@@ -41419,7 +41269,7 @@ def get_public_adoption_w08_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w08/schedule.ics")
+@public_router.get("/adoption-plan/w08/schedule.ics")
 def get_public_adoption_w08_schedule_ics() -> Response:
     payload = _adoption_w08_payload()
     ics_text = _build_adoption_w08_schedule_ics(payload)
@@ -41431,7 +41281,7 @@ def get_public_adoption_w08_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w09/checklist.csv")
+@public_router.get("/adoption-plan/w09/checklist.csv")
 def get_public_adoption_w09_checklist_csv() -> Response:
     payload = _adoption_w09_payload()
     csv_text = _build_adoption_w09_checklist_csv(payload)
@@ -41443,7 +41293,7 @@ def get_public_adoption_w09_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w09/schedule.ics")
+@public_router.get("/adoption-plan/w09/schedule.ics")
 def get_public_adoption_w09_schedule_ics() -> Response:
     payload = _adoption_w09_payload()
     ics_text = _build_adoption_w09_schedule_ics(payload)
@@ -41455,7 +41305,7 @@ def get_public_adoption_w09_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w10/checklist.csv")
+@public_router.get("/adoption-plan/w10/checklist.csv")
 def get_public_adoption_w10_checklist_csv() -> Response:
     payload = _adoption_w10_payload()
     csv_text = _build_adoption_w10_checklist_csv(payload)
@@ -41467,7 +41317,7 @@ def get_public_adoption_w10_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w10/schedule.ics")
+@public_router.get("/adoption-plan/w10/schedule.ics")
 def get_public_adoption_w10_schedule_ics() -> Response:
     payload = _adoption_w10_payload()
     ics_text = _build_adoption_w10_schedule_ics(payload)
@@ -41479,7 +41329,7 @@ def get_public_adoption_w10_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w11/checklist.csv")
+@public_router.get("/adoption-plan/w11/checklist.csv")
 def get_public_adoption_w11_checklist_csv() -> Response:
     payload = _adoption_w11_payload()
     csv_text = _build_adoption_w11_checklist_csv(payload)
@@ -41491,7 +41341,7 @@ def get_public_adoption_w11_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w11/schedule.ics")
+@public_router.get("/adoption-plan/w11/schedule.ics")
 def get_public_adoption_w11_schedule_ics() -> Response:
     payload = _adoption_w11_payload()
     ics_text = _build_adoption_w11_schedule_ics(payload)
@@ -41503,7 +41353,7 @@ def get_public_adoption_w11_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w12/checklist.csv")
+@public_router.get("/adoption-plan/w12/checklist.csv")
 def get_public_adoption_w12_checklist_csv() -> Response:
     payload = _adoption_w12_payload()
     csv_text = _build_adoption_w12_checklist_csv(payload)
@@ -41515,7 +41365,7 @@ def get_public_adoption_w12_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w12/schedule.ics")
+@public_router.get("/adoption-plan/w12/schedule.ics")
 def get_public_adoption_w12_schedule_ics() -> Response:
     payload = _adoption_w12_payload()
     ics_text = _build_adoption_w12_schedule_ics(payload)
@@ -41527,7 +41377,7 @@ def get_public_adoption_w12_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w13/checklist.csv")
+@public_router.get("/adoption-plan/w13/checklist.csv")
 def get_public_adoption_w13_checklist_csv() -> Response:
     payload = _adoption_w13_payload()
     csv_text = _build_adoption_w13_checklist_csv(payload)
@@ -41539,7 +41389,7 @@ def get_public_adoption_w13_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w13/schedule.ics")
+@public_router.get("/adoption-plan/w13/schedule.ics")
 def get_public_adoption_w13_schedule_ics() -> Response:
     payload = _adoption_w13_payload()
     ics_text = _build_adoption_w13_schedule_ics(payload)
@@ -41551,7 +41401,7 @@ def get_public_adoption_w13_schedule_ics() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w14/checklist.csv")
+@public_router.get("/adoption-plan/w14/checklist.csv")
 def get_public_adoption_w14_checklist_csv() -> Response:
     payload = _adoption_w14_payload()
     csv_text = _build_adoption_w14_checklist_csv(payload)
@@ -41563,7 +41413,7 @@ def get_public_adoption_w14_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w14/schedule.ics")
+@public_router.get("/adoption-plan/w14/schedule.ics")
 def get_public_adoption_w14_schedule_ics() -> Response:
     payload = _adoption_w14_payload()
     ics_text = _build_adoption_w14_schedule_ics(payload)
@@ -41576,7 +41426,7 @@ def get_public_adoption_w14_schedule_ics() -> Response:
 
 
 
-@app.get("/api/public/adoption-plan/w15/checklist.csv")
+@public_router.get("/adoption-plan/w15/checklist.csv")
 def get_public_adoption_w15_checklist_csv() -> Response:
     payload = _adoption_w15_payload()
     csv_text = _build_adoption_w15_checklist_csv(payload)
@@ -41588,7 +41438,7 @@ def get_public_adoption_w15_checklist_csv() -> Response:
     )
 
 
-@app.get("/api/public/adoption-plan/w15/schedule.ics")
+@public_router.get("/adoption-plan/w15/schedule.ics")
 def get_public_adoption_w15_schedule_ics() -> Response:
     payload = _adoption_w15_payload()
     ics_text = _build_adoption_w15_schedule_ics(payload)
@@ -41602,7 +41452,7 @@ def get_public_adoption_w15_schedule_ics() -> Response:
 
 
 
-@app.get("/api/public/adoption-plan/w08/reporting-sop")
+@public_router.get("/adoption-plan/w08/reporting-sop")
 def get_public_adoption_w08_reporting_sop() -> dict[str, Any]:
     payload = _adoption_w08_payload()
     return {
@@ -41613,12 +41463,12 @@ def get_public_adoption_w08_reporting_sop() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/adoption-plan/w02/sample-files")
+@public_router.get("/adoption-plan/w02/sample-files")
 def get_public_adoption_w02_sample_files() -> dict[str, Any]:
     return _w02_sample_files_payload()
 
 
-@app.get("/api/public/adoption-plan/w02/sample-files/{sample_id}", response_model=None)
+@public_router.get("/adoption-plan/w02/sample-files/{sample_id}", response_model=None)
 def download_public_adoption_w02_sample_file(sample_id: str) -> Response:
     artifact = _find_w02_sample_file(sample_id)
     if artifact is None:
@@ -41640,12 +41490,12 @@ def download_public_adoption_w02_sample_file(sample_id: str) -> Response:
     )
 
 
-@app.get("/api/public/post-mvp")
+@public_router.get("/post-mvp")
 def get_public_post_mvp_plan() -> dict[str, Any]:
     return _post_mvp_payload()
 
 
-@app.get("/api/public/post-mvp/backlog.csv")
+@public_router.get("/post-mvp/backlog.csv")
 def get_public_post_mvp_backlog_csv() -> Response:
     plan = _post_mvp_payload()
     csv_text = _build_post_mvp_backlog_csv(plan)
@@ -41657,7 +41507,7 @@ def get_public_post_mvp_backlog_csv() -> Response:
     )
 
 
-@app.get("/api/public/post-mvp/releases.ics")
+@public_router.get("/post-mvp/releases.ics")
 def get_public_post_mvp_releases_ics() -> Response:
     plan = _post_mvp_payload()
     ics_text = _build_post_mvp_release_ics(plan)
@@ -41669,7 +41519,7 @@ def get_public_post_mvp_releases_ics() -> Response:
     )
 
 
-@app.get("/api/public/post-mvp/kpi-dashboard")
+@public_router.get("/post-mvp/kpi-dashboard")
 def get_public_post_mvp_kpi_dashboard() -> dict[str, Any]:
     plan = _post_mvp_payload()
     return {
@@ -41680,7 +41530,7 @@ def get_public_post_mvp_kpi_dashboard() -> dict[str, Any]:
     }
 
 
-@app.get("/api/public/post-mvp/risks")
+@public_router.get("/post-mvp/risks")
 def get_public_post_mvp_risks() -> dict[str, Any]:
     plan = _post_mvp_payload()
     return {
@@ -41691,7 +41541,7 @@ def get_public_post_mvp_risks() -> dict[str, Any]:
     }
 
 
-@app.post("/api/adoption/w02/tracker/bootstrap", response_model=W02TrackerBootstrapResponse)
+@adoption_router.post("/w02/tracker/bootstrap", response_model=W02TrackerBootstrapResponse)
 def bootstrap_w02_tracker_items(
     payload: W02TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
@@ -41772,7 +41622,7 @@ def bootstrap_w02_tracker_items(
     )
 
 
-@app.get("/api/adoption/w02/tracker/items", response_model=list[W02TrackerItemRead])
+@adoption_router.get("/w02/tracker/items", response_model=list[W02TrackerItemRead])
 def list_w02_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -41814,7 +41664,7 @@ def list_w02_tracker_items(
     return [_row_to_w02_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w02/tracker/overview", response_model=W02TrackerOverviewRead)
+@adoption_router.get("/w02/tracker/overview", response_model=W02TrackerOverviewRead)
 def get_w02_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
@@ -41828,7 +41678,7 @@ def get_w02_tracker_overview(
     return _compute_w02_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w02/tracker/readiness", response_model=W02TrackerReadinessRead)
+@adoption_router.get("/w02/tracker/readiness", response_model=W02TrackerReadinessRead)
 def get_w02_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
@@ -41838,7 +41688,7 @@ def get_w02_tracker_readiness(
     return _compute_w02_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w02/tracker/completion", response_model=W02TrackerCompletionRead)
+@adoption_router.get("/w02/tracker/completion", response_model=W02TrackerCompletionRead)
 def get_w02_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
@@ -41854,7 +41704,7 @@ def get_w02_tracker_completion(
     return _row_to_w02_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w02/tracker/complete", response_model=W02TrackerCompletionRead)
+@adoption_router.post("/w02/tracker/complete", response_model=W02TrackerCompletionRead)
 def complete_w02_tracker(
     payload: W02TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:write")),
@@ -41945,7 +41795,7 @@ def complete_w02_tracker(
     return model
 
 
-@app.patch("/api/adoption/w02/tracker/items/{tracker_item_id}", response_model=W02TrackerItemRead)
+@adoption_router.patch("/w02/tracker/items/{tracker_item_id}", response_model=W02TrackerItemRead)
 def update_w02_tracker_item(
     tracker_item_id: int,
     payload: W02TrackerItemUpdate,
@@ -42049,7 +41899,7 @@ def update_w02_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w02/tracker/items/{tracker_item_id}/evidence", response_model=W02EvidenceRead, status_code=201)
+@adoption_router.post("/w02/tracker/items/{tracker_item_id}/evidence", response_model=W02EvidenceRead, status_code=201)
 async def upload_w02_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -42150,7 +42000,7 @@ async def upload_w02_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w02/tracker/items/{tracker_item_id}/evidence", response_model=list[W02EvidenceRead])
+@adoption_router.get("/w02/tracker/items/{tracker_item_id}/evidence", response_model=list[W02EvidenceRead])
 def list_w02_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
@@ -42171,7 +42021,7 @@ def list_w02_tracker_evidence(
     return [_row_to_w02_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w02/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w02/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w02_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w02:read")),
@@ -42214,7 +42064,7 @@ def download_w02_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w03/tracker/bootstrap", response_model=W03TrackerBootstrapResponse)
+@adoption_router.post("/w03/tracker/bootstrap", response_model=W03TrackerBootstrapResponse)
 def bootstrap_w03_tracker_items(
     payload: W03TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:write")),
@@ -42295,7 +42145,7 @@ def bootstrap_w03_tracker_items(
     )
 
 
-@app.get("/api/adoption/w03/tracker/items", response_model=list[W03TrackerItemRead])
+@adoption_router.get("/w03/tracker/items", response_model=list[W03TrackerItemRead])
 def list_w03_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -42337,7 +42187,7 @@ def list_w03_tracker_items(
     return [_row_to_w03_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w03/tracker/overview", response_model=W03TrackerOverviewRead)
+@adoption_router.get("/w03/tracker/overview", response_model=W03TrackerOverviewRead)
 def get_w03_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:read")),
@@ -42351,7 +42201,7 @@ def get_w03_tracker_overview(
     return _compute_w03_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w03/tracker/readiness", response_model=W03TrackerReadinessRead)
+@adoption_router.get("/w03/tracker/readiness", response_model=W03TrackerReadinessRead)
 def get_w03_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:read")),
@@ -42361,7 +42211,7 @@ def get_w03_tracker_readiness(
     return _compute_w03_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w03/tracker/completion", response_model=W03TrackerCompletionRead)
+@adoption_router.get("/w03/tracker/completion", response_model=W03TrackerCompletionRead)
 def get_w03_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:read")),
@@ -42377,7 +42227,7 @@ def get_w03_tracker_completion(
     return _row_to_w03_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w03/tracker/complete", response_model=W03TrackerCompletionRead)
+@adoption_router.post("/w03/tracker/complete", response_model=W03TrackerCompletionRead)
 def complete_w03_tracker(
     payload: W03TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:write")),
@@ -42468,7 +42318,7 @@ def complete_w03_tracker(
     return model
 
 
-@app.patch("/api/adoption/w03/tracker/items/{tracker_item_id}", response_model=W03TrackerItemRead)
+@adoption_router.patch("/w03/tracker/items/{tracker_item_id}", response_model=W03TrackerItemRead)
 def update_w03_tracker_item(
     tracker_item_id: int,
     payload: W03TrackerItemUpdate,
@@ -42571,7 +42421,7 @@ def update_w03_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w03/tracker/items/{tracker_item_id}/evidence", response_model=W03EvidenceRead, status_code=201)
+@adoption_router.post("/w03/tracker/items/{tracker_item_id}/evidence", response_model=W03EvidenceRead, status_code=201)
 async def upload_w03_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -42672,7 +42522,7 @@ async def upload_w03_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w03/tracker/items/{tracker_item_id}/evidence", response_model=list[W03EvidenceRead])
+@adoption_router.get("/w03/tracker/items/{tracker_item_id}/evidence", response_model=list[W03EvidenceRead])
 def list_w03_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:read")),
@@ -42693,7 +42543,7 @@ def list_w03_tracker_evidence(
     return [_row_to_w03_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w03/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w03/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w03_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w03:read")),
@@ -42736,7 +42586,7 @@ def download_w03_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w04/tracker/bootstrap", response_model=W04TrackerBootstrapResponse)
+@adoption_router.post("/w04/tracker/bootstrap", response_model=W04TrackerBootstrapResponse)
 def bootstrap_w04_tracker_items(
     payload: W04TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
@@ -42817,7 +42667,7 @@ def bootstrap_w04_tracker_items(
     )
 
 
-@app.get("/api/adoption/w04/tracker/items", response_model=list[W04TrackerItemRead])
+@adoption_router.get("/w04/tracker/items", response_model=list[W04TrackerItemRead])
 def list_w04_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -42859,7 +42709,7 @@ def list_w04_tracker_items(
     return [_row_to_w04_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w04/tracker/overview", response_model=W04TrackerOverviewRead)
+@adoption_router.get("/w04/tracker/overview", response_model=W04TrackerOverviewRead)
 def get_w04_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
@@ -42873,7 +42723,7 @@ def get_w04_tracker_overview(
     return _compute_w04_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w04/tracker/readiness", response_model=W04TrackerReadinessRead)
+@adoption_router.get("/w04/tracker/readiness", response_model=W04TrackerReadinessRead)
 def get_w04_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
@@ -42883,7 +42733,7 @@ def get_w04_tracker_readiness(
     return _compute_w04_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w04/tracker/completion", response_model=W04TrackerCompletionRead)
+@adoption_router.get("/w04/tracker/completion", response_model=W04TrackerCompletionRead)
 def get_w04_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
@@ -42899,7 +42749,7 @@ def get_w04_tracker_completion(
     return _row_to_w04_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w04/tracker/complete", response_model=W04TrackerCompletionRead)
+@adoption_router.post("/w04/tracker/complete", response_model=W04TrackerCompletionRead)
 def complete_w04_tracker(
     payload: W04TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:write")),
@@ -42990,7 +42840,7 @@ def complete_w04_tracker(
     return model
 
 
-@app.patch("/api/adoption/w04/tracker/items/{tracker_item_id}", response_model=W04TrackerItemRead)
+@adoption_router.patch("/w04/tracker/items/{tracker_item_id}", response_model=W04TrackerItemRead)
 def update_w04_tracker_item(
     tracker_item_id: int,
     payload: W04TrackerItemUpdate,
@@ -43093,7 +42943,7 @@ def update_w04_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w04/tracker/items/{tracker_item_id}/evidence", response_model=W04EvidenceRead, status_code=201)
+@adoption_router.post("/w04/tracker/items/{tracker_item_id}/evidence", response_model=W04EvidenceRead, status_code=201)
 async def upload_w04_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -43194,7 +43044,7 @@ async def upload_w04_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w04/tracker/items/{tracker_item_id}/evidence", response_model=list[W04EvidenceRead])
+@adoption_router.get("/w04/tracker/items/{tracker_item_id}/evidence", response_model=list[W04EvidenceRead])
 def list_w04_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
@@ -43215,7 +43065,7 @@ def list_w04_tracker_evidence(
     return [_row_to_w04_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w04/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w04/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w04_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w04:read")),
@@ -43258,7 +43108,7 @@ def download_w04_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w07/tracker/bootstrap", response_model=W07TrackerBootstrapResponse)
+@adoption_router.post("/w07/tracker/bootstrap", response_model=W07TrackerBootstrapResponse)
 def bootstrap_w07_tracker_items(
     payload: W07TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
@@ -43339,7 +43189,7 @@ def bootstrap_w07_tracker_items(
     )
 
 
-@app.get("/api/adoption/w07/tracker/items", response_model=list[W07TrackerItemRead])
+@adoption_router.get("/w07/tracker/items", response_model=list[W07TrackerItemRead])
 def list_w07_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -43381,7 +43231,7 @@ def list_w07_tracker_items(
     return [_row_to_w07_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w07/tracker/overview", response_model=W07TrackerOverviewRead)
+@adoption_router.get("/w07/tracker/overview", response_model=W07TrackerOverviewRead)
 def get_w07_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -43395,7 +43245,7 @@ def get_w07_tracker_overview(
     return _compute_w07_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w07/tracker/readiness", response_model=W07TrackerReadinessRead)
+@adoption_router.get("/w07/tracker/readiness", response_model=W07TrackerReadinessRead)
 def get_w07_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -43405,7 +43255,7 @@ def get_w07_tracker_readiness(
     return _compute_w07_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w07/tracker/completion", response_model=W07TrackerCompletionRead)
+@adoption_router.get("/w07/tracker/completion", response_model=W07TrackerCompletionRead)
 def get_w07_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -43421,7 +43271,7 @@ def get_w07_tracker_completion(
     return _row_to_w07_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.get("/api/adoption/w07/tracker/completion-package", response_model=None)
+@adoption_router.get("/w07/tracker/completion-package", response_model=None)
 def download_w07_tracker_completion_package(
     site: Annotated[str, Query(min_length=1)],
     include_evidence: Annotated[bool, Query()] = True,
@@ -43480,7 +43330,7 @@ def download_w07_tracker_completion_package(
     )
 
 
-@app.post("/api/adoption/w07/tracker/complete", response_model=W07TrackerCompletionRead)
+@adoption_router.post("/w07/tracker/complete", response_model=W07TrackerCompletionRead)
 def complete_w07_tracker(
     payload: W07TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:write")),
@@ -43571,7 +43421,7 @@ def complete_w07_tracker(
     return model
 
 
-@app.patch("/api/adoption/w07/tracker/items/{tracker_item_id}", response_model=W07TrackerItemRead)
+@adoption_router.patch("/w07/tracker/items/{tracker_item_id}", response_model=W07TrackerItemRead)
 def update_w07_tracker_item(
     tracker_item_id: int,
     payload: W07TrackerItemUpdate,
@@ -43674,7 +43524,7 @@ def update_w07_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w07/tracker/items/{tracker_item_id}/evidence", response_model=W07EvidenceRead, status_code=201)
+@adoption_router.post("/w07/tracker/items/{tracker_item_id}/evidence", response_model=W07EvidenceRead, status_code=201)
 async def upload_w07_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -43775,7 +43625,7 @@ async def upload_w07_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w07/tracker/items/{tracker_item_id}/evidence", response_model=list[W07EvidenceRead])
+@adoption_router.get("/w07/tracker/items/{tracker_item_id}/evidence", response_model=list[W07EvidenceRead])
 def list_w07_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -43796,7 +43646,7 @@ def list_w07_tracker_evidence(
     return [_row_to_w07_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w07/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w07/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w07_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -43840,7 +43690,7 @@ def download_w07_tracker_evidence(
 
 
 
-@app.post("/api/adoption/w09/tracker/bootstrap", response_model=W09TrackerBootstrapResponse)
+@adoption_router.post("/w09/tracker/bootstrap", response_model=W09TrackerBootstrapResponse)
 def bootstrap_w09_tracker_items(
     payload: W09TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
@@ -43921,7 +43771,7 @@ def bootstrap_w09_tracker_items(
     )
 
 
-@app.get("/api/adoption/w09/tracker/items", response_model=list[W09TrackerItemRead])
+@adoption_router.get("/w09/tracker/items", response_model=list[W09TrackerItemRead])
 def list_w09_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -43963,7 +43813,7 @@ def list_w09_tracker_items(
     return [_row_to_w09_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w09/tracker/overview", response_model=W09TrackerOverviewRead)
+@adoption_router.get("/w09/tracker/overview", response_model=W09TrackerOverviewRead)
 def get_w09_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -43977,7 +43827,7 @@ def get_w09_tracker_overview(
     return _compute_w09_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w09/tracker/readiness", response_model=W09TrackerReadinessRead)
+@adoption_router.get("/w09/tracker/readiness", response_model=W09TrackerReadinessRead)
 def get_w09_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -43987,7 +43837,7 @@ def get_w09_tracker_readiness(
     return _compute_w09_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w09/tracker/completion", response_model=W09TrackerCompletionRead)
+@adoption_router.get("/w09/tracker/completion", response_model=W09TrackerCompletionRead)
 def get_w09_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -44003,7 +43853,7 @@ def get_w09_tracker_completion(
     return _row_to_w09_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w09/tracker/complete", response_model=W09TrackerCompletionRead)
+@adoption_router.post("/w09/tracker/complete", response_model=W09TrackerCompletionRead)
 def complete_w09_tracker(
     payload: W09TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:write")),
@@ -44094,7 +43944,7 @@ def complete_w09_tracker(
     return model
 
 
-@app.patch("/api/adoption/w09/tracker/items/{tracker_item_id}", response_model=W09TrackerItemRead)
+@adoption_router.patch("/w09/tracker/items/{tracker_item_id}", response_model=W09TrackerItemRead)
 def update_w09_tracker_item(
     tracker_item_id: int,
     payload: W09TrackerItemUpdate,
@@ -44197,7 +44047,7 @@ def update_w09_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w09/tracker/items/{tracker_item_id}/evidence", response_model=W09EvidenceRead, status_code=201)
+@adoption_router.post("/w09/tracker/items/{tracker_item_id}/evidence", response_model=W09EvidenceRead, status_code=201)
 async def upload_w09_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -44302,7 +44152,7 @@ async def upload_w09_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w09/tracker/items/{tracker_item_id}/evidence", response_model=list[W09EvidenceRead])
+@adoption_router.get("/w09/tracker/items/{tracker_item_id}/evidence", response_model=list[W09EvidenceRead])
 def list_w09_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -44323,7 +44173,7 @@ def list_w09_tracker_evidence(
     return [_row_to_w09_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w09/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w09/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w09_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -44368,7 +44218,7 @@ def download_w09_tracker_evidence(
 
 
 
-@app.post("/api/adoption/w10/tracker/bootstrap", response_model=W10TrackerBootstrapResponse)
+@adoption_router.post("/w10/tracker/bootstrap", response_model=W10TrackerBootstrapResponse)
 def bootstrap_w10_tracker_items(
     payload: W10TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
@@ -44449,7 +44299,7 @@ def bootstrap_w10_tracker_items(
     )
 
 
-@app.get("/api/adoption/w10/tracker/items", response_model=list[W10TrackerItemRead])
+@adoption_router.get("/w10/tracker/items", response_model=list[W10TrackerItemRead])
 def list_w10_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -44491,7 +44341,7 @@ def list_w10_tracker_items(
     return [_row_to_w10_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w10/tracker/overview", response_model=W10TrackerOverviewRead)
+@adoption_router.get("/w10/tracker/overview", response_model=W10TrackerOverviewRead)
 def get_w10_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -44505,7 +44355,7 @@ def get_w10_tracker_overview(
     return _compute_w10_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w10/tracker/readiness", response_model=W10TrackerReadinessRead)
+@adoption_router.get("/w10/tracker/readiness", response_model=W10TrackerReadinessRead)
 def get_w10_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -44515,7 +44365,7 @@ def get_w10_tracker_readiness(
     return _compute_w10_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w10/tracker/completion", response_model=W10TrackerCompletionRead)
+@adoption_router.get("/w10/tracker/completion", response_model=W10TrackerCompletionRead)
 def get_w10_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -44531,7 +44381,7 @@ def get_w10_tracker_completion(
     return _row_to_w10_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w10/tracker/complete", response_model=W10TrackerCompletionRead)
+@adoption_router.post("/w10/tracker/complete", response_model=W10TrackerCompletionRead)
 def complete_w10_tracker(
     payload: W10TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:write")),
@@ -44622,7 +44472,7 @@ def complete_w10_tracker(
     return model
 
 
-@app.patch("/api/adoption/w10/tracker/items/{tracker_item_id}", response_model=W10TrackerItemRead)
+@adoption_router.patch("/w10/tracker/items/{tracker_item_id}", response_model=W10TrackerItemRead)
 def update_w10_tracker_item(
     tracker_item_id: int,
     payload: W10TrackerItemUpdate,
@@ -44725,7 +44575,7 @@ def update_w10_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w10/tracker/items/{tracker_item_id}/evidence", response_model=W10EvidenceRead, status_code=201)
+@adoption_router.post("/w10/tracker/items/{tracker_item_id}/evidence", response_model=W10EvidenceRead, status_code=201)
 async def upload_w10_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -44830,7 +44680,7 @@ async def upload_w10_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w10/tracker/items/{tracker_item_id}/evidence", response_model=list[W10EvidenceRead])
+@adoption_router.get("/w10/tracker/items/{tracker_item_id}/evidence", response_model=list[W10EvidenceRead])
 def list_w10_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -44851,7 +44701,7 @@ def list_w10_tracker_evidence(
     return [_row_to_w10_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w10/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w10/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w10_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -44894,7 +44744,7 @@ def download_w10_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w11/tracker/bootstrap", response_model=W11TrackerBootstrapResponse)
+@adoption_router.post("/w11/tracker/bootstrap", response_model=W11TrackerBootstrapResponse)
 def bootstrap_w11_tracker_items(
     payload: W11TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
@@ -44975,7 +44825,7 @@ def bootstrap_w11_tracker_items(
     )
 
 
-@app.get("/api/adoption/w11/tracker/items", response_model=list[W11TrackerItemRead])
+@adoption_router.get("/w11/tracker/items", response_model=list[W11TrackerItemRead])
 def list_w11_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -45017,7 +44867,7 @@ def list_w11_tracker_items(
     return [_row_to_w11_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w11/tracker/overview", response_model=W11TrackerOverviewRead)
+@adoption_router.get("/w11/tracker/overview", response_model=W11TrackerOverviewRead)
 def get_w11_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -45031,7 +44881,7 @@ def get_w11_tracker_overview(
     return _compute_w11_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w11/tracker/readiness", response_model=W11TrackerReadinessRead)
+@adoption_router.get("/w11/tracker/readiness", response_model=W11TrackerReadinessRead)
 def get_w11_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -45041,7 +44891,7 @@ def get_w11_tracker_readiness(
     return _compute_w11_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w11/tracker/completion", response_model=W11TrackerCompletionRead)
+@adoption_router.get("/w11/tracker/completion", response_model=W11TrackerCompletionRead)
 def get_w11_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -45057,7 +44907,7 @@ def get_w11_tracker_completion(
     return _row_to_w11_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w11/tracker/complete", response_model=W11TrackerCompletionRead)
+@adoption_router.post("/w11/tracker/complete", response_model=W11TrackerCompletionRead)
 def complete_w11_tracker(
     payload: W11TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:write")),
@@ -45148,7 +44998,7 @@ def complete_w11_tracker(
     return model
 
 
-@app.patch("/api/adoption/w11/tracker/items/{tracker_item_id}", response_model=W11TrackerItemRead)
+@adoption_router.patch("/w11/tracker/items/{tracker_item_id}", response_model=W11TrackerItemRead)
 def update_w11_tracker_item(
     tracker_item_id: int,
     payload: W11TrackerItemUpdate,
@@ -45251,7 +45101,7 @@ def update_w11_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w11/tracker/items/{tracker_item_id}/evidence", response_model=W11EvidenceRead, status_code=201)
+@adoption_router.post("/w11/tracker/items/{tracker_item_id}/evidence", response_model=W11EvidenceRead, status_code=201)
 async def upload_w11_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -45355,7 +45205,7 @@ async def upload_w11_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w11/tracker/items/{tracker_item_id}/evidence", response_model=list[W11EvidenceRead])
+@adoption_router.get("/w11/tracker/items/{tracker_item_id}/evidence", response_model=list[W11EvidenceRead])
 def list_w11_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -45376,7 +45226,7 @@ def list_w11_tracker_evidence(
     return [_row_to_w11_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w11/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w11/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w11_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -45419,7 +45269,7 @@ def download_w11_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w12/tracker/bootstrap", response_model=W12TrackerBootstrapResponse)
+@adoption_router.post("/w12/tracker/bootstrap", response_model=W12TrackerBootstrapResponse)
 def bootstrap_w12_tracker_items(
     payload: W12TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:write")),
@@ -45500,7 +45350,7 @@ def bootstrap_w12_tracker_items(
     )
 
 
-@app.get("/api/adoption/w12/tracker/items", response_model=list[W12TrackerItemRead])
+@adoption_router.get("/w12/tracker/items", response_model=list[W12TrackerItemRead])
 def list_w12_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -45542,7 +45392,7 @@ def list_w12_tracker_items(
     return [_row_to_w12_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w12/tracker/overview", response_model=W12TrackerOverviewRead)
+@adoption_router.get("/w12/tracker/overview", response_model=W12TrackerOverviewRead)
 def get_w12_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -45556,7 +45406,7 @@ def get_w12_tracker_overview(
     return _compute_w12_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w12/tracker/readiness", response_model=W12TrackerReadinessRead)
+@adoption_router.get("/w12/tracker/readiness", response_model=W12TrackerReadinessRead)
 def get_w12_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -45566,7 +45416,7 @@ def get_w12_tracker_readiness(
     return _compute_w12_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w12/tracker/completion", response_model=W12TrackerCompletionRead)
+@adoption_router.get("/w12/tracker/completion", response_model=W12TrackerCompletionRead)
 def get_w12_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -45582,7 +45432,7 @@ def get_w12_tracker_completion(
     return _row_to_w12_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w12/tracker/complete", response_model=W12TrackerCompletionRead)
+@adoption_router.post("/w12/tracker/complete", response_model=W12TrackerCompletionRead)
 def complete_w12_tracker(
     payload: W12TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:write")),
@@ -45673,7 +45523,7 @@ def complete_w12_tracker(
     return model
 
 
-@app.patch("/api/adoption/w12/tracker/items/{tracker_item_id}", response_model=W12TrackerItemRead)
+@adoption_router.patch("/w12/tracker/items/{tracker_item_id}", response_model=W12TrackerItemRead)
 def update_w12_tracker_item(
     tracker_item_id: int,
     payload: W12TrackerItemUpdate,
@@ -45776,7 +45626,7 @@ def update_w12_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w12/tracker/items/{tracker_item_id}/evidence", response_model=W12EvidenceRead, status_code=201)
+@adoption_router.post("/w12/tracker/items/{tracker_item_id}/evidence", response_model=W12EvidenceRead, status_code=201)
 async def upload_w12_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -45880,7 +45730,7 @@ async def upload_w12_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w12/tracker/items/{tracker_item_id}/evidence", response_model=list[W12EvidenceRead])
+@adoption_router.get("/w12/tracker/items/{tracker_item_id}/evidence", response_model=list[W12EvidenceRead])
 def list_w12_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -45901,7 +45751,7 @@ def list_w12_tracker_evidence(
     return [_row_to_w12_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w12/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w12/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w12_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -45944,7 +45794,7 @@ def download_w12_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w13/tracker/bootstrap", response_model=W13TrackerBootstrapResponse)
+@adoption_router.post("/w13/tracker/bootstrap", response_model=W13TrackerBootstrapResponse)
 def bootstrap_w13_tracker_items(
     payload: W13TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
@@ -46025,7 +45875,7 @@ def bootstrap_w13_tracker_items(
     )
 
 
-@app.get("/api/adoption/w13/tracker/items", response_model=list[W13TrackerItemRead])
+@adoption_router.get("/w13/tracker/items", response_model=list[W13TrackerItemRead])
 def list_w13_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -46067,7 +45917,7 @@ def list_w13_tracker_items(
     return [_row_to_w13_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w13/tracker/overview", response_model=W13TrackerOverviewRead)
+@adoption_router.get("/w13/tracker/overview", response_model=W13TrackerOverviewRead)
 def get_w13_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -46081,7 +45931,7 @@ def get_w13_tracker_overview(
     return _compute_w13_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w13/tracker/readiness", response_model=W13TrackerReadinessRead)
+@adoption_router.get("/w13/tracker/readiness", response_model=W13TrackerReadinessRead)
 def get_w13_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -46091,7 +45941,7 @@ def get_w13_tracker_readiness(
     return _compute_w13_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w13/tracker/completion", response_model=W13TrackerCompletionRead)
+@adoption_router.get("/w13/tracker/completion", response_model=W13TrackerCompletionRead)
 def get_w13_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -46107,7 +45957,7 @@ def get_w13_tracker_completion(
     return _row_to_w13_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w13/tracker/complete", response_model=W13TrackerCompletionRead)
+@adoption_router.post("/w13/tracker/complete", response_model=W13TrackerCompletionRead)
 def complete_w13_tracker(
     payload: W13TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:write")),
@@ -46198,7 +46048,7 @@ def complete_w13_tracker(
     return model
 
 
-@app.patch("/api/adoption/w13/tracker/items/{tracker_item_id}", response_model=W13TrackerItemRead)
+@adoption_router.patch("/w13/tracker/items/{tracker_item_id}", response_model=W13TrackerItemRead)
 def update_w13_tracker_item(
     tracker_item_id: int,
     payload: W13TrackerItemUpdate,
@@ -46301,7 +46151,7 @@ def update_w13_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w13/tracker/items/{tracker_item_id}/evidence", response_model=W13EvidenceRead, status_code=201)
+@adoption_router.post("/w13/tracker/items/{tracker_item_id}/evidence", response_model=W13EvidenceRead, status_code=201)
 async def upload_w13_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -46405,7 +46255,7 @@ async def upload_w13_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w13/tracker/items/{tracker_item_id}/evidence", response_model=list[W13EvidenceRead])
+@adoption_router.get("/w13/tracker/items/{tracker_item_id}/evidence", response_model=list[W13EvidenceRead])
 def list_w13_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -46426,7 +46276,7 @@ def list_w13_tracker_evidence(
     return [_row_to_w13_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w13/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w13/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w13_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -46468,7 +46318,7 @@ def download_w13_tracker_evidence(
         },
     )
 
-@app.post("/api/adoption/w14/tracker/bootstrap", response_model=W14TrackerBootstrapResponse)
+@adoption_router.post("/w14/tracker/bootstrap", response_model=W14TrackerBootstrapResponse)
 def bootstrap_w14_tracker_items(
     payload: W14TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
@@ -46549,7 +46399,7 @@ def bootstrap_w14_tracker_items(
     )
 
 
-@app.get("/api/adoption/w14/tracker/items", response_model=list[W14TrackerItemRead])
+@adoption_router.get("/w14/tracker/items", response_model=list[W14TrackerItemRead])
 def list_w14_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -46591,7 +46441,7 @@ def list_w14_tracker_items(
     return [_row_to_w14_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w14/tracker/overview", response_model=W14TrackerOverviewRead)
+@adoption_router.get("/w14/tracker/overview", response_model=W14TrackerOverviewRead)
 def get_w14_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -46605,7 +46455,7 @@ def get_w14_tracker_overview(
     return _compute_w14_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w14/tracker/readiness", response_model=W14TrackerReadinessRead)
+@adoption_router.get("/w14/tracker/readiness", response_model=W14TrackerReadinessRead)
 def get_w14_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -46615,7 +46465,7 @@ def get_w14_tracker_readiness(
     return _compute_w14_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w14/tracker/completion", response_model=W14TrackerCompletionRead)
+@adoption_router.get("/w14/tracker/completion", response_model=W14TrackerCompletionRead)
 def get_w14_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -46631,7 +46481,7 @@ def get_w14_tracker_completion(
     return _row_to_w14_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w14/tracker/complete", response_model=W14TrackerCompletionRead)
+@adoption_router.post("/w14/tracker/complete", response_model=W14TrackerCompletionRead)
 def complete_w14_tracker(
     payload: W14TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:write")),
@@ -46722,7 +46572,7 @@ def complete_w14_tracker(
     return model
 
 
-@app.patch("/api/adoption/w14/tracker/items/{tracker_item_id}", response_model=W14TrackerItemRead)
+@adoption_router.patch("/w14/tracker/items/{tracker_item_id}", response_model=W14TrackerItemRead)
 def update_w14_tracker_item(
     tracker_item_id: int,
     payload: W14TrackerItemUpdate,
@@ -46825,7 +46675,7 @@ def update_w14_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w14/tracker/items/{tracker_item_id}/evidence", response_model=W14EvidenceRead, status_code=201)
+@adoption_router.post("/w14/tracker/items/{tracker_item_id}/evidence", response_model=W14EvidenceRead, status_code=201)
 async def upload_w14_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -46929,7 +46779,7 @@ async def upload_w14_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w14/tracker/items/{tracker_item_id}/evidence", response_model=list[W14EvidenceRead])
+@adoption_router.get("/w14/tracker/items/{tracker_item_id}/evidence", response_model=list[W14EvidenceRead])
 def list_w14_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -46950,7 +46800,7 @@ def list_w14_tracker_evidence(
     return [_row_to_w14_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w14/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w14/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w14_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -46993,7 +46843,7 @@ def download_w14_tracker_evidence(
     )
 
 
-@app.post("/api/adoption/w15/tracker/bootstrap", response_model=W15TrackerBootstrapResponse)
+@adoption_router.post("/w15/tracker/bootstrap", response_model=W15TrackerBootstrapResponse)
 def bootstrap_w15_tracker_items(
     payload: W15TrackerBootstrapRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:write")),
@@ -47074,7 +46924,7 @@ def bootstrap_w15_tracker_items(
     )
 
 
-@app.get("/api/adoption/w15/tracker/items", response_model=list[W15TrackerItemRead])
+@adoption_router.get("/w15/tracker/items", response_model=list[W15TrackerItemRead])
 def list_w15_tracker_items(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -47116,7 +46966,7 @@ def list_w15_tracker_items(
     return [_row_to_w15_tracker_item_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w15/tracker/overview", response_model=W15TrackerOverviewRead)
+@adoption_router.get("/w15/tracker/overview", response_model=W15TrackerOverviewRead)
 def get_w15_tracker_overview(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -47130,7 +46980,7 @@ def get_w15_tracker_overview(
     return _compute_w15_tracker_overview(site, models)
 
 
-@app.get("/api/adoption/w15/tracker/readiness", response_model=W15TrackerReadinessRead)
+@adoption_router.get("/w15/tracker/readiness", response_model=W15TrackerReadinessRead)
 def get_w15_tracker_readiness(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -47140,7 +46990,7 @@ def get_w15_tracker_readiness(
     return _compute_w15_tracker_readiness(site=site, rows=models)
 
 
-@app.get("/api/adoption/w15/tracker/completion", response_model=W15TrackerCompletionRead)
+@adoption_router.get("/w15/tracker/completion", response_model=W15TrackerCompletionRead)
 def get_w15_tracker_completion(
     site: Annotated[str, Query(min_length=1)],
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -47156,7 +47006,7 @@ def get_w15_tracker_completion(
     return _row_to_w15_completion_model(site=site, readiness=readiness, row=row)
 
 
-@app.post("/api/adoption/w15/tracker/complete", response_model=W15TrackerCompletionRead)
+@adoption_router.post("/w15/tracker/complete", response_model=W15TrackerCompletionRead)
 def complete_w15_tracker(
     payload: W15TrackerCompletionRequest,
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:write")),
@@ -47247,7 +47097,7 @@ def complete_w15_tracker(
     return model
 
 
-@app.patch("/api/adoption/w15/tracker/items/{tracker_item_id}", response_model=W15TrackerItemRead)
+@adoption_router.patch("/w15/tracker/items/{tracker_item_id}", response_model=W15TrackerItemRead)
 def update_w15_tracker_item(
     tracker_item_id: int,
     payload: W15TrackerItemUpdate,
@@ -47350,7 +47200,7 @@ def update_w15_tracker_item(
     return model
 
 
-@app.post("/api/adoption/w15/tracker/items/{tracker_item_id}/evidence", response_model=W15EvidenceRead, status_code=201)
+@adoption_router.post("/w15/tracker/items/{tracker_item_id}/evidence", response_model=W15EvidenceRead, status_code=201)
 async def upload_w15_tracker_evidence(
     tracker_item_id: int,
     file: UploadFile = File(...),
@@ -47454,7 +47304,7 @@ async def upload_w15_tracker_evidence(
     return model
 
 
-@app.get("/api/adoption/w15/tracker/items/{tracker_item_id}/evidence", response_model=list[W15EvidenceRead])
+@adoption_router.get("/w15/tracker/items/{tracker_item_id}/evidence", response_model=list[W15EvidenceRead])
 def list_w15_tracker_evidence(
     tracker_item_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -47475,7 +47325,7 @@ def list_w15_tracker_evidence(
     return [_row_to_w15_evidence_model(row) for row in rows]
 
 
-@app.get("/api/adoption/w15/tracker/evidence/{evidence_id}/download", response_model=None)
+@adoption_router.get("/w15/tracker/evidence/{evidence_id}/download", response_model=None)
 def download_w15_tracker_evidence(
     evidence_id: int,
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -47789,7 +47639,7 @@ def auth_me_deactivate(
     )
 
 
-@app.get("/api/admin/users", response_model=list[AdminUserRead])
+@admin_router.get("/users", response_model=list[AdminUserRead])
 def list_admin_users(
     principal: dict[str, Any] = Depends(get_current_admin),
 ) -> list[AdminUserRead]:
@@ -47813,7 +47663,7 @@ def list_admin_users(
     return models
 
 
-@app.post("/api/admin/users", response_model=AdminUserRead, status_code=201)
+@admin_router.post("/users", response_model=AdminUserRead, status_code=201)
 def create_admin_user(
     payload: AdminUserCreate,
     principal: dict[str, Any] = Depends(get_current_admin),
@@ -47880,7 +47730,7 @@ def create_admin_user(
     return model
 
 
-@app.patch("/api/admin/users/{user_id}", response_model=AdminUserRead)
+@admin_router.patch("/users/{user_id}", response_model=AdminUserRead)
 def update_admin_user(
     user_id: int,
     payload: AdminUserUpdate,
@@ -47972,7 +47822,7 @@ def update_admin_user(
     return model
 
 
-@app.delete("/api/admin/users/{user_id}", response_model=AdminUserRead)
+@admin_router.delete("/users/{user_id}", response_model=AdminUserRead)
 def delete_admin_user(
     user_id: int,
     principal: dict[str, Any] = Depends(get_current_admin),
@@ -48028,7 +47878,7 @@ def delete_admin_user(
     return model
 
 
-@app.patch("/api/admin/users/{user_id}/active", response_model=AdminUserRead)
+@admin_router.patch("/users/{user_id}/active", response_model=AdminUserRead)
 def set_admin_user_active(
     user_id: int,
     payload: AdminUserActiveUpdate,
@@ -48072,7 +47922,7 @@ def set_admin_user_active(
     return model
 
 
-@app.post("/api/admin/users/{user_id}/password", response_model=AdminUserRead)
+@admin_router.post("/users/{user_id}/password", response_model=AdminUserRead)
 def set_admin_user_password(
     user_id: int,
     payload: AdminUserPasswordSetRequest,
@@ -48133,7 +47983,7 @@ def _enforce_active_token_quota(
     return revoke_ids
 
 
-@app.post("/api/admin/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
+@admin_router.post("/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
 def issue_admin_token(
     user_id: int,
     payload: AdminTokenIssueRequest,
@@ -48229,7 +48079,7 @@ def issue_admin_token(
     return response
 
 
-@app.post("/api/admin/tokens/{token_id}/rotate", response_model=AdminTokenIssueResponse)
+@admin_router.post("/tokens/{token_id}/rotate", response_model=AdminTokenIssueResponse)
 def rotate_admin_token(
     token_id: int,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -48346,7 +48196,7 @@ def rotate_admin_token(
     return response
 
 
-@app.get("/api/admin/tokens", response_model=list[AdminTokenRead])
+@admin_router.get("/tokens", response_model=list[AdminTokenRead])
 def list_admin_tokens(
     user_id: Annotated[int | None, Query()] = None,
     active_only: Annotated[bool, Query()] = False,
@@ -48378,7 +48228,7 @@ def list_admin_tokens(
     return [_row_to_admin_token_model(row) for row in rows]
 
 
-@app.get("/api/admin/token-policy")
+@admin_router.get("/token-policy")
 def get_admin_token_policy(
     _: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -48392,7 +48242,7 @@ def get_admin_token_policy(
     }
 
 
-@app.get("/api/admin/audit-logs", response_model=list[AdminAuditLogRead])
+@admin_router.get("/audit-logs", response_model=list[AdminAuditLogRead])
 def list_admin_audit_logs(
     action: Annotated[str | None, Query()] = None,
     actor_username: Annotated[str | None, Query()] = None,
@@ -48497,7 +48347,7 @@ def _build_audit_archive_csv(
     return output.getvalue()
 
 
-@app.get("/api/admin/audit-integrity")
+@admin_router.get("/audit-integrity")
 def get_admin_audit_integrity(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
@@ -48531,7 +48381,7 @@ def get_admin_audit_integrity(
     }
 
 
-@app.post("/api/admin/audit-chain/rebaseline")
+@admin_router.post("/audit-chain/rebaseline")
 def post_admin_audit_chain_rebaseline(
     from_month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     max_rows: Annotated[int, Query(ge=1, le=200000)] = 50000,
@@ -48562,7 +48412,7 @@ def post_admin_audit_chain_rebaseline(
     return result
 
 
-@app.get("/api/admin/audit-archive/monthly")
+@admin_router.get("/audit-archive/monthly")
 def get_admin_monthly_audit_archive(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
@@ -48589,7 +48439,7 @@ def get_admin_monthly_audit_archive(
     return archive
 
 
-@app.get("/api/admin/audit-archive/monthly/csv")
+@admin_router.get("/audit-archive/monthly/csv")
 def get_admin_monthly_audit_archive_csv(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
@@ -48630,7 +48480,7 @@ def get_admin_monthly_audit_archive_csv(
     )
 
 
-@app.get("/api/ops/job-runs", response_model=list[JobRunRead])
+@ops_router.get("/job-runs", response_model=list[JobRunRead])
 def list_job_runs(
     job_name: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -48647,7 +48497,7 @@ def list_job_runs(
     return [_row_to_job_run_model(row) for row in rows]
 
 
-@app.get("/api/ops/performance/api-latency")
+@ops_router.get("/performance/api-latency")
 def get_ops_api_latency_snapshot(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -48668,7 +48518,7 @@ def get_ops_api_latency_snapshot(
     return snapshot
 
 
-@app.get("/api/ops/integrity/evidence-archive")
+@ops_router.get("/integrity/evidence-archive")
 def get_ops_evidence_archive_integrity(
     sample_per_table: Annotated[int | None, Query(ge=1, le=200)] = None,
     max_issues: Annotated[int | None, Query(ge=1, le=500)] = None,
@@ -48694,7 +48544,7 @@ def get_ops_evidence_archive_integrity(
     return snapshot
 
 
-@app.get("/api/ops/deploy/checklist")
+@ops_router.get("/deploy/checklist")
 def get_ops_deploy_checklist(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -48712,7 +48562,7 @@ def get_ops_deploy_checklist(
     return payload
 
 
-@app.post("/api/ops/deploy/smoke/record")
+@ops_router.post("/deploy/smoke/record")
 def post_ops_deploy_smoke_record(
     payload: dict[str, Any],
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -48850,7 +48700,7 @@ def post_ops_deploy_smoke_record(
     }
 
 
-@app.get("/api/ops/dashboard/summary", response_model=DashboardSummaryRead)
+@ops_router.get("/dashboard/summary", response_model=DashboardSummaryRead)
 def get_dashboard_summary(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -49490,7 +49340,7 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     }
 
 
-@app.get("/api/ops/runbook/checks")
+@ops_router.get("/runbook/checks")
 def get_ops_runbook_checks(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -49522,7 +49372,7 @@ def get_ops_runbook_checks(
     return snapshot
 
 
-@app.post("/api/ops/runbook/checks/run")
+@ops_router.post("/runbook/checks/run")
 def run_ops_runbook_checks(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -49548,7 +49398,7 @@ def run_ops_runbook_checks(
     return result
 
 
-@app.get("/api/ops/runbook/checks/latest")
+@ops_router.get("/runbook/checks/latest")
 def get_ops_runbook_checks_latest(
     include_checks: Annotated[bool, Query()] = True,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -49622,7 +49472,7 @@ def get_ops_runbook_checks_latest(
     return response
 
 
-@app.get("/api/ops/runbook/checks/latest/summary.json")
+@ops_router.get("/runbook/checks/latest/summary.json")
 def get_ops_runbook_checks_latest_summary_json(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -49660,7 +49510,7 @@ def get_ops_runbook_checks_latest_summary_json(
     return payload
 
 
-@app.get("/api/ops/runbook/checks/latest/summary.csv")
+@ops_router.get("/runbook/checks/latest/summary.csv")
 def get_ops_runbook_checks_latest_summary_csv(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> Response:
@@ -49698,7 +49548,7 @@ def get_ops_runbook_checks_latest_summary_csv(
     )
 
 
-@app.get("/api/ops/runbook/checks/archive.json")
+@ops_router.get("/runbook/checks/archive.json")
 def get_ops_runbook_checks_archive_json(
     limit: Annotated[int, Query(ge=1, le=365)] = 30,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -49724,7 +49574,7 @@ def get_ops_runbook_checks_archive_json(
     return payload
 
 
-@app.get("/api/ops/runbook/checks/archive.csv")
+@ops_router.get("/runbook/checks/archive.csv")
 def get_ops_runbook_checks_archive_csv(
     limit: Annotated[int, Query(ge=1, le=365)] = 90,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -49750,7 +49600,7 @@ def get_ops_runbook_checks_archive_csv(
     )
 
 
-@app.get("/api/ops/security/posture")
+@ops_router.get("/security/posture")
 def get_ops_security_posture(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -51465,7 +51315,7 @@ def run_ops_tutorial_simulator_session_action(
     return result
 
 
-@app.get("/api/ops/dashboard/trends", response_model=DashboardTrendsRead)
+@ops_router.get("/dashboard/trends", response_model=DashboardTrendsRead)
 def get_dashboard_trends(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -51476,7 +51326,7 @@ def get_dashboard_trends(
     return build_dashboard_trends(site=site, days=days, allowed_sites=allowed_sites)
 
 
-@app.get("/api/ops/adoption/w05/consistency")
+@ops_router.get("/adoption/w05/consistency")
 def get_ops_adoption_w05_consistency(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=90)] = 28,
@@ -51500,7 +51350,7 @@ def get_ops_adoption_w05_consistency(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w06/rhythm")
+@ops_router.get("/adoption/w06/rhythm")
 def get_ops_adoption_w06_rhythm(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=7, le=90)] = 14,
@@ -51525,7 +51375,7 @@ def get_ops_adoption_w06_rhythm(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w07/sla-quality")
+@ops_router.get("/adoption/w07/sla-quality")
 def get_ops_adoption_w07_sla_quality(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=7, le=90)] = 14,
@@ -51551,7 +51401,7 @@ def get_ops_adoption_w07_sla_quality(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w08/report-discipline")
+@ops_router.get("/adoption/w08/report-discipline")
 def get_ops_adoption_w08_report_discipline(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51577,7 +51427,7 @@ def get_ops_adoption_w08_report_discipline(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w08/site-benchmark")
+@ops_router.get("/adoption/w08/site-benchmark")
 def get_ops_adoption_w08_site_benchmark(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51617,7 +51467,7 @@ def get_ops_adoption_w08_site_benchmark(
     }
 
 
-@app.get("/api/ops/adoption/w09/kpi-operation")
+@ops_router.get("/adoption/w09/kpi-operation")
 def get_ops_adoption_w09_kpi_operation(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51682,7 +51532,7 @@ def _build_adoption_policy_response(
     }
 
 
-@app.get("/api/ops/adoption/w09/kpi-policy")
+@ops_router.get("/adoption/w09/kpi-policy")
 def get_ops_adoption_w09_kpi_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w09:read")),
@@ -51718,7 +51568,7 @@ def get_ops_adoption_w09_kpi_policy(
     )
 
 
-@app.put("/api/ops/adoption/w09/kpi-policy")
+@ops_router.put("/adoption/w09/kpi-policy")
 def set_ops_adoption_w09_kpi_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -51757,7 +51607,7 @@ def set_ops_adoption_w09_kpi_policy(
     )
 
 
-@app.get("/api/ops/adoption/w10/self-serve")
+@ops_router.get("/adoption/w10/self-serve")
 def get_ops_adoption_w10_self_serve(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51785,7 +51635,7 @@ def get_ops_adoption_w10_self_serve(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w10/support-policy")
+@ops_router.get("/adoption/w10/support-policy")
 def get_ops_adoption_w10_support_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w10:read")),
@@ -51817,7 +51667,7 @@ def get_ops_adoption_w10_support_policy(
     )
 
 
-@app.put("/api/ops/adoption/w10/support-policy")
+@ops_router.put("/adoption/w10/support-policy")
 def set_ops_adoption_w10_support_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -51852,7 +51702,7 @@ def set_ops_adoption_w10_support_policy(
     )
 
 
-@app.get("/api/ops/adoption/w11/scale-readiness")
+@ops_router.get("/adoption/w11/scale-readiness")
 def get_ops_adoption_w11_scale_readiness(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51880,7 +51730,7 @@ def get_ops_adoption_w11_scale_readiness(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w11/readiness-policy")
+@ops_router.get("/adoption/w11/readiness-policy")
 def get_ops_adoption_w11_readiness_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w11:read")),
@@ -51912,7 +51762,7 @@ def get_ops_adoption_w11_readiness_policy(
     )
 
 
-@app.put("/api/ops/adoption/w11/readiness-policy")
+@ops_router.put("/adoption/w11/readiness-policy")
 def set_ops_adoption_w11_readiness_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -51947,7 +51797,7 @@ def set_ops_adoption_w11_readiness_policy(
     )
 
 
-@app.get("/api/ops/adoption/w12/closure-handoff")
+@ops_router.get("/adoption/w12/closure-handoff")
 def get_ops_adoption_w12_closure_handoff(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -51975,7 +51825,7 @@ def get_ops_adoption_w12_closure_handoff(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w12/handoff-policy")
+@ops_router.get("/adoption/w12/handoff-policy")
 def get_ops_adoption_w12_handoff_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w12:read")),
@@ -52007,7 +51857,7 @@ def get_ops_adoption_w12_handoff_policy(
     )
 
 
-@app.put("/api/ops/adoption/w12/handoff-policy")
+@ops_router.put("/adoption/w12/handoff-policy")
 def set_ops_adoption_w12_handoff_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -52042,7 +51892,7 @@ def set_ops_adoption_w12_handoff_policy(
     )
 
 
-@app.get("/api/ops/adoption/w13/closure-handoff")
+@ops_router.get("/adoption/w13/closure-handoff")
 def get_ops_adoption_w13_closure_handoff(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -52070,7 +51920,7 @@ def get_ops_adoption_w13_closure_handoff(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w13/handoff-policy")
+@ops_router.get("/adoption/w13/handoff-policy")
 def get_ops_adoption_w13_handoff_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w13:read")),
@@ -52102,7 +51952,7 @@ def get_ops_adoption_w13_handoff_policy(
     )
 
 
-@app.put("/api/ops/adoption/w13/handoff-policy")
+@ops_router.put("/adoption/w13/handoff-policy")
 def set_ops_adoption_w13_handoff_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -52136,7 +51986,7 @@ def set_ops_adoption_w13_handoff_policy(
         policy_site=policy_site,
     )
 
-@app.get("/api/ops/adoption/w14/stability-sprint")
+@ops_router.get("/adoption/w14/stability-sprint")
 def get_ops_adoption_w14_stability_sprint(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -52164,7 +52014,7 @@ def get_ops_adoption_w14_stability_sprint(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w14/stability-policy")
+@ops_router.get("/adoption/w14/stability-policy")
 def get_ops_adoption_w14_stability_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w14:read")),
@@ -52196,7 +52046,7 @@ def get_ops_adoption_w14_stability_policy(
     )
 
 
-@app.put("/api/ops/adoption/w14/stability-policy")
+@ops_router.put("/adoption/w14/stability-policy")
 def set_ops_adoption_w14_stability_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -52231,7 +52081,7 @@ def set_ops_adoption_w14_stability_policy(
     )
 
 
-@app.get("/api/ops/adoption/w15/ops-efficiency")
+@ops_router.get("/adoption/w15/ops-efficiency")
 def get_ops_adoption_w15_ops_efficiency(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=14, le=120)] = 30,
@@ -52259,7 +52109,7 @@ def get_ops_adoption_w15_ops_efficiency(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w15/efficiency-policy")
+@ops_router.get("/adoption/w15/efficiency-policy")
 def get_ops_adoption_w15_efficiency_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w15:read")),
@@ -52291,7 +52141,7 @@ def get_ops_adoption_w15_efficiency_policy(
     )
 
 
-@app.put("/api/ops/adoption/w15/efficiency-policy")
+@ops_router.put("/adoption/w15/efficiency-policy")
 def set_ops_adoption_w15_efficiency_policy(
     payload: dict[str, Any],
     site: Annotated[str | None, Query()] = None,
@@ -52327,7 +52177,7 @@ def set_ops_adoption_w15_efficiency_policy(
 
 
 
-@app.get("/api/ops/adoption/w07/automation-readiness")
+@ops_router.get("/adoption/w07/automation-readiness")
 def get_ops_adoption_w07_automation_readiness(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -52352,7 +52202,7 @@ def get_ops_adoption_w07_automation_readiness(
     return snapshot
 
 
-@app.post("/api/ops/adoption/w07/sla-quality/run-weekly")
+@ops_router.post("/adoption/w07/sla-quality/run-weekly")
 def run_ops_adoption_w07_sla_quality_weekly(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=7, le=90)] = 14,
@@ -52422,7 +52272,7 @@ def run_ops_adoption_w07_sla_quality_weekly(
     return response
 
 
-@app.get("/api/ops/adoption/w07/sla-quality/latest-weekly")
+@ops_router.get("/adoption/w07/sla-quality/latest-weekly")
 def get_ops_adoption_w07_sla_quality_latest_weekly(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("adoption_w07:read")),
@@ -52468,7 +52318,7 @@ def get_ops_adoption_w07_sla_quality_latest_weekly(
     return response
 
 
-@app.get("/api/ops/adoption/w07/sla-quality/trends")
+@ops_router.get("/adoption/w07/sla-quality/trends")
 def get_ops_adoption_w07_sla_quality_trends(
     site: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=104)] = 26,
@@ -52491,7 +52341,7 @@ def get_ops_adoption_w07_sla_quality_trends(
     return payload
 
 
-@app.get("/api/ops/adoption/w07/sla-quality/archive.csv")
+@ops_router.get("/adoption/w07/sla-quality/archive.csv")
 def get_ops_adoption_w07_sla_quality_archive_csv(
     site: Annotated[str | None, Query()] = None,
     limit: Annotated[int, Query(ge=1, le=104)] = 52,
@@ -52522,7 +52372,7 @@ def get_ops_adoption_w07_sla_quality_archive_csv(
     )
 
 
-@app.get("/api/ops/adoption/w04/funnel")
+@ops_router.get("/adoption/w04/funnel")
 def get_ops_adoption_w04_funnel(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -52547,7 +52397,7 @@ def get_ops_adoption_w04_funnel(
     return snapshot
 
 
-@app.get("/api/ops/adoption/w04/blockers")
+@ops_router.get("/adoption/w04/blockers")
 def get_ops_adoption_w04_blockers(
     site: Annotated[str | None, Query()] = None,
     days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -52581,7 +52431,7 @@ def get_ops_adoption_w04_blockers(
     return snapshot
 
 
-@app.get("/api/ops/handover/brief", response_model=OpsHandoverBriefRead)
+@ops_router.get("/handover/brief", response_model=OpsHandoverBriefRead)
 def get_ops_handover_brief(
     site: Annotated[str | None, Query()] = None,
     window_hours: Annotated[int, Query(ge=1, le=168)] = 12,
@@ -52616,7 +52466,7 @@ def get_ops_handover_brief(
     return report
 
 
-@app.get("/api/ops/handover/brief/csv")
+@ops_router.get("/handover/brief/csv")
 def get_ops_handover_brief_csv(
     site: Annotated[str | None, Query()] = None,
     window_hours: Annotated[int, Query(ge=1, le=168)] = 12,
@@ -52657,7 +52507,7 @@ def get_ops_handover_brief_csv(
     return response
 
 
-@app.get("/api/ops/handover/brief/pdf")
+@ops_router.get("/handover/brief/pdf")
 def get_ops_handover_brief_pdf(
     site: Annotated[str | None, Query()] = None,
     window_hours: Annotated[int, Query(ge=1, le=168)] = 12,
@@ -53006,7 +52856,7 @@ def _build_alert_channel_mttr_snapshot(
     }
 
 
-@app.get("/api/ops/alerts/deliveries", response_model=list[AlertDeliveryRead])
+@ops_router.get("/alerts/deliveries", response_model=list[AlertDeliveryRead])
 def list_alert_deliveries(
     event_type: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -53029,7 +52879,7 @@ def list_alert_deliveries(
     return [_row_to_alert_delivery_model(row) for row in rows]
 
 
-@app.get("/api/ops/alerts/kpi/channels")
+@ops_router.get("/alerts/kpi/channels")
 def get_alert_channel_kpi(
     event_type: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53057,7 +52907,7 @@ def get_alert_channel_kpi(
     return snapshot
 
 
-@app.get("/api/ops/alerts/kpi/mttr")
+@ops_router.get("/alerts/kpi/mttr")
 def get_alert_channel_mttr_kpi(
     event_type: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53087,7 +52937,7 @@ def get_alert_channel_mttr_kpi(
     return snapshot
 
 
-@app.get("/api/ops/alerts/mttr-slo/policy")
+@ops_router.get("/alerts/mttr-slo/policy")
 def get_alert_mttr_slo_policy(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -53113,7 +52963,7 @@ def get_alert_mttr_slo_policy(
     )
 
 
-@app.put("/api/ops/alerts/mttr-slo/policy")
+@ops_router.put("/alerts/mttr-slo/policy")
 def set_alert_mttr_slo_policy(
     payload: dict[str, Any],
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53146,7 +52996,7 @@ def set_alert_mttr_slo_policy(
     )
 
 
-@app.post("/api/ops/alerts/mttr-slo/check/run")
+@ops_router.post("/alerts/mttr-slo/check/run")
 def run_alert_mttr_slo_check(
     event_type: Annotated[str | None, Query()] = None,
     force_notify: Annotated[bool, Query()] = False,
@@ -53174,7 +53024,7 @@ def run_alert_mttr_slo_check(
     return result
 
 
-@app.get("/api/ops/alerts/mttr-slo/check/latest")
+@ops_router.get("/alerts/mttr-slo/check/latest")
 def get_alert_mttr_slo_check_latest(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -53220,7 +53070,7 @@ def get_alert_mttr_slo_check_latest(
     return response
 
 
-@app.get("/api/ops/alerts/channels/guard")
+@ops_router.get("/alerts/channels/guard")
 def get_alert_channel_guard(
     event_type: Annotated[str | None, Query()] = None,
     lookback_days: Annotated[int, Query(ge=1, le=90)] = 30,
@@ -53251,7 +53101,7 @@ def get_alert_channel_guard(
     return snapshot
 
 
-@app.post("/api/ops/alerts/channels/guard/recover")
+@ops_router.post("/alerts/channels/guard/recover")
 def recover_alert_channel_guard(
     target: Annotated[str, Query(min_length=3, max_length=400)],
     event_type: Annotated[str | None, Query()] = None,
@@ -53330,7 +53180,7 @@ def recover_alert_channel_guard(
     }
 
 
-@app.post("/api/ops/alerts/channels/guard/recover-batch")
+@ops_router.post("/alerts/channels/guard/recover-batch")
 def recover_alert_channel_guard_batch(
     event_type: Annotated[str | None, Query()] = None,
     state: Annotated[str, Query(pattern=r"^(quarantined|warning|all)$")] = "quarantined",
@@ -53367,7 +53217,7 @@ def recover_alert_channel_guard_batch(
     return result
 
 
-@app.get("/api/ops/alerts/channels/guard/recover/latest")
+@ops_router.get("/alerts/channels/guard/recover/latest")
 def get_alert_channel_guard_recover_latest(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -53416,7 +53266,7 @@ def get_alert_channel_guard_recover_latest(
     return response
 
 
-@app.get("/api/ops/alerts/retention/policy")
+@ops_router.get("/alerts/retention/policy")
 def get_alert_retention_policy(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -53440,7 +53290,7 @@ def get_alert_retention_policy(
     }
 
 
-@app.get("/api/ops/alerts/retention/latest")
+@ops_router.get("/alerts/retention/latest")
 def get_alert_retention_latest(
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> dict[str, Any]:
@@ -53487,7 +53337,7 @@ def get_alert_retention_latest(
     return response
 
 
-@app.post("/api/ops/alerts/retention/run")
+@ops_router.post("/alerts/retention/run")
 def run_alert_retention(
     retention_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
     max_delete: Annotated[int | None, Query(ge=1, le=50000)] = None,
@@ -53522,7 +53372,7 @@ def run_alert_retention(
     return result
 
 
-@app.post("/api/ops/sla/simulate", response_model=SlaWhatIfResponse)
+@ops_router.post("/sla/simulate", response_model=SlaWhatIfResponse)
 def simulate_sla(
     payload: SlaWhatIfRequest,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53554,7 +53404,7 @@ def simulate_sla(
     return result
 
 
-@app.post("/api/ops/alerts/retries/run", response_model=AlertRetryRunResponse)
+@ops_router.post("/alerts/retries/run", response_model=AlertRetryRunResponse)
 def run_alert_retries(
     payload: AlertRetryRunRequest,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53583,7 +53433,7 @@ def run_alert_retries(
     return result
 
 
-@app.post("/api/admin/policies/sla/proposals", response_model=SlaPolicyProposalRead, status_code=201)
+@admin_router.post("/policies/sla/proposals", response_model=SlaPolicyProposalRead, status_code=201)
 def create_sla_policy_proposal(
     payload: SlaPolicyProposalCreate,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53647,7 +53497,7 @@ def create_sla_policy_proposal(
     return model
 
 
-@app.get("/api/admin/policies/sla/proposals", response_model=list[SlaPolicyProposalRead])
+@admin_router.get("/policies/sla/proposals", response_model=list[SlaPolicyProposalRead])
 def list_sla_policy_proposals(
     site: Annotated[str | None, Query()] = None,
     status: Annotated[str | None, Query()] = None,
@@ -53680,7 +53530,7 @@ def list_sla_policy_proposals(
     return [_row_to_sla_policy_proposal_model(row) for row in rows]
 
 
-@app.get("/api/admin/policies/sla/proposals/{proposal_id}", response_model=SlaPolicyProposalRead)
+@admin_router.get("/policies/sla/proposals/{proposal_id}", response_model=SlaPolicyProposalRead)
 def get_sla_policy_proposal(
     proposal_id: int,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53700,7 +53550,7 @@ def get_sla_policy_proposal(
     return _row_to_sla_policy_proposal_model(row)
 
 
-@app.post("/api/admin/policies/sla/proposals/{proposal_id}/approve", response_model=SlaPolicyProposalRead)
+@admin_router.post("/policies/sla/proposals/{proposal_id}/approve", response_model=SlaPolicyProposalRead)
 def approve_sla_policy_proposal(
     proposal_id: int,
     payload: SlaPolicyProposalDecision,
@@ -53778,7 +53628,7 @@ def approve_sla_policy_proposal(
     return model
 
 
-@app.post("/api/admin/policies/sla/proposals/{proposal_id}/reject", response_model=SlaPolicyProposalRead)
+@admin_router.post("/policies/sla/proposals/{proposal_id}/reject", response_model=SlaPolicyProposalRead)
 def reject_sla_policy_proposal(
     proposal_id: int,
     payload: SlaPolicyProposalDecision,
@@ -53831,7 +53681,7 @@ def reject_sla_policy_proposal(
     return model
 
 
-@app.post("/api/ops/alerts/deliveries/{delivery_id}/retry", response_model=AlertDeliveryRead)
+@ops_router.post("/alerts/deliveries/{delivery_id}/retry", response_model=AlertDeliveryRead)
 def retry_alert_delivery(
     delivery_id: int,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53889,7 +53739,7 @@ def retry_alert_delivery(
     return model
 
 
-@app.get("/api/admin/policies/sla", response_model=SlaPolicyRead)
+@admin_router.get("/policies/sla", response_model=SlaPolicyRead)
 def get_sla_policy(
     site: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -53905,7 +53755,7 @@ def get_sla_policy(
     )
 
 
-@app.put("/api/admin/policies/sla", response_model=SlaPolicyRead)
+@admin_router.put("/policies/sla", response_model=SlaPolicyRead)
 def set_sla_policy(
     payload: SlaPolicyUpdate,
     site: Annotated[str | None, Query()] = None,
@@ -53938,7 +53788,7 @@ def set_sla_policy(
     return model
 
 
-@app.get("/api/admin/policies/sla/revisions", response_model=list[SlaPolicyRevisionRead])
+@admin_router.get("/policies/sla/revisions", response_model=list[SlaPolicyRevisionRead])
 def list_sla_policy_revisions(
     site: Annotated[str | None, Query()] = None,
     source_action: Annotated[str | None, Query()] = None,
@@ -53971,7 +53821,7 @@ def list_sla_policy_revisions(
     return [_row_to_sla_policy_revision_model(row) for row in rows]
 
 
-@app.post("/api/admin/policies/sla/revisions/{revision_id}/restore", response_model=SlaPolicyRead)
+@admin_router.post("/policies/sla/revisions/{revision_id}/restore", response_model=SlaPolicyRead)
 def restore_sla_policy_revision(
     revision_id: int,
     payload: SlaPolicyRestoreRequest,
@@ -54021,7 +53871,7 @@ def restore_sla_policy_revision(
     return model
 
 
-@app.post("/api/admin/tokens/{token_id}/revoke", response_model=AdminTokenRead)
+@admin_router.post("/tokens/{token_id}/revoke", response_model=AdminTokenRead)
 def revoke_admin_token(
     token_id: int,
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
@@ -55448,6 +55298,7 @@ app.include_router(ops_router)
 app.include_router(admin_router)
 app.include_router(adoption_router)
 app.include_router(public_router)
+
 
 
 

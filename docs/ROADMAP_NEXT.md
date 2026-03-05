@@ -128,6 +128,16 @@
   - 공통 함수: `runSharedAdoptionKpiOperation(phaseCode)`, `getSharedAdoptionKpiConfig(phaseCode)`
   - 공통 컬럼/요약 매핑: KPI/반복이슈/권고안/정책 테이블 렌더 중복 제거
   - 결과: `runW10KpiOperation`, `runW11KpiOperation`, `runW15KpiOperation`이 공통 실행 경로 사용
+- [x] Tracker CRUD/evidence UI 템플릿 공통화 2차 적용
+  - 대상: `W02/W03/W04` 실행추적 입력 박스
+  - 공통 템플릿: `_build_shared_tracker_execution_box_html(phase_code, phase_label)`
+  - 결과: `W02~W04/W09~W11/W15`가 동일 HTML/ID 규약으로 렌더링
+- [x] 도메인 라우터 분리 1차 착수 (`ops/admin/adoption/public`)
+  - `/api/ops/*` -> `ops_router`
+  - `/api/admin/*` -> `admin_router`
+  - `/api/adoption/*` -> `adoption_router`
+  - `/api/public/*` -> `public_router`
+  - 비고: `/`, `/web/*`, `/health`, `/meta`, `/api/auth/*`는 현재 `app` 직결 유지
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
