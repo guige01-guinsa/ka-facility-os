@@ -4747,7 +4747,7 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
     latency_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_LATENCY_SLO_PERCENT)))
     error_budget_percent = max(0.01, round(100.0 - error_slo_percent, 4))
     latency_budget_percent = max(0.01, round(100.0 - latency_slo_percent, 4))
-    persisted_limit = max(window_size, int(API_BURN_RATE_SAMPLE_LIMIT))
+    burn_sample_limit = max(window_size, int(API_BURN_RATE_SAMPLE_LIMIT))
     endpoints: list[dict[str, Any]] = []
 
     with _API_LATENCY_LOCK:
@@ -4757,11 +4757,12 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
             key = target["key"]
             persisted_records, persisted_last_seen_at = _load_persisted_api_latency_records(
                 endpoint_key=key,
-                limit=persisted_limit,
+                limit=burn_sample_limit,
             )
             sample_source = "database" if persisted_records else "memory"
+            latency_records = persisted_records[:window_size] if persisted_records else []
             samples = (
-                [float(row.get("duration_ms") or 0.0) for row in persisted_records]
+                [float(row.get("duration_ms") or 0.0) for row in latency_records]
                 if persisted_records
                 else list(memory_samples.get(key, []))
             )
@@ -4769,7 +4770,7 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
             p95_ms = _percentile_value(samples, 95.0)
             p99_ms = _percentile_value(samples, 99.0)
             last_seen_at = persisted_last_seen_at or memory_last_seen.get(key)
-            error_count = sum(1 for row in persisted_records if bool(row.get("is_error"))) if persisted_records else 0
+            error_count = sum(1 for row in latency_records if bool(row.get("is_error"))) if persisted_records else 0
             error_rate_percent = round((error_count / sample_count) * 100.0, 2) if sample_count > 0 else 0.0
 
             status = "ok"

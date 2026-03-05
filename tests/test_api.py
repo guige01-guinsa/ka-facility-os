@@ -5704,6 +5704,58 @@ def test_api_latency_samples_persisted_beyond_memory_cache(app_client: TestClien
     assert endpoint["burn_status"] in {"ok", "warning", "critical"}
 
 
+def test_api_latency_snapshot_uses_monitor_window_for_p95(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+    from sqlalchemy import delete, insert
+
+    endpoint_key = "GET /api/ops/dashboard/summary"
+    now = datetime.now(timezone.utc)
+    monitor_window = 20
+    monkeypatch.setattr(main_module, "API_LATENCY_MONITOR_WINDOW", monitor_window)
+
+    with main_module.get_conn() as conn:
+        conn.execute(
+            delete(main_module.api_latency_samples).where(main_module.api_latency_samples.c.endpoint_key == endpoint_key)
+        )
+        rows: list[dict[str, object]] = []
+        for idx in range(5):
+            rows.append(
+                {
+                    "endpoint_key": endpoint_key,
+                    "method": "GET",
+                    "path": "/api/ops/dashboard/summary",
+                    "duration_ms": 9000.0,
+                    "status_code": 200,
+                    "is_error": False,
+                    "sampled_at": now - timedelta(minutes=30, seconds=idx),
+                }
+            )
+        for idx in range(25):
+            rows.append(
+                {
+                    "endpoint_key": endpoint_key,
+                    "method": "GET",
+                    "path": "/api/ops/dashboard/summary",
+                    "duration_ms": float(180 + (idx % 10)),
+                    "status_code": 200,
+                    "is_error": False,
+                    "sampled_at": now - timedelta(seconds=idx),
+                }
+            )
+        conn.execute(insert(main_module.api_latency_samples), rows)
+
+    latency = app_client.get(
+        "/api/ops/performance/api-latency",
+        headers=_owner_headers(),
+    )
+    assert latency.status_code == 200
+    body = latency.json()
+    endpoint = next(item for item in body["endpoints"] if item["endpoint"] == endpoint_key)
+    assert endpoint["sample_count"] == monitor_window
+    assert endpoint["status"] in {"ok", "warning"}
+    assert float(endpoint["p95_ms"]) < 900.0
+
+
 def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     run = app_client.post(
         "/api/ops/runbook/checks/run",
