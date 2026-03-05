@@ -5,6 +5,8 @@ param(
   [string]$ServiceId,
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
+  [string]$ExpectedServiceName = "ka-facility-os",
+  [string]$ExpectedRepoFragment = "guige01-guinsa/ka-facility-os",
   [string]$AdminToken = "",
   [string]$RenderApiKey = "",
   [int]$PollSeconds = 5,
@@ -32,6 +34,10 @@ function Get-Deploys {
   return Invoke-RestMethod -Method Get -Uri "$apiBase/services/$ServiceId/deploys?limit=$Limit" -Headers $headers
 }
 
+function Get-ServiceInfo {
+  return Invoke-RestMethod -Method Get -Uri "$apiBase/services/$ServiceId" -Headers $headers
+}
+
 function Try-Rollback {
   param([string]$DeployId)
   try {
@@ -42,6 +48,21 @@ function Try-Rollback {
     Write-Output "ROLLBACK_API_FAILED"
     return $false
   }
+}
+
+$serviceInfo = Get-ServiceInfo
+$serviceName = "$($serviceInfo.name)"
+$serviceRepo = "$($serviceInfo.repo)"
+$serviceUrl = ""
+if ($serviceInfo.serviceDetails) {
+  $serviceUrl = "$($serviceInfo.serviceDetails.url)"
+}
+Write-Output "TARGET_SERVICE id=$ServiceId name=$serviceName repo=$serviceRepo url=$serviceUrl"
+if ($ExpectedServiceName -ne "" -and $serviceName -ne $ExpectedServiceName) {
+  throw "Service name mismatch: expected '$ExpectedServiceName' but got '$serviceName' (serviceId=$ServiceId)"
+}
+if ($ExpectedRepoFragment -ne "" -and (-not $serviceRepo.Contains($ExpectedRepoFragment))) {
+  throw "Service repo mismatch: expected repo containing '$ExpectedRepoFragment' but got '$serviceRepo' (serviceId=$ServiceId)"
 }
 
 $before = Get-Deploys -Limit 20

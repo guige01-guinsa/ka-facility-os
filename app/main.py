@@ -32962,6 +32962,18 @@ def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> 
                 }
             )
             continue
+        if existing_index is None and create_missing:
+            missing_for_create = [field for field in OPS_QR_MUTABLE_FIELDS if field not in update_fields]
+            if missing_for_create:
+                skipped_rows.append(
+                    {
+                        "index": idx,
+                        "qr_id": qr_id,
+                        "reason": "missing_required_fields_for_create",
+                        "message": "create_missing=true requires all fields: " + ", ".join(missing_for_create),
+                    }
+                )
+                continue
 
         action = "updated" if existing_index is not None else "created"
         before_row = (
@@ -48528,12 +48540,20 @@ def list_admin_audit_logs(
     return [_row_to_admin_audit_log_model(row) for row in rows]
 
 
-def _build_audit_archive_csv(entries: list[dict[str, Any]], *, archive: dict[str, Any] | None = None) -> str:
+def _build_audit_archive_csv(
+    entries: list[dict[str, Any]],
+    *,
+    archive: dict[str, Any] | None = None,
+    format_version: str = "v1",
+) -> str:
     output = io.StringIO()
     writer = csv.writer(output)
-    if isinstance(archive, dict):
+    normalized_format = str(format_version or "v1").strip().lower()
+    include_attachment_meta = normalized_format == "v2"
+    if include_attachment_meta and isinstance(archive, dict):
         chain = archive.get("chain") if isinstance(archive.get("chain"), dict) else {}
         writer.writerow(["section", "key", "value"])
+        writer.writerow(["meta", "format_version", "v2"])
         writer.writerow(["meta", "month", archive.get("month", "")])
         writer.writerow(["meta", "generated_at", archive.get("generated_at", "")])
         writer.writerow(["meta", "entry_count", archive.get("entry_count", 0)])
@@ -48699,6 +48719,7 @@ def get_admin_monthly_audit_archive(
 def get_admin_monthly_audit_archive_csv(
     month: Annotated[str | None, Query(description="YYYY-MM", pattern=r"^\d{4}-\d{2}$")] = None,
     max_entries: Annotated[int, Query(ge=1, le=50000)] = 10000,
+    format_version: Annotated[str, Query(pattern="^(v1|v2)$")] = "v1",
     principal: dict[str, Any] = Depends(require_permission("admins:manage")),
 ) -> Response:
     archive = build_monthly_audit_archive(
@@ -48706,8 +48727,12 @@ def get_admin_monthly_audit_archive_csv(
         max_entries=max_entries,
         include_entries=True,
     )
-    csv_text = _build_audit_archive_csv(archive["entries"], archive=archive)
-    file_name = f"audit-archive-{archive['month']}.csv"
+    csv_text = _build_audit_archive_csv(archive["entries"], archive=archive, format_version=format_version)
+    file_name = (
+        f"audit-archive-{archive['month']}.csv"
+        if format_version == "v1"
+        else f"audit-archive-{archive['month']}-v2.csv"
+    )
     _write_audit_log(
         principal=principal,
         action="admin_audit_archive_export_csv",
@@ -48717,6 +48742,7 @@ def get_admin_monthly_audit_archive_csv(
             "month": archive["month"],
             "entry_count": archive["entry_count"],
             "chain_ok": archive["chain"]["chain_ok"],
+            "format_version": format_version,
         },
     )
     return Response(

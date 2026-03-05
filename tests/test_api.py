@@ -2234,6 +2234,52 @@ def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) ->
     assert all(row["qr_id"] != target_qr_id for row in after_body["rows"])
 
 
+def test_ops_inspection_qr_bulk_update_create_missing_requires_all_fields(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    before = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert before.status_code == 200
+    before_summary = before.json()["summary"]
+
+    result = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=headers,
+        json={
+            "dry_run": False,
+            "create_missing": True,
+            "updates": [
+                {
+                    "qr_id": "QR-998",
+                    "equipment": "신규 설비",
+                    "location": "신규 위치",
+                }
+            ],
+        },
+    )
+    assert result.status_code == 200
+    body = result.json()
+    summary = body["summary"]
+    assert summary["requested_count"] == 1
+    assert summary["applied_count"] == 0
+    assert summary["created_count"] == 0
+    assert summary["skipped_count"] >= 1
+    assert any(
+        row.get("reason") == "missing_required_fields_for_create"
+        for row in body.get("skipped", [])
+        if isinstance(row, dict)
+    )
+
+    after = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/placeholders",
+        headers=headers,
+    )
+    assert after.status_code == 200
+    after_summary = after.json()["summary"]
+    assert after_summary["qr_asset_count"] == before_summary["qr_asset_count"]
+
+
 def test_work_order_sla_rules_and_inspection_priority_floor(app_client: TestClient) -> None:
     headers = _owner_headers()
 
@@ -5341,7 +5387,17 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_csv.status_code == 200
     assert archive_csv.headers["content-type"].startswith("text/csv")
     assert len(archive_csv.headers.get("x-audit-archive-sha256", "")) == 64
-    assert "attachment.ops_checklists_import_validation,status" in archive_csv.text
+    assert archive_csv.text.startswith("id,created_at,actor_username,action,resource_type,resource_id,status,prev_hash,entry_hash")
+
+    archive_csv_v2 = app_client.get(
+        f"/api/admin/audit-archive/monthly/csv?month={month}&format_version=v2",
+        headers=_owner_headers(),
+    )
+    assert archive_csv_v2.status_code == 200
+    assert archive_csv_v2.headers["content-type"].startswith("text/csv")
+    assert len(archive_csv_v2.headers.get("x-audit-archive-sha256", "")) == 64
+    assert "attachment.ops_checklists_import_validation,status" in archive_csv_v2.text
+    assert "meta,format_version,v2" in archive_csv_v2.text
 
     with db_module.get_conn() as conn:
         first_row = conn.execute(
