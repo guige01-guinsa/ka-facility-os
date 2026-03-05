@@ -1556,6 +1556,15 @@ class AuthLoginResponse(BaseModel):
     profile: AuthMeRead
 
 
+class AuthLogoutResponse(BaseModel):
+    status: str
+    token_id: Optional[int] = None
+    token_label: Optional[str] = None
+    token_revoked: bool = False
+    is_legacy: bool = False
+    logged_out_at: datetime
+
+
 class AuthMeUpdateRequest(BaseModel):
     display_name: Optional[str] = Field(default=None, max_length=120)
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)

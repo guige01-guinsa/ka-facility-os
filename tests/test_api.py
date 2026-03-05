@@ -387,6 +387,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "X-Admin-Token 입력" in root_html.text
     assert "ID/PW 로그인" in root_html.text
     assert "사용자 신규가입" in root_html.text
+    assert "권한관리" in root_html.text
+    assert "로그아웃" in root_html.text
     assert "요약 새로고침" in root_html.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})
@@ -417,6 +419,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     )
     assert service_info.json()["work_order_sla_rules_api"] == "/api/work-orders/sla/rules"
     assert service_info.json()["auth_login_api"] == "/api/auth/login"
+    assert service_info.json()["auth_logout_api"] == "/api/auth/logout"
     assert service_info.json()["admin_user_password_api"] == "/api/admin/users/{user_id}/password"
     assert "public_modules_api" in service_info.json()
     assert service_info.json()["adoption_portal_html"] == "/web/adoption"
@@ -1457,6 +1460,54 @@ def test_auth_login_with_seeded_password_user(app_client: TestClient) -> None:
     )
     assert wrong.status_code == 401
     assert wrong.json()["detail"] == "Invalid username or password"
+
+
+def test_auth_logout_revokes_issued_token_and_handles_legacy_token(app_client: TestClient) -> None:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": "logout_ci",
+            "display_name": "Logout CI",
+            "role": "operator",
+            "permissions": [],
+            "password": "LogoutPass123!",
+        },
+    )
+    assert created.status_code == 201
+
+    login = app_client.post(
+        "/api/auth/login",
+        json={
+            "username": "logout_ci",
+            "password": "LogoutPass123!",
+            "token_label": "logout-ci-token",
+        },
+    )
+    assert login.status_code == 200
+    issued_token = login.json()["token"]
+    issued_headers = {"X-Admin-Token": issued_token}
+    me_before = app_client.get("/api/auth/me", headers=issued_headers)
+    assert me_before.status_code == 200
+
+    logout = app_client.post("/api/auth/logout", headers=issued_headers)
+    assert logout.status_code == 200
+    logout_body = logout.json()
+    assert logout_body["status"] == "logged_out"
+    assert logout_body["token_revoked"] is True
+    assert logout_body["is_legacy"] is False
+
+    me_after = app_client.get("/api/auth/me", headers=issued_headers)
+    assert me_after.status_code == 401
+
+    legacy_logout = app_client.post("/api/auth/logout", headers=_owner_headers())
+    assert legacy_logout.status_code == 200
+    legacy_body = legacy_logout.json()
+    assert legacy_body["status"] == "logged_out"
+    assert legacy_body["token_revoked"] is False
+    assert legacy_body["is_legacy"] is True
+    legacy_me_after = app_client.get("/api/auth/me", headers=_owner_headers())
+    assert legacy_me_after.status_code == 200
 
 
 def test_admin_set_password_then_auth_login(app_client: TestClient) -> None:

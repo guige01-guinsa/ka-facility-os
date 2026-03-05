@@ -104,6 +104,7 @@ from app.schemas import (
     AuthMeUpdateRequest,
     AuthLoginRequest,
     AuthLoginResponse,
+    AuthLogoutResponse,
     AuthMeRead,
     AuthSelfDeactivateResponse,
     DashboardSummaryRead,
@@ -25122,6 +25123,7 @@ def _service_info_payload() -> dict[str, str]:
         "monthly_report_csv_api": "/api/reports/monthly/csv",
         "monthly_report_pdf_api": "/api/reports/monthly/pdf",
         "auth_login_api": "/api/auth/login",
+        "auth_logout_api": "/api/auth/logout",
         "auth_me_api": "/api/auth/me",
         "auth_me_profile_api": "/api/auth/me/profile",
         "auth_me_deactivate_api": "/api/auth/me",
@@ -33113,7 +33115,7 @@ def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> 
 
 
 def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
-    allowed_tabs = {"overview", "workorders", "inspections", "reports", "adoption", "tutorial"}
+    allowed_tabs = {"overview", "workorders", "inspections", "reports", "iam", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
     w02_tracker_box_html = _build_shared_tracker_execution_box_html("w02", "W02")
     w03_tracker_box_html = _build_shared_tracker_execution_box_html("w03", "W03")
@@ -33631,6 +33633,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         <button class="tab-btn" type="button" role="tab" data-tab="workorders">작업지시</button>
         <button class="tab-btn" type="button" role="tab" data-tab="inspections">점검</button>
         <button class="tab-btn" type="button" role="tab" data-tab="reports">월간리포트</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="iam">권한관리</button>
         <button class="tab-btn" type="button" role="tab" data-tab="adoption">사용자 정착 계획</button>
         <button class="tab-btn" type="button" role="tab" data-tab="tutorial">튜토리얼</button>
       </div>
@@ -33644,6 +33647,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         <div class="auth-actions">
           <button id="openLoginModalBtn" class="btn run" type="button">ID/PW 로그인</button>
           <button id="openSignupModalBtn" class="btn run" type="button">사용자 신규가입</button>
+          <button id="logoutBtn" class="btn" type="button">로그아웃</button>
         </div>
         <div id="authState" class="auth-state">토큰 상태: 없음</div>
         <div id="authModalBackdrop" class="auth-backdrop" hidden></div>
@@ -33891,6 +33895,106 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF</a>
             </div>
             <pre id="reportsRaw" class="mono">{{}}</pre>
+          </div>
+        </div>
+
+        <div id="panelIam" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">owner/manager가 로그인 세션, 사용자 권한, 계정 상태를 한 화면에서 관리합니다.</p>
+          <div class="box">
+            <h3>내 세션 / 권한 / 로그아웃</h3>
+            <div class="filter-row">
+              <input id="iamReserved1" value="GET /api/auth/me" disabled />
+              <input id="iamReserved2" value="POST /api/auth/logout" disabled />
+              <input id="iamReserved3" value="GET /api/admin/token-policy" disabled />
+              <input id="iamReserved4" value="legacy env token은 서버 revoke 불가" disabled />
+              <button id="runIamMeBtn" class="btn run" type="button">내 권한 조회</button>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runIamLogoutBtn" class="btn" type="button">로그아웃</button>
+              <button id="runIamTokenPolicyBtn" class="btn soft" type="button">토큰 정책 조회</button>
+            </div>
+            <div id="iamMeMeta" class="meta">조회 전</div>
+            <div id="iamMeTable" class="empty">데이터 없음</div>
+            <div id="iamTokenPolicyTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>사용자 목록</h3>
+            <div class="filter-row">
+              <input id="iamFilterRole" placeholder="role filter (optional)" />
+              <select id="iamFilterActive">
+                <option value="all">active: all</option>
+                <option value="true">active: true</option>
+                <option value="false">active: false</option>
+              </select>
+              <input id="iamFilterSearch" placeholder="username/display search" />
+              <input id="iamUsersReserved1" value="목록에서 선택 클릭 후 아래 수정폼 연동" disabled />
+              <button id="runIamUsersBtn" class="btn run" type="button">사용자 조회</button>
+            </div>
+            <div id="iamUsersMeta" class="meta">조회 전</div>
+            <div id="iamUsersTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>사용자 생성</h3>
+            <div class="ops-form-grid">
+              <input id="iamCreateUsername" placeholder="username" />
+              <input id="iamCreatePassword" type="password" placeholder="password (8+)" />
+              <input id="iamCreateDisplayName" placeholder="display_name (optional)" />
+              <select id="iamCreateRole">
+                <option value="operator">operator</option>
+                <option value="auditor">auditor</option>
+                <option value="manager">manager</option>
+                <option value="owner">owner</option>
+              </select>
+              <input id="iamCreateSiteScope" value="*" placeholder="site_scope comma (e.g. HQ,TRAINING-HQ)" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="iamCreatePermissions" class="span-2" placeholder="custom permissions comma (optional)" />
+              <label class="ops-inline-label">
+                <input id="iamCreateIsActive" type="checkbox" checked />
+                is_active=true
+              </label>
+              <input id="iamCreateReserved1" value="permissions 공백이면 []" disabled />
+              <button id="runIamCreateUserBtn" class="btn run" type="button">사용자 생성</button>
+            </div>
+            <div id="iamCreateMeta" class="meta">생성 전</div>
+          </div>
+          <div class="box">
+            <h3>사용자 수정 / 비활성화 / 삭제</h3>
+            <div class="filter-row">
+              <input id="iamEditUserId" placeholder="user_id (숫자)" />
+              <input id="iamEditUsername" placeholder="username (읽기용)" disabled />
+              <input id="iamEditReserved1" value="PATCH /api/admin/users/<id>" disabled />
+              <input id="iamEditReserved2" value="POST /api/admin/users/<id>/password" disabled />
+              <button id="runIamPickUserBtn" class="btn soft" type="button">사용자 선택</button>
+            </div>
+            <div class="ops-form-grid">
+              <input id="iamEditDisplayName" placeholder="display_name" />
+              <select id="iamEditRole">
+                <option value="operator">operator</option>
+                <option value="auditor">auditor</option>
+                <option value="manager">manager</option>
+                <option value="owner">owner</option>
+              </select>
+              <input id="iamEditSiteScope" placeholder="site_scope comma" />
+              <input id="iamEditPermissions" placeholder="permissions comma" />
+              <select id="iamEditIsActive">
+                <option value="true">is_active=true</option>
+                <option value="false">is_active=false</option>
+              </select>
+            </div>
+            <div class="ops-form-grid">
+              <input id="iamEditPassword" type="password" class="span-2" placeholder="새 password (변경 시 입력)" />
+              <input id="iamEditReserved3" value="PATCH /api/admin/users/<id>/active" disabled />
+              <input id="iamEditReserved4" value="DELETE /api/admin/users/<id>" disabled />
+              <input id="iamEditReserved5" value="owner 최소 1명 유지 정책 적용" disabled />
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runIamUpdateUserBtn" class="btn run" type="button">사용자 수정</button>
+              <button id="runIamSetPasswordBtn" class="btn soft" type="button">비밀번호 변경</button>
+              <button id="runIamDeactivateUserBtn" class="btn" type="button">비활성화</button>
+              <button id="runIamDeleteUserBtn" class="btn" type="button">사용자 삭제</button>
+            </div>
+            <div id="iamEditMeta" class="meta">수정 전</div>
           </div>
         </div>
 
@@ -34453,6 +34557,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         workorders: document.getElementById("panelWorkorders"),
         inspections: document.getElementById("panelInspections"),
         reports: document.getElementById("panelReports"),
+        iam: document.getElementById("panelIam"),
         adoption: document.getElementById("panelAdoption"),
         tutorial: document.getElementById("panelTutorial")
       }};
@@ -34469,6 +34574,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       const signupSiteScopeInput = document.getElementById("signupSiteScopeInput");
       const openLoginModalBtn = document.getElementById("openLoginModalBtn");
       const openSignupModalBtn = document.getElementById("openSignupModalBtn");
+      const logoutBtn = document.getElementById("logoutBtn");
       const closeLoginModalBtn = document.getElementById("closeLoginModalBtn");
       const closeSignupModalBtn = document.getElementById("closeSignupModalBtn");
       const authModalBackdrop = document.getElementById("authModalBackdrop");
@@ -34476,6 +34582,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       const authSignupModal = document.getElementById("authSignupModal");
       let activeAuthModal = null;
       let authProfile = null;
+      let iamUsersCache = [];
+      let iamSelectedUserId = null;
       let w07TrackerItemsCache = [];
       let w07TrackerFilter = "all";
       let w07SelectedItemIds = new Set();
@@ -35203,6 +35311,53 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
       }}
 
+      async function runAuthLogout() {{
+        const token = getToken();
+        if (!token) {{
+          setAuthState("로그아웃 안내: 현재 저장된 토큰이 없습니다.");
+          return;
+        }}
+        setAuthState("로그아웃 처리 중...");
+        try {{
+          const result = await fetchJson("/api/auth/logout", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{}}),
+          }});
+          TOKEN_KEY_ALIASES.forEach((key) => {{
+            window.sessionStorage.removeItem(key);
+            window.localStorage.removeItem(key);
+          }});
+          tokenInput.value = "";
+          authProfile = null;
+          iamUsersCache = [];
+          iamSelectedUserId = null;
+          updateAuthStateFromToken();
+          const detail = []
+          detail.push("token_revoked=" + String(Boolean(result && result.token_revoked)));
+          detail.push("is_legacy=" + String(Boolean(result && result.is_legacy)));
+          setAuthState("로그아웃 완료 | " + detail.join(" | "));
+          const iamMeMeta = document.getElementById("iamMeMeta");
+          const iamMeTable = document.getElementById("iamMeTable");
+          const iamUsersMeta = document.getElementById("iamUsersMeta");
+          const iamUsersTable = document.getElementById("iamUsersTable");
+          if (iamMeMeta) {{
+            iamMeMeta.textContent = "로그아웃 완료";
+          }}
+          if (iamMeTable) {{
+            iamMeTable.innerHTML = renderEmpty("로그아웃 상태입니다.");
+          }}
+          if (iamUsersMeta) {{
+            iamUsersMeta.textContent = "로그아웃 상태";
+          }}
+          if (iamUsersTable) {{
+            iamUsersTable.innerHTML = renderEmpty("로그아웃 상태입니다.");
+          }}
+        }} catch (err) {{
+          setAuthState("로그아웃 실패 | " + err.message);
+        }}
+      }}
+
       function parseSiteScopeInput(raw) {{
         const parts = String(raw || "")
           .split(",")
@@ -35214,6 +35369,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (parts.includes("*")) {{
           return ["*"];
         }}
+        return Array.from(new Set(parts));
+      }}
+
+      function parsePermissionsInput(raw) {{
+        const parts = String(raw || "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => item !== "");
         return Array.from(new Set(parts));
       }}
 
@@ -35267,6 +35430,325 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           openAuthModal("login");
         }} catch (err) {{
           setAuthState("가입 실패 | " + err.message);
+        }}
+      }}
+
+      function getIamUserFromCache(userId) {{
+        const targetId = asInt(userId, -1);
+        if (targetId <= 0) return null;
+        const found = iamUsersCache.find((row) => asInt(row.id, -1) === targetId);
+        return found || null;
+      }}
+
+      function applyIamUserToForm(user) {{
+        if (!user) return;
+        const userId = asInt(user.id, 0);
+        if (userId <= 0) return;
+        iamSelectedUserId = userId;
+        document.getElementById("iamEditUserId").value = String(userId);
+        document.getElementById("iamEditUsername").value = String(user.username || "");
+        document.getElementById("iamEditDisplayName").value = String(user.display_name || "");
+        document.getElementById("iamEditRole").value = String(user.role || "operator");
+        const siteScope = Array.isArray(user.site_scope) ? user.site_scope : [];
+        document.getElementById("iamEditSiteScope").value = siteScope.join(",");
+        const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+        document.getElementById("iamEditPermissions").value = permissions.join(",");
+        document.getElementById("iamEditIsActive").value = user.is_active ? "true" : "false";
+      }}
+
+      function renderIamUsersTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("사용자 데이터가 없습니다.");
+        }}
+        const body = rows.map((row) => {{
+          const userId = asInt(row.id, 0);
+          const selectedCls = iamSelectedUserId === userId ? ' class="w07-track-row active"' : "";
+          const scopeText = Array.isArray(row.site_scope) ? row.site_scope.join(", ") : "";
+          const permsText = Array.isArray(row.permissions) ? row.permissions.join(", ") : "";
+          return (
+            "<tr" + selectedCls + ">" +
+              "<td>" + escapeHtml(userId) + "</td>" +
+              "<td>" + escapeHtml(row.username || "") + "</td>" +
+              "<td>" + escapeHtml(row.display_name || "") + "</td>" +
+              "<td>" + escapeHtml(row.role || "") + "</td>" +
+              "<td>" + escapeHtml(row.is_active ? "true" : "false") + "</td>" +
+              "<td>" + escapeHtml(scopeText) + "</td>" +
+              "<td>" + escapeHtml(permsText) + "</td>" +
+              '<td><button class="btn soft iam-select-user" type="button" data-user-id="' + escapeHtml(userId) + '">선택</button></td>' +
+            "</tr>"
+          );
+        }}).join("");
+        return (
+          '<div class="table-wrap"><table><thead><tr>'
+          + "<th>ID</th><th>Username</th><th>Display</th><th>Role</th><th>Active</th><th>Site Scope</th><th>Permissions</th><th>Action</th>"
+          + "</tr></thead><tbody>" + body + "</tbody></table></div>"
+        );
+      }}
+
+      async function runIamMe() {{
+        const meta = document.getElementById("iamMeMeta");
+        const table = document.getElementById("iamMeTable");
+        const tokenPolicyTable = document.getElementById("iamTokenPolicyTable");
+        try {{
+          meta.textContent = "조회 중... /api/auth/me";
+          const profile = await runAuthMe();
+          const role = String(profile.role || "").toLowerCase();
+          const ownerHint = role === "owner" ? "owner 권한 확인됨" : ("현재 role=" + role);
+          meta.textContent = "성공: /api/auth/me | " + ownerHint;
+          const rows = [{{
+            username: profile.username || "",
+            display_name: profile.display_name || "",
+            role: profile.role || "",
+            site_scope: Array.isArray(profile.site_scope) ? profile.site_scope.join(", ") : "",
+            permissions: Array.isArray(profile.permissions) ? profile.permissions.join(", ") : "",
+            token_label: profile.token_label || "",
+            token_expires_at: profile.token_expires_at || "",
+            token_rotate_due_at: profile.token_rotate_due_at || "",
+            token_idle_due_at: profile.token_idle_due_at || "",
+            token_must_rotate: Boolean(profile.token_must_rotate),
+            is_legacy: Boolean(profile.is_legacy),
+          }}];
+          table.innerHTML = renderTable(rows, [
+            {{ key: "username", label: "Username" }},
+            {{ key: "display_name", label: "Display" }},
+            {{ key: "role", label: "Role" }},
+            {{ key: "site_scope", label: "Site Scope" }},
+            {{ key: "permissions", label: "Permissions" }},
+            {{ key: "token_label", label: "Token Label" }},
+            {{ key: "token_expires_at", label: "Token Expires At" }},
+            {{ key: "token_rotate_due_at", label: "Rotate Due At" }},
+            {{ key: "token_idle_due_at", label: "Idle Due At" }},
+            {{ key: "token_must_rotate", label: "Must Rotate" }},
+            {{ key: "is_legacy", label: "Is Legacy" }},
+          ]);
+          tokenPolicyTable.innerHTML = renderEmpty("토큰 정책은 '토큰 정책 조회' 버튼으로 확인하세요.");
+          return profile;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+          tokenPolicyTable.innerHTML = renderEmpty(err.message);
+          throw err;
+        }}
+      }}
+
+      async function runIamTokenPolicy() {{
+        const table = document.getElementById("iamTokenPolicyTable");
+        try {{
+          table.innerHTML = renderEmpty("조회 중...");
+          const policy = await fetchJson("/api/admin/token-policy", true);
+          table.innerHTML = renderTable([policy], [
+            {{ key: "require_expiry", label: "Require Expiry" }},
+            {{ key: "max_ttl_days", label: "Max TTL Days" }},
+            {{ key: "rotate_after_days", label: "Rotate After Days" }},
+            {{ key: "rotate_warning_days", label: "Rotate Warning Days" }},
+            {{ key: "max_idle_days", label: "Max Idle Days" }},
+            {{ key: "max_active_per_user", label: "Max Active Per User" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      async function runIamUsers() {{
+        const meta = document.getElementById("iamUsersMeta");
+        const table = document.getElementById("iamUsersTable");
+        try {{
+          meta.textContent = "조회 중... /api/admin/users";
+          const users = await fetchJson("/api/admin/users", true);
+          iamUsersCache = Array.isArray(users) ? users : [];
+
+          const roleFilter = String(document.getElementById("iamFilterRole").value || "").trim().toLowerCase();
+          const activeFilter = String(document.getElementById("iamFilterActive").value || "all").trim().toLowerCase();
+          const searchFilter = String(document.getElementById("iamFilterSearch").value || "").trim().toLowerCase();
+          let rows = iamUsersCache.slice();
+          if (roleFilter) {{
+            rows = rows.filter((row) => String(row.role || "").toLowerCase() === roleFilter);
+          }}
+          if (activeFilter === "true" || activeFilter === "false") {{
+            const expected = activeFilter === "true";
+            rows = rows.filter((row) => Boolean(row.is_active) === expected);
+          }}
+          if (searchFilter) {{
+            rows = rows.filter((row) => {{
+              const candidate = (String(row.username || "") + " " + String(row.display_name || "")).toLowerCase();
+              return candidate.includes(searchFilter);
+            }});
+          }}
+          meta.textContent = "성공: /api/admin/users | total=" + String(iamUsersCache.length) + " | filtered=" + String(rows.length);
+          table.innerHTML = renderIamUsersTable(rows);
+          return rows;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+          return [];
+        }}
+      }}
+
+      async function runIamPickUser() {{
+        const editMeta = document.getElementById("iamEditMeta");
+        const userId = asInt(document.getElementById("iamEditUserId").value, -1);
+        if (userId <= 0) {{
+          editMeta.textContent = "실패: user_id를 입력하세요.";
+          return;
+        }}
+        if (!iamUsersCache.length) {{
+          await runIamUsers();
+        }}
+        const user = getIamUserFromCache(userId);
+        if (!user) {{
+          editMeta.textContent = "실패: user_id=" + String(userId) + " 를 목록에서 찾을 수 없습니다.";
+          return;
+        }}
+        applyIamUserToForm(user);
+        editMeta.textContent = "선택 완료: user_id=" + String(userId) + " (" + String(user.username || "") + ")";
+        document.getElementById("iamUsersTable").innerHTML = renderIamUsersTable(iamUsersCache);
+      }}
+
+      async function runIamCreateUser() {{
+        const meta = document.getElementById("iamCreateMeta");
+        const username = String(document.getElementById("iamCreateUsername").value || "").trim();
+        const password = String(document.getElementById("iamCreatePassword").value || "").trim();
+        const displayName = String(document.getElementById("iamCreateDisplayName").value || "").trim();
+        const role = String(document.getElementById("iamCreateRole").value || "operator").trim().toLowerCase();
+        const siteScopeRaw = String(document.getElementById("iamCreateSiteScope").value || "").trim();
+        const permissionsRaw = String(document.getElementById("iamCreatePermissions").value || "").trim();
+        const isActive = Boolean(document.getElementById("iamCreateIsActive").checked);
+        if (!username) {{
+          meta.textContent = "실패: username을 입력하세요.";
+          return;
+        }}
+        if (!password) {{
+          meta.textContent = "실패: password를 입력하세요.";
+          return;
+        }}
+        try {{
+          const payload = {{
+            username,
+            password,
+            role,
+            permissions: parsePermissionsInput(permissionsRaw),
+            site_scope: parseSiteScopeInput(siteScopeRaw),
+            is_active: isActive,
+          }};
+          if (displayName) {{
+            payload.display_name = displayName;
+          }}
+          const created = await fetchJson("/api/admin/users", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "생성 성공: user_id=" + String(created.id) + " | username=" + String(created.username || "");
+          document.getElementById("iamCreatePassword").value = "";
+          await runIamUsers();
+          applyIamUserToForm(created);
+          document.getElementById("iamEditMeta").textContent = "선택 완료: 방금 생성한 사용자";
+        }} catch (err) {{
+          meta.textContent = "생성 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamUpdateUser() {{
+        const meta = document.getElementById("iamEditMeta");
+        const userId = asInt(document.getElementById("iamEditUserId").value, -1);
+        if (userId <= 0) {{
+          meta.textContent = "실패: user_id를 입력하세요.";
+          return;
+        }}
+        try {{
+          const payload = {{
+            display_name: String(document.getElementById("iamEditDisplayName").value || "").trim(),
+            role: String(document.getElementById("iamEditRole").value || "operator").trim().toLowerCase(),
+            permissions: parsePermissionsInput(document.getElementById("iamEditPermissions").value || ""),
+            site_scope: parseSiteScopeInput(document.getElementById("iamEditSiteScope").value || ""),
+            is_active: String(document.getElementById("iamEditIsActive").value || "true").trim().toLowerCase() !== "false",
+          }};
+          const updated = await fetchJson("/api/admin/users/" + encodeURIComponent(String(userId)), true, {{
+            method: "PATCH",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "수정 성공: user_id=" + String(updated.id) + " | role=" + String(updated.role || "");
+          await runIamUsers();
+          applyIamUserToForm(updated);
+        }} catch (err) {{
+          meta.textContent = "수정 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamSetPassword() {{
+        const meta = document.getElementById("iamEditMeta");
+        const userId = asInt(document.getElementById("iamEditUserId").value, -1);
+        const nextPassword = String(document.getElementById("iamEditPassword").value || "").trim();
+        if (userId <= 0) {{
+          meta.textContent = "실패: user_id를 입력하세요.";
+          return;
+        }}
+        if (!nextPassword) {{
+          meta.textContent = "실패: 새 password를 입력하세요.";
+          return;
+        }}
+        try {{
+          await fetchJson("/api/admin/users/" + encodeURIComponent(String(userId)) + "/password", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ password: nextPassword }}),
+          }});
+          document.getElementById("iamEditPassword").value = "";
+          meta.textContent = "비밀번호 변경 성공: user_id=" + String(userId);
+        }} catch (err) {{
+          meta.textContent = "비밀번호 변경 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamDeactivateUser() {{
+        const meta = document.getElementById("iamEditMeta");
+        const userId = asInt(document.getElementById("iamEditUserId").value, -1);
+        if (userId <= 0) {{
+          meta.textContent = "실패: user_id를 입력하세요.";
+          return;
+        }}
+        if (!window.confirm("user_id=" + String(userId) + " 계정을 비활성화하시겠습니까?")) {{
+          return;
+        }}
+        try {{
+          const updated = await fetchJson("/api/admin/users/" + encodeURIComponent(String(userId)) + "/active", true, {{
+            method: "PATCH",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{ is_active: false }}),
+          }});
+          meta.textContent = "비활성화 성공: user_id=" + String(updated.id);
+          await runIamUsers();
+          applyIamUserToForm(updated);
+        }} catch (err) {{
+          meta.textContent = "비활성화 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamDeleteUser() {{
+        const meta = document.getElementById("iamEditMeta");
+        const userId = asInt(document.getElementById("iamEditUserId").value, -1);
+        if (userId <= 0) {{
+          meta.textContent = "실패: user_id를 입력하세요.";
+          return;
+        }}
+        if (!window.confirm("user_id=" + String(userId) + " 계정을 삭제(비활성화)하시겠습니까?")) {{
+          return;
+        }}
+        try {{
+          await fetchJson("/api/admin/users/" + encodeURIComponent(String(userId)), true, {{
+            method: "DELETE",
+          }});
+          meta.textContent = "삭제(비활성화) 성공: user_id=" + String(userId);
+          iamSelectedUserId = null;
+          document.getElementById("iamEditUserId").value = "";
+          document.getElementById("iamEditUsername").value = "";
+          document.getElementById("iamEditDisplayName").value = "";
+          document.getElementById("iamEditPermissions").value = "";
+          document.getElementById("iamEditPassword").value = "";
+          await runIamUsers();
+        }} catch (err) {{
+          meta.textContent = "삭제 실패: " + err.message;
         }}
       }}
 
@@ -40575,6 +41057,9 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       if (openSignupModalBtn) {{
         openSignupModalBtn.addEventListener("click", () => openAuthModal("signup"));
       }}
+      if (logoutBtn) {{
+        logoutBtn.addEventListener("click", runAuthLogout);
+      }}
       if (closeLoginModalBtn) {{
         closeLoginModalBtn.addEventListener("click", closeAuthModal);
       }}
@@ -40605,6 +41090,31 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
             event.preventDefault();
             runAuthSignup();
           }}
+        }});
+      }}
+      document.getElementById("runIamMeBtn").addEventListener("click", runIamMe);
+      document.getElementById("runIamLogoutBtn").addEventListener("click", runAuthLogout);
+      document.getElementById("runIamTokenPolicyBtn").addEventListener("click", runIamTokenPolicy);
+      document.getElementById("runIamUsersBtn").addEventListener("click", runIamUsers);
+      document.getElementById("runIamPickUserBtn").addEventListener("click", runIamPickUser);
+      document.getElementById("runIamCreateUserBtn").addEventListener("click", runIamCreateUser);
+      document.getElementById("runIamUpdateUserBtn").addEventListener("click", runIamUpdateUser);
+      document.getElementById("runIamSetPasswordBtn").addEventListener("click", runIamSetPassword);
+      document.getElementById("runIamDeactivateUserBtn").addEventListener("click", runIamDeactivateUser);
+      document.getElementById("runIamDeleteUserBtn").addEventListener("click", runIamDeleteUser);
+      const iamUsersTableContainer = document.getElementById("iamUsersTable");
+      if (iamUsersTableContainer) {{
+        iamUsersTableContainer.addEventListener("click", (event) => {{
+          const pickBtn = event.target.closest(".iam-select-user");
+          if (!pickBtn) return;
+          const userId = asInt(pickBtn.getAttribute("data-user-id"), -1);
+          if (userId <= 0) return;
+          const user = getIamUserFromCache(userId);
+          if (!user) return;
+          applyIamUserToForm(user);
+          document.getElementById("iamUsersTable").innerHTML = renderIamUsersTable(iamUsersCache);
+          document.getElementById("iamEditMeta").textContent =
+            "선택 완료: user_id=" + String(userId) + " (" + String(user.username || "") + ")";
         }});
       }}
 
@@ -47558,6 +48068,58 @@ def auth_me(
     principal: dict[str, Any] = Depends(get_current_admin),
 ) -> AuthMeRead:
     return _principal_to_auth_me_model(principal)
+
+
+@app.post("/api/auth/logout", response_model=AuthLogoutResponse)
+def auth_logout(
+    response: Response,
+    principal: dict[str, Any] = Depends(get_current_admin),
+) -> AuthLogoutResponse:
+    now = datetime.now(timezone.utc)
+    token_id_value = principal.get("token_id")
+    token_id = int(token_id_value) if token_id_value is not None else None
+    token_label = str(principal.get("token_label") or "")
+    is_legacy = bool(principal.get("is_legacy", False))
+    token_revoked = False
+    is_legacy_env_token = token_label in {"legacy-env-admin-token", "legacy-env-token"}
+
+    if token_id is not None and not is_legacy_env_token:
+        with get_conn() as conn:
+            row = conn.execute(
+                select(admin_tokens.c.id).where(admin_tokens.c.id == token_id).limit(1)
+            ).first()
+            if row is not None:
+                conn.execute(
+                    update(admin_tokens)
+                    .where(admin_tokens.c.id == token_id)
+                    .values(is_active=False, last_used_at=now)
+                )
+                token_revoked = True
+
+    _write_audit_log(
+        principal=principal,
+        action="auth_logout",
+        resource_type="admin_token",
+        resource_id=str(token_id if token_id is not None else (token_label or "current")),
+        detail={
+            "username": str(principal.get("username") or "unknown"),
+            "token_id": token_id,
+            "token_label": token_label,
+            "token_revoked": token_revoked,
+            "is_legacy": is_legacy,
+            "is_legacy_env_token": is_legacy_env_token,
+        },
+    )
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return AuthLogoutResponse(
+        status="logged_out",
+        token_id=token_id,
+        token_label=token_label or None,
+        token_revoked=token_revoked,
+        is_legacy=is_legacy,
+        logged_out_at=now,
+    )
 
 
 @app.patch("/api/auth/me/profile", response_model=AuthMeRead)
