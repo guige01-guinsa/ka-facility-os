@@ -117,12 +117,17 @@
   - 월간 감사 아카이브 해시/서명 검증 로직 보정(`archive_sha_ok/signature_ok` 일치)
   - API 지연 P95 계산을 모니터 윈도우 기준으로 보정(과거 샘플 과반영 제거)
   - smoke 스크립트에서 이전 실패이력(`deploy_smoke_checklist`) 자기참조 차단 로직 제거
+  - 최신 반영 배포+스모크 성공(`SMOKE_OK`, deploy `dep-d6kogr3h46gs73d30ptg`, commit `0a1109f`)
 
 ## W16 진행상황 (2026-03-05)
 - [x] 정책 API 공통 응답 메타 필드 표준화 1차 적용
   - 대상: `/api/ops/governance/gate/remediation/tracker/autopilot/policy` (GET/PUT)
   - 대상: `/api/ops/alerts/mttr-slo/policy` (GET/PUT)
   - 공통 메타: `meta.version`, `meta.scope`, `meta.applies_to`, `meta.policy_key`, `meta.updated_at`
+- [x] W10/W11/W15 Adoption KPI 점검 화면 JS 공통화
+  - 공통 함수: `runSharedAdoptionKpiOperation(phaseCode)`, `getSharedAdoptionKpiConfig(phaseCode)`
+  - 공통 컬럼/요약 매핑: KPI/반복이슈/권고안/정책 테이블 렌더 중복 제거
+  - 결과: `runW10KpiOperation`, `runW11KpiOperation`, `runW15KpiOperation`이 공통 실행 경로 사용
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
