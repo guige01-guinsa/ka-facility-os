@@ -7769,6 +7769,30 @@ def _default_w26_remediation_autopilot_policy() -> dict[str, Any]:
     }
 
 
+def _build_policy_response_payload(
+    *,
+    policy_key: str,
+    updated_at: datetime,
+    policy: dict[str, Any],
+    scope: str,
+    applies_to: str = "global",
+    version: str = "v1",
+) -> dict[str, Any]:
+    updated_at_iso = updated_at.isoformat()
+    return {
+        "meta": {
+            "version": version,
+            "scope": scope,
+            "applies_to": applies_to,
+            "policy_key": policy_key,
+            "updated_at": updated_at_iso,
+        },
+        "policy_key": policy_key,
+        "updated_at": updated_at_iso,
+        "policy": policy,
+    }
+
+
 def _normalize_w26_remediation_autopilot_policy(value: Any) -> dict[str, Any]:
     source = value if isinstance(value, dict) else {}
     defaults = _default_w26_remediation_autopilot_policy()
@@ -51124,11 +51148,12 @@ def get_ops_governance_gate_remediation_tracker_autopilot_policy(
             "cooldown_minutes": int(policy.get("cooldown_minutes") or 0),
         },
     )
-    return {
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_policy_response_payload(
+        policy_key=policy_key,
+        updated_at=updated_at,
+        policy=policy,
+        scope="ops.governance.remediation.autopilot",
+    )
 
 
 @ops_router.put("/governance/gate/remediation/tracker/autopilot/policy")
@@ -51157,11 +51182,12 @@ def set_ops_governance_gate_remediation_tracker_autopilot_policy(
             "auto_assign_max_items": int(policy.get("auto_assign_max_items") or 0),
         },
     )
-    return {
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_policy_response_payload(
+        policy_key=policy_key,
+        updated_at=updated_at,
+        policy=policy,
+        scope="ops.governance.remediation.autopilot",
+    )
 
 
 @ops_router.post("/governance/gate/remediation/tracker/autopilot/preview")
@@ -53226,11 +53252,12 @@ def get_alert_mttr_slo_policy(
             "min_incidents": int(policy.get("min_incidents") or 0),
         },
     )
-    return {
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_policy_response_payload(
+        policy_key=policy_key,
+        updated_at=updated_at,
+        policy=policy,
+        scope="ops.alerts.mttr_slo",
+    )
 
 
 @app.put("/api/ops/alerts/mttr-slo/policy")
@@ -53258,11 +53285,12 @@ def set_alert_mttr_slo_policy(
             "notify_cooldown_minutes": int(policy.get("notify_cooldown_minutes") or 0),
         },
     )
-    return {
-        "policy_key": policy_key,
-        "updated_at": updated_at.isoformat(),
-        "policy": policy,
-    }
+    return _build_policy_response_payload(
+        policy_key=policy_key,
+        updated_at=updated_at,
+        policy=policy,
+        scope="ops.alerts.mttr_slo",
+    )
 
 
 @app.post("/api/ops/alerts/mttr-slo/check/run")

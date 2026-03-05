@@ -124,6 +124,8 @@ try {
     if (-not $RequireAuditChainOk) {
       $criticalChecks = @($criticalChecks | Where-Object { $_.id -ne "audit_chain_integrity" })
     }
+    # Ignore previous smoke status while evaluating the current smoke run.
+    $criticalChecks = @($criticalChecks | Where-Object { $_.id -ne "deploy_smoke_checklist" })
     if ($criticalChecks.Count -gt 0) {
       $criticalIds = ($criticalChecks | ForEach-Object { $_.id }) -join ","
       throw "Runbook check failed: critical checks=$criticalIds"
@@ -143,15 +145,19 @@ try {
 
     if ($RunRunbookGate) {
       $runbookRun = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/ops/runbook/checks/run" -Headers $headers -TimeoutSec $TimeoutSec
-      $criticalCount = 0
-      try {
-        $criticalCount = [int]$runbookRun.critical_count
-      } catch {
-        $criticalCount = 0
+      $runbookRunCritical = @()
+      if ($runbookRun.checks) {
+        $runbookRunCritical = @($runbookRun.checks | Where-Object { $_.status -eq "critical" })
       }
-      $runbookGatePassed = ($runbookRun.overall_status -ne "critical" -and $criticalCount -le 0)
+      if (-not $RequireAuditChainOk) {
+        $runbookRunCritical = @($runbookRunCritical | Where-Object { $_.id -ne "audit_chain_integrity" })
+      }
+      $runbookRunCritical = @($runbookRunCritical | Where-Object { $_.id -ne "deploy_smoke_checklist" })
+      $criticalCount = $runbookRunCritical.Count
+      $runbookGatePassed = ($criticalCount -le 0)
       if (-not $runbookGatePassed) {
-        throw "Runbook gate failed: overall=$($runbookRun.overall_status), critical_count=$criticalCount"
+        $criticalIds = ($runbookRunCritical | ForEach-Object { $_.id }) -join ","
+        throw "Runbook gate failed: critical checks=$criticalIds"
       }
       Add-SmokeCheck -Id "runbook_gate" -Status "ok" -Message "Runbook gate passed"
     } else {

@@ -112,6 +112,17 @@
   - 공개 튜토리얼 허브(`/api/public/tutorial-simulator`, `/web/tutorial-simulator`) 추가
   - 검증 샘플데이터 기반 세션 시작/조회/체크/실행 API(`.../ops/tutorial-simulator/sessions/*`) 추가
   - 점검→작업지시 ACK→완료→리포트 준비 조건을 실습/자동판정으로 제공
+- 운영 전환 사전 안정화(2026-03-05)
+  - `AdminToken` 포함 post-deploy smoke 1회 실행 완료(`SMOKE_OK`, deploy `dep-d6knu61aae7s73ahu5k0`)
+  - 월간 감사 아카이브 해시/서명 검증 로직 보정(`archive_sha_ok/signature_ok` 일치)
+  - API 지연 P95 계산을 모니터 윈도우 기준으로 보정(과거 샘플 과반영 제거)
+  - smoke 스크립트에서 이전 실패이력(`deploy_smoke_checklist`) 자기참조 차단 로직 제거
+
+## W16 진행상황 (2026-03-05)
+- [x] 정책 API 공통 응답 메타 필드 표준화 1차 적용
+  - 대상: `/api/ops/governance/gate/remediation/tracker/autopilot/policy` (GET/PUT)
+  - 대상: `/api/ops/alerts/mttr-slo/policy` (GET/PUT)
+  - 공통 메타: `meta.version`, `meta.scope`, `meta.applies_to`, `meta.policy_key`, `meta.updated_at`
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`

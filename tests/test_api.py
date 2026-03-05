@@ -6429,6 +6429,11 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert policy_get.status_code == 200
     get_body = policy_get.json()
     assert get_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert get_body["meta"]["version"] == "v1"
+    assert get_body["meta"]["scope"] == "ops.governance.remediation.autopilot"
+    assert get_body["meta"]["applies_to"] == "global"
+    assert get_body["meta"]["policy_key"] == get_body["policy_key"]
+    assert get_body["meta"]["updated_at"] == get_body["updated_at"]
     assert isinstance(get_body["policy"], dict)
     assert "enabled" in get_body["policy"]
     assert "kpi_window_days" in get_body["policy"]
@@ -6453,6 +6458,9 @@ def test_ops_governance_remediation_tracker_autopilot_policy_preview_endpoints(a
     assert policy_set.status_code == 200
     set_body = policy_set.json()
     assert set_body["policy_key"] == "ops_governance_remediation_autopilot_policy"
+    assert set_body["meta"]["scope"] == "ops.governance.remediation.autopilot"
+    assert set_body["meta"]["policy_key"] == set_body["policy_key"]
+    assert set_body["meta"]["updated_at"] == set_body["updated_at"]
     assert set_body["policy"]["notify_enabled"] is False
     assert int(set_body["policy"]["unassigned_trigger"]) == 0
     assert int(set_body["policy"]["overdue_trigger"]) == 0
@@ -7678,6 +7686,11 @@ def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch
     assert policy_set.status_code == 200
     assert policy_set.json()["policy"]["threshold_minutes"] == 30
     assert policy_set.json()["policy"]["recover_state"] == "all"
+    assert policy_set.json()["meta"]["version"] == "v1"
+    assert policy_set.json()["meta"]["scope"] == "ops.alerts.mttr_slo"
+    assert policy_set.json()["meta"]["applies_to"] == "global"
+    assert policy_set.json()["meta"]["policy_key"] == policy_set.json()["policy_key"]
+    assert policy_set.json()["meta"]["updated_at"] == policy_set.json()["updated_at"]
 
     monkeypatch.setattr(
         main_module,
@@ -7732,6 +7745,8 @@ def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch
     )
     assert policy_get.status_code == 200
     assert policy_get.json()["policy"]["notify_event_type"] == "mttr_slo_breach_test"
+    assert policy_get.json()["meta"]["scope"] == "ops.alerts.mttr_slo"
+    assert policy_get.json()["meta"]["policy_key"] == policy_get.json()["policy_key"]
 
 
 def test_alert_channel_guard_and_recover_api(app_client: TestClient, monkeypatch) -> None:
