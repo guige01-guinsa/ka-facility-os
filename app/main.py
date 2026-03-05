@@ -38541,16 +38541,150 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         await runSharedTrackerUpdateAndUpload(getSharedTrackerConfig("w09"));
       }}
 
-      async function runW10KpiOperation() {{
-        const meta = document.getElementById("w10KpiMeta");
-        const summary = document.getElementById("w10KpiSummary");
-        const kpiTable = document.getElementById("w10KpiTable");
-        const escalationTable = document.getElementById("w10EscalationTable");
-        const recommendations = document.getElementById("w10KpiRecommendations");
-        const policyMeta = document.getElementById("w10PolicyMeta");
-        const policyTable = document.getElementById("w10PolicyTable");
-        const site = (document.getElementById("w10KpiSite").value || "").trim();
-        const daysRaw = (document.getElementById("w10KpiDays").value || "").trim();
+      const SHARED_ADOPTION_KPI_COLUMNS = [
+        {{ key: "kpi_key", label: "KPI Key" }},
+        {{ key: "kpi_name", label: "KPI Name" }},
+        {{ key: "actual_value", label: "Actual" }},
+        {{ key: "target", label: "Target" }},
+        {{ key: "green_threshold", label: "Green" }},
+        {{ key: "yellow_threshold", label: "Yellow" }},
+        {{ key: "status", label: "Status" }},
+      ];
+
+      const SHARED_ADOPTION_REPEAT_COLUMNS = [
+        {{ key: "title", label: "Title" }},
+        {{ key: "count", label: "Count" }},
+        {{ key: "share_percent", label: "Share %" }},
+      ];
+
+      const SHARED_ADOPTION_RECOMMENDATION_COLUMNS = [
+        {{ key: "no", label: "#" }},
+        {{ key: "recommendation", label: "Recommendation" }},
+      ];
+
+      const SHARED_ADOPTION_POLICY_COLUMNS_SUPPORT = [
+        {{ key: "repeat_rate_green_threshold", label: "Repeat Green <= %" }},
+        {{ key: "repeat_rate_yellow_threshold", label: "Repeat Yellow <= %" }},
+        {{ key: "guide_publish_green_threshold", label: "Guide Green >= %" }},
+        {{ key: "guide_publish_yellow_threshold", label: "Guide Yellow >= %" }},
+        {{ key: "runbook_completion_green_threshold", label: "Runbook Green >= %" }},
+        {{ key: "runbook_completion_yellow_threshold", label: "Runbook Yellow >= %" }},
+        {{ key: "readiness_target", label: "Readiness Target" }},
+        {{ key: "enabled", label: "Enabled" }},
+      ];
+
+      const SHARED_ADOPTION_POLICY_COLUMNS_EFFICIENCY = [
+        {{ key: "risk_rate_green_threshold", label: "Risk Green <= %" }},
+        {{ key: "risk_rate_yellow_threshold", label: "Risk Yellow <= %" }},
+        {{ key: "checklist_completion_green_threshold", label: "Checklist Green >= %" }},
+        {{ key: "checklist_completion_yellow_threshold", label: "Checklist Yellow >= %" }},
+        {{ key: "simulation_success_green_threshold", label: "Simulation Green >= %" }},
+        {{ key: "simulation_success_yellow_threshold", label: "Simulation Yellow >= %" }},
+        {{ key: "readiness_target", label: "Readiness Target" }},
+        {{ key: "enabled", label: "Enabled" }},
+      ];
+
+      const SHARED_ADOPTION_KPI_CONFIGS = {{
+        w10: {{
+          apiPath: "/api/ops/adoption/w10/self-serve",
+          policyPathBase: "/api/ops/adoption/w10/support-policy",
+          repeatMetricKey: "repeat_rate_percent",
+          readinessMetricKey: "self_serve_readiness_score",
+          repeatItemsKey: "top_repeat_titles",
+          policyColumns: SHARED_ADOPTION_POLICY_COLUMNS_SUPPORT,
+          summaryRows: [
+            ["WO Count", "work_orders_count"],
+            ["Unique Titles", "unique_titles"],
+            ["Repeat WOs", "repeated_work_orders_count"],
+            ["Repeat Rate %", "repeat_rate_percent"],
+            ["Guide Publish %", "guide_publish_rate_percent"],
+            ["Runbook Completion %", "runbook_completion_rate_percent"],
+            ["Readiness Score", "self_serve_readiness_score"],
+            ["Overall Status", "overall_status", "text"],
+            ["Target Met", "target_met", "bool"],
+          ],
+        }},
+        w11: {{
+          apiPath: "/api/ops/adoption/w11/scale-readiness",
+          policyPathBase: "/api/ops/adoption/w11/readiness-policy",
+          repeatMetricKey: "repeat_rate_percent",
+          readinessMetricKey: "self_serve_readiness_score",
+          repeatItemsKey: "top_repeat_titles",
+          policyColumns: SHARED_ADOPTION_POLICY_COLUMNS_SUPPORT,
+          summaryRows: [
+            ["WO Count", "work_orders_count"],
+            ["Unique Titles", "unique_titles"],
+            ["Repeat WOs", "repeated_work_orders_count"],
+            ["Repeat Rate %", "repeat_rate_percent"],
+            ["Guide Publish %", "guide_publish_rate_percent"],
+            ["Runbook Completion %", "runbook_completion_rate_percent"],
+            ["Readiness Score", "self_serve_readiness_score"],
+            ["Overall Status", "overall_status", "text"],
+            ["Target Met", "target_met", "bool"],
+          ],
+        }},
+        w15: {{
+          apiPath: "/api/ops/adoption/w15/ops-efficiency",
+          policyPathBase: "/api/ops/adoption/w15/efficiency-policy",
+          repeatMetricKey: "incident_repeat_rate_percent",
+          readinessMetricKey: "ops_efficiency_readiness_score",
+          repeatItemsKey: "top_repeat_incidents",
+          policyColumns: SHARED_ADOPTION_POLICY_COLUMNS_EFFICIENCY,
+          summaryRows: [
+            ["Incidents", "incidents_count"],
+            ["Unique Titles", "unique_titles"],
+            ["Repeated Incidents", "repeated_incidents_count"],
+            ["Repeat Rate %", "incident_repeat_rate_percent"],
+            ["Checklist %", "checklist_completion_rate_percent"],
+            ["Runbook %", "simulation_success_rate_percent"],
+            ["Readiness Score", "ops_efficiency_readiness_score"],
+            ["Overall Status", "overall_status", "text"],
+            ["Target Met", "target_met", "bool"],
+          ],
+        }},
+      }};
+
+      function getSharedAdoptionKpiConfig(phaseCode) {{
+        const config = SHARED_ADOPTION_KPI_CONFIGS[phaseCode];
+        if (!config) {{
+          throw new Error("Unknown adoption KPI phase: " + String(phaseCode));
+        }}
+        return config;
+      }}
+
+      function getSharedAdoptionKpiElements(phaseCode) {{
+        return {{
+          meta: document.getElementById(phaseCode + "KpiMeta"),
+          summary: document.getElementById(phaseCode + "KpiSummary"),
+          kpiTable: document.getElementById(phaseCode + "KpiTable"),
+          escalationTable: document.getElementById(phaseCode + "EscalationTable"),
+          recommendations: document.getElementById(phaseCode + "KpiRecommendations"),
+          policyMeta: document.getElementById(phaseCode + "PolicyMeta"),
+          policyTable: document.getElementById(phaseCode + "PolicyTable"),
+        }};
+      }}
+
+      function buildSharedAdoptionSummaryItems(metrics, summaryRows) {{
+        return summaryRows.map((row) => {{
+          const label = row[0];
+          const key = row[1];
+          const kind = row[2] || "number";
+          const rawValue = metrics[key];
+          if (kind === "bool") {{
+            return [label, rawValue ? "YES" : "NO"];
+          }}
+          if (kind === "text") {{
+            return [label, rawValue || "-"];
+          }}
+          return [label, rawValue ?? 0];
+        }});
+      }}
+
+      async function runSharedAdoptionKpiOperation(phaseCode) {{
+        const config = getSharedAdoptionKpiConfig(phaseCode);
+        const el = getSharedAdoptionKpiElements(phaseCode);
+        const site = (document.getElementById(phaseCode + "KpiSite").value || "").trim();
+        const daysRaw = (document.getElementById(phaseCode + "KpiDays").value || "").trim();
         const params = new URLSearchParams();
         if (site) {{
           params.set("site", site);
@@ -38558,17 +38692,18 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         if (daysRaw) {{
           params.set("days", daysRaw);
         }}
-        const path = "/api/ops/adoption/w10/self-serve" + (params.toString() ? ("?" + params.toString()) : "");
+        const path = config.apiPath + (params.toString() ? ("?" + params.toString()) : "");
         const policyPath = site
-          ? "/api/ops/adoption/w10/support-policy?site=" + encodeURIComponent(site)
+          ? config.policyPathBase + "?site=" + encodeURIComponent(site)
           : "";
+
         try {{
-          meta.textContent = "조회 중.. " + path;
+          el.meta.textContent = "조회 중.. " + path;
           if (policyPath) {{
-            policyMeta.textContent = "조회 중.. " + policyPath;
+            el.policyMeta.textContent = "조회 중.. " + policyPath;
           }} else {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+            el.policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            el.policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
           }}
           const [data, policyPayload] = await Promise.all([
             fetchJson(path, true),
@@ -38577,96 +38712,62 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               : Promise.resolve({{ __skipped: true }}),
           ]);
           const metrics = data.metrics || {{}};
-          meta.textContent =
+          el.meta.textContent =
             "성공: site=" + String(data.site || "ALL")
             + " | window_days=" + String(data.window_days || "-")
             + " | overall=" + String(metrics.overall_status || "-")
-            + " | repeat_rate=" + String(metrics.repeat_rate_percent ?? 0) + "%"
-            + " | readiness=" + String(metrics.self_serve_readiness_score ?? 0);
-          const summaryItems = [
-            ["WO Count", metrics.work_orders_count ?? 0],
-            ["Unique Titles", metrics.unique_titles ?? 0],
-            ["Repeat WOs", metrics.repeated_work_orders_count ?? 0],
-            ["Repeat Rate %", metrics.repeat_rate_percent ?? 0],
-            ["Guide Publish %", metrics.guide_publish_rate_percent ?? 0],
-            ["Runbook Completion %", metrics.runbook_completion_rate_percent ?? 0],
-            ["Readiness Score", metrics.self_serve_readiness_score ?? 0],
-            ["Overall Status", metrics.overall_status || "-"],
-            ["Target Met", metrics.target_met ? "YES" : "NO"],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
+            + " | repeat_rate=" + String(metrics[config.repeatMetricKey] ?? 0) + "%"
+            + " | readiness=" + String(metrics[config.readinessMetricKey] ?? 0);
+          const summaryItems = buildSharedAdoptionSummaryItems(metrics, config.summaryRows);
+          el.summary.innerHTML = summaryItems.map((x) => (
             '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
           )).join("");
-          kpiTable.innerHTML = renderTable(
-            data.kpis || [],
-            [
-              {{ key: "kpi_key", label: "KPI Key" }},
-              {{ key: "kpi_name", label: "KPI Name" }},
-              {{ key: "actual_value", label: "Actual" }},
-              {{ key: "target", label: "Target" }},
-              {{ key: "green_threshold", label: "Green" }},
-              {{ key: "yellow_threshold", label: "Yellow" }},
-              {{ key: "status", label: "Status" }},
-            ]
-          );
-          escalationTable.innerHTML = renderTable(
-            data.top_repeat_titles || [],
-            [
-              {{ key: "title", label: "Title" }},
-              {{ key: "count", label: "Count" }},
-              {{ key: "share_percent", label: "Share %" }},
-            ]
-          );
+          el.kpiTable.innerHTML = renderTable(data.kpis || [], SHARED_ADOPTION_KPI_COLUMNS);
+          el.escalationTable.innerHTML = renderTable(data[config.repeatItemsKey] || [], SHARED_ADOPTION_REPEAT_COLUMNS);
           const recRows = Array.isArray(data.recommendations)
             ? data.recommendations.map((item, idx) => ({{
                 no: idx + 1,
                 recommendation: item,
               }}))
             : [];
-          recommendations.innerHTML = renderTable(
-            recRows,
-            [
-              {{ key: "no", label: "#" }},
-              {{ key: "recommendation", label: "Recommendation" }},
-            ]
-          );
+          el.recommendations.innerHTML = renderTable(recRows, SHARED_ADOPTION_RECOMMENDATION_COLUMNS);
           if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
             const policy = policyPayload.policy || {{}};
-            policyMeta.textContent =
-              "성공: key=" + String(policyPayload.policy_key || "-")
-              + " | site=" + String(policyPayload.site || "default")
-              + " | updated_at=" + String(policyPayload.updated_at || "-");
-            policyTable.innerHTML = renderTable(
-              [policy],
-              [
-                {{ key: "repeat_rate_green_threshold", label: "Repeat Green <= %" }},
-                {{ key: "repeat_rate_yellow_threshold", label: "Repeat Yellow <= %" }},
-                {{ key: "guide_publish_green_threshold", label: "Guide Green >= %" }},
-                {{ key: "guide_publish_yellow_threshold", label: "Guide Yellow >= %" }},
-                {{ key: "runbook_completion_green_threshold", label: "Runbook Green >= %" }},
-                {{ key: "runbook_completion_yellow_threshold", label: "Runbook Yellow >= %" }},
-                {{ key: "readiness_target", label: "Readiness Target" }},
-                {{ key: "enabled", label: "Enabled" }},
-              ]
+            const policySite = String(
+              policyPayload.site
+              || ((policyPayload.meta && policyPayload.meta.applies_to) || "default")
             );
+            const policyUpdatedAt = String(
+              policyPayload.updated_at
+              || ((policyPayload.meta && policyPayload.meta.updated_at) || "-")
+            );
+            el.policyMeta.textContent =
+              "성공: key=" + String(policyPayload.policy_key || "-")
+              + " | site=" + policySite
+              + " | updated_at=" + policyUpdatedAt;
+            el.policyTable.innerHTML = renderTable([policy], config.policyColumns);
           }} else if (policyPayload && policyPayload.__error) {{
-            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
-            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
+            el.policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
+            el.policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
           }}
         }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          kpiTable.innerHTML = renderEmpty(err.message);
-          escalationTable.innerHTML = renderEmpty(err.message);
-          recommendations.innerHTML = renderEmpty(err.message);
+          el.meta.textContent = "실패: " + err.message;
+          el.summary.innerHTML = "";
+          el.kpiTable.innerHTML = renderEmpty(err.message);
+          el.escalationTable.innerHTML = renderEmpty(err.message);
+          el.recommendations.innerHTML = renderEmpty(err.message);
           if (!site) {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
+            el.policyMeta.textContent = "site 입력 시 정책 조회 가능";
+            el.policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
           }} else {{
-            policyMeta.textContent = "실패: " + err.message;
-            policyTable.innerHTML = renderEmpty(err.message);
+            el.policyMeta.textContent = "실패: " + err.message;
+            el.policyTable.innerHTML = renderEmpty(err.message);
           }}
         }}
+      }}
+
+      async function runW10KpiOperation() {{
+        await runSharedAdoptionKpiOperation("w10");
       }}
 
       async function runW10Tracker() {{
@@ -38690,131 +38791,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW11KpiOperation() {{
-        const meta = document.getElementById("w11KpiMeta");
-        const summary = document.getElementById("w11KpiSummary");
-        const kpiTable = document.getElementById("w11KpiTable");
-        const escalationTable = document.getElementById("w11EscalationTable");
-        const recommendations = document.getElementById("w11KpiRecommendations");
-        const policyMeta = document.getElementById("w11PolicyMeta");
-        const policyTable = document.getElementById("w11PolicyTable");
-        const site = (document.getElementById("w11KpiSite").value || "").trim();
-        const daysRaw = (document.getElementById("w11KpiDays").value || "").trim();
-        const params = new URLSearchParams();
-        if (site) {{
-          params.set("site", site);
-        }}
-        if (daysRaw) {{
-          params.set("days", daysRaw);
-        }}
-        const path = "/api/ops/adoption/w11/scale-readiness" + (params.toString() ? ("?" + params.toString()) : "");
-        const policyPath = site
-          ? "/api/ops/adoption/w11/readiness-policy?site=" + encodeURIComponent(site)
-          : "";
-        try {{
-          meta.textContent = "조회 중.. " + path;
-          if (policyPath) {{
-            policyMeta.textContent = "조회 중.. " + policyPath;
-          }} else {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
-          }}
-          const [data, policyPayload] = await Promise.all([
-            fetchJson(path, true),
-            policyPath
-              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
-              : Promise.resolve({{ __skipped: true }}),
-          ]);
-          const metrics = data.metrics || {{}};
-          meta.textContent =
-            "성공: site=" + String(data.site || "ALL")
-            + " | window_days=" + String(data.window_days || "-")
-            + " | overall=" + String(metrics.overall_status || "-")
-            + " | repeat_rate=" + String(metrics.repeat_rate_percent ?? 0) + "%"
-            + " | readiness=" + String(metrics.self_serve_readiness_score ?? 0);
-          const summaryItems = [
-            ["WO Count", metrics.work_orders_count ?? 0],
-            ["Unique Titles", metrics.unique_titles ?? 0],
-            ["Repeat WOs", metrics.repeated_work_orders_count ?? 0],
-            ["Repeat Rate %", metrics.repeat_rate_percent ?? 0],
-            ["Guide Publish %", metrics.guide_publish_rate_percent ?? 0],
-            ["Runbook Completion %", metrics.runbook_completion_rate_percent ?? 0],
-            ["Readiness Score", metrics.self_serve_readiness_score ?? 0],
-            ["Overall Status", metrics.overall_status || "-"],
-            ["Target Met", metrics.target_met ? "YES" : "NO"],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          kpiTable.innerHTML = renderTable(
-            data.kpis || [],
-            [
-              {{ key: "kpi_key", label: "KPI Key" }},
-              {{ key: "kpi_name", label: "KPI Name" }},
-              {{ key: "actual_value", label: "Actual" }},
-              {{ key: "target", label: "Target" }},
-              {{ key: "green_threshold", label: "Green" }},
-              {{ key: "yellow_threshold", label: "Yellow" }},
-              {{ key: "status", label: "Status" }},
-            ]
-          );
-          escalationTable.innerHTML = renderTable(
-            data.top_repeat_titles || [],
-            [
-              {{ key: "title", label: "Title" }},
-              {{ key: "count", label: "Count" }},
-              {{ key: "share_percent", label: "Share %" }},
-            ]
-          );
-          const recRows = Array.isArray(data.recommendations)
-            ? data.recommendations.map((item, idx) => ({{
-                no: idx + 1,
-                recommendation: item,
-              }}))
-            : [];
-          recommendations.innerHTML = renderTable(
-            recRows,
-            [
-              {{ key: "no", label: "#" }},
-              {{ key: "recommendation", label: "Recommendation" }},
-            ]
-          );
-          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
-            const policy = policyPayload.policy || {{}};
-            policyMeta.textContent =
-              "성공: key=" + String(policyPayload.policy_key || "-")
-              + " | site=" + String(policyPayload.site || "default")
-              + " | updated_at=" + String(policyPayload.updated_at || "-");
-            policyTable.innerHTML = renderTable(
-              [policy],
-              [
-                {{ key: "repeat_rate_green_threshold", label: "Repeat Green <= %" }},
-                {{ key: "repeat_rate_yellow_threshold", label: "Repeat Yellow <= %" }},
-                {{ key: "guide_publish_green_threshold", label: "Guide Green >= %" }},
-                {{ key: "guide_publish_yellow_threshold", label: "Guide Yellow >= %" }},
-                {{ key: "runbook_completion_green_threshold", label: "Runbook Green >= %" }},
-                {{ key: "runbook_completion_yellow_threshold", label: "Runbook Yellow >= %" }},
-                {{ key: "readiness_target", label: "Readiness Target" }},
-                {{ key: "enabled", label: "Enabled" }},
-              ]
-            );
-          }} else if (policyPayload && policyPayload.__error) {{
-            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
-            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
-          }}
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          kpiTable.innerHTML = renderEmpty(err.message);
-          escalationTable.innerHTML = renderEmpty(err.message);
-          recommendations.innerHTML = renderEmpty(err.message);
-          if (!site) {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
-          }} else {{
-            policyMeta.textContent = "실패: " + err.message;
-            policyTable.innerHTML = renderEmpty(err.message);
-          }}
-        }}
+        await runSharedAdoptionKpiOperation("w11");
       }}
 
       async function runW11Tracker() {{
@@ -38838,131 +38815,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       }}
 
       async function runW15KpiOperation() {{
-        const meta = document.getElementById("w15KpiMeta");
-        const summary = document.getElementById("w15KpiSummary");
-        const kpiTable = document.getElementById("w15KpiTable");
-        const escalationTable = document.getElementById("w15EscalationTable");
-        const recommendations = document.getElementById("w15KpiRecommendations");
-        const policyMeta = document.getElementById("w15PolicyMeta");
-        const policyTable = document.getElementById("w15PolicyTable");
-        const site = (document.getElementById("w15KpiSite").value || "").trim();
-        const daysRaw = (document.getElementById("w15KpiDays").value || "").trim();
-        const params = new URLSearchParams();
-        if (site) {{
-          params.set("site", site);
-        }}
-        if (daysRaw) {{
-          params.set("days", daysRaw);
-        }}
-        const path = "/api/ops/adoption/w15/ops-efficiency" + (params.toString() ? ("?" + params.toString()) : "");
-        const policyPath = site
-          ? "/api/ops/adoption/w15/efficiency-policy?site=" + encodeURIComponent(site)
-          : "";
-        try {{
-          meta.textContent = "조회 중.. " + path;
-          if (policyPath) {{
-            policyMeta.textContent = "조회 중.. " + policyPath;
-          }} else {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
-          }}
-          const [data, policyPayload] = await Promise.all([
-            fetchJson(path, true),
-            policyPath
-              ? fetchJson(policyPath, true).catch((err) => ({{ __error: err.message }}))
-              : Promise.resolve({{ __skipped: true }}),
-          ]);
-          const metrics = data.metrics || {{}};
-          meta.textContent =
-            "성공: site=" + String(data.site || "ALL")
-            + " | window_days=" + String(data.window_days || "-")
-            + " | overall=" + String(metrics.overall_status || "-")
-            + " | repeat_rate=" + String(metrics.incident_repeat_rate_percent ?? 0) + "%"
-            + " | readiness=" + String(metrics.ops_efficiency_readiness_score ?? 0);
-          const summaryItems = [
-            ["Incidents", metrics.incidents_count ?? 0],
-            ["Unique Titles", metrics.unique_titles ?? 0],
-            ["Repeated Incidents", metrics.repeated_incidents_count ?? 0],
-            ["Repeat Rate %", metrics.incident_repeat_rate_percent ?? 0],
-            ["Checklist %", metrics.checklist_completion_rate_percent ?? 0],
-            ["Runbook %", metrics.simulation_success_rate_percent ?? 0],
-            ["Readiness Score", metrics.ops_efficiency_readiness_score ?? 0],
-            ["Overall Status", metrics.overall_status || "-"],
-            ["Target Met", metrics.target_met ? "YES" : "NO"],
-          ];
-          summary.innerHTML = summaryItems.map((x) => (
-            '<div class="card"><div class="k">' + escapeHtml(x[0]) + '</div><div class="v">' + escapeHtml(x[1]) + "</div></div>"
-          )).join("");
-          kpiTable.innerHTML = renderTable(
-            data.kpis || [],
-            [
-              {{ key: "kpi_key", label: "KPI Key" }},
-              {{ key: "kpi_name", label: "KPI Name" }},
-              {{ key: "actual_value", label: "Actual" }},
-              {{ key: "target", label: "Target" }},
-              {{ key: "green_threshold", label: "Green" }},
-              {{ key: "yellow_threshold", label: "Yellow" }},
-              {{ key: "status", label: "Status" }},
-            ]
-          );
-          escalationTable.innerHTML = renderTable(
-            data.top_repeat_incidents || [],
-            [
-              {{ key: "title", label: "Title" }},
-              {{ key: "count", label: "Count" }},
-              {{ key: "share_percent", label: "Share %" }},
-            ]
-          );
-          const recRows = Array.isArray(data.recommendations)
-            ? data.recommendations.map((item, idx) => ({{
-                no: idx + 1,
-                recommendation: item,
-              }}))
-            : [];
-          recommendations.innerHTML = renderTable(
-            recRows,
-            [
-              {{ key: "no", label: "#" }},
-              {{ key: "recommendation", label: "Recommendation" }},
-            ]
-          );
-          if (policyPayload && !policyPayload.__error && !policyPayload.__skipped) {{
-            const policy = policyPayload.policy || {{}};
-            policyMeta.textContent =
-              "성공: key=" + String(policyPayload.policy_key || "-")
-              + " | site=" + String(policyPayload.site || "default")
-              + " | updated_at=" + String(policyPayload.updated_at || "-");
-            policyTable.innerHTML = renderTable(
-              [policy],
-              [
-                {{ key: "risk_rate_green_threshold", label: "Risk Green <= %" }},
-                {{ key: "risk_rate_yellow_threshold", label: "Risk Yellow <= %" }},
-                {{ key: "checklist_completion_green_threshold", label: "Checklist Green >= %" }},
-                {{ key: "checklist_completion_yellow_threshold", label: "Checklist Yellow >= %" }},
-                {{ key: "simulation_success_green_threshold", label: "Simulation Green >= %" }},
-                {{ key: "simulation_success_yellow_threshold", label: "Simulation Yellow >= %" }},
-                {{ key: "readiness_target", label: "Readiness Target" }},
-                {{ key: "enabled", label: "Enabled" }},
-              ]
-            );
-          }} else if (policyPayload && policyPayload.__error) {{
-            policyMeta.textContent = "정책 조회 실패: " + String(policyPayload.__error);
-            policyTable.innerHTML = renderEmpty(String(policyPayload.__error));
-          }}
-        }} catch (err) {{
-          meta.textContent = "실패: " + err.message;
-          summary.innerHTML = "";
-          kpiTable.innerHTML = renderEmpty(err.message);
-          escalationTable.innerHTML = renderEmpty(err.message);
-          recommendations.innerHTML = renderEmpty(err.message);
-          if (!site) {{
-            policyMeta.textContent = "site 입력 시 정책 조회 가능";
-            policyTable.innerHTML = renderEmpty("site를 입력하면 정책 세부를 조회합니다.");
-          }} else {{
-            policyMeta.textContent = "실패: " + err.message;
-            policyTable.innerHTML = renderEmpty(err.message);
-          }}
-        }}
+        await runSharedAdoptionKpiOperation("w15");
       }}
 
       async function runW15Tracker() {{
