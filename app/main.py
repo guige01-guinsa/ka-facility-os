@@ -41112,7 +41112,7 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           const user = getIamUserFromCache(userId);
           if (!user) return;
           applyIamUserToForm(user);
-          document.getElementById("iamUsersTable").innerHTML = renderIamUsersTable(iamUsersCache);
+          runIamUsers();
           document.getElementById("iamEditMeta").textContent =
             "선택 완료: user_id=" + String(userId) + " (" + String(user.username || "") + ")";
         }});
@@ -48081,7 +48081,7 @@ def auth_logout(
     token_label = str(principal.get("token_label") or "")
     is_legacy = bool(principal.get("is_legacy", False))
     token_revoked = False
-    is_legacy_env_token = token_label in {"legacy-env-admin-token", "legacy-env-token"}
+    is_legacy_env_token = is_legacy and token_label in {"legacy-env-admin-token", "legacy-env-token"}
 
     if token_id is not None and not is_legacy_env_token:
         with get_conn() as conn:
