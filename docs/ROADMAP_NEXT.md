@@ -150,6 +150,9 @@
   - deploy: `dep-d6ks12fpm1nc73f6a3t0` (`live`)
   - commit: `2082005` (`Standardize W09-W15 policy meta fields and tighten schema tests`)
   - smoke: `SMOKE_OK`
+- [x] 메인/레거시 콘솔 토큰 저장키 통일 + 호환 마이그레이션 적용 (2026-03-06)
+  - 공통 키: `kaFacilityAdminToken` (레거시 `kaFacilityMainToken` 자동 흡수)
+  - deploy: `dep-d6ksecvpm1nc73f6j71g` (`live`), smoke: `SMOKE_OK`
 - 관련 API
   - `/api/ops/performance/api-latency`
   - `/api/ops/deploy/checklist`
