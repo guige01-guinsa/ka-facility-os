@@ -20,7 +20,7 @@
   - OPS 체크리스트/권한/토큰/감사 응답 메타 규약 1차 반영
   - 감사로그 카테고리 사전 문서화 (`docs/AUDIT_LOG_CATEGORY_DICTIONARY.md`)
   - 월간 감사 아카이브 `format_version=v2`, `attachment_schema_version=v2` 고정
-  - 운영 배포 `dep-d6lk3erh46gs73e17geg` + `SMOKE_OK`
+  - 운영 배포 `dep-d6lkd4ftskes73c2216g` + `SMOKE_OK`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
