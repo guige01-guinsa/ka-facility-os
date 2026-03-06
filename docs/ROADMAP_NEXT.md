@@ -20,7 +20,12 @@
   - OPS 체크리스트/권한/토큰/감사 응답 메타 규약 1차 반영
   - 감사로그 카테고리 사전 문서화 (`docs/AUDIT_LOG_CATEGORY_DICTIONARY.md`)
   - 월간 감사 아카이브 `format_version=v2`, `attachment_schema_version=v2` 고정
-  - 운영 배포 `dep-d6lkd4ftskes73c2216g` + `SMOKE_OK`
+  - R4 운영 신뢰성 강화 반영
+    - 운영 스모크 UI 핵심 경로(`/ ?tab=iam`) 추가
+    - runbook critical 월간 review loop API/배치 추가
+    - governance gate DR 가중치/가중 점수 반영
+    - 배포 체크리스트 자동 버전(`current_utc_month + deploy_smoke signature sequence`) 반영
+  - 운영 배포 `dep-d6ll79vtskes73c2cf6g` + `SMOKE_OK`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -72,10 +77,10 @@
 
 ### R4. 운영 신뢰성 강화 (우선순위 4, 1주)
 
-- [ ] 운영 스모크에 “UI 핵심 경로” 1개 추가 (인증→IAM→점검목록)
-- [ ] runbook critical 체크의 오탐/누락 월간 리뷰 루프 추가
-- [ ] DR rehearsal 결과를 governance gate 가중치에 반영
-- [ ] 배포 체크리스트 버전 자동 증분 규칙 정의
+- [x] 운영 스모크에 “UI 핵심 경로” 1개 추가 (인증→IAM→점검목록) (2026-03-07, `/?tab=iam` + `scripts/post_deploy_smoke.ps1`)
+- [x] runbook critical 체크의 오탐/누락 월간 리뷰 루프 추가 (2026-03-07, `/api/ops/runbook/review/run|latest`, 운영 review run `840`)
+- [x] DR rehearsal 결과를 governance gate 가중치에 반영 (2026-03-07, `dr_weight`, `weighted_score_percent`)
+- [x] 배포 체크리스트 버전 자동 증분 규칙 정의 (2026-03-07, `current_utc_month + deploy_smoke signature sequence`)
 
 완료 기준:
 - `deploy -> smoke -> runbook -> gate` 전 과정이 같은 버전 기준으로 연결
@@ -103,7 +108,7 @@
 
 - [x] Day 1-2: 테스트 파일 분할 + fixture 정리 (`tests/api/test_*.py`, `tests/conftest.py`, `tests/helpers/common.py`, 전체 테스트 92 passed)
 - [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영 + 감사로그 사전 + audit archive v2, 전체 테스트 92 passed)
-- [ ] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강
+- [x] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강 (`dc1cad8`, deploy `dep-d6ll79vtskes73c2cf6g`, `SMOKE_OK`, runbook review run `840`)
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
 
 ## 운영 규칙
