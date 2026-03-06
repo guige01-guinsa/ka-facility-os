@@ -25131,8 +25131,10 @@ def _service_info_payload() -> dict[str, str]:
         "admin_user_update_api": "/api/admin/users/{user_id}",
         "admin_user_delete_api": "/api/admin/users/{user_id}",
         "admin_user_password_api": "/api/admin/users/{user_id}/password",
+        "admin_user_token_issue_api": "/api/admin/users/{user_id}/tokens",
         "admin_tokens_api": "/api/admin/tokens",
         "admin_token_rotate_api": "/api/admin/tokens/{token_id}/rotate",
+        "admin_token_revoke_api": "/api/admin/tokens/{token_id}/revoke",
         "admin_token_policy_api": "/api/admin/token-policy",
         "admin_audit_api": "/api/admin/audit-logs",
         "admin_audit_integrity_api": "/api/admin/audit-integrity",
@@ -33209,6 +33211,56 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       background: #ebfaf5;
       box-shadow: inset 0 -2px 0 #77c7b4;
     }}
+    .tab-btn[data-tip] {{
+      position: relative;
+    }}
+    .tab-btn[data-tip]::after {{
+      content: attr(data-tip);
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 8px);
+      transform: translateX(-50%) translateY(-3px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 40;
+      width: max-content;
+      max-width: 280px;
+      border: 1px solid #b8cde6;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #1f456d;
+      box-shadow: 0 10px 20px rgba(13, 40, 70, 0.12);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      padding: 7px 9px;
+      white-space: normal;
+      text-align: left;
+      transition: opacity 130ms ease, transform 130ms ease;
+    }}
+    .tab-btn[data-tip]::before {{
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 2px);
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 6px solid #b8cde6;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 130ms ease;
+      z-index: 41;
+    }}
+    .tab-btn[data-tip]:hover::after,
+    .tab-btn[data-tip]:focus-visible::after {{
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }}
+    .tab-btn[data-tip]:hover::before,
+    .tab-btn[data-tip]:focus-visible::before {{
+      opacity: 1;
+    }}
     .shell {{
       padding: 12px;
     }}
@@ -33629,13 +33681,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
 
     <section class="tabs">
       <div class="tab-head" role="tablist" aria-label="메인 탭">
-        <button class="tab-btn" type="button" role="tab" data-tab="overview">운영요약</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="workorders">작업지시</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="inspections">점검</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="reports">월간리포트</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="iam">권한관리</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="adoption">사용자 정착 계획</button>
-        <button class="tab-btn" type="button" role="tab" data-tab="tutorial">튜토리얼</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="overview" data-tip="Overview(운영요약): SLA·알림·작업현황 핵심지표를 한눈에 봅니다." title="Overview(운영요약): SLA·알림·작업현황 핵심지표를 한눈에 봅니다.">운영요약</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="workorders" data-tip="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다." title="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다.">작업지시</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="inspections" data-tip="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다." title="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다.">점검</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="reports" data-tip="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다." title="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다.">월간리포트</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="iam" data-tip="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다." title="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다.">권한관리</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="adoption" data-tip="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다." title="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다.">사용자 정착 계획</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="tutorial" data-tip="Tutorial(튜토리얼): 신규 사용자 실습 시나리오를 실행합니다." title="Tutorial(튜토리얼): 신규 사용자 실습 시나리오를 실행합니다.">튜토리얼</button>
       </div>
       <div class="shell">
         <div class="auth-row">
@@ -33995,6 +34047,55 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
               <button id="runIamDeleteUserBtn" class="btn" type="button">사용자 삭제</button>
             </div>
             <div id="iamEditMeta" class="meta">수정 전</div>
+          </div>
+          <div class="box">
+            <h3>토큰 발급 / 회전 / 폐기</h3>
+            <div class="filter-row">
+              <input id="iamTokensFilterUserId" placeholder="user_id filter (optional)" />
+              <select id="iamTokensFilterActive">
+                <option value="all">active: all</option>
+                <option value="true">active: true</option>
+                <option value="false">active: false</option>
+              </select>
+              <input id="iamTokensReserved1" value="GET /api/admin/tokens" disabled />
+              <input id="iamTokensReserved2" value="POST /api/admin/users/<id>/tokens" disabled />
+              <button id="runIamTokensBtn" class="btn run" type="button">토큰 조회</button>
+            </div>
+            <div id="iamTokensMeta" class="meta">조회 전</div>
+            <div id="iamTokensTable" class="empty">데이터 없음</div>
+            <div class="ops-form-grid">
+              <input id="iamIssueTokenUserId" placeholder="issue user_id (기본: 선택 사용자)" />
+              <input id="iamIssueTokenLabel" value="console-issued" placeholder="token label" />
+              <input id="iamIssueTokenExpiresAt" placeholder="expires_at (ISO-8601, optional)" />
+              <input id="iamIssueTokenSiteScope" placeholder="token site_scope comma (optional)" />
+              <button id="runIamIssueTokenBtn" class="btn run" type="button">토큰 발급</button>
+            </div>
+            <div class="ops-form-grid">
+              <input id="iamSelectedTokenId" placeholder="token_id" />
+              <input id="iamSelectedTokenUser" placeholder="username (읽기용)" disabled />
+              <input id="iamSelectedTokenLabel" placeholder="token label (읽기용)" disabled />
+              <input id="iamTokensReserved3" value="POST /api/admin/tokens/<id>/rotate|revoke" disabled />
+              <button id="runIamPickTokenBtn" class="btn soft" type="button">토큰 선택</button>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runIamRotateTokenBtn" class="btn soft" type="button">토큰 회전</button>
+              <button id="runIamRevokeTokenBtn" class="btn" type="button">토큰 폐기</button>
+            </div>
+            <div id="iamTokenActionMeta" class="meta">실행 전</div>
+            <pre id="iamTokenPlain" class="mono">신규 토큰 값은 발급/회전 직후 1회만 표시됩니다.</pre>
+          </div>
+          <div class="box">
+            <h3>감사 로그 조회</h3>
+            <div class="filter-row">
+              <input id="iamAuditAction" placeholder="action filter (optional)" />
+              <input id="iamAuditActor" placeholder="actor_username filter (optional)" />
+              <input id="iamAuditLimit" value="50" placeholder="limit (1-200)" />
+              <input id="iamAuditOffset" value="0" placeholder="offset (0+)" />
+              <button id="runIamAuditBtn" class="btn run" type="button">감사 로그 조회</button>
+            </div>
+            <div id="iamAuditMeta" class="meta">조회 전</div>
+            <div id="iamAuditTable" class="empty">데이터 없음</div>
+            <pre id="iamAuditDetail" class="mono">로그를 선택하면 detail JSON이 표시됩니다.</pre>
           </div>
         </div>
 
@@ -34583,7 +34684,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       let activeAuthModal = null;
       let authProfile = null;
       let iamUsersCache = [];
+      let iamFilteredUsersCache = [];
+      let iamTokensCache = [];
+      let iamFilteredTokensCache = [];
       let iamSelectedUserId = null;
+      let iamSelectedTokenId = null;
+      let iamAuditLogsCache = [];
+      let iamSelectedAuditLogId = null;
       let w07TrackerItemsCache = [];
       let w07TrackerFilter = "all";
       let w07SelectedItemIds = new Set();
@@ -35331,7 +35438,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           tokenInput.value = "";
           authProfile = null;
           iamUsersCache = [];
+          iamFilteredUsersCache = [];
+          iamTokensCache = [];
+          iamFilteredTokensCache = [];
           iamSelectedUserId = null;
+          iamSelectedTokenId = null;
+          iamAuditLogsCache = [];
+          iamSelectedAuditLogId = null;
           updateAuthStateFromToken();
           const detail = []
           detail.push("token_revoked=" + String(Boolean(result && result.token_revoked)));
@@ -35341,6 +35454,13 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           const iamMeTable = document.getElementById("iamMeTable");
           const iamUsersMeta = document.getElementById("iamUsersMeta");
           const iamUsersTable = document.getElementById("iamUsersTable");
+          const iamTokensMeta = document.getElementById("iamTokensMeta");
+          const iamTokensTable = document.getElementById("iamTokensTable");
+          const iamTokenActionMeta = document.getElementById("iamTokenActionMeta");
+          const iamTokenPlain = document.getElementById("iamTokenPlain");
+          const iamAuditMeta = document.getElementById("iamAuditMeta");
+          const iamAuditTable = document.getElementById("iamAuditTable");
+          const iamAuditDetail = document.getElementById("iamAuditDetail");
           if (iamMeMeta) {{
             iamMeMeta.textContent = "로그아웃 완료";
           }}
@@ -35353,6 +35473,30 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           if (iamUsersTable) {{
             iamUsersTable.innerHTML = renderEmpty("로그아웃 상태입니다.");
           }}
+          if (iamTokensMeta) {{
+            iamTokensMeta.textContent = "로그아웃 상태";
+          }}
+          if (iamTokensTable) {{
+            iamTokensTable.innerHTML = renderEmpty("로그아웃 상태입니다.");
+          }}
+          if (iamTokenActionMeta) {{
+            iamTokenActionMeta.textContent = "로그아웃 상태";
+          }}
+          if (iamTokenPlain) {{
+            iamTokenPlain.textContent = "신규 토큰 값은 발급/회전 직후 1회만 표시됩니다.";
+          }}
+          if (iamAuditMeta) {{
+            iamAuditMeta.textContent = "로그아웃 상태";
+          }}
+          if (iamAuditTable) {{
+            iamAuditTable.innerHTML = renderEmpty("로그아웃 상태입니다.");
+          }}
+          if (iamAuditDetail) {{
+            iamAuditDetail.textContent = "로그를 선택하면 detail JSON이 표시됩니다.";
+          }}
+          document.getElementById("iamSelectedTokenId").value = "";
+          document.getElementById("iamSelectedTokenUser").value = "";
+          document.getElementById("iamSelectedTokenLabel").value = "";
         }} catch (err) {{
           setAuthState("로그아웃 실패 | " + err.message);
         }}
@@ -35454,6 +35598,14 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         const permissions = Array.isArray(user.permissions) ? user.permissions : [];
         document.getElementById("iamEditPermissions").value = permissions.join(",");
         document.getElementById("iamEditIsActive").value = user.is_active ? "true" : "false";
+        const issueUserInput = document.getElementById("iamIssueTokenUserId");
+        if (issueUserInput) {{
+          issueUserInput.value = String(userId);
+        }}
+        const tokenFilterInput = document.getElementById("iamTokensFilterUserId");
+        if (tokenFilterInput && !String(tokenFilterInput.value || "").trim()) {{
+          tokenFilterInput.value = String(userId);
+        }}
       }}
 
       function renderIamUsersTable(rows) {{
@@ -35483,6 +35635,27 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           + "<th>ID</th><th>Username</th><th>Display</th><th>Role</th><th>Active</th><th>Site Scope</th><th>Permissions</th><th>Action</th>"
           + "</tr></thead><tbody>" + body + "</tbody></table></div>"
         );
+      }}
+
+      function getFilteredIamUsers(rows) {{
+        const roleFilter = String(document.getElementById("iamFilterRole").value || "").trim().toLowerCase();
+        const activeFilter = String(document.getElementById("iamFilterActive").value || "all").trim().toLowerCase();
+        const searchFilter = String(document.getElementById("iamFilterSearch").value || "").trim().toLowerCase();
+        let filtered = Array.isArray(rows) ? rows.slice() : [];
+        if (roleFilter) {{
+          filtered = filtered.filter((row) => String(row.role || "").toLowerCase() === roleFilter);
+        }}
+        if (activeFilter === "true" || activeFilter === "false") {{
+          const expected = activeFilter === "true";
+          filtered = filtered.filter((row) => Boolean(row.is_active) === expected);
+        }}
+        if (searchFilter) {{
+          filtered = filtered.filter((row) => {{
+            const candidate = (String(row.username || "") + " " + String(row.display_name || "")).toLowerCase();
+            return candidate.includes(searchFilter);
+          }});
+        }}
+        return filtered;
       }}
 
       async function runIamMe() {{
@@ -35556,30 +35729,15 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           meta.textContent = "조회 중... /api/admin/users";
           const users = await fetchJson("/api/admin/users", true);
           iamUsersCache = Array.isArray(users) ? users : [];
-
-          const roleFilter = String(document.getElementById("iamFilterRole").value || "").trim().toLowerCase();
-          const activeFilter = String(document.getElementById("iamFilterActive").value || "all").trim().toLowerCase();
-          const searchFilter = String(document.getElementById("iamFilterSearch").value || "").trim().toLowerCase();
-          let rows = iamUsersCache.slice();
-          if (roleFilter) {{
-            rows = rows.filter((row) => String(row.role || "").toLowerCase() === roleFilter);
-          }}
-          if (activeFilter === "true" || activeFilter === "false") {{
-            const expected = activeFilter === "true";
-            rows = rows.filter((row) => Boolean(row.is_active) === expected);
-          }}
-          if (searchFilter) {{
-            rows = rows.filter((row) => {{
-              const candidate = (String(row.username || "") + " " + String(row.display_name || "")).toLowerCase();
-              return candidate.includes(searchFilter);
-            }});
-          }}
+          const rows = getFilteredIamUsers(iamUsersCache);
+          iamFilteredUsersCache = rows.slice();
           meta.textContent = "성공: /api/admin/users | total=" + String(iamUsersCache.length) + " | filtered=" + String(rows.length);
           table.innerHTML = renderIamUsersTable(rows);
           return rows;
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           table.innerHTML = renderEmpty(err.message);
+          iamFilteredUsersCache = [];
           return [];
         }}
       }}
@@ -35601,7 +35759,8 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
         }}
         applyIamUserToForm(user);
         editMeta.textContent = "선택 완료: user_id=" + String(userId) + " (" + String(user.username || "") + ")";
-        document.getElementById("iamUsersTable").innerHTML = renderIamUsersTable(iamUsersCache);
+        const visibleRows = iamFilteredUsersCache.length ? iamFilteredUsersCache : getFilteredIamUsers(iamUsersCache);
+        document.getElementById("iamUsersTable").innerHTML = renderIamUsersTable(visibleRows);
       }}
 
       async function runIamCreateUser() {{
@@ -35749,6 +35908,329 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           await runIamUsers();
         }} catch (err) {{
           meta.textContent = "삭제 실패: " + err.message;
+        }}
+      }}
+
+      function getIamTokenFromCache(tokenId) {{
+        const targetId = asInt(tokenId, -1);
+        if (targetId <= 0) return null;
+        const found = iamTokensCache.find((row) => asInt(row.token_id, -1) === targetId);
+        return found || null;
+      }}
+
+      function applyIamTokenToForm(token) {{
+        if (!token) return;
+        const tokenId = asInt(token.token_id, 0);
+        if (tokenId <= 0) return;
+        iamSelectedTokenId = tokenId;
+        document.getElementById("iamSelectedTokenId").value = String(tokenId);
+        document.getElementById("iamSelectedTokenUser").value = String(token.username || "");
+        document.getElementById("iamSelectedTokenLabel").value = String(token.label || "");
+      }}
+
+      function renderIamTokensTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("토큰 데이터가 없습니다.");
+        }}
+        const body = rows.map((row) => {{
+          const tokenId = asInt(row.token_id, 0);
+          const selectedCls = iamSelectedTokenId === tokenId ? ' class="w07-track-row active"' : "";
+          const scopeText = Array.isArray(row.site_scope) ? row.site_scope.join(", ") : "";
+          return (
+            "<tr" + selectedCls + ">" +
+              "<td>" + escapeHtml(tokenId) + "</td>" +
+              "<td>" + escapeHtml(row.user_id || "") + "</td>" +
+              "<td>" + escapeHtml(row.username || "") + "</td>" +
+              "<td>" + escapeHtml(row.label || "") + "</td>" +
+              "<td>" + escapeHtml(row.is_active ? "true" : "false") + "</td>" +
+              "<td>" + escapeHtml(scopeText) + "</td>" +
+              "<td>" + escapeHtml(row.expires_at || "") + "</td>" +
+              "<td>" + escapeHtml(row.rotate_due_at || "") + "</td>" +
+              "<td>" + escapeHtml(row.idle_due_at || "") + "</td>" +
+              "<td>" + escapeHtml(row.last_used_at || "") + "</td>" +
+              "<td>" + escapeHtml(row.created_at || "") + "</td>" +
+              "<td>" + escapeHtml(Boolean(row.must_rotate) ? "true" : "false") + "</td>" +
+              '<td><button class="btn soft iam-select-token" type="button" data-token-id="' + escapeHtml(tokenId) + '">선택</button></td>' +
+            "</tr>"
+          );
+        }}).join("");
+        return (
+          '<div class="table-wrap"><table><thead><tr>'
+          + "<th>Token ID</th><th>User ID</th><th>Username</th><th>Label</th><th>Active</th><th>Site Scope</th><th>Expires</th><th>Rotate Due</th><th>Idle Due</th><th>Last Used</th><th>Created</th><th>Must Rotate</th><th>Action</th>"
+          + "</tr></thead><tbody>" + body + "</tbody></table></div>"
+        );
+      }}
+
+      async function runIamTokens() {{
+        const meta = document.getElementById("iamTokensMeta");
+        const table = document.getElementById("iamTokensTable");
+        try {{
+          const userId = asInt(document.getElementById("iamTokensFilterUserId").value, -1);
+          const activeFilter = String(document.getElementById("iamTokensFilterActive").value || "all").trim().toLowerCase();
+          const params = new URLSearchParams();
+          if (userId > 0) {{
+            params.set("user_id", String(userId));
+          }}
+          if (activeFilter === "true") {{
+            params.set("active_only", "true");
+          }}
+          const query = params.toString();
+          const path = "/api/admin/tokens" + (query ? "?" + query : "");
+          meta.textContent = "조회 중... " + path;
+          const rows = await fetchJson(path, true);
+          iamTokensCache = Array.isArray(rows) ? rows : [];
+          let filtered = iamTokensCache.slice();
+          if (activeFilter === "false") {{
+            filtered = filtered.filter((row) => !Boolean(row.is_active));
+          }}
+          iamFilteredTokensCache = filtered;
+          if (iamSelectedTokenId != null && !getIamTokenFromCache(iamSelectedTokenId)) {{
+            iamSelectedTokenId = null;
+            document.getElementById("iamSelectedTokenId").value = "";
+            document.getElementById("iamSelectedTokenUser").value = "";
+            document.getElementById("iamSelectedTokenLabel").value = "";
+          }}
+          meta.textContent = "성공: " + path + " | total=" + String(iamTokensCache.length) + " | filtered=" + String(filtered.length);
+          table.innerHTML = renderIamTokensTable(filtered);
+          return filtered;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+          iamTokensCache = [];
+          iamFilteredTokensCache = [];
+          return [];
+        }}
+      }}
+
+      async function runIamPickToken() {{
+        const meta = document.getElementById("iamTokenActionMeta");
+        const tokenId = asInt(document.getElementById("iamSelectedTokenId").value, -1);
+        if (tokenId <= 0) {{
+          meta.textContent = "실패: token_id를 입력하세요.";
+          return;
+        }}
+        if (!iamTokensCache.length) {{
+          await runIamTokens();
+        }}
+        const token = getIamTokenFromCache(tokenId);
+        if (!token) {{
+          meta.textContent = "실패: token_id=" + String(tokenId) + " 를 목록에서 찾을 수 없습니다.";
+          return;
+        }}
+        applyIamTokenToForm(token);
+        const visibleRows = iamFilteredTokensCache.length ? iamFilteredTokensCache : iamTokensCache;
+        document.getElementById("iamTokensTable").innerHTML = renderIamTokensTable(visibleRows);
+        meta.textContent = "선택 완료: token_id=" + String(tokenId) + " | user=" + String(token.username || "");
+      }}
+
+      async function runIamIssueToken() {{
+        const meta = document.getElementById("iamTokenActionMeta");
+        const plainNode = document.getElementById("iamTokenPlain");
+        const issueUserIdRaw = String(document.getElementById("iamIssueTokenUserId").value || "").trim();
+        const fallbackUserId = asInt(document.getElementById("iamEditUserId").value, iamSelectedUserId || -1);
+        const userId = issueUserIdRaw ? asInt(issueUserIdRaw, -1) : fallbackUserId;
+        const label = String(document.getElementById("iamIssueTokenLabel").value || "").trim() || "console-issued";
+        const expiresAtRaw = String(document.getElementById("iamIssueTokenExpiresAt").value || "").trim();
+        const tokenSiteScopeRaw = String(document.getElementById("iamIssueTokenSiteScope").value || "").trim();
+        if (userId <= 0) {{
+          meta.textContent = "실패: issue 대상 user_id를 입력하세요.";
+          return;
+        }}
+        try {{
+          const payload = {{ label }};
+          if (expiresAtRaw) {{
+            payload.expires_at = expiresAtRaw;
+          }}
+          if (tokenSiteScopeRaw) {{
+            payload.site_scope = parseSiteScopeInput(tokenSiteScopeRaw);
+          }}
+          const issued = await fetchJson("/api/admin/users/" + encodeURIComponent(String(userId)) + "/tokens", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          document.getElementById("iamTokensFilterUserId").value = String(userId);
+          document.getElementById("iamTokensFilterActive").value = "all";
+          await runIamTokens();
+          const issuedToken = getIamTokenFromCache(issued.token_id);
+          if (issuedToken) {{
+            applyIamTokenToForm(issuedToken);
+          }} else {{
+            iamSelectedTokenId = asInt(issued.token_id, null);
+            document.getElementById("iamSelectedTokenId").value = String(issued.token_id || "");
+            document.getElementById("iamSelectedTokenLabel").value = String(issued.label || "");
+            document.getElementById("iamSelectedTokenUser").value = "";
+          }}
+          plainNode.textContent = String(issued.token || "");
+          meta.textContent =
+            "발급 성공: token_id=" + String(issued.token_id)
+            + " | user_id=" + String(issued.user_id)
+            + " | expires_at=" + String(issued.expires_at || "-");
+        }} catch (err) {{
+          meta.textContent = "발급 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamRotateToken() {{
+        const meta = document.getElementById("iamTokenActionMeta");
+        const plainNode = document.getElementById("iamTokenPlain");
+        const tokenId = asInt(document.getElementById("iamSelectedTokenId").value, iamSelectedTokenId || -1);
+        if (tokenId <= 0) {{
+          meta.textContent = "실패: token_id를 입력하세요.";
+          return;
+        }}
+        if (!window.confirm("token_id=" + String(tokenId) + " 를 회전하시겠습니까? 기존 토큰은 즉시 비활성화됩니다.")) {{
+          return;
+        }}
+        try {{
+          const rotated = await fetchJson("/api/admin/tokens/" + encodeURIComponent(String(tokenId)) + "/rotate", true, {{
+            method: "POST",
+          }});
+          iamSelectedTokenId = asInt(rotated.token_id, null);
+          document.getElementById("iamSelectedTokenId").value = String(rotated.token_id || "");
+          document.getElementById("iamSelectedTokenLabel").value = String(rotated.label || "");
+          plainNode.textContent = String(rotated.token || "");
+          await runIamTokens();
+          const newToken = getIamTokenFromCache(rotated.token_id);
+          if (newToken) {{
+            applyIamTokenToForm(newToken);
+          }}
+          meta.textContent =
+            "회전 성공: old_token_id=" + String(tokenId)
+            + " -> new_token_id=" + String(rotated.token_id)
+            + " | user_id=" + String(rotated.user_id);
+        }} catch (err) {{
+          meta.textContent = "회전 실패: " + err.message;
+        }}
+      }}
+
+      async function runIamRevokeToken() {{
+        const meta = document.getElementById("iamTokenActionMeta");
+        const plainNode = document.getElementById("iamTokenPlain");
+        const tokenId = asInt(document.getElementById("iamSelectedTokenId").value, iamSelectedTokenId || -1);
+        if (tokenId <= 0) {{
+          meta.textContent = "실패: token_id를 입력하세요.";
+          return;
+        }}
+        if (!window.confirm("token_id=" + String(tokenId) + " 를 폐기(비활성화)하시겠습니까?")) {{
+          return;
+        }}
+        try {{
+          const revoked = await fetchJson("/api/admin/tokens/" + encodeURIComponent(String(tokenId)) + "/revoke", true, {{
+            method: "POST",
+          }});
+          iamSelectedTokenId = asInt(revoked.token_id, null);
+          document.getElementById("iamSelectedTokenId").value = String(revoked.token_id || "");
+          document.getElementById("iamSelectedTokenLabel").value = String(revoked.label || "");
+          document.getElementById("iamSelectedTokenUser").value = String(revoked.username || "");
+          plainNode.textContent = "토큰 폐기 완료 (token plain text는 표시되지 않습니다).";
+          await runIamTokens();
+          meta.textContent =
+            "폐기 성공: token_id=" + String(revoked.token_id)
+            + " | is_active=" + String(Boolean(revoked.is_active));
+        }} catch (err) {{
+          meta.textContent = "폐기 실패: " + err.message;
+        }}
+      }}
+
+      function getIamAuditLogFromCache(logId) {{
+        const targetId = asInt(logId, -1);
+        if (targetId <= 0) return null;
+        const found = iamAuditLogsCache.find((row) => asInt(row.id, -1) === targetId);
+        return found || null;
+      }}
+
+      function showIamAuditDetail(logRow) {{
+        const detailNode = document.getElementById("iamAuditDetail");
+        if (!detailNode) return;
+        if (!logRow) {{
+          detailNode.textContent = "로그를 선택하면 detail JSON이 표시됩니다.";
+          return;
+        }}
+        iamSelectedAuditLogId = asInt(logRow.id, null);
+        let detailText = "";
+        try {{
+          detailText = JSON.stringify(logRow.detail || {{}}, null, 2);
+        }} catch (err) {{
+          detailText = String(logRow.detail || "");
+        }}
+        detailNode.textContent =
+          "id=" + String(logRow.id)
+          + " | action=" + String(logRow.action || "")
+          + " | actor=" + String(logRow.actor_username || "")
+          + "\\n"
+          + detailText;
+      }}
+
+      function renderIamAuditTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("감사 로그가 없습니다.");
+        }}
+        const body = rows.map((row) => {{
+          const logId = asInt(row.id, 0);
+          const selectedCls = iamSelectedAuditLogId === logId ? ' class="w07-track-row active"' : "";
+          return (
+            "<tr" + selectedCls + ">" +
+              "<td>" + escapeHtml(logId) + "</td>" +
+              "<td>" + escapeHtml(row.created_at || "") + "</td>" +
+              "<td>" + escapeHtml(row.actor_username || "") + "</td>" +
+              "<td>" + escapeHtml(row.action || "") + "</td>" +
+              "<td>" + escapeHtml(row.resource_type || "") + "</td>" +
+              "<td>" + escapeHtml(row.resource_id || "") + "</td>" +
+              "<td>" + escapeHtml(row.status || "") + "</td>" +
+              '<td><button class="btn soft iam-select-audit" type="button" data-audit-id="' + escapeHtml(logId) + '">상세</button></td>' +
+            "</tr>"
+          );
+        }}).join("");
+        return (
+          '<div class="table-wrap"><table><thead><tr>'
+          + "<th>ID</th><th>Created</th><th>Actor</th><th>Action</th><th>Resource Type</th><th>Resource ID</th><th>Status</th><th>Action</th>"
+          + "</tr></thead><tbody>" + body + "</tbody></table></div>"
+        );
+      }}
+
+      async function runIamAuditLogs() {{
+        const meta = document.getElementById("iamAuditMeta");
+        const table = document.getElementById("iamAuditTable");
+        try {{
+          const action = String(document.getElementById("iamAuditAction").value || "").trim();
+          const actor = String(document.getElementById("iamAuditActor").value || "").trim();
+          const limit = Math.max(1, Math.min(200, asInt(document.getElementById("iamAuditLimit").value, 50)));
+          const offset = Math.max(0, asInt(document.getElementById("iamAuditOffset").value, 0));
+          document.getElementById("iamAuditLimit").value = String(limit);
+          document.getElementById("iamAuditOffset").value = String(offset);
+          const params = new URLSearchParams();
+          if (action) {{
+            params.set("action", action);
+          }}
+          if (actor) {{
+            params.set("actor_username", actor);
+          }}
+          params.set("limit", String(limit));
+          params.set("offset", String(offset));
+          const path = "/api/admin/audit-logs?" + params.toString();
+          meta.textContent = "조회 중... " + path;
+          const rows = await fetchJson(path, true);
+          iamAuditLogsCache = Array.isArray(rows) ? rows : [];
+          const selected =
+            getIamAuditLogFromCache(iamSelectedAuditLogId)
+            || (iamAuditLogsCache.length ? iamAuditLogsCache[0] : null);
+          if (selected) {{
+            iamSelectedAuditLogId = asInt(selected.id, null);
+          }} else {{
+            iamSelectedAuditLogId = null;
+          }}
+          meta.textContent = "성공: " + path + " | count=" + String(iamAuditLogsCache.length);
+          table.innerHTML = renderIamAuditTable(iamAuditLogsCache);
+          showIamAuditDetail(selected);
+          return iamAuditLogsCache;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          table.innerHTML = renderEmpty(err.message);
+          iamAuditLogsCache = [];
+          iamSelectedAuditLogId = null;
+          showIamAuditDetail(null);
+          return [];
         }}
       }}
 
@@ -41102,6 +41584,12 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
       document.getElementById("runIamSetPasswordBtn").addEventListener("click", runIamSetPassword);
       document.getElementById("runIamDeactivateUserBtn").addEventListener("click", runIamDeactivateUser);
       document.getElementById("runIamDeleteUserBtn").addEventListener("click", runIamDeleteUser);
+      document.getElementById("runIamTokensBtn").addEventListener("click", runIamTokens);
+      document.getElementById("runIamIssueTokenBtn").addEventListener("click", runIamIssueToken);
+      document.getElementById("runIamPickTokenBtn").addEventListener("click", runIamPickToken);
+      document.getElementById("runIamRotateTokenBtn").addEventListener("click", runIamRotateToken);
+      document.getElementById("runIamRevokeTokenBtn").addEventListener("click", runIamRevokeToken);
+      document.getElementById("runIamAuditBtn").addEventListener("click", runIamAuditLogs);
       const iamUsersTableContainer = document.getElementById("iamUsersTable");
       if (iamUsersTableContainer) {{
         iamUsersTableContainer.addEventListener("click", (event) => {{
@@ -41115,6 +41603,35 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
           runIamUsers();
           document.getElementById("iamEditMeta").textContent =
             "선택 완료: user_id=" + String(userId) + " (" + String(user.username || "") + ")";
+        }});
+      }}
+      const iamTokensTableContainer = document.getElementById("iamTokensTable");
+      if (iamTokensTableContainer) {{
+        iamTokensTableContainer.addEventListener("click", (event) => {{
+          const pickBtn = event.target.closest(".iam-select-token");
+          if (!pickBtn) return;
+          const tokenId = asInt(pickBtn.getAttribute("data-token-id"), -1);
+          if (tokenId <= 0) return;
+          const token = getIamTokenFromCache(tokenId);
+          if (!token) return;
+          applyIamTokenToForm(token);
+          const visibleRows = iamFilteredTokensCache.length ? iamFilteredTokensCache : iamTokensCache;
+          iamTokensTableContainer.innerHTML = renderIamTokensTable(visibleRows);
+          document.getElementById("iamTokenActionMeta").textContent =
+            "선택 완료: token_id=" + String(tokenId) + " | user=" + String(token.username || "");
+        }});
+      }}
+      const iamAuditTableContainer = document.getElementById("iamAuditTable");
+      if (iamAuditTableContainer) {{
+        iamAuditTableContainer.addEventListener("click", (event) => {{
+          const detailBtn = event.target.closest(".iam-select-audit");
+          if (!detailBtn) return;
+          const logId = asInt(detailBtn.getAttribute("data-audit-id"), -1);
+          if (logId <= 0) return;
+          const logRow = getIamAuditLogFromCache(logId);
+          if (!logRow) return;
+          showIamAuditDetail(logRow);
+          iamAuditTableContainer.innerHTML = renderIamAuditTable(iamAuditLogsCache);
         }});
       }}
 

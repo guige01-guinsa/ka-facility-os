@@ -389,6 +389,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "사용자 신규가입" in root_html.text
     assert "권한관리" in root_html.text
     assert "로그아웃" in root_html.text
+    assert "토큰 발급 / 회전 / 폐기" in root_html.text
+    assert "감사 로그 조회" in root_html.text
+    assert "Overview(운영요약)" in root_html.text
+    assert "IAM(권한관리)" in root_html.text
     assert "요약 새로고침" in root_html.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})
@@ -586,7 +590,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     )
     assert service_info.json()["admin_audit_integrity_api"] == "/api/admin/audit-integrity"
     assert service_info.json()["admin_audit_rebaseline_api"] == "/api/admin/audit-chain/rebaseline"
+    assert service_info.json()["admin_user_token_issue_api"] == "/api/admin/users/{user_id}/tokens"
     assert service_info.json()["admin_token_rotate_api"] == "/api/admin/tokens/{token_id}/rotate"
+    assert service_info.json()["admin_token_revoke_api"] == "/api/admin/tokens/{token_id}/revoke"
     assert service_info.json()["ops_runbook_checks_api"] == "/api/ops/runbook/checks"
     assert service_info.json()["ops_runbook_checks_run_api"] == "/api/ops/runbook/checks/run"
     assert service_info.json()["ops_runbook_checks_latest_api"] == "/api/ops/runbook/checks/latest"
