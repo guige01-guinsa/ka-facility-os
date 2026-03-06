@@ -1,6 +1,121 @@
 # KA Facility OS Next Roadmap (2026 Q2-Q3)
 
-기준일: 2026-03-01
+기준일: 2026-03-06 (구조 재점검 반영)
+
+## 2026-03-06 시스템 구조 점검 결과
+
+- 코드 규모
+  - `app/main.py`: 43,742 lines (HTML 렌더러 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `tests/test_api.py`: 7,520 lines (단일 테스트 파일 집중)
+  - `app/schemas.py`: 1,452 lines, `app/database.py`: 945 lines
+- 라우팅 상태
+  - `ops/admin/adoption/public` 라우터 분리는 진행됨
+  - 단, 실제 구현은 여전히 `app/main.py` 단일 파일에 집중
+- 운영 자동화 상태
+  - 배포/스모크/런북/거버넌스/리메디에이션 자동화는 운영 가능한 수준
+  - cron job 블루프린트도 다수 구성됨
+- 최근 운영 반영 상태(2026-03-06)
+  - IAM 토큰/감사로그 콘솔 기능 반영
+  - 메뉴탭 툴팁(영문 용어 + 한글 설명) 반영
+  - 운영 배포 `dep-d6lbm5buibrs739r6u30` + `SMOKE_OK`
+
+## 재정의 로드맵 (실행 체크리스트)
+
+### R0. 즉시 안정화 (이번 주)
+
+- [x] IAM 탭에 토큰 발급/회전/폐기 + 감사로그 조회 UI 반영
+- [x] 메뉴탭 호버 풍선안내 반영(영문 용어의 한글 설명 포함)
+- [x] 운영 배포 + post-deploy smoke 완료
+- [ ] 콘솔 사용 가이드 1페이지 추가 (`/web/console` 기준 신규 사용자용)
+- [ ] IAM 탭 사용자 매뉴얼(권한/토큰/감사로그 순서) 작성
+
+완료 기준:
+- 운영 콘솔에서 신규 사용자 10분 내 기본 흐름(로그인→점검→작업지시→리포트) 수행 가능
+
+### R1. 모놀리스 분해 1차 (우선순위 1, 2주)
+
+- [x] Day 1 기준선 확정: 분해 설계서 + 목표 패키지 트리 생성 (`docs/R1_MAIN_SPLIT_DESIGN.md`, `app/web/*`, `app/domains/*`) (2026-03-06)
+- [x] `app/main.py`에서 HTML 빌더를 `app/web/*.py`로 분리 (2026-03-06, `app/web/main_tabs.py`, `app/web/public_pages.py`, `app/web/facility_console.py`, `app/web/tutorial.py`)
+- [ ] 인증/권한/토큰/감사 로직을 `app/domains/iam/*.py`로 분리
+- [ ] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 분리
+- [ ] `app/main.py`는 라우터 결합 + 앱 부트스트랩 역할로 축소
+
+완료 기준:
+- `app/main.py` 52k -> 20k lines 이하
+- 도메인별 파일에서 단위 테스트 가능한 함수 경계 확보
+
+### R2. 테스트 구조 분할 (우선순위 2, 1주)
+
+- [ ] `tests/test_api.py`를 도메인별 파일로 분리
+  - `tests/api/test_auth_*.py`
+  - `tests/api/test_admin_*.py`
+  - `tests/api/test_ops_*.py`
+  - `tests/api/test_adoption_*.py`
+- [ ] 공통 fixture/util 모듈화 (`tests/conftest.py`, `tests/helpers/*.py`)
+- [ ] 배포 스모크 핵심 시나리오를 별도 `smoke` 그룹으로 태깅
+
+완료 기준:
+- 테스트 실패 시 도메인 영향 범위를 파일 단위로 즉시 식별 가능
+- CI 실행 로그에서 병목 케이스 분리 가능
+
+### R3. 데이터/경계 정리 (우선순위 3, 1주)
+
+- [ ] OPS 체크리스트 버전 관리 키 표준화 (`checklist_version`, `source`, `applied_at`)
+- [ ] 권한/토큰 정책 응답 메타 규약 전 API 통일 점검
+- [ ] 감사로그 `action/resource/status` 카테고리 사전 정의 문서화
+- [ ] 월간 감사 아카이브 첨부 항목 스키마 고정(v2)
+
+완료 기준:
+- “정책/감사/점검 데이터가 어떤 버전 규약인지” API 응답만으로 판별 가능
+
+### R4. 운영 신뢰성 강화 (우선순위 4, 1주)
+
+- [ ] 운영 스모크에 “UI 핵심 경로” 1개 추가 (인증→IAM→점검목록)
+- [ ] runbook critical 체크의 오탐/누락 월간 리뷰 루프 추가
+- [ ] DR rehearsal 결과를 governance gate 가중치에 반영
+- [ ] 배포 체크리스트 버전 자동 증분 규칙 정의
+
+완료 기준:
+- `deploy -> smoke -> runbook -> gate` 전 과정이 같은 버전 기준으로 연결
+
+### R5. 신규 사용자 온보딩 (우선순위 5, 1주)
+
+- [ ] 메뉴탭 툴팁 사전 확장(모든 주요 버튼/액션에 설명 추가)
+- [ ] “처음 1일 운영 체크리스트” UI 제공 (튜토리얼 탭 연동)
+- [ ] 용어집(영문/한글/업무 의미) API + 화면 제공
+- [ ] 역할별(owner/manager/operator/auditor) 시작 가이드 제공
+
+완료 기준:
+- 신규 사용자 질문 빈도 상위 10개 항목을 UI에서 자체 해결 가능
+
+## 2주 실행 순서 (바로 실행용)
+
+### Week 1
+
+- [x] Day 1: `app/main.py` 분해 설계서 작성 + 파일 트리 확정 (`docs/R1_MAIN_SPLIT_DESIGN.md`)
+- [x] Day 2-3: 웹 렌더링/JS 블록 분리 1차 (`app.main` -> `app.web.*`, 전체 테스트 92 passed)
+- [ ] Day 4: IAM 도메인 로직 분리 1차
+- [ ] Day 5: 회귀 테스트/스모크/배포
+
+### Week 2
+
+- [ ] Day 1-2: 테스트 파일 분할 + fixture 정리
+- [ ] Day 3: 데이터/정책 메타 정합성 점검
+- [ ] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강
+- [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
+
+## 운영 규칙
+
+- 모든 [x] 완료 항목은 아래 3가지를 함께 기록
+  - commit SHA
+  - deploy ID
+  - smoke 결과(`SMOKE_OK` 여부)
+- 목표 추가 시 “효과 지표”를 반드시 같이 명시
+  - 예: 처리시간 감소, 오류율 감소, 교육시간 단축
+
+---
+
+아래 기존 섹션(W16~W31 및 과거 완료 이력)은 추적 목적의 레퍼런스로 유지합니다.
 
 ## 즉시 실행 체크리스트 (2026-03-04 착수)
 
