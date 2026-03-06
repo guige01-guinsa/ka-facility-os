@@ -35,6 +35,8 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     )
     assert integrity.status_code == 200
     body = integrity.json()
+    assert body["format_version"] == "v2"
+    assert body["attachment_schema_version"] == "v2"
     assert body["chain"]["chain_ok"] is True
     assert body["signature_algorithm"] in {"hmac-sha256", "unsigned"}
     assert len(body["archive_sha256"]) == 64
@@ -42,6 +44,7 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert body["meta"]["schema_version"] == "v1"
     assert body["meta"]["endpoint"] == "/api/admin/audit-integrity"
     assert body["meta"]["month"] == month
+    assert body["meta"]["format_version"] == "v2"
 
     dr_run = app_client.post(
         "/api/ops/dr/rehearsal/run?simulate_restore=true",
@@ -57,6 +60,8 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive.status_code == 200
     archive_body = archive.json()
     assert archive_body["month"] == month
+    assert archive_body["format_version"] == "v2"
+    assert archive_body["attachment_schema_version"] == "v2"
     assert archive_body["entry_count"] >= 1
     assert isinstance(archive_body["entries"], list)
     assert archive_body["meta"]["schema"] == "admin_audit_archive_response"
@@ -64,10 +69,18 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_body["meta"]["endpoint"] == "/api/admin/audit-archive/monthly"
     assert archive_body["meta"]["month"] == month
     assert archive_body["meta"]["include_entries"] is True
+    assert archive_body["meta"]["format_version"] == "v2"
+    assert archive_body["meta"]["attachment_schema_version"] == "v2"
+    assert isinstance(archive_body["attachments"], dict)
+    assert archive_body["attachment_count"] == len(archive_body["attachments"])
+    assert "dr_rehearsal" in archive_body["attachments"]
+    assert "ops_checklists_import_validation" in archive_body["attachments"]
     assert "dr_rehearsal_attachment" in archive_body
     assert archive_body["dr_rehearsal_attachment"]["month"] == month
     assert archive_body["dr_rehearsal_attachment"]["included"] is True
     assert archive_body["dr_rehearsal_attachment"]["latest_in_month"]["run_id"] == dr_run_body["run_id"]
+    assert archive_body["attachments"]["dr_rehearsal"]["schema"] == "audit_archive_attachment_dr_rehearsal"
+    assert archive_body["attachments"]["dr_rehearsal"]["schema_version"] == "v2"
     assert "ops_checklists_import_validation_attachment" in archive_body
     import_attachment = archive_body["ops_checklists_import_validation_attachment"]
     assert import_attachment["month"] == month
@@ -79,6 +92,10 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert isinstance(import_attachment["summary"], dict)
     assert "error_count" in import_attachment["summary"]
     assert "warning_count" in import_attachment["summary"]
+    attachments_import = archive_body["attachments"]["ops_checklists_import_validation"]
+    assert attachments_import["schema"] == "audit_archive_attachment_ops_checklists_import_validation"
+    assert attachments_import["schema_version"] == "v2"
+    assert attachments_import["checklist_version"] == import_attachment["checklist_version"]
 
     archive_csv = app_client.get(
         f"/api/admin/audit-archive/monthly/csv?month={month}",
@@ -87,6 +104,7 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_csv.status_code == 200
     assert archive_csv.headers["content-type"].startswith("text/csv")
     assert len(archive_csv.headers.get("x-audit-archive-sha256", "")) == 64
+    assert archive_csv.headers.get("x-audit-archive-format-version") == "v1"
     assert archive_csv.text.startswith("id,created_at,actor_username,action,resource_type,resource_id,status,prev_hash,entry_hash")
 
     archive_csv_v2 = app_client.get(
@@ -96,8 +114,11 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_csv_v2.status_code == 200
     assert archive_csv_v2.headers["content-type"].startswith("text/csv")
     assert len(archive_csv_v2.headers.get("x-audit-archive-sha256", "")) == 64
+    assert archive_csv_v2.headers.get("x-audit-archive-format-version") == "v2"
     assert "attachment.ops_checklists_import_validation,status" in archive_csv_v2.text
     assert "meta,format_version,v2" in archive_csv_v2.text
+    assert "meta,attachment_schema_version,v2" in archive_csv_v2.text
+    assert "attachment.dr_rehearsal,schema,audit_archive_attachment_dr_rehearsal" in archive_csv_v2.text
 
     with db_module.get_conn() as conn:
         first_row = conn.execute(

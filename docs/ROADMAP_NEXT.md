@@ -18,6 +18,8 @@
   - IAM 토큰/감사로그 콘솔 기능 반영
   - 메뉴탭 툴팁(영문 용어 + 한글 설명) 반영
   - OPS 체크리스트/권한/토큰/감사 응답 메타 규약 1차 반영
+  - 감사로그 카테고리 사전 문서화 (`docs/AUDIT_LOG_CATEGORY_DICTIONARY.md`)
+  - 월간 감사 아카이브 `format_version=v2`, `attachment_schema_version=v2` 고정
   - 운영 배포 `dep-d6lk3erh46gs73e17geg` + `SMOKE_OK`
 
 ## 재정의 로드맵 (실행 체크리스트)
@@ -62,8 +64,8 @@
 
 - [x] OPS 체크리스트 버전 관리 키 표준화 (`checklist_version`, `source`, `applied_at`)
 - [x] 권한/토큰 정책 응답 메타 규약 전 API 통일 점검
-- [ ] 감사로그 `action/resource/status` 카테고리 사전 정의 문서화
-- [ ] 월간 감사 아카이브 첨부 항목 스키마 고정(v2)
+- [x] 감사로그 `action/resource/status` 카테고리 사전 정의 문서화 (`docs/AUDIT_LOG_CATEGORY_DICTIONARY.md`)
+- [x] 월간 감사 아카이브 첨부 항목 스키마 고정(v2)
 
 완료 기준:
 - “정책/감사/점검 데이터가 어떤 버전 규약인지” API 응답만으로 판별 가능
@@ -100,7 +102,7 @@
 ### Week 2
 
 - [x] Day 1-2: 테스트 파일 분할 + fixture 정리 (`tests/api/test_*.py`, `tests/conftest.py`, `tests/helpers/common.py`, 전체 테스트 92 passed)
-- [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영, 전체 테스트 92 passed)
+- [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영 + 감사로그 사전 + audit archive v2, 전체 테스트 92 passed)
 - [ ] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
 

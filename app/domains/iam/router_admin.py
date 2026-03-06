@@ -689,27 +689,55 @@ def _build_audit_archive_csv(
     include_attachment_meta = normalized_format == "v2"
     if include_attachment_meta and isinstance(archive, dict):
         chain = archive.get("chain") if isinstance(archive.get("chain"), dict) else {}
+        archive_meta = archive.get("meta") if isinstance(archive.get("meta"), dict) else {}
+        attachments = archive.get("attachments") if isinstance(archive.get("attachments"), dict) else {}
         writer.writerow(["section", "key", "value"])
-        writer.writerow(["meta", "format_version", "v2"])
+        writer.writerow(["meta", "format_version", archive.get("format_version", "v2")])
+        writer.writerow(
+            ["meta", "attachment_schema_version", archive.get("attachment_schema_version", "v2")]
+        )
+        writer.writerow(["meta", "schema", archive_meta.get("schema", "")])
+        writer.writerow(["meta", "schema_version", archive_meta.get("schema_version", "")])
         writer.writerow(["meta", "month", archive.get("month", "")])
         writer.writerow(["meta", "generated_at", archive.get("generated_at", "")])
         writer.writerow(["meta", "entry_count", archive.get("entry_count", 0)])
+        writer.writerow(["meta", "entries_included", archive.get("entries_included", True)])
         writer.writerow(["meta", "chain_ok", chain.get("chain_ok", False)])
 
         dr_attachment = (
-            archive.get("dr_rehearsal_attachment")
+            attachments.get("dr_rehearsal")
+            if isinstance(attachments.get("dr_rehearsal"), dict)
+            else archive.get("dr_rehearsal_attachment")
             if isinstance(archive.get("dr_rehearsal_attachment"), dict)
             else {}
         )
+        writer.writerow(["attachment.dr_rehearsal", "schema", dr_attachment.get("schema", "")])
+        writer.writerow(["attachment.dr_rehearsal", "schema_version", dr_attachment.get("schema_version", "")])
         writer.writerow(["attachment.dr_rehearsal", "status", dr_attachment.get("status", "")])
         writer.writerow(["attachment.dr_rehearsal", "included", dr_attachment.get("included", False)])
 
         import_attachment = (
-            archive.get("ops_checklists_import_validation_attachment")
+            attachments.get("ops_checklists_import_validation")
+            if isinstance(attachments.get("ops_checklists_import_validation"), dict)
+            else archive.get("ops_checklists_import_validation_attachment")
             if isinstance(archive.get("ops_checklists_import_validation_attachment"), dict)
             else {}
         )
         import_summary = import_attachment.get("summary") if isinstance(import_attachment.get("summary"), dict) else {}
+        writer.writerow(
+            [
+                "attachment.ops_checklists_import_validation",
+                "schema",
+                import_attachment.get("schema", ""),
+            ]
+        )
+        writer.writerow(
+            [
+                "attachment.ops_checklists_import_validation",
+                "schema_version",
+                import_attachment.get("schema_version", ""),
+            ]
+        )
         writer.writerow(["attachment.ops_checklists_import_validation", "status", import_attachment.get("status", "")])
         writer.writerow(
             ["attachment.ops_checklists_import_validation", "generated_at", import_attachment.get("generated_at", "")]
@@ -783,6 +811,8 @@ def get_admin_audit_integrity(
         },
     )
     return {
+        "format_version": archive.get("format_version"),
+        "attachment_schema_version": archive.get("attachment_schema_version"),
         "month": archive["month"],
         "generated_at": archive["generated_at"],
         "entry_count": archive["entry_count"],
@@ -796,6 +826,8 @@ def get_admin_audit_integrity(
             scope_type="monthly",
             month=archive["month"],
             include_entries=False,
+            format_version=archive.get("format_version"),
+            attachment_schema_version=archive.get("attachment_schema_version"),
         ),
     }
 
@@ -853,13 +885,19 @@ def get_admin_monthly_audit_archive(
             "chain_ok": archive["chain"]["chain_ok"],
         },
     )
-    archive["meta"] = _build_iam_response_meta(
-        schema="admin_audit_archive_response",
-        endpoint="/api/admin/audit-archive/monthly",
-        scope_type="monthly",
-        month=archive["month"],
-        include_entries=include_entries,
-    )
+    existing_meta = archive.get("meta") if isinstance(archive.get("meta"), dict) else {}
+    archive["meta"] = {
+        **existing_meta,
+        **_build_iam_response_meta(
+            schema="admin_audit_archive_response",
+            endpoint="/api/admin/audit-archive/monthly",
+            scope_type="monthly",
+            month=archive["month"],
+            include_entries=include_entries,
+            format_version=archive.get("format_version"),
+            attachment_schema_version=archive.get("attachment_schema_version"),
+        ),
+    }
     return archive
 
 @admin_router.get("/audit-archive/monthly/csv")
@@ -899,6 +937,7 @@ def get_admin_monthly_audit_archive_csv(
             "Content-Disposition": f'attachment; filename="{file_name}"',
             "X-Audit-Archive-Signature": archive["signature"] or "",
             "X-Audit-Archive-SHA256": archive["archive_sha256"],
+            "X-Audit-Archive-Format-Version": format_version,
         },
     )
 

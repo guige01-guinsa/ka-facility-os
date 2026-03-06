@@ -41,6 +41,9 @@ _token_rotate_due_at = main_module._token_rotate_due_at
 
 IAM_RESPONSE_SCHEMA_VERSION = "v1"
 IAM_AUTH_ME_SCHEMA = "auth_profile_response"
+AUDIT_ARCHIVE_FORMAT_VERSION = "v2"
+AUDIT_ARCHIVE_ATTACHMENT_SCHEMA_VERSION = "v2"
+AUDIT_ARCHIVE_PAYLOAD_SCHEMA = "admin_audit_archive_payload"
 
 
 def _to_json_text(value: dict[str, Any] | None) -> str:
@@ -84,6 +87,22 @@ def _attach_auth_me_meta(profile: AuthMeRead, *, endpoint: str = "/api/auth/me")
         token_id=int(profile.token_id) if profile.token_id is not None else None,
     )
     return profile
+
+
+def _build_audit_archive_attachment(
+    *,
+    attachment_key: str,
+    schema: str,
+    resource_type: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "attachment_key": attachment_key,
+        "schema": schema,
+        "schema_version": AUDIT_ARCHIVE_ATTACHMENT_SCHEMA_VERSION,
+        "resource_type": resource_type,
+        **payload,
+    }
 
 def _compute_audit_entry_hash(
     *,
@@ -325,7 +344,11 @@ def build_monthly_audit_archive(
 
     dr_latest_in_month = _to_dr_attachment(dr_month_row)
     dr_latest_before_window_end = _to_dr_attachment(dr_latest_row)
-    dr_attachment = {
+    dr_attachment = _build_audit_archive_attachment(
+        attachment_key="dr_rehearsal",
+        schema="audit_archive_attachment_dr_rehearsal",
+        resource_type="ops_dr",
+        payload={
         "required": DR_REHEARSAL_ENABLED,
         "month": normalized,
         "included": dr_latest_in_month is not None,
@@ -345,7 +368,8 @@ def build_monthly_audit_archive(
         ),
         "latest_in_month": dr_latest_in_month,
         "latest_before_window_end": dr_latest_before_window_end,
-    }
+        },
+    )
 
     import_validation_report = _build_ops_checklists_import_validation_report()
     import_generated_at = _as_optional_datetime(import_validation_report.get("generated_at"))
@@ -362,7 +386,11 @@ def build_monthly_audit_archive(
     import_in_month = (
         import_generated_at is not None and import_generated_at >= start and import_generated_at < end
     )
-    import_attachment = {
+    import_attachment = _build_audit_archive_attachment(
+        attachment_key="ops_checklists_import_validation",
+        schema="audit_archive_attachment_ops_checklists_import_validation",
+        resource_type="ops_inspection_checklists",
+        payload={
         "required": True,
         "month": normalized,
         "included": True,
@@ -403,15 +431,34 @@ def build_monthly_audit_archive(
             if isinstance(item, dict)
         ],
         "suggestions": import_suggestions[:5],
+        },
+    )
+
+    attachments = {
+        "dr_rehearsal": dr_attachment,
+        "ops_checklists_import_validation": import_attachment,
     }
 
     payload = {
+        "format_version": AUDIT_ARCHIVE_FORMAT_VERSION,
+        "attachment_schema_version": AUDIT_ARCHIVE_ATTACHMENT_SCHEMA_VERSION,
+        "meta": {
+            "schema": AUDIT_ARCHIVE_PAYLOAD_SCHEMA,
+            "schema_version": "v1",
+            "format_version": AUDIT_ARCHIVE_FORMAT_VERSION,
+            "attachment_schema_version": AUDIT_ARCHIVE_ATTACHMENT_SCHEMA_VERSION,
+            "month": normalized,
+            "entries_included": include_entries,
+        },
         "month": normalized,
         "window_start": start.isoformat(),
         "window_end": end.isoformat(),
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "entry_count": len(rows),
         "max_entries": max_entries,
+        "entries_included": include_entries,
+        "attachment_count": len(attachments),
+        "attachments": attachments,
         "chain": chain,
         "dr_rehearsal_attachment": dr_attachment,
         "ops_checklists_import_validation_attachment": import_attachment,
