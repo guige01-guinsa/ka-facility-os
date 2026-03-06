@@ -5,7 +5,7 @@
 ## 2026-03-06 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 41,849 lines (HTML + IAM helper/service + IAM route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `app/main.py`: 40,555 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
   - `tests/test_api.py`: 8,336 lines (단일 테스트 파일 집중)
   - `app/schemas.py`: 1,452 lines, `app/database.py`: 945 lines
 - 라우팅 상태
@@ -37,7 +37,7 @@
 - [x] Day 1 기준선 확정: 분해 설계서 + 목표 패키지 트리 생성 (`docs/R1_MAIN_SPLIT_DESIGN.md`, `app/web/*`, `app/domains/*`) (2026-03-06)
 - [x] `app/main.py`에서 HTML 빌더를 `app/web/*.py`로 분리 (2026-03-06, `app/web/main_tabs.py`, `app/web/public_pages.py`, `app/web/facility_console.py`, `app/web/tutorial.py`)
 - [x] 인증/권한/토큰/감사 로직을 `app/domains/iam/*.py`로 1차 분리 (2026-03-06, `security.py`/`service.py` + `router_auth.py`/`router_admin.py` 추출, `app.main` 호환 래퍼 유지)
-- [ ] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 분리
+- [x] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 1차 분리 (2026-03-06, `router_core.py`로 workflow-locks/inspections/work-orders/reports route 추출)
 - [ ] `app/main.py`는 라우터 결합 + 앱 부트스트랩 역할로 축소
 
 완료 기준:
@@ -95,7 +95,7 @@
 - [x] Day 1: `app/main.py` 분해 설계서 작성 + 파일 트리 확정 (`docs/R1_MAIN_SPLIT_DESIGN.md`)
 - [x] Day 2-3: 웹 렌더링/JS 블록 분리 1차 (`app.main` -> `app.web.*`, 전체 테스트 92 passed)
 - [x] Day 4: IAM 도메인 로직 분리 1차 (`app.domains.iam.security/service/router_*`, 전체 테스트 92 passed)
-- [ ] Day 5: 회귀 테스트/스모크/배포
+- [x] Day 5: OPS core route 분리 + 회귀 테스트 (`app.domains.ops.router_core`, 전체 테스트 92 passed)
 
 ### Week 2
 
