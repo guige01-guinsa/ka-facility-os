@@ -25,7 +25,11 @@
     - runbook critical 월간 review loop API/배치 추가
     - governance gate DR 가중치/가중 점수 반영
     - 배포 체크리스트 자동 버전(`current_utc_month + deploy_smoke signature sequence`) 반영
-  - 운영 배포 `dep-d6ll79vtskes73c2cf6g` + `SMOKE_OK`
+  - audit chain write 직렬화 + 운영 rebaseline 완료
+    - 런타임 커밋 `1ed4f4c`
+    - 운영 배포 `dep-d6llg3ea2pns73b434sg` + `SMOKE_OK`
+    - `/api/admin/audit-integrity` `chain_ok=true`
+    - `/api/ops/governance/gate` `decision=go`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
