@@ -11,6 +11,7 @@ hmac = main_module.hmac
 datetime = main_module.datetime
 timedelta = main_module.timedelta
 timezone = main_module.timezone
+Lock = main_module.Lock
 AdminAuditLogRead = main_module.AdminAuditLogRead
 AdminTokenRead = main_module.AdminTokenRead
 AdminUserRead = main_module.AdminUserRead
@@ -44,6 +45,8 @@ IAM_AUTH_ME_SCHEMA = "auth_profile_response"
 AUDIT_ARCHIVE_FORMAT_VERSION = "v2"
 AUDIT_ARCHIVE_ATTACHMENT_SCHEMA_VERSION = "v2"
 AUDIT_ARCHIVE_PAYLOAD_SCHEMA = "admin_audit_archive_payload"
+AUDIT_CHAIN_ADVISORY_LOCK_KEY = 84202431
+AUDIT_CHAIN_WRITE_LOCK = Lock()
 
 
 def _to_json_text(value: dict[str, Any] | None) -> str:
@@ -143,6 +146,15 @@ def _sign_payload(payload_text: str) -> str | None:
         hashlib.sha256,
     ).hexdigest()
 
+
+def _acquire_audit_chain_write_guard(conn: Any) -> None:
+    dialect_name = str(getattr(getattr(conn, "dialect", None), "name", "") or "").lower()
+    if dialect_name == "postgresql":
+        try:
+            conn.exec_driver_sql(f"SELECT pg_advisory_xact_lock({AUDIT_CHAIN_ADVISORY_LOCK_KEY})")
+        except Exception:
+            return
+
 def _write_audit_log(
     *,
     principal: dict[str, Any] | None,
@@ -152,7 +164,6 @@ def _write_audit_log(
     status: str = "success",
     detail: dict[str, Any] | None = None,
 ) -> None:
-    now = datetime.now(timezone.utc)
     actor_user_id = None
     actor_username = "system"
     if principal is not None:
@@ -161,38 +172,43 @@ def _write_audit_log(
     detail_json = _to_json_text(detail)
 
     try:
-        with get_conn() as conn:
-            prev_row = conn.execute(
-                select(admin_audit_logs.c.entry_hash)
-                .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
-                .limit(1)
-            ).mappings().first()
-            prev_hash = str(prev_row.get("entry_hash") or "") if prev_row is not None else ""
-            entry_hash = _compute_audit_entry_hash(
-                prev_hash=prev_hash,
-                actor_user_id=actor_user_id,
-                actor_username=actor_username,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                status=status,
-                detail_json=detail_json,
-                created_at=now,
-            )
-            conn.execute(
-                insert(admin_audit_logs).values(
+        # Audit chain writes must be serialized; otherwise concurrent requests can branch
+        # from the same previous hash and corrupt monthly integrity verification.
+        with AUDIT_CHAIN_WRITE_LOCK:
+            with get_conn() as conn:
+                _acquire_audit_chain_write_guard(conn)
+                now = datetime.now(timezone.utc)
+                prev_row = conn.execute(
+                    select(admin_audit_logs.c.entry_hash)
+                    .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
+                    .limit(1)
+                ).mappings().first()
+                prev_hash = str(prev_row.get("entry_hash") or "") if prev_row is not None else ""
+                entry_hash = _compute_audit_entry_hash(
+                    prev_hash=prev_hash,
                     actor_user_id=actor_user_id,
                     actor_username=actor_username,
                     action=action,
                     resource_type=resource_type,
                     resource_id=resource_id,
                     status=status,
-                    prev_hash=prev_hash or None,
-                    entry_hash=entry_hash,
                     detail_json=detail_json,
                     created_at=now,
                 )
-            )
+                conn.execute(
+                    insert(admin_audit_logs).values(
+                        actor_user_id=actor_user_id,
+                        actor_username=actor_username,
+                        action=action,
+                        resource_type=resource_type,
+                        resource_id=resource_id,
+                        status=status,
+                        prev_hash=prev_hash or None,
+                        entry_hash=entry_hash,
+                        detail_json=detail_json,
+                        created_at=now,
+                    )
+                )
     except SQLAlchemyError:
         # Audit log failures must not block business requests.
         return

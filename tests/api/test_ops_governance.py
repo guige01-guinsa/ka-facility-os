@@ -3,6 +3,7 @@ import io
 import json
 import sys
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -192,6 +193,28 @@ def test_audit_chain_anchor_hash_support() -> None:
     assert ok["chain_ok"] is True
     bad = main_module._verify_audit_chain([row], initial_prev_hash="")
     assert bad["chain_ok"] is False
+
+
+def test_audit_log_concurrent_writes_keep_chain_consistent() -> None:
+    import app.main as main_module
+
+    principal = {"user_id": 1, "username": "concurrency-owner"}
+
+    def _write(index: int) -> None:
+        main_module._write_audit_log(
+            principal=principal,
+            action="ci_audit_concurrency",
+            resource_type="ci_audit",
+            resource_id=str(index),
+            detail={"index": index},
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_write, range(32)))
+
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    archive = main_module.build_monthly_audit_archive(month=month, include_entries=False, max_entries=10000)
+    assert archive["chain"]["chain_ok"] is True
 
 def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     checks = app_client.get(
