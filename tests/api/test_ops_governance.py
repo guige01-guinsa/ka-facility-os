@@ -249,6 +249,99 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "runbook_critical_monthly_review" in ids
     assert "evidence_archive_integrity_batch" in ids
 
+
+def test_runbook_alert_checks_are_ok_without_pending_alert_backlog(app_client: TestClient) -> None:
+    import app.main as main_module
+
+    snapshot = main_module._build_ops_runbook_checks_snapshot()
+    checks = {item["id"]: item for item in snapshot["checks"]}
+
+    assert checks["alert_retry_recent"]["status"] == "ok"
+    assert checks["alert_retry_recent"]["pending_count"] == 0
+    assert checks["alert_retention_recent"]["status"] == "ok"
+    assert checks["alert_retention_recent"]["candidate_count"] == 0
+
+
+def test_weekly_streak_uses_recent_success_as_anchor_during_ramp_up(app_client: TestClient) -> None:
+    import app.main as main_module
+    from sqlalchemy import delete, insert
+
+    now = datetime(2026, 3, 7, 12, 0, tzinfo=timezone.utc)
+    with main_module.get_conn() as conn:
+        conn.execute(
+            delete(main_module.job_runs).where(main_module.job_runs.c.job_name == main_module.OPS_QUALITY_WEEKLY_JOB_NAME)
+        )
+        conn.execute(
+            insert(main_module.job_runs).values(
+                job_name=main_module.OPS_QUALITY_WEEKLY_JOB_NAME,
+                trigger="manual",
+                status="success",
+                started_at=now - timedelta(days=6, minutes=10),
+                finished_at=now - timedelta(days=6),
+                detail_json="{}",
+            )
+        )
+
+    snapshot = main_module._build_ops_quality_weekly_streak_snapshot(now=now)
+    assert snapshot["current_streak_weeks"] == 1
+    assert snapshot["target_weeks"] == 1
+    assert snapshot["configured_target_weeks"] == 4
+    assert snapshot["bootstrap_grace_active"] is True
+    assert snapshot["target_met"] is True
+    assert snapshot["anchor_week_start"] == "2026-02-23"
+
+
+def test_api_latency_snapshot_treats_stale_and_low_traffic_targets_as_idle(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+    from sqlalchemy import delete, insert
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(main_module, "API_LATENCY_STALE_AFTER_MIN", 120)
+    with main_module._API_LATENCY_LOCK:
+        main_module._API_LATENCY_SAMPLES.clear()
+        main_module._API_LATENCY_LAST_SEEN_AT.clear()
+
+    with main_module.get_conn() as conn:
+        conn.execute(delete(main_module.api_latency_samples))
+        rows: list[dict[str, object]] = []
+        for idx in range(20):
+            rows.append(
+                {
+                    "endpoint_key": "GET /api/ops/dashboard/summary",
+                    "method": "GET",
+                    "path": "/api/ops/dashboard/summary",
+                    "duration_ms": 700.0,
+                    "status_code": 200,
+                    "is_error": False,
+                    "sampled_at": now - timedelta(hours=4, minutes=idx),
+                }
+            )
+        for idx in range(2):
+            rows.append(
+                {
+                    "endpoint_key": "GET /meta",
+                    "method": "GET",
+                    "path": "/meta",
+                    "duration_ms": 8.0,
+                    "status_code": 200,
+                    "is_error": False,
+                    "sampled_at": now - timedelta(minutes=30, seconds=idx),
+                }
+            )
+        conn.execute(insert(main_module.api_latency_samples), rows)
+
+    snapshot = main_module._build_api_latency_snapshot()
+    stale_endpoint = next(item for item in snapshot["endpoints"] if item["endpoint"] == "GET /api/ops/dashboard/summary")
+    meta_endpoint = next(item for item in snapshot["endpoints"] if item["endpoint"] == "GET /meta")
+
+    assert snapshot["status"] == "ok"
+    assert snapshot["burn_rate"]["status"] == "ok"
+    assert stale_endpoint["status"] == "ok"
+    assert stale_endpoint["is_stale"] is True
+    assert "idle" in stale_endpoint["message"].lower()
+    assert meta_endpoint["burn_status"] == "ok"
+    assert meta_endpoint["burn_idle"] is True
+
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     posture = app_client.get(
         "/api/ops/security/posture",

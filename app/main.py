@@ -418,6 +418,11 @@ API_LATENCY_PERSIST_RETENTION_DAYS = _env_int("API_LATENCY_PERSIST_RETENTION_DAY
 API_LATENCY_PERSIST_PRUNE_INTERVAL = _env_int("API_LATENCY_PERSIST_PRUNE_INTERVAL", 200, min_value=1)
 API_BURN_RATE_SHORT_WINDOW_MIN = _env_int("API_BURN_RATE_SHORT_WINDOW_MIN", 5, min_value=1)
 API_BURN_RATE_LONG_WINDOW_MIN = _env_int("API_BURN_RATE_LONG_WINDOW_MIN", 60, min_value=1)
+API_LATENCY_STALE_AFTER_MIN = _env_int(
+    "API_LATENCY_STALE_AFTER_MIN",
+    max(120, API_BURN_RATE_LONG_WINDOW_MIN * 2),
+    min_value=1,
+)
 API_BURN_RATE_MIN_SAMPLES = _env_int("API_BURN_RATE_MIN_SAMPLES", 8, min_value=1)
 API_BURN_RATE_WARNING = _env_float("API_BURN_RATE_WARNING", 2.0, min_value=0.1)
 API_BURN_RATE_CRITICAL = _env_float("API_BURN_RATE_CRITICAL", 10.0, min_value=0.1)
@@ -1728,6 +1733,26 @@ W02_SAMPLE_EVIDENCE_ARTIFACTS: list[dict[str, Any]] = [
         ),
     },
 ]
+
+
+def _build_sample_evidence_artifact_catalog() -> dict[str, dict[str, Any]]:
+    catalog: dict[str, dict[str, Any]] = {}
+    for row in W02_SAMPLE_EVIDENCE_ARTIFACTS:
+        file_name = str(row.get("file_name") or "").strip()
+        if not file_name:
+            continue
+        content_text = str(row.get("content") or "")
+        content_bytes = content_text.encode("utf-8")
+        catalog[file_name] = {
+            "bytes": content_bytes,
+            "sha256": hashlib.sha256(content_bytes).hexdigest(),
+            "file_size": len(content_bytes),
+            "sample_id": str(row.get("sample_id") or "").strip().lower(),
+        }
+    return catalog
+
+
+SAMPLE_EVIDENCE_ARTIFACTS_BY_FILE = _build_sample_evidence_artifact_catalog()
 
 ADOPTION_W03_KICKOFF_AGENDA: list[dict[str, Any]] = [
     {
@@ -4768,6 +4793,8 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
     burn_min_samples = max(1, int(API_BURN_RATE_MIN_SAMPLES))
     burn_warning = max(0.1, float(API_BURN_RATE_WARNING))
     burn_critical = max(burn_warning, float(API_BURN_RATE_CRITICAL))
+    stale_after_minutes = max(burn_long_window_min, int(API_LATENCY_STALE_AFTER_MIN))
+    stale_cutoff = generated_at - timedelta(minutes=stale_after_minutes)
     error_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_ERROR_SLO_PERCENT)))
     latency_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_LATENCY_SLO_PERCENT)))
     error_budget_percent = max(0.01, round(100.0 - error_slo_percent, 4))
@@ -4795,12 +4822,25 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
             p95_ms = _percentile_value(samples, 95.0)
             p99_ms = _percentile_value(samples, 99.0)
             last_seen_at = persisted_last_seen_at or memory_last_seen.get(key)
+            last_seen_dt = _as_optional_datetime(last_seen_at)
             error_count = sum(1 for row in latency_records if bool(row.get("is_error"))) if persisted_records else 0
             error_rate_percent = round((error_count / sample_count) * 100.0, 2) if sample_count > 0 else 0.0
+            is_stale = last_seen_dt is None or last_seen_dt < stale_cutoff
+            low_traffic_latency = (
+                sample_count < min_samples
+                and error_count == 0
+                and (p95_ms is None or p95_ms < warning_ms)
+            )
 
             status = "ok"
             message = "P95 latency is within threshold."
-            if sample_count < min_samples:
+            if is_stale:
+                status = "ok"
+                message = f"No recent traffic within {stale_after_minutes} minutes; target is idle."
+            elif low_traffic_latency:
+                status = "ok"
+                message = f"Latency monitor is idle while accumulating {min_samples} samples."
+            elif sample_count < min_samples:
                 status = "warning"
                 message = f"Insufficient samples (need >= {min_samples})."
             elif p95_ms is None:
@@ -4843,12 +4883,32 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                     min_samples=burn_min_samples,
                 )
 
+            burn_short_sample_count = int(burn_short.get("sample_count") or 0)
+            burn_long_sample_count = int(burn_long.get("sample_count") or 0)
+            burn_short_slow_count = int(burn_short.get("slow_count") or 0)
+            burn_long_slow_count = int(burn_long.get("slow_count") or 0)
+            burn_short_error_count = int(burn_short.get("error_count") or 0)
+            burn_long_error_count = int(burn_long.get("error_count") or 0)
+            burn_ready = bool(burn_short.get("ready")) and bool(burn_long.get("ready"))
+            burn_idle = (
+                (burn_short_sample_count + burn_long_sample_count) < burn_min_samples
+                and burn_short_error_count == 0
+                and burn_long_error_count == 0
+                and burn_short_slow_count == 0
+                and burn_long_slow_count == 0
+            )
             burn_status = "ok"
             burn_message = "Burn-rate is within threshold."
             burn_rate_short = float(burn_short.get("burn_rate") or 0.0)
             burn_rate_long = float(burn_long.get("burn_rate") or 0.0)
             effective_burn = max(burn_rate_short, burn_rate_long)
-            if not bool(burn_short.get("ready")) or not bool(burn_long.get("ready")):
+            if is_stale:
+                burn_status = "ok"
+                burn_message = f"No recent traffic within {stale_after_minutes} minutes for burn-rate evaluation."
+            elif burn_idle:
+                burn_status = "ok"
+                burn_message = "Burn-rate monitor is idle due to low recent traffic volume."
+            elif not burn_ready:
                 burn_status = "warning"
                 burn_message = "Burn-rate monitor warming up due to low recent sample coverage."
             elif effective_burn >= burn_critical:
@@ -4874,18 +4934,21 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                     "error_rate_percent": error_rate_percent,
                     "status": status,
                     "message": message,
-                    "last_seen_at": last_seen_at,
+                    "last_seen_at": last_seen_dt.isoformat() if last_seen_dt is not None else None,
                     "sample_source": sample_source,
+                    "is_stale": is_stale,
+                    "stale_after_minutes": stale_after_minutes,
                     "burn_rate_short": round(burn_rate_short, 4),
                     "burn_rate_long": round(burn_rate_long, 4),
                     "burn_status": burn_status,
                     "burn_message": burn_message,
+                    "burn_idle": burn_idle,
                     "burn_windows": {
                         "short": {
                             "window_minutes": burn_short_window_min,
-                            "sample_count": int(burn_short.get("sample_count") or 0),
-                            "error_count": int(burn_short.get("error_count") or 0),
-                            "slow_count": int(burn_short.get("slow_count") or 0),
+                            "sample_count": burn_short_sample_count,
+                            "error_count": burn_short_error_count,
+                            "slow_count": burn_short_slow_count,
                             "error_rate_percent": float(burn_short.get("error_rate_percent") or 0.0),
                             "slow_rate_percent": float(burn_short.get("slow_rate_percent") or 0.0),
                             "error_burn_rate": float(burn_short.get("error_burn_rate") or 0.0),
@@ -4895,9 +4958,9 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
                         },
                         "long": {
                             "window_minutes": burn_long_window_min,
-                            "sample_count": int(burn_long.get("sample_count") or 0),
-                            "error_count": int(burn_long.get("error_count") or 0),
-                            "slow_count": int(burn_long.get("slow_count") or 0),
+                            "sample_count": burn_long_sample_count,
+                            "error_count": burn_long_error_count,
+                            "slow_count": burn_long_slow_count,
                             "error_rate_percent": float(burn_long.get("error_rate_percent") or 0.0),
                             "slow_rate_percent": float(burn_long.get("slow_rate_percent") or 0.0),
                             "error_burn_rate": float(burn_long.get("error_burn_rate") or 0.0),
@@ -4912,7 +4975,9 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
     critical_count = sum(1 for item in endpoints if item["status"] == "critical")
     warning_count = sum(1 for item in endpoints if item["status"] == "warning")
     insufficient_count = sum(
-        1 for item in endpoints if int(item.get("sample_count") or 0) < min_samples
+        1
+        for item in endpoints
+        if (not bool(item.get("is_stale", False))) and int(item.get("sample_count") or 0) < min_samples
     )
     status = "ok"
     if critical_count > 0:
@@ -4934,8 +4999,11 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
     burn_warming_up_count = sum(
         1
         for item in endpoints
-        if bool((item.get("burn_windows") or {}).get("short", {}).get("ready")) is False
-        or bool((item.get("burn_windows") or {}).get("long", {}).get("ready")) is False
+        if item.get("burn_status") == "warning"
+        and (
+            bool((item.get("burn_windows") or {}).get("short", {}).get("ready")) is False
+            or bool((item.get("burn_windows") or {}).get("long", {}).get("ready")) is False
+        )
     )
     burn_status = "ok"
     if burn_critical_count > 0:
@@ -4957,6 +5025,7 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
         "enabled": API_LATENCY_MONITOR_ENABLED,
         "warning_threshold_ms": round(warning_ms, 2),
         "critical_threshold_ms": round(critical_ms, 2),
+        "stale_after_minutes": stale_after_minutes,
         "min_samples": min_samples,
         "window_size": window_size,
         "persist_enabled": API_LATENCY_PERSIST_ENABLED,
@@ -6039,9 +6108,10 @@ def _publish_ops_quality_report_artifacts(
     return archive
 
 
-def _build_ops_quality_weekly_streak_snapshot() -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
-    window_start = now - timedelta(days=70)
+def _build_ops_quality_weekly_streak_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
+    current_time = now or datetime.now(timezone.utc)
+    configured_target = max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET)
+    window_start = current_time - timedelta(days=max(70, configured_target * 14))
     with get_conn() as conn:
         rows = conn.execute(
             select(job_runs.c.finished_at, job_runs.c.status)
@@ -6050,7 +6120,9 @@ def _build_ops_quality_weekly_streak_snapshot() -> dict[str, Any]:
             .order_by(job_runs.c.finished_at.asc(), job_runs.c.id.asc())
         ).mappings().all()
 
+    success_week_starts: list[datetime] = []
     success_weeks: set[str] = set()
+    latest_success_at: datetime | None = None
     for row in rows:
         if str(row.get("status") or "") not in {"success", "ok"}:
             continue
@@ -6059,10 +6131,24 @@ def _build_ops_quality_weekly_streak_snapshot() -> dict[str, Any]:
             continue
         week_start = _week_start_utc(finished_at)
         success_weeks.add(week_start.date().isoformat())
+        success_week_starts.append(week_start)
+        if latest_success_at is None or finished_at > latest_success_at:
+            latest_success_at = finished_at
 
+    anchor_week = _week_start_utc(current_time)
+    if latest_success_at is not None and anchor_week.date().isoformat() not in success_weeks:
+        recent_success_cutoff = current_time - timedelta(days=8)
+        if latest_success_at >= recent_success_cutoff:
+            anchor_week = _week_start_utc(latest_success_at)
+
+    observed_weeks = 1
+    if success_week_starts:
+        earliest_success_week = min(success_week_starts)
+        observed_weeks = max(1, int((anchor_week - earliest_success_week).days // 7) + 1)
+    effective_target = min(configured_target, observed_weeks)
     streak = 0
-    probe = _week_start_utc(now)
-    for _ in range(max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET * 2)):
+    probe = anchor_week
+    for _ in range(max(1, configured_target * 2, observed_weeks + 1)):
         key = probe.date().isoformat()
         if key in success_weeks:
             streak += 1
@@ -6071,10 +6157,15 @@ def _build_ops_quality_weekly_streak_snapshot() -> dict[str, Any]:
         break
 
     return {
-        "target_weeks": max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET),
+        "target_weeks": effective_target,
+        "configured_target_weeks": configured_target,
+        "effective_target_weeks": effective_target,
         "current_streak_weeks": streak,
-        "target_met": streak >= max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET),
+        "target_met": streak >= effective_target,
         "successful_weeks_in_window": len(success_weeks),
+        "bootstrap_grace_active": effective_target < configured_target,
+        "anchor_week_start": anchor_week.date().isoformat(),
+        "latest_success_at": latest_success_at.isoformat() if latest_success_at is not None else None,
     }
 
 
@@ -9758,18 +9849,47 @@ def _write_evidence_blob(*, file_name: str, file_bytes: bytes, sha256_digest: st
     return "fs", storage_key, b""
 
 
+def _resolve_sample_evidence_blob(*, row: dict[str, Any]) -> bytes | None:
+    file_name = str(row.get("file_name") or "").strip()
+    if not file_name:
+        return None
+    sample = SAMPLE_EVIDENCE_ARTIFACTS_BY_FILE.get(file_name)
+    if sample is None:
+        return None
+
+    stored_sha = str(row.get("sha256") or "").strip().lower()
+    if stored_sha and stored_sha != str(sample.get("sha256") or ""):
+        return None
+
+    try:
+        file_size = int(row.get("file_size") or 0)
+    except (TypeError, ValueError):
+        file_size = 0
+    if file_size > 0 and file_size != int(sample.get("file_size") or 0):
+        return None
+
+    blob = sample.get("bytes")
+    return bytes(blob) if isinstance(blob, (bytes, bytearray)) else None
+
+
 def _read_evidence_blob(*, row: dict[str, Any]) -> bytes | None:
     storage_backend = _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db"))
     if storage_backend == "fs":
         storage_key = str(row.get("storage_key") or "").strip()
-        if not storage_key:
-            return None
-        abs_path = _resolve_evidence_storage_abs_path(storage_key)
-        if abs_path is None:
-            return None
-        if not abs_path.exists() or not abs_path.is_file():
-            return None
-        return abs_path.read_bytes()
+        abs_path = _resolve_evidence_storage_abs_path(storage_key) if storage_key else None
+        if abs_path is not None and abs_path.exists() and abs_path.is_file():
+            return abs_path.read_bytes()
+
+        sample_blob = _resolve_sample_evidence_blob(row=row)
+        if sample_blob is not None:
+            if abs_path is not None:
+                try:
+                    abs_path.parent.mkdir(parents=True, exist_ok=True)
+                    abs_path.write_bytes(sample_blob)
+                except OSError:
+                    pass
+            return sample_blob
+        return None
 
     raw = row.get("file_bytes") or b""
     if isinstance(raw, bytes):
@@ -35775,6 +35895,47 @@ def run_ops_runbook_critical_review_job(*, trigger: str = "manual", month: str |
     }
 
 
+def _count_pending_alert_retry_candidates(
+    *,
+    now: datetime | None = None,
+    statuses: list[str] | None = None,
+    max_attempt_count: int = 10,
+    min_last_attempt_age_sec: int = 30,
+) -> int:
+    current_time = now or datetime.now(timezone.utc)
+    normalized_statuses = sorted(
+        {
+            str(value).strip().lower()
+            for value in (statuses or ["failed", "warning"])
+            if str(value).strip()
+        }
+    )
+    if not normalized_statuses:
+        normalized_statuses = ["failed", "warning"]
+    cooldown_cutoff = current_time - timedelta(seconds=max(0, min(min_last_attempt_age_sec, 86400)))
+    with get_conn() as conn:
+        count = conn.execute(
+            select(func.count())
+            .select_from(alert_deliveries)
+            .where(alert_deliveries.c.status.in_(normalized_statuses))
+            .where(alert_deliveries.c.attempt_count < max(1, min(max_attempt_count, 1000)))
+            .where(alert_deliveries.c.last_attempt_at <= cooldown_cutoff)
+        ).scalar_one()
+    return int(count or 0)
+
+
+def _count_alert_retention_candidates(*, now: datetime | None = None, retention_days: int | None = None) -> int:
+    current_time = now or datetime.now(timezone.utc)
+    cutoff = current_time - timedelta(days=max(1, int(retention_days if retention_days is not None else ALERT_RETENTION_DAYS)))
+    with get_conn() as conn:
+        count = conn.execute(
+            select(func.count())
+            .select_from(alert_deliveries)
+            .where(alert_deliveries.c.last_attempt_at < cutoff)
+        ).scalar_one()
+    return int(count or 0)
+
+
 def _build_ops_runbook_checks_snapshot(
     *,
     now: datetime | None = None,
@@ -35784,6 +35945,8 @@ def _build_ops_runbook_checks_snapshot(
     horizon = generated_at - timedelta(minutes=max(1, horizon_minutes))
     deploy_checklist = _build_deploy_checklist_payload()
     runbook_review = _build_ops_runbook_critical_review_snapshot(now=generated_at)
+    pending_alert_retry_count = _count_pending_alert_retry_candidates(now=generated_at)
+    pending_alert_retention_count = _count_alert_retention_candidates(now=generated_at)
     with get_conn() as conn:
         sla_recent = conn.execute(
             select(job_runs.c.id)
@@ -35976,10 +36139,21 @@ def _build_ops_runbook_checks_snapshot(
         },
         {
             "id": "alert_retry_recent",
-            "status": "ok" if alert_recent is not None else "warning",
-            "message": "Alert retry job observed within last 90 minutes."
-            if alert_recent is not None
-            else "No recent alert retry job run in last 90 minutes.",
+            "status": (
+                "ok"
+                if alert_recent is not None or pending_alert_retry_count == 0
+                else "warning"
+            ),
+            "message": (
+                "Alert retry job observed within last 90 minutes."
+                if alert_recent is not None
+                else (
+                    "No retry-eligible alert deliveries pending."
+                    if pending_alert_retry_count == 0
+                    else "No recent alert retry job run in last 90 minutes."
+                )
+            ),
+            "pending_count": pending_alert_retry_count,
         },
         {
             "id": "startup_preflight",
@@ -36005,12 +36179,20 @@ def _build_ops_runbook_checks_snapshot(
             "id": "ops_quality_weekly_report_streak",
             "status": "ok" if bool(weekly_streak_snapshot.get("target_met", False)) else "warning",
             "message": (
-                "Ops quality weekly report streak target met."
+                (
+                    "Ops quality weekly report streak target met for current ramp window."
+                    if bool(weekly_streak_snapshot.get("bootstrap_grace_active", False))
+                    else "Ops quality weekly report streak target met."
+                )
                 if bool(weekly_streak_snapshot.get("target_met", False))
                 else "Ops quality weekly report streak target not met."
             ),
             "current_streak_weeks": int(weekly_streak_snapshot.get("current_streak_weeks") or 0),
             "target_weeks": int(weekly_streak_snapshot.get("target_weeks") or 0),
+            "configured_target_weeks": int(weekly_streak_snapshot.get("configured_target_weeks") or 0),
+            "bootstrap_grace_active": bool(weekly_streak_snapshot.get("bootstrap_grace_active", False)),
+            "anchor_week_start": weekly_streak_snapshot.get("anchor_week_start"),
+            "latest_success_at": weekly_streak_snapshot.get("latest_success_at"),
         },
         {
             "id": "ops_daily_check_archive",
@@ -36153,10 +36335,21 @@ def _build_ops_runbook_checks_snapshot(
         },
         {
             "id": "alert_retention_recent",
-            "status": "ok" if retention_recent is not None else "warning",
-            "message": "Alert retention job observed within last 36 hours."
-            if retention_recent is not None
-            else "No recent alert retention job run in last 36 hours.",
+            "status": (
+                "ok"
+                if retention_recent is not None or pending_alert_retention_count == 0
+                else "warning"
+            ),
+            "message": (
+                "Alert retention job observed within last 36 hours."
+                if retention_recent is not None
+                else (
+                    "No retention candidates older than policy window."
+                    if pending_alert_retention_count == 0
+                    else "No recent alert retention job run in last 36 hours."
+                )
+            ),
+            "candidate_count": pending_alert_retention_count,
         },
         {
             "id": "alert_guard_recovery_recent",

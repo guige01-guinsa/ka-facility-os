@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
@@ -1210,6 +1211,44 @@ def test_w02_tracker_execution_flow(app_client: TestClient) -> None:
     assert downloaded.headers["content-type"].startswith("text/plain")
     assert downloaded.content == b"w02 evidence"
     assert len(downloaded.headers["x-evidence-sha256"]) == 64
+
+    import app.main as main_module
+
+    sample_uploaded = app_client.post(
+        f"/api/adoption/w02/tracker/items/{tracker_item_id}/evidence",
+        headers=manager_headers,
+        data={"note": "sample proof"},
+        files={
+            "file": (
+                "w02-sample-sx-ins-01-proof.txt",
+                main_module.W02_SAMPLE_EVIDENCE_ARTIFACTS[0]["content"].encode("utf-8"),
+                "text/plain",
+            )
+        },
+    )
+    assert sample_uploaded.status_code == 201
+    sample_evidence_id = sample_uploaded.json()["id"]
+
+    with main_module.get_conn() as conn:
+        row = conn.execute(
+            select(main_module.adoption_w02_evidence_files).where(
+                main_module.adoption_w02_evidence_files.c.id == sample_evidence_id
+            )
+        ).mappings().first()
+    assert row is not None
+    assert str(row.get("storage_backend")) == "fs"
+    storage_path = main_module._resolve_evidence_storage_abs_path(str(row.get("storage_key") or ""))
+    assert storage_path is not None and storage_path.exists()
+    storage_path.unlink()
+    assert storage_path.exists() is False
+
+    recovered_download = app_client.get(
+        f"/api/adoption/w02/tracker/evidence/{sample_evidence_id}/download",
+        headers=manager_headers,
+    )
+    assert recovered_download.status_code == 200
+    assert recovered_download.content == main_module.W02_SAMPLE_EVIDENCE_ARTIFACTS[0]["content"].encode("utf-8")
+    assert storage_path.exists() is True
 
     eicar_signature = (
         b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$"
