@@ -1,23 +1,24 @@
 # KA Facility OS Next Roadmap (2026 Q2-Q3)
 
-기준일: 2026-03-06 (구조 재점검 반영)
+기준일: 2026-03-07 (구조 재점검 반영)
 
-## 2026-03-06 시스템 구조 점검 결과
+## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 40,555 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `app/main.py`: 40,615 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
   - `tests/api/*.py`: 6 files, 92 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
-  - `app/schemas.py`: 1,452 lines, `app/database.py`: 945 lines
+  - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
   - 단, 실제 구현은 여전히 `app/main.py` 단일 파일에 집중
 - 운영 자동화 상태
   - 배포/스모크/런북/거버넌스/리메디에이션 자동화는 운영 가능한 수준
   - cron job 블루프린트도 다수 구성됨
-- 최근 운영 반영 상태(2026-03-06)
+- 최근 운영 반영 상태(2026-03-07)
   - IAM 토큰/감사로그 콘솔 기능 반영
   - 메뉴탭 툴팁(영문 용어 + 한글 설명) 반영
-  - 운영 배포 `dep-d6ldo4vafjfc73fbki3g` + `SMOKE_OK`
+  - OPS 체크리스트/권한/토큰/감사 응답 메타 규약 1차 반영
+  - 운영 배포 `dep-d6lk3erh46gs73e17geg` + `SMOKE_OK`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -59,8 +60,8 @@
 
 ### R3. 데이터/경계 정리 (우선순위 3, 1주)
 
-- [ ] OPS 체크리스트 버전 관리 키 표준화 (`checklist_version`, `source`, `applied_at`)
-- [ ] 권한/토큰 정책 응답 메타 규약 전 API 통일 점검
+- [x] OPS 체크리스트 버전 관리 키 표준화 (`checklist_version`, `source`, `applied_at`)
+- [x] 권한/토큰 정책 응답 메타 규약 전 API 통일 점검
 - [ ] 감사로그 `action/resource/status` 카테고리 사전 정의 문서화
 - [ ] 월간 감사 아카이브 첨부 항목 스키마 고정(v2)
 
@@ -99,7 +100,7 @@
 ### Week 2
 
 - [x] Day 1-2: 테스트 파일 분할 + fixture 정리 (`tests/api/test_*.py`, `tests/conftest.py`, `tests/helpers/common.py`, 전체 테스트 92 passed)
-- [ ] Day 3: 데이터/정책 메타 정합성 점검
+- [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영, 전체 테스트 92 passed)
 - [ ] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
 
