@@ -15,7 +15,12 @@ from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())
     assert me.status_code == 200
-    assert me.json()["role"] == "owner"
+    me_body = me.json()
+    assert me_body["role"] == "owner"
+    assert me_body["meta"]["schema"] == "auth_profile_response"
+    assert me_body["meta"]["schema_version"] == "v1"
+    assert me_body["meta"]["endpoint"] == "/api/auth/me"
+    assert me_body["meta"]["scope_type"] == "global"
     assert me.headers.get("cache-control") == "no-store"
     assert me.headers.get("pragma") == "no-cache"
 
@@ -85,6 +90,8 @@ def test_auth_login_with_seeded_password_user(app_client: TestClient) -> None:
     assert body["profile"]["username"] == "login_seeded_ci"
     assert body["profile"]["role"] == "manager"
     assert body["profile"]["token_label"] == "web-login-ci"
+    assert body["profile"]["meta"]["schema"] == "auth_profile_response"
+    assert body["profile"]["meta"]["endpoint"] == "/api/auth/login"
 
     me = app_client.get("/api/auth/me", headers={"X-Admin-Token": body["token"]})
     assert me.status_code == 200
@@ -409,8 +416,13 @@ def test_admin_token_expiry_and_rotation_policy(app_client: TestClient) -> None:
 
     policy = app_client.get("/api/admin/token-policy", headers=_owner_headers())
     assert policy.status_code == 200
-    assert policy.json()["max_ttl_days"] == 30
-    assert policy.json()["max_idle_days"] == 30
+    policy_body = policy.json()
+    assert policy_body["max_ttl_days"] == 30
+    assert policy_body["max_idle_days"] == 30
+    assert policy_body["meta"]["schema"] == "admin_token_policy_response"
+    assert policy_body["meta"]["schema_version"] == "v1"
+    assert policy_body["meta"]["endpoint"] == "/api/admin/token-policy"
+    assert policy_body["meta"]["policy_family"] == "admin_token"
 
     created = app_client.post(
         "/api/admin/users",
@@ -537,7 +549,9 @@ def test_site_scoped_rbac_enforcement(app_client: TestClient) -> None:
 
     me = app_client.get("/api/auth/me", headers=scoped_headers)
     assert me.status_code == 200
-    assert me.json()["site_scope"] == ["Scope Site"]
+    me_body = me.json()
+    assert me_body["site_scope"] == ["Scope Site"]
+    assert me_body["meta"]["scope_type"] == "site"
 
     outside_due = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     outside = app_client.post(

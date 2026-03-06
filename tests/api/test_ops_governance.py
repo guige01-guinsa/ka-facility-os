@@ -38,6 +38,10 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert body["chain"]["chain_ok"] is True
     assert body["signature_algorithm"] in {"hmac-sha256", "unsigned"}
     assert len(body["archive_sha256"]) == 64
+    assert body["meta"]["schema"] == "admin_audit_integrity_response"
+    assert body["meta"]["schema_version"] == "v1"
+    assert body["meta"]["endpoint"] == "/api/admin/audit-integrity"
+    assert body["meta"]["month"] == month
 
     dr_run = app_client.post(
         "/api/ops/dr/rehearsal/run?simulate_restore=true",
@@ -55,6 +59,11 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_body["month"] == month
     assert archive_body["entry_count"] >= 1
     assert isinstance(archive_body["entries"], list)
+    assert archive_body["meta"]["schema"] == "admin_audit_archive_response"
+    assert archive_body["meta"]["schema_version"] == "v1"
+    assert archive_body["meta"]["endpoint"] == "/api/admin/audit-archive/monthly"
+    assert archive_body["meta"]["month"] == month
+    assert archive_body["meta"]["include_entries"] is True
     assert "dr_rehearsal_attachment" in archive_body
     assert archive_body["dr_rehearsal_attachment"]["month"] == month
     assert archive_body["dr_rehearsal_attachment"]["included"] is True
@@ -64,6 +73,9 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert import_attachment["month"] == month
     assert import_attachment["included"] is True
     assert import_attachment["status"] in {"ok", "warning", "error"}
+    assert import_attachment["checklist_version"]
+    assert import_attachment["source"] in {"file", "fallback", "qr_bulk_update_api"}
+    assert import_attachment["applied_at"] is not None
     assert isinstance(import_attachment["summary"], dict)
     assert "error_count" in import_attachment["summary"]
     assert "warning_count" in import_attachment["summary"]

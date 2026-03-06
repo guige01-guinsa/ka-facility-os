@@ -69,6 +69,22 @@ timezone = main_module.timezone
 update = main_module.update
 
 
+def _build_iam_response_meta(
+    *,
+    schema: str,
+    endpoint: str,
+    scope_type: str = "global",
+    **extra: Any,
+) -> dict[str, Any]:
+    return {
+        "schema": schema,
+        "schema_version": "v1",
+        "endpoint": endpoint,
+        "scope_type": scope_type,
+        **extra,
+    }
+
+
 @admin_router.get("/users", response_model=list[AdminUserRead])
 def list_admin_users(
     principal: dict[str, Any] = Depends(get_current_admin),
@@ -633,6 +649,11 @@ def get_admin_token_policy(
         "rotate_warning_days": ADMIN_TOKEN_ROTATE_WARNING_DAYS,
         "max_idle_days": ADMIN_TOKEN_MAX_IDLE_DAYS,
         "max_active_per_user": ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+        "meta": _build_iam_response_meta(
+            schema="admin_token_policy_response",
+            endpoint="/api/admin/token-policy",
+            policy_family="admin_token",
+        ),
     }
 
 @admin_router.get("/audit-logs", response_model=list[AdminAuditLogRead])
@@ -769,6 +790,13 @@ def get_admin_audit_integrity(
         "archive_sha256": archive["archive_sha256"],
         "signature": archive["signature"],
         "signature_algorithm": archive["signature_algorithm"],
+        "meta": _build_iam_response_meta(
+            schema="admin_audit_integrity_response",
+            endpoint="/api/admin/audit-integrity",
+            scope_type="monthly",
+            month=archive["month"],
+            include_entries=False,
+        ),
     }
 
 @admin_router.post("/audit-chain/rebaseline")
@@ -824,6 +852,13 @@ def get_admin_monthly_audit_archive(
             "include_entries": include_entries,
             "chain_ok": archive["chain"]["chain_ok"],
         },
+    )
+    archive["meta"] = _build_iam_response_meta(
+        schema="admin_audit_archive_response",
+        endpoint="/api/admin/audit-archive/monthly",
+        scope_type="monthly",
+        month=archive["month"],
+        include_entries=include_entries,
     )
     return archive
 

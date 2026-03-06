@@ -1543,6 +1543,7 @@ class AuthMeRead(BaseModel):
     permissions: list[str]
     site_scope: list[str]
     is_legacy: bool = False
+    meta: dict[str, Any] = Field(default_factory=dict)
 
 
 class AuthLoginRequest(BaseModel):

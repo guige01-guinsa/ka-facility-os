@@ -36,6 +36,7 @@ update = main_module.update
 _count_active_owner_users = main_module._count_active_owner_users
 _effective_permissions = main_module._effective_permissions
 _enforce_active_token_quota = main_module._enforce_active_token_quota
+_attach_auth_me_meta = main_module._attach_auth_me_meta
 _hash_password = main_module._hash_password
 _hash_token = main_module._hash_token
 _load_principal_by_token = main_module._load_principal_by_token
@@ -160,14 +161,14 @@ def auth_login(
     response.headers["Pragma"] = "no-cache"
     return AuthLoginResponse(
         token=token_plain,
-        profile=_principal_to_auth_me_model(principal),
+        profile=_principal_to_auth_me_model(principal, endpoint="/api/auth/login"),
     )
 
 @app.get("/api/auth/me", response_model=AuthMeRead)
 def auth_me(
     principal: dict[str, Any] = Depends(get_current_admin),
 ) -> AuthMeRead:
-    return _principal_to_auth_me_model(principal)
+    return _principal_to_auth_me_model(principal, endpoint="/api/auth/me")
 
 @app.post("/api/auth/logout", response_model=AuthLogoutResponse)
 def auth_logout(
@@ -293,7 +294,7 @@ def auth_me_update_profile(
             "actor": actor_username,
         },
     )
-    return profile
+    return _attach_auth_me_meta(profile, endpoint="/api/auth/me/profile")
 
 @app.delete("/api/auth/me", response_model=AuthSelfDeactivateResponse)
 def auth_me_deactivate(

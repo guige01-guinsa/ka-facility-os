@@ -132,6 +132,12 @@ def test_ops_inspection_import_validation_report_endpoints(app_client: TestClien
     assert report.status_code == 200
     body = report.json()
     assert body["status"] in {"ok", "warning", "error"}
+    assert body["checklist_version"]
+    assert body["source"] in {"file", "fallback", "qr_bulk_update_api"}
+    assert body["applied_at"] is not None
+    assert body["meta"]["schema"] == "ops_checklist_catalog_response"
+    assert body["meta"]["schema_version"] == "v1"
+    assert body["meta"]["endpoint"] == "/api/ops/inspections/checklists/import-validation"
     assert body["summary"]["checklist_set_count"] >= 2
     assert body["summary"]["checklist_item_count"] >= 10
     assert body["summary"]["ops_code_count"] >= 1
@@ -145,6 +151,8 @@ def test_ops_inspection_import_validation_report_endpoints(app_client: TestClien
     )
     assert export.status_code == 200
     assert export.headers["content-type"].startswith("text/csv")
+    assert "checklist_version," in export.text
+    assert "applied_at," in export.text
     assert "severity,category,code,count,message,references" in export.text
 
 def test_ops_inspection_qr_placeholder_snapshot_endpoint(app_client: TestClient) -> None:
@@ -157,6 +165,10 @@ def test_ops_inspection_qr_placeholder_snapshot_endpoint(app_client: TestClient)
     body = response.json()
     summary = body["summary"]
     assert body["status"] in {"ok", "warning"}
+    assert body["checklist_version"]
+    assert body["source"] in {"file", "fallback", "qr_bulk_update_api"}
+    assert body["applied_at"] is not None
+    assert body["meta"]["endpoint"] == "/api/ops/inspections/checklists/qr-assets/placeholders"
     assert summary["qr_asset_count"] >= 1
     assert summary["placeholder_row_count"] >= 0
     assert isinstance(summary["placeholder_flag_counts"], dict)
@@ -224,6 +236,10 @@ def test_ops_inspection_qr_bulk_update_dry_run_does_not_persist(app_client: Test
     summary = body["summary"]
     assert body["dry_run"] is True
     assert body["saved"] is False
+    assert body["checklist_version"]
+    assert body["source"] in {"file", "fallback", "qr_bulk_update_api"}
+    assert body["applied_at"] is not None
+    assert body["meta"]["endpoint"] == "/api/ops/inspections/checklists/qr-assets/bulk-update"
     assert summary["requested_count"] == 2
     assert summary["applied_count"] == 1
     assert summary["updated_count"] == 1
@@ -299,6 +315,9 @@ def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) ->
     assert body["dry_run"] is False
     assert body["saved"] is True
     assert body["saved_path"]
+    assert body["checklist_version"]
+    assert body["source"] == "qr_bulk_update_api"
+    assert body["applied_at"] is not None
     assert summary["requested_count"] == 2
     assert summary["applied_count"] == 2
     assert summary["updated_count"] == 1
@@ -313,6 +332,8 @@ def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) ->
     assert after.status_code == 200
     after_body = after.json()
     after_summary = after_body["summary"]
+    assert after_body["source"] == "qr_bulk_update_api"
+    assert after_body["applied_at"] is not None
     assert after_summary["placeholder_row_count"] == before_summary["placeholder_row_count"] - 1
     assert after_summary["qr_asset_count"] == before_summary["qr_asset_count"] + 1
     assert all(row["qr_id"] != target_qr_id for row in after_body["rows"])

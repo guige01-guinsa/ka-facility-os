@@ -27562,10 +27562,41 @@ def _build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) 
     return _web_build_shared_tracker_execution_box_html(phase_code, phase_label)
 
 
+OPS_CHECKLIST_RESPONSE_SCHEMA = "ops_checklist_catalog_response"
+OPS_CHECKLIST_RESPONSE_VERSION = "v1"
+
+
+def _build_ops_checklist_response_meta(
+    payload: dict[str, Any],
+    *,
+    endpoint: str,
+) -> dict[str, Any]:
+    checklist_version = str(payload.get("checklist_version") or payload.get("version") or "unknown")
+    source = str(payload.get("source") or "unknown")
+    applied_at = _as_optional_datetime(payload.get("applied_at"))
+    applied_at_iso = applied_at.isoformat() if applied_at is not None else None
+    return {
+        "checklist_version": checklist_version,
+        "source": source,
+        "applied_at": applied_at_iso,
+        "meta": {
+            "schema": OPS_CHECKLIST_RESPONSE_SCHEMA,
+            "schema_version": OPS_CHECKLIST_RESPONSE_VERSION,
+            "endpoint": endpoint,
+            "checklist_version": checklist_version,
+            "source": source,
+            "applied_at": applied_at_iso,
+        },
+    }
+
+
 def _default_ops_special_checklists_payload() -> dict[str, Any]:
     return {
         "source_file": "fallback",
+        "source": "fallback",
         "version": "fallback",
+        "checklist_version": "fallback",
+        "applied_at": None,
         "checklist_sets": [
             {
                 "set_id": "electrical_60",
@@ -27733,7 +27764,13 @@ def _load_ops_special_checklists_payload() -> dict[str, Any]:
 
     return {
         "source_file": str(loaded.get("source_file") or target.as_posix()),
+        "source": str(loaded.get("source") or "file"),
         "version": str(loaded.get("version") or "unknown"),
+        "checklist_version": str(loaded.get("checklist_version") or loaded.get("version") or "unknown"),
+        "applied_at": (
+            loaded.get("applied_at")
+            or datetime.fromtimestamp(target.stat().st_mtime, tz=timezone.utc).isoformat()
+        ),
         "checklist_sets": checklist_sets,
         "ops_codes": ops_codes,
         "qr_assets": qr_assets,
@@ -28137,6 +28174,7 @@ def _build_ops_checklists_import_validation_report() -> dict[str, Any]:
         "source_file": source_file,
         "source_file_exists": source_exists,
         "version": str(payload.get("version") or ""),
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/import-validation"),
         "status": status,
         "summary": {
             "checklist_set_count": len(checklist_sets),
@@ -28161,6 +28199,9 @@ def _build_ops_checklists_import_validation_csv(report: dict[str, Any]) -> str:
     writer.writerow(["status", str(report.get("status") or "")])
     writer.writerow(["source_file", str(report.get("source_file") or "")])
     writer.writerow(["version", str(report.get("version") or "")])
+    writer.writerow(["checklist_version", str(report.get("checklist_version") or "")])
+    writer.writerow(["source", str(report.get("source") or "")])
+    writer.writerow(["applied_at", str(report.get("applied_at") or "")])
 
     summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
     writer.writerow([])
@@ -28280,6 +28321,7 @@ def _build_ops_qr_placeholder_report(payload: dict[str, Any]) -> dict[str, Any]:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source_file": str(payload.get("source_file") or ""),
         "version": str(payload.get("version") or ""),
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/qr-assets/placeholders"),
         "status": "warning" if rows else "ok",
         "summary": {
             "qr_asset_count": len(qr_assets),
@@ -28473,10 +28515,16 @@ def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> 
 
     saved = False
     saved_path = ""
+    metadata_payload = after_payload
     if (not dry_run) and applied_count > 0:
+        saved_at = datetime.now(timezone.utc)
         next_payload = {**after_payload}
-        next_payload["version"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        next_payload["version"] = saved_at.strftime("%Y-%m-%d")
+        next_payload["checklist_version"] = next_payload["version"]
+        next_payload["source"] = "qr_bulk_update_api"
+        next_payload["applied_at"] = saved_at.isoformat()
         persisted = _persist_ops_special_checklists_payload(next_payload)
+        metadata_payload = next_payload
         saved = True
         saved_path = persisted.as_posix()
 
@@ -28487,6 +28535,10 @@ def _apply_ops_qr_asset_bulk_update_request(request_payload: dict[str, Any]) -> 
         "allow_placeholder_values": allow_placeholder_values,
         "saved": saved,
         "saved_path": saved_path,
+        **_build_ops_checklist_response_meta(
+            metadata_payload,
+            endpoint="/api/ops/inspections/checklists/qr-assets/bulk-update",
+        ),
         "summary": {
             "requested_count": len(updates_raw),
             "applied_count": applied_count,
@@ -35017,9 +35069,17 @@ def meta() -> dict[str, str]:
     return {"env": getenv("ENV", "local"), "db": db_backend}
 
 
-def _principal_to_auth_me_model(principal: dict[str, Any]) -> AuthMeRead:
+def _principal_to_auth_me_model(
+    principal: dict[str, Any],
+    endpoint: str = "/api/auth/me",
+) -> AuthMeRead:
     from app.domains.iam.service import _principal_to_auth_me_model as _impl
-    return _impl(principal)
+    return _impl(principal, endpoint=endpoint)
+
+
+def _attach_auth_me_meta(profile: AuthMeRead, *, endpoint: str = "/api/auth/me") -> AuthMeRead:
+    from app.domains.iam.service import _attach_auth_me_meta as _impl
+    return _impl(profile, endpoint=endpoint)
 
 
 

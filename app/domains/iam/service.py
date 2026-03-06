@@ -39,10 +39,51 @@ _site_scope_text_to_list = main_module._site_scope_text_to_list
 _token_idle_due_at = main_module._token_idle_due_at
 _token_rotate_due_at = main_module._token_rotate_due_at
 
+IAM_RESPONSE_SCHEMA_VERSION = "v1"
+IAM_AUTH_ME_SCHEMA = "auth_profile_response"
+
 
 def _to_json_text(value: dict[str, Any] | None) -> str:
     data = value or {}
     return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def _iam_site_scope_type(site_scope: list[str]) -> str:
+    if not site_scope:
+        return "none"
+    if "*" in site_scope:
+        return "global"
+    return "site"
+
+
+def _build_auth_me_meta(
+    *,
+    endpoint: str,
+    role: str,
+    site_scope: list[str],
+    is_legacy: bool,
+    token_id: int | None,
+) -> dict[str, Any]:
+    return {
+        "schema": IAM_AUTH_ME_SCHEMA,
+        "schema_version": IAM_RESPONSE_SCHEMA_VERSION,
+        "endpoint": endpoint,
+        "role": role,
+        "scope_type": _iam_site_scope_type(site_scope),
+        "is_legacy": is_legacy,
+        "token_bound": token_id is not None,
+    }
+
+
+def _attach_auth_me_meta(profile: AuthMeRead, *, endpoint: str = "/api/auth/me") -> AuthMeRead:
+    profile.meta = _build_auth_me_meta(
+        endpoint=endpoint,
+        role=profile.role,
+        site_scope=list(profile.site_scope),
+        is_legacy=bool(profile.is_legacy),
+        token_id=int(profile.token_id) if profile.token_id is not None else None,
+    )
+    return profile
 
 def _compute_audit_entry_hash(
     *,
@@ -335,7 +376,10 @@ def build_monthly_audit_archive(
         "generated_in_target_month": import_in_month,
         "source_file": str(import_validation_report.get("source_file") or ""),
         "source_file_exists": bool(import_validation_report.get("source_file_exists", False)),
+        "source": str(import_validation_report.get("source") or ""),
         "version": str(import_validation_report.get("version") or ""),
+        "checklist_version": str(import_validation_report.get("checklist_version") or import_validation_report.get("version") or ""),
+        "applied_at": import_validation_report.get("applied_at"),
         "summary": {
             "checklist_set_count": int(import_summary.get("checklist_set_count") or 0),
             "checklist_item_count": int(import_summary.get("checklist_item_count") or 0),
@@ -516,8 +560,11 @@ def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
         must_rotate=must_rotate,
     )
 
-def _principal_to_auth_me_model(principal: dict[str, Any]) -> AuthMeRead:
-    return AuthMeRead(
+def _principal_to_auth_me_model(
+    principal: dict[str, Any],
+    endpoint: str = "/api/auth/me",
+) -> AuthMeRead:
+    profile = AuthMeRead(
         user_id=principal.get("user_id"),
         token_id=principal.get("token_id"),
         token_label=principal.get("token_label"),
@@ -532,6 +579,7 @@ def _principal_to_auth_me_model(principal: dict[str, Any]) -> AuthMeRead:
         site_scope=list(_principal_site_scope(principal)),
         is_legacy=bool(principal.get("is_legacy", False)),
     )
+    return _attach_auth_me_meta(profile, endpoint=endpoint)
 
 def _enforce_active_token_quota(
     *,
