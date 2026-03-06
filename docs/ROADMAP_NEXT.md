@@ -5,7 +5,7 @@
 ## 2026-03-06 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 37,322 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `app/main.py`: 40,555 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
   - `tests/api/*.py`: 6 files, 92 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,452 lines, `app/database.py`: 945 lines
 - 라우팅 상태
