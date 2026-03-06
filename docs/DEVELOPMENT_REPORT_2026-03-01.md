@@ -1,6 +1,7 @@
 # KA Facility OS Development Report
 
 기준일: 2026-03-01
+추가 업데이트: 2026-03-07
 대상: `main` 브랜치, Render 운영 서비스(`ops.ka-part.com`)
 
 ## 1. 요약
@@ -8,6 +9,7 @@
 - W01~W15 주차형 실행추적 모듈과 공개형 운영/교육 페이지를 구축했다.
 - 보안(RBAC, 토큰 정책, 레이트리밋, 감사무결성)과 운영자동화(Cron, 스모크, 런북)를 내재화했다.
 - 최신 안정화 스프린트(성능/신뢰성/데이터 무결성) 항목을 운영 API로 반영했다.
+- 2026-03-07 기준 runbook 오탐 경고를 정리하고 샘플 증빙 누락 blob 복구 로직을 운영에 반영했다.
 
 ## 2. 단계별 개발 내역
 
@@ -93,6 +95,21 @@
   - `deploy_smoke_checklist`
   - `evidence_archive_integrity_batch`
 
+### 운영 보정 업데이트(2026-03-07 반영)
+- runbook warning 오탐 억제 로직 추가
+  - retry/retention 대상이 0건이면 `alert_retry_recent`, `alert_retention_recent`를 `ok`로 판정
+  - 주간 품질 리포트 streak는 최근 성공 주차를 anchor로 사용하고 ramp-up target을 적용
+  - stale endpoint와 저트래픽 burn-rate는 idle로 분리해 `api_latency_p95`, `api_burn_rate` 오탐 제거
+- 샘플 증빙 self-heal 추가
+  - W02/W03/W04/W07/W11 샘플 증빙 blob이 파일시스템에서 누락돼도 canonical sample payload로 다운로드 복구
+  - 복구 시 파일을 재생성해 이후 무결성 배치가 정상화되도록 처리
+- 운영 배포 결과
+  - 커밋: `7b7835d`
+  - 배포: `dep-d6lmemkhg0os73aske20`
+  - post-deploy smoke: `SMOKE_OK`
+  - live runbook 결과: `alert_retry_recent`, `alert_retention_recent`, `ops_quality_weekly_report_streak`, `api_latency_p95`, `api_burn_rate`, `evidence_archive_integrity_batch` 정상화
+  - 현재 남은 실경고: `w07_quality_alert_channel` (품질 알림 webhook target 미설정)
+
 ## 3. 공통 보안/운영 고도화(횡단영역)
 - RBAC 사용자/권한/사이트 스코프 모델 운영화.
 - 관리자 토큰 수명/회전/유휴 정책 강화.
@@ -106,6 +123,7 @@
 - 배포 스모크 결과 기록이 런북 체크에 직접 반영되도록 구성.
 - W15 마이그레이션은 forward-only 정책이며 롤백 가이드 문서화 완료:
   - `docs/W15_MIGRATION_ROLLBACK.md`
+- 2026-03-07 운영 기준 거버넌스 게이트는 `go`, runbook overall status는 `warning`이며 원인은 `w07_quality_alert_channel` 1건이다.
 
 ## 5. 잔여 리스크 및 개선 필요 포인트
 - `app/main.py` 단일 파일 규모가 커 유지보수/리스크 증가.
@@ -117,4 +135,4 @@
 1. 모듈 공통화: 트래커 UI/JS 공통 컴포넌트로 리팩터링
 2. 관측 강화: 지연/오류/SLO 지표 영속 저장 + 주간 요약 자동 발행
 3. 거버넌스: startup preflight + DR 리허설 자동화 + 권한 감사 대시보드 강화
-
+4. 알림 운영: W07 webhook 채널 실제 연결 또는 품질 알림 정책 비활성 기준 확정
