@@ -9025,52 +9025,38 @@ def _has_site_access(principal: dict[str, Any], site: str | None) -> bool:
 
 
 def _require_site_access(principal: dict[str, Any], site: str | None) -> None:
-    if not _has_site_access(principal, site):
-        raise HTTPException(status_code=403, detail="Site access denied")
+    from app.domains.iam.security import _require_site_access as _impl
+    return _impl(principal, site)
 
 
 def _require_global_site_scope(principal: dict[str, Any]) -> None:
-    if SITE_SCOPE_ALL not in _principal_site_scope(principal):
-        raise HTTPException(status_code=403, detail="Global site scope required")
+    from app.domains.iam.security import _require_global_site_scope as _impl
+    return _impl(principal)
 
 
 def _effective_permissions(role: str, custom: list[str]) -> list[str]:
-    perms = set(ROLE_PERMISSION_MAP.get(role, set()))
-    perms.update(custom)
-    if role == "owner":
-        perms.add("*")
-    return sorted(perms)
+    from app.domains.iam.security import _effective_permissions as _impl
+    return _impl(role, custom)
 
 
 def _principal_role(principal: dict[str, Any]) -> str:
-    return str(principal.get("role") or "").strip().lower()
+    from app.domains.iam.security import _principal_role as _impl
+    return _impl(principal)
 
 
 def _require_user_management_access(principal: dict[str, Any]) -> None:
-    role = _principal_role(principal)
-    if role in {"owner", "manager"} or _has_permission(principal, "admins:manage"):
-        return
-    raise HTTPException(status_code=403, detail="User management requires owner or manager role")
+    from app.domains.iam.security import _require_user_management_access as _impl
+    return _impl(principal)
 
 
 def _contains_admin_control_permissions(permissions: list[str]) -> bool:
-    for item in permissions:
-        normalized = str(item or "").strip()
-        if not normalized:
-            continue
-        if normalized == "*" or normalized.startswith("admins:"):
-            return True
-    return False
+    from app.domains.iam.security import _contains_admin_control_permissions as _impl
+    return _impl(permissions)
 
 
 def _site_scope_is_subset(scope: list[str], allowed_scope: list[str]) -> bool:
-    normalized_scope = _site_scope_text_to_list(scope, default_all=True)
-    normalized_allowed = _site_scope_text_to_list(allowed_scope, default_all=True)
-    if SITE_SCOPE_ALL in normalized_allowed:
-        return True
-    if SITE_SCOPE_ALL in normalized_scope:
-        return False
-    return set(normalized_scope).issubset(set(normalized_allowed))
+    from app.domains.iam.security import _site_scope_is_subset as _impl
+    return _impl(scope, allowed_scope)
 
 
 def _enforce_manager_user_mutation_guardrails(
@@ -9082,177 +9068,58 @@ def _enforce_manager_user_mutation_guardrails(
     target_role: str | None = None,
     target_site_scope: list[str] | None = None,
 ) -> None:
-    if _principal_role(principal) != "manager":
-        return
-
-    actor_scope = _principal_site_scope(principal)
-    if target_role == "owner":
-        raise HTTPException(status_code=403, detail="Manager cannot manage owner accounts")
-    if target_site_scope is not None and not _site_scope_is_subset(target_site_scope, actor_scope):
-        raise HTTPException(status_code=403, detail="Manager cannot manage users outside their site scope")
-    if str(next_role).strip().lower() == "owner":
-        raise HTTPException(status_code=403, detail="Manager cannot assign owner role")
-    if _contains_admin_control_permissions(next_permissions):
-        raise HTTPException(status_code=403, detail="Manager cannot grant admin control permissions")
-    if not _site_scope_is_subset(next_site_scope, actor_scope):
-        raise HTTPException(status_code=403, detail="Manager cannot assign site scope outside their own scope")
+    from app.domains.iam.security import _enforce_manager_user_mutation_guardrails as _impl
+    return _impl(principal, next_role=next_role, next_permissions=next_permissions, next_site_scope=next_site_scope, target_role=target_role, target_site_scope=target_site_scope)
 
 
 def _count_active_owner_users(conn: Any, *, exclude_user_id: int | None = None) -> int:
-    stmt = select(func.count()).select_from(admin_users).where(admin_users.c.role == "owner").where(admin_users.c.is_active.is_(True))
-    if exclude_user_id is not None:
-        stmt = stmt.where(admin_users.c.id != exclude_user_id)
-    value = conn.execute(stmt).scalar_one()
-    return int(value or 0)
+    from app.domains.iam.security import _count_active_owner_users as _impl
+    return _impl(conn, exclude_user_id=exclude_user_id)
 
 
 def _hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+    from app.domains.iam.security import _hash_token as _impl
+    return _impl(token)
 
 
 def _normalize_admin_username(value: str) -> str:
-    return value.strip()
+    from app.domains.iam.security import _normalize_admin_username as _impl
+    return _impl(value)
 
 
 def _validate_admin_password_value(password: str) -> str:
-    candidate = str(password or "")
-    if len(candidate) < ADMIN_PASSWORD_MIN_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at least {ADMIN_PASSWORD_MIN_LENGTH} characters",
-        )
-    if len(candidate) > ADMIN_PASSWORD_MAX_LENGTH:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Password must be at most {ADMIN_PASSWORD_MAX_LENGTH} characters",
-        )
-    return candidate
+    from app.domains.iam.security import _validate_admin_password_value as _impl
+    return _impl(password)
 
 
 def _b64_url_encode(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+    from app.domains.iam.security import _b64_url_encode as _impl
+    return _impl(raw)
 
 
 def _b64_url_decode(value: str) -> bytes:
-    text = str(value or "").strip()
-    if not text:
-        return b""
-    padding = "=" * ((4 - (len(text) % 4)) % 4)
-    return base64.urlsafe_b64decode((text + padding).encode("utf-8"))
+    from app.domains.iam.security import _b64_url_decode as _impl
+    return _impl(value)
 
 
 def _hash_password(password: str) -> str:
-    normalized = _validate_admin_password_value(password)
-    salt = secrets.token_bytes(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        normalized.encode("utf-8"),
-        salt,
-        ADMIN_PASSWORD_PBKDF2_ITERATIONS,
-    )
-    return "pbkdf2_sha256${iterations}${salt}${digest}".format(
-        iterations=ADMIN_PASSWORD_PBKDF2_ITERATIONS,
-        salt=_b64_url_encode(salt),
-        digest=_b64_url_encode(digest),
-    )
+    from app.domains.iam.security import _hash_password as _impl
+    return _impl(password)
 
 
 def _verify_password(password: str, encoded_hash: str) -> bool:
-    raw = str(encoded_hash or "").strip()
-    if not raw:
-        return False
-    parts = raw.split("$")
-    if len(parts) != 4:
-        return False
-    algorithm, iterations_text, salt_text, digest_text = parts
-    if algorithm != "pbkdf2_sha256":
-        return False
-    try:
-        iterations = int(iterations_text)
-        if iterations <= 0:
-            return False
-        salt = _b64_url_decode(salt_text)
-        expected_digest = _b64_url_decode(digest_text)
-        if not salt or not expected_digest:
-            return False
-        computed_digest = hashlib.pbkdf2_hmac(
-            "sha256",
-            str(password or "").encode("utf-8"),
-            salt,
-            iterations,
-        )
-    except Exception:
-        return False
-    return hmac.compare_digest(computed_digest, expected_digest)
+    from app.domains.iam.security import _verify_password as _impl
+    return _impl(password, encoded_hash)
 
 
 def _has_active_admin_tokens() -> bool:
-    try:
-        with get_conn() as conn:
-            row = conn.execute(
-                select(admin_tokens.c.id).where(admin_tokens.c.is_active.is_(True)).limit(1)
-            ).first()
-        return row is not None
-    except SQLAlchemyError:
-        return False
+    from app.domains.iam.security import _has_active_admin_tokens as _impl
+    return _impl()
 
 
 def ensure_legacy_admin_token_seed() -> None:
-    if not ADMIN_TOKEN:
-        return
-
-    now = datetime.now(timezone.utc)
-    token_hash = _hash_token(ADMIN_TOKEN)
-    with get_conn() as conn:
-        existing = conn.execute(
-            select(admin_tokens.c.id).where(admin_tokens.c.token_hash == token_hash)
-        ).first()
-        if existing is not None:
-            return
-
-        user_row = conn.execute(
-            select(admin_users).where(admin_users.c.username == "legacy-admin")
-        ).mappings().first()
-        if user_row is None:
-            result = conn.execute(
-                insert(admin_users).values(
-                    username="legacy-admin",
-                    display_name="Legacy Bootstrap Admin",
-                    role="owner",
-                    permissions="*",
-                    site_scope=SITE_SCOPE_ALL,
-                    is_active=True,
-                    created_at=now,
-                    updated_at=now,
-                )
-            )
-            user_id = int(result.inserted_primary_key[0])
-        else:
-            user_id = int(user_row["id"])
-            conn.execute(
-                update(admin_users)
-                .where(admin_users.c.id == user_id)
-                .values(
-                    role="owner",
-                    permissions="*",
-                    site_scope=SITE_SCOPE_ALL,
-                    is_active=True,
-                    updated_at=now,
-                )
-            )
-
-        conn.execute(
-            insert(admin_tokens).values(
-                user_id=user_id,
-                label="legacy-env-admin-token",
-                token_hash=token_hash,
-                is_active=True,
-                site_scope=None,
-                expires_at=None,
-                last_used_at=None,
-                created_at=now,
-            )
-        )
+    from app.domains.iam.security import ensure_legacy_admin_token_seed as _impl
+    return _impl()
 
 
 def _parse_ops_checklist_notes(note_text: str) -> dict[str, Any] | None:
@@ -9808,204 +9675,45 @@ def _month_window(month: str | None) -> tuple[datetime, datetime, str]:
 
 
 def _token_rotate_due_at(created_at: datetime) -> datetime | None:
-    if ADMIN_TOKEN_ROTATE_AFTER_DAYS <= 0:
-        return None
-    return created_at + timedelta(days=ADMIN_TOKEN_ROTATE_AFTER_DAYS)
+    from app.domains.iam.security import _token_rotate_due_at as _impl
+    return _impl(created_at)
 
 
 def _token_idle_due_at(*, created_at: datetime, last_used_at: datetime | None) -> datetime | None:
-    baseline = last_used_at or created_at
-    if ADMIN_TOKEN_MAX_IDLE_DAYS <= 0:
-        return None
-    return baseline + timedelta(days=ADMIN_TOKEN_MAX_IDLE_DAYS)
+    from app.domains.iam.security import _token_idle_due_at as _impl
+    return _impl(created_at=created_at, last_used_at=last_used_at)
 
 
 def _load_principal_by_token(token: str) -> dict[str, Any] | None:
-    now = datetime.now(timezone.utc)
-    token_hash = _hash_token(token)
-
-    stmt = (
-        select(
-            admin_tokens.c.id.label("token_id"),
-            admin_tokens.c.user_id.label("user_id"),
-            admin_tokens.c.expires_at.label("expires_at"),
-            admin_tokens.c.last_used_at.label("last_used_at"),
-            admin_tokens.c.created_at.label("created_at"),
-            admin_tokens.c.label.label("token_label"),
-            admin_tokens.c.site_scope.label("token_site_scope"),
-            admin_users.c.username.label("username"),
-            admin_users.c.display_name.label("display_name"),
-            admin_users.c.role.label("role"),
-            admin_users.c.permissions.label("permissions"),
-            admin_users.c.site_scope.label("user_site_scope"),
-        )
-        .where(admin_tokens.c.token_hash == token_hash)
-        .where(admin_tokens.c.is_active.is_(True))
-        .where(admin_users.c.id == admin_tokens.c.user_id)
-        .where(admin_users.c.is_active.is_(True))
-        .limit(1)
-    )
-
-    try:
-        with get_conn() as conn:
-            row = conn.execute(stmt).mappings().first()
-            if row is None:
-                return None
-
-            token_id = int(row["token_id"])
-            expires_at = _as_optional_datetime(row["expires_at"])
-            created_at = _as_datetime(row["created_at"])
-            last_used_at = _as_optional_datetime(row["last_used_at"])
-            rotate_due_at = _token_rotate_due_at(created_at)
-            idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
-
-            if ADMIN_TOKEN_ROTATE_AFTER_DAYS > 0:
-                rotate_cutoff = now - timedelta(days=ADMIN_TOKEN_ROTATE_AFTER_DAYS)
-                if created_at <= rotate_cutoff:
-                    conn.execute(
-                        update(admin_tokens)
-                        .where(admin_tokens.c.id == token_id)
-                        .values(is_active=False, last_used_at=now)
-                    )
-                    return None
-
-            if idle_due_at is not None and idle_due_at <= now:
-                conn.execute(
-                    update(admin_tokens)
-                    .where(admin_tokens.c.id == token_id)
-                    .values(is_active=False, last_used_at=now)
-                )
-                return None
-
-            effective_expires_at = expires_at
-            if effective_expires_at is None and ADMIN_TOKEN_REQUIRE_EXPIRY:
-                effective_expires_at = created_at + timedelta(days=ADMIN_TOKEN_MAX_TTL_DAYS)
-
-            if effective_expires_at is not None and effective_expires_at <= now:
-                conn.execute(
-                    update(admin_tokens)
-                    .where(admin_tokens.c.id == token_id)
-                    .values(is_active=False, last_used_at=now)
-                )
-                return None
-
-            conn.execute(
-                update(admin_tokens)
-                .where(admin_tokens.c.id == token_id)
-                .values(last_used_at=now)
-            )
-    except SQLAlchemyError:
-        return None
-
-    custom_permissions = _permission_text_to_list(row["permissions"])
-    permissions = _effective_permissions(str(row["role"]), custom_permissions)
-    user_scope = _site_scope_text_to_list(row["user_site_scope"], default_all=True)
-    token_scope_raw = row["token_site_scope"]
-    token_scope = None
-    if token_scope_raw is not None:
-        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
-    effective_site_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
-    rotate_due_at = _token_rotate_due_at(created_at)
-    warning_due_at = None
-    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
-        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
-    must_rotate = rotate_due_at is not None and warning_due_at is not None and now >= warning_due_at
-    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
-    return {
-        "user_id": int(row["user_id"]),
-        "token_id": int(row["token_id"]),
-        "token_label": str(row.get("token_label") or ""),
-        "token_created_at": created_at,
-        "token_expires_at": effective_expires_at,
-        "token_rotate_due_at": rotate_due_at,
-        "token_idle_due_at": idle_due_at,
-        "token_must_rotate": must_rotate,
-        "username": str(row["username"]),
-        "display_name": str(row["display_name"] or row["username"]),
-        "role": str(row["role"]),
-        "permissions": permissions,
-        "site_scope": effective_site_scope,
-        "is_legacy": str(row["username"]) == "legacy-admin",
-    }
+    from app.domains.iam.security import _load_principal_by_token as _impl
+    return _impl(token)
 
 
 def _build_local_dev_principal() -> dict[str, Any]:
-    return {
-        "user_id": None,
-        "token_id": None,
-        "token_label": "local-dev",
-        "token_created_at": datetime.now(timezone.utc),
-        "token_expires_at": None,
-        "token_rotate_due_at": None,
-        "token_idle_due_at": None,
-        "token_must_rotate": False,
-        "username": "local-dev",
-        "display_name": "Local Dev Bypass",
-        "role": "owner",
-        "permissions": ["*"],
-        "site_scope": [SITE_SCOPE_ALL],
-        "is_legacy": True,
-    }
+    from app.domains.iam.security import _build_local_dev_principal as _impl
+    return _impl()
 
 
 def get_current_admin(
     x_admin_token: Annotated[str | None, Header(alias="X-Admin-Token")] = None,
 ) -> dict[str, Any]:
-    if x_admin_token:
-        principal = _load_principal_by_token(x_admin_token)
-        if principal is not None:
-            return principal
-
-        if ADMIN_TOKEN and hmac.compare_digest(x_admin_token, ADMIN_TOKEN):
-            return {
-                "user_id": None,
-                "token_id": None,
-                "token_label": "legacy-env-token",
-                "token_created_at": datetime.now(timezone.utc),
-                "token_expires_at": None,
-                "token_rotate_due_at": None,
-                "token_idle_due_at": None,
-                "token_must_rotate": False,
-                "username": "legacy-env-token",
-                "display_name": "Legacy Env Token",
-                "role": "owner",
-                "permissions": ["*"],
-                "site_scope": [SITE_SCOPE_ALL],
-                "is_legacy": True,
-            }
-        raise HTTPException(status_code=401, detail="Invalid admin token")
-
-    if (
-        ENV_NAME != "production"
-        and ALLOW_INSECURE_LOCAL_AUTH
-        and not ADMIN_TOKEN
-        and not _has_active_admin_tokens()
-    ):
-        return _build_local_dev_principal()
-
-    raise HTTPException(status_code=401, detail="Missing admin token")
+    from app.domains.iam.security import get_current_admin as _impl
+    return _impl(x_admin_token)
 
 
 def _has_permission(principal: dict[str, Any], permission: str) -> bool:
-    permissions = set(principal.get("permissions", []))
-    if "*" in permissions or permission in permissions:
-        return True
-    namespace = f"{permission.split(':', 1)[0]}:*"
-    return namespace in permissions
+    from app.domains.iam.security import _has_permission as _impl
+    return _impl(principal, permission)
 
 
 def require_permission(permission: str) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    def dependency(principal: dict[str, Any] = Depends(get_current_admin)) -> dict[str, Any]:
-        if not _has_permission(principal, permission):
-            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
-        return principal
-
-    return dependency
+    from app.domains.iam.security import require_permission as _impl
+    return _impl(permission)
 
 
 def _has_explicit_permission(principal: dict[str, Any], permission: str) -> bool:
-    permissions = set(principal.get("permissions", []))
-    return permission in permissions
+    from app.domains.iam.security import _has_explicit_permission as _impl
+    return _impl(principal, permission)
 
 
 def _is_workflow_admin_override(principal: dict[str, Any]) -> bool:
@@ -10051,8 +9759,8 @@ def _require_workflow_lock_action(
 
 
 def _to_json_text(value: dict[str, Any] | None) -> str:
-    data = value or {}
-    return json.dumps(data, ensure_ascii=False, default=str)
+    from app.domains.iam.service import _to_json_text as _impl
+    return _impl(value)
 
 
 def _compute_audit_entry_hash(
@@ -10067,33 +9775,13 @@ def _compute_audit_entry_hash(
     detail_json: str,
     created_at: datetime,
 ) -> str:
-    canonical = json.dumps(
-        {
-            "prev_hash": prev_hash,
-            "actor_user_id": actor_user_id,
-            "actor_username": actor_username,
-            "action": action,
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "status": status,
-            "detail_json": detail_json,
-            "created_at": created_at.isoformat(),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    from app.domains.iam.service import _compute_audit_entry_hash as _impl
+    return _impl(prev_hash=prev_hash, actor_user_id=actor_user_id, actor_username=actor_username, action=action, resource_type=resource_type, resource_id=resource_id, status=status, detail_json=detail_json, created_at=created_at)
 
 
 def _sign_payload(payload_text: str) -> str | None:
-    if not AUDIT_ARCHIVE_SIGNING_KEY:
-        return None
-    return hmac.new(
-        AUDIT_ARCHIVE_SIGNING_KEY.encode("utf-8"),
-        payload_text.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    from app.domains.iam.service import _sign_payload as _impl
+    return _impl(payload_text)
 
 
 def _write_audit_log(
@@ -10105,106 +9793,18 @@ def _write_audit_log(
     status: str = "success",
     detail: dict[str, Any] | None = None,
 ) -> None:
-    now = datetime.now(timezone.utc)
-    actor_user_id = None
-    actor_username = "system"
-    if principal is not None:
-        actor_user_id = principal.get("user_id")
-        actor_username = str(principal.get("username") or "unknown")
-    detail_json = _to_json_text(detail)
-
-    try:
-        with get_conn() as conn:
-            prev_row = conn.execute(
-                select(admin_audit_logs.c.entry_hash)
-                .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
-                .limit(1)
-            ).mappings().first()
-            prev_hash = str(prev_row.get("entry_hash") or "") if prev_row is not None else ""
-            entry_hash = _compute_audit_entry_hash(
-                prev_hash=prev_hash,
-                actor_user_id=actor_user_id,
-                actor_username=actor_username,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                status=status,
-                detail_json=detail_json,
-                created_at=now,
-            )
-            conn.execute(
-                insert(admin_audit_logs).values(
-                    actor_user_id=actor_user_id,
-                    actor_username=actor_username,
-                    action=action,
-                    resource_type=resource_type,
-                    resource_id=resource_id,
-                    status=status,
-                    prev_hash=prev_hash or None,
-                    entry_hash=entry_hash,
-                    detail_json=detail_json,
-                    created_at=now,
-                )
-            )
-    except SQLAlchemyError:
-        # Audit log failures must not block business requests.
-        return
+    from app.domains.iam.service import _write_audit_log as _impl
+    return _impl(principal=principal, action=action, resource_type=resource_type, resource_id=resource_id, status=status, detail=detail)
 
 
 def _row_to_admin_audit_log_model(row: dict[str, Any]) -> AdminAuditLogRead:
-    raw = str(row["detail_json"] or "{}")
-    try:
-        detail = json.loads(raw)
-    except json.JSONDecodeError:
-        detail = {"raw": raw}
-
-    return AdminAuditLogRead(
-        id=int(row["id"]),
-        actor_user_id=row["actor_user_id"],
-        actor_username=str(row["actor_username"]),
-        action=str(row["action"]),
-        resource_type=str(row["resource_type"]),
-        resource_id=str(row["resource_id"]),
-        status=str(row["status"]),
-        detail=detail if isinstance(detail, dict) else {"value": detail},
-        created_at=_as_datetime(row["created_at"]),
-    )
+    from app.domains.iam.service import _row_to_admin_audit_log_model as _impl
+    return _impl(row)
 
 
 def _verify_audit_chain(rows: list[dict[str, Any]], *, initial_prev_hash: str = "") -> dict[str, Any]:
-    previous_hash = initial_prev_hash
-    issues: list[dict[str, Any]] = []
-    checked = 0
-    for row in rows:
-        checked += 1
-        detail_json = str(row.get("detail_json") or "{}")
-        created_at = _as_datetime(row["created_at"])
-        expected = _compute_audit_entry_hash(
-            prev_hash=previous_hash,
-            actor_user_id=row.get("actor_user_id"),
-            actor_username=str(row.get("actor_username") or ""),
-            action=str(row.get("action") or ""),
-            resource_type=str(row.get("resource_type") or ""),
-            resource_id=str(row.get("resource_id") or ""),
-            status=str(row.get("status") or ""),
-            detail_json=detail_json,
-            created_at=created_at,
-        )
-        stored_prev = str(row.get("prev_hash") or "")
-        stored_hash = str(row.get("entry_hash") or "")
-        if stored_prev != previous_hash:
-            issues.append({"id": int(row["id"]), "reason": "prev_hash_mismatch"})
-        if stored_hash != expected:
-            issues.append({"id": int(row["id"]), "reason": "entry_hash_mismatch"})
-        previous_hash = stored_hash or expected
-    return {
-        "checked_count": checked,
-        "issue_count": len(issues),
-        "issues": issues[:100],
-        "initial_prev_hash": initial_prev_hash or None,
-        "last_entry_hash": previous_hash or None,
-        "chain_ok": len(issues) == 0,
-    }
+    from app.domains.iam.service import _verify_audit_chain as _impl
+    return _impl(rows, initial_prev_hash=initial_prev_hash)
 
 
 def build_monthly_audit_archive(
@@ -10213,188 +9813,8 @@ def build_monthly_audit_archive(
     max_entries: int = 10000,
     include_entries: bool = True,
 ) -> dict[str, Any]:
-    start, end, normalized = _month_window(month)
-    with get_conn() as conn:
-        anchor_row = conn.execute(
-            select(admin_audit_logs.c.entry_hash)
-            .where(admin_audit_logs.c.created_at < start)
-            .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
-            .limit(1)
-        ).mappings().first()
-        anchor_hash = str(anchor_row.get("entry_hash") or "") if anchor_row is not None else ""
-        rows = conn.execute(
-            select(admin_audit_logs)
-            .where(admin_audit_logs.c.created_at >= start)
-            .where(admin_audit_logs.c.created_at < end)
-            .order_by(admin_audit_logs.c.created_at.asc(), admin_audit_logs.c.id.asc())
-            .limit(max_entries)
-        ).mappings().all()
-        dr_month_row = conn.execute(
-            select(job_runs)
-            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
-            .where(job_runs.c.finished_at >= start)
-            .where(job_runs.c.finished_at < end)
-            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
-            .limit(1)
-        ).mappings().first()
-        dr_latest_row = conn.execute(
-            select(job_runs)
-            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
-            .where(job_runs.c.finished_at < end)
-            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
-            .limit(1)
-        ).mappings().first()
-
-    chain = _verify_audit_chain([dict(row) for row in rows], initial_prev_hash=anchor_hash)
-    archive_rows: list[dict[str, Any]] = []
-    if include_entries:
-        for row in rows:
-            detail_raw = str(row.get("detail_json") or "{}")
-            try:
-                detail_value = json.loads(detail_raw)
-            except json.JSONDecodeError:
-                detail_value = {"raw": detail_raw}
-            archive_rows.append(
-                {
-                    "id": int(row["id"]),
-                    "actor_user_id": row.get("actor_user_id"),
-                    "actor_username": str(row.get("actor_username") or ""),
-                    "action": str(row.get("action") or ""),
-                    "resource_type": str(row.get("resource_type") or ""),
-                    "resource_id": str(row.get("resource_id") or ""),
-                    "status": str(row.get("status") or ""),
-                    "detail": detail_value,
-                    "created_at": _as_datetime(row["created_at"]).isoformat(),
-                    "prev_hash": row.get("prev_hash"),
-                    "entry_hash": row.get("entry_hash"),
-                }
-            )
-
-    def _to_dr_attachment(row: dict[str, Any] | None) -> dict[str, Any] | None:
-        if row is None:
-            return None
-        detail_raw = str(row.get("detail_json") or "{}")
-        try:
-            detail = json.loads(detail_raw)
-        except json.JSONDecodeError:
-            detail = {"raw": detail_raw}
-        if not isinstance(detail, dict):
-            detail = {"value": detail}
-        started_at = _as_optional_datetime(row.get("started_at"))
-        finished_at = _as_optional_datetime(row.get("finished_at"))
-        counts_raw = detail.get("counts")
-        counts = counts_raw if isinstance(counts_raw, dict) else {}
-        return {
-            "run_id": int(row["id"]),
-            "status": str(row.get("status") or "unknown"),
-            "trigger": str(row.get("trigger") or "unknown"),
-            "started_at": started_at.isoformat() if started_at is not None else None,
-            "finished_at": finished_at.isoformat() if finished_at is not None else None,
-            "restore_valid": bool(detail.get("restore_valid", False)),
-            "simulate_restore": bool(detail.get("simulate_restore", False)),
-            "backup_file": detail.get("backup_file"),
-            "pruned_files": int(detail.get("pruned_files") or 0),
-            "counts": counts,
-            "notes": detail.get("notes") if isinstance(detail.get("notes"), list) else [],
-        }
-
-    dr_latest_in_month = _to_dr_attachment(dr_month_row)
-    dr_latest_before_window_end = _to_dr_attachment(dr_latest_row)
-    dr_attachment = {
-        "required": DR_REHEARSAL_ENABLED,
-        "month": normalized,
-        "included": dr_latest_in_month is not None,
-        "status": (
-            "ok"
-            if dr_latest_in_month is not None
-            else ("warning" if DR_REHEARSAL_ENABLED else "info")
-        ),
-        "message": (
-            "DR rehearsal result attached for target month."
-            if dr_latest_in_month is not None
-            else (
-                "No DR rehearsal result in target month."
-                if DR_REHEARSAL_ENABLED
-                else "DR rehearsal is disabled by policy."
-            )
-        ),
-        "latest_in_month": dr_latest_in_month,
-        "latest_before_window_end": dr_latest_before_window_end,
-    }
-
-    import_validation_report = _build_ops_checklists_import_validation_report()
-    import_generated_at = _as_optional_datetime(import_validation_report.get("generated_at"))
-    import_summary_raw = import_validation_report.get("summary")
-    import_summary = import_summary_raw if isinstance(import_summary_raw, dict) else {}
-    import_issues_raw = import_validation_report.get("issues")
-    import_issues = import_issues_raw if isinstance(import_issues_raw, list) else []
-    import_suggestions_raw = import_validation_report.get("suggestions")
-    import_suggestions = (
-        [str(item or "") for item in import_suggestions_raw if str(item or "").strip()]
-        if isinstance(import_suggestions_raw, list)
-        else []
-    )
-    import_in_month = (
-        import_generated_at is not None and import_generated_at >= start and import_generated_at < end
-    )
-    import_attachment = {
-        "required": True,
-        "month": normalized,
-        "included": True,
-        "status": str(import_validation_report.get("status") or "warning"),
-        "message": (
-            "Checklist import validation snapshot generated in target month."
-            if import_in_month
-            else "Checklist import validation snapshot attached (generated outside target month)."
-        ),
-        "generated_at": import_generated_at.isoformat() if import_generated_at is not None else None,
-        "generated_in_target_month": import_in_month,
-        "source_file": str(import_validation_report.get("source_file") or ""),
-        "source_file_exists": bool(import_validation_report.get("source_file_exists", False)),
-        "version": str(import_validation_report.get("version") or ""),
-        "summary": {
-            "checklist_set_count": int(import_summary.get("checklist_set_count") or 0),
-            "checklist_item_count": int(import_summary.get("checklist_item_count") or 0),
-            "ops_code_count": int(import_summary.get("ops_code_count") or 0),
-            "qr_asset_count": int(import_summary.get("qr_asset_count") or 0),
-            "task_type_count": int(import_summary.get("task_type_count") or 0),
-            "error_count": int(import_summary.get("error_count") or 0),
-            "warning_count": int(import_summary.get("warning_count") or 0),
-            "issue_bucket_count": int(import_summary.get("issue_bucket_count") or 0),
-        },
-        "top_issues": [
-            {
-                "severity": str(item.get("severity") or ""),
-                "category": str(item.get("category") or ""),
-                "code": str(item.get("code") or ""),
-                "count": int(item.get("count") or 0),
-                "message": str(item.get("message") or ""),
-                "references": item.get("references") if isinstance(item.get("references"), list) else [],
-            }
-            for item in import_issues[:10]
-            if isinstance(item, dict)
-        ],
-        "suggestions": import_suggestions[:5],
-    }
-
-    payload = {
-        "month": normalized,
-        "window_start": start.isoformat(),
-        "window_end": end.isoformat(),
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "entry_count": len(rows),
-        "max_entries": max_entries,
-        "chain": chain,
-        "dr_rehearsal_attachment": dr_attachment,
-        "ops_checklists_import_validation_attachment": import_attachment,
-        "entries": archive_rows if include_entries else [],
-    }
-    payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-    signature = _sign_payload(payload_text)
-    payload["archive_sha256"] = hashlib.sha256(payload_text.encode("utf-8")).hexdigest()
-    payload["signature"] = signature
-    payload["signature_algorithm"] = "hmac-sha256" if signature is not None else "unsigned"
-    return payload
+    from app.domains.iam.service import build_monthly_audit_archive as _impl
+    return _impl(month=month, max_entries=max_entries, include_entries=include_entries)
 
 
 def rebaseline_admin_audit_chain(
@@ -10403,88 +9823,8 @@ def rebaseline_admin_audit_chain(
     max_rows: int = 50000,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    start_dt: datetime | None = None
-    normalized_month: str | None = None
-    if from_month is not None:
-        start_dt, _, normalized_month = _month_window(from_month)
-
-    with get_conn() as conn:
-        anchor_hash = ""
-        anchor_id: int | None = None
-        if start_dt is not None:
-            anchor = conn.execute(
-                select(
-                    admin_audit_logs.c.id,
-                    admin_audit_logs.c.entry_hash,
-                )
-                .where(admin_audit_logs.c.created_at < start_dt)
-                .order_by(admin_audit_logs.c.created_at.desc(), admin_audit_logs.c.id.desc())
-                .limit(1)
-            ).mappings().first()
-            if anchor is not None:
-                anchor_id = int(anchor["id"])
-                anchor_hash = str(anchor.get("entry_hash") or "")
-
-        stmt = select(admin_audit_logs).order_by(
-            admin_audit_logs.c.created_at.asc(),
-            admin_audit_logs.c.id.asc(),
-        )
-        if start_dt is not None:
-            stmt = stmt.where(admin_audit_logs.c.created_at >= start_dt)
-        rows = conn.execute(stmt.limit(max_rows)).mappings().all()
-
-        scanned_count = len(rows)
-        updated_count = 0
-        first_updated_id: int | None = None
-        last_updated_id: int | None = None
-        previous_hash = anchor_hash
-
-        for row in rows:
-            row_id = int(row["id"])
-            detail_json = str(row.get("detail_json") or "{}")
-            created_at = _as_datetime(row["created_at"])
-            expected_hash = _compute_audit_entry_hash(
-                prev_hash=previous_hash,
-                actor_user_id=row.get("actor_user_id"),
-                actor_username=str(row.get("actor_username") or ""),
-                action=str(row.get("action") or ""),
-                resource_type=str(row.get("resource_type") or ""),
-                resource_id=str(row.get("resource_id") or ""),
-                status=str(row.get("status") or ""),
-                detail_json=detail_json,
-                created_at=created_at,
-            )
-
-            stored_prev = str(row.get("prev_hash") or "")
-            stored_hash = str(row.get("entry_hash") or "")
-            changed = stored_prev != previous_hash or stored_hash != expected_hash
-            if changed:
-                updated_count += 1
-                if first_updated_id is None:
-                    first_updated_id = row_id
-                last_updated_id = row_id
-                if not dry_run:
-                    conn.execute(
-                        update(admin_audit_logs)
-                        .where(admin_audit_logs.c.id == row_id)
-                        .values(
-                            prev_hash=previous_hash or None,
-                            entry_hash=expected_hash,
-                        )
-                    )
-            previous_hash = expected_hash
-
-    return {
-        "from_month": normalized_month,
-        "max_rows": max_rows,
-        "dry_run": dry_run,
-        "anchor_id": anchor_id,
-        "scanned_count": scanned_count,
-        "updated_count": updated_count,
-        "first_updated_id": first_updated_id,
-        "last_updated_id": last_updated_id,
-        "last_entry_hash": previous_hash or None,
-    }
+    from app.domains.iam.service import rebaseline_admin_audit_chain as _impl
+    return _impl(from_month=from_month, max_rows=max_rows, dry_run=dry_run)
 
 
 def _write_job_run(
@@ -13203,52 +12543,13 @@ def _dispatch_sla_alert(
 
 
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
-    role = str(row["role"])
-    custom_permissions = _permission_text_to_list(row["permissions"])
-    user_site_scope = _site_scope_text_to_list(row["site_scope"], default_all=True)
-    return AdminUserRead(
-        id=int(row["id"]),
-        username=str(row["username"]),
-        display_name=str(row["display_name"] or row["username"]),
-        role=role,
-        permissions=_effective_permissions(role, custom_permissions),
-        site_scope=user_site_scope,
-        is_active=bool(row["is_active"]),
-        created_at=_as_datetime(row["created_at"]),
-        updated_at=_as_datetime(row["updated_at"]),
-    )
+    from app.domains.iam.service import _row_to_admin_user_model as _impl
+    return _impl(row)
 
 
 def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
-    user_scope = _site_scope_text_to_list(row.get("user_site_scope"), default_all=True)
-    token_scope_raw = row.get("token_site_scope")
-    token_scope = None
-    if token_scope_raw is not None:
-        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
-    effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
-    created_at = _as_datetime(row["created_at"])
-    expires_at = _as_optional_datetime(row["expires_at"])
-    last_used_at = _as_optional_datetime(row["last_used_at"])
-    rotate_due_at = _token_rotate_due_at(created_at)
-    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
-    warning_due_at = None
-    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
-        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
-    must_rotate = rotate_due_at is not None and warning_due_at is not None and datetime.now(timezone.utc) >= warning_due_at
-    return AdminTokenRead(
-        token_id=int(row["token_id"]),
-        user_id=int(row["user_id"]),
-        username=str(row["username"]),
-        label=str(row["label"] or ""),
-        is_active=bool(row["is_active"]),
-        site_scope=effective_scope,
-        expires_at=expires_at,
-        last_used_at=last_used_at,
-        created_at=created_at,
-        rotate_due_at=rotate_due_at,
-        idle_due_at=idle_due_at,
-        must_rotate=must_rotate,
-    )
+    from app.domains.iam.service import _row_to_admin_token_model as _impl
+    return _impl(row)
 
 
 def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
@@ -17443,52 +16744,13 @@ def _dispatch_sla_alert(
 
 
 def _row_to_admin_user_model(row: dict[str, Any]) -> AdminUserRead:
-    role = str(row["role"])
-    custom_permissions = _permission_text_to_list(row["permissions"])
-    user_site_scope = _site_scope_text_to_list(row["site_scope"], default_all=True)
-    return AdminUserRead(
-        id=int(row["id"]),
-        username=str(row["username"]),
-        display_name=str(row["display_name"] or row["username"]),
-        role=role,
-        permissions=_effective_permissions(role, custom_permissions),
-        site_scope=user_site_scope,
-        is_active=bool(row["is_active"]),
-        created_at=_as_datetime(row["created_at"]),
-        updated_at=_as_datetime(row["updated_at"]),
-    )
+    from app.domains.iam.service import _row_to_admin_user_model as _impl
+    return _impl(row)
 
 
 def _row_to_admin_token_model(row: dict[str, Any]) -> AdminTokenRead:
-    user_scope = _site_scope_text_to_list(row.get("user_site_scope"), default_all=True)
-    token_scope_raw = row.get("token_site_scope")
-    token_scope = None
-    if token_scope_raw is not None:
-        token_scope = _site_scope_text_to_list(token_scope_raw, default_all=True)
-    effective_scope = _resolve_effective_site_scope(user_scope=user_scope, token_scope=token_scope)
-    created_at = _as_datetime(row["created_at"])
-    expires_at = _as_optional_datetime(row["expires_at"])
-    last_used_at = _as_optional_datetime(row["last_used_at"])
-    rotate_due_at = _token_rotate_due_at(created_at)
-    idle_due_at = _token_idle_due_at(created_at=created_at, last_used_at=last_used_at)
-    warning_due_at = None
-    if rotate_due_at is not None and ADMIN_TOKEN_ROTATE_WARNING_DAYS > 0:
-        warning_due_at = rotate_due_at - timedelta(days=ADMIN_TOKEN_ROTATE_WARNING_DAYS)
-    must_rotate = rotate_due_at is not None and warning_due_at is not None and datetime.now(timezone.utc) >= warning_due_at
-    return AdminTokenRead(
-        token_id=int(row["token_id"]),
-        user_id=int(row["user_id"]),
-        username=str(row["username"]),
-        label=str(row["label"] or ""),
-        is_active=bool(row["is_active"]),
-        site_scope=effective_scope,
-        expires_at=expires_at,
-        last_used_at=last_used_at,
-        created_at=created_at,
-        rotate_due_at=rotate_due_at,
-        idle_due_at=idle_due_at,
-        must_rotate=must_rotate,
-    )
+    from app.domains.iam.service import _row_to_admin_token_model as _impl
+    return _impl(row)
 
 
 def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
@@ -35756,21 +35018,8 @@ def meta() -> dict[str, str]:
 
 
 def _principal_to_auth_me_model(principal: dict[str, Any]) -> AuthMeRead:
-    return AuthMeRead(
-        user_id=principal.get("user_id"),
-        token_id=principal.get("token_id"),
-        token_label=principal.get("token_label"),
-        token_expires_at=principal.get("token_expires_at"),
-        token_rotate_due_at=principal.get("token_rotate_due_at"),
-        token_idle_due_at=principal.get("token_idle_due_at"),
-        token_must_rotate=bool(principal.get("token_must_rotate", False)),
-        username=str(principal.get("username") or "unknown"),
-        display_name=str(principal.get("display_name") or principal.get("username") or "unknown"),
-        role=str(principal.get("role") or "operator"),
-        permissions=list(principal.get("permissions", [])),
-        site_scope=list(_principal_site_scope(principal)),
-        is_legacy=bool(principal.get("is_legacy", False)),
-    )
+    from app.domains.iam.service import _principal_to_auth_me_model as _impl
+    return _impl(principal)
 
 
 @app.post("/api/auth/login", response_model=AuthLoginResponse)
@@ -36390,24 +35639,8 @@ def _enforce_active_token_quota(
     now: datetime,
     keep_token_ids: set[int] | None = None,
 ) -> list[int]:
-    keep_ids = keep_token_ids or set()
-    rows = conn.execute(
-        select(admin_tokens.c.id, admin_tokens.c.created_at)
-        .where(admin_tokens.c.user_id == user_id)
-        .where(admin_tokens.c.is_active.is_(True))
-        .order_by(admin_tokens.c.created_at.asc(), admin_tokens.c.id.asc())
-    ).all()
-    active_ids = [int(row[0]) for row in rows if int(row[0]) not in keep_ids]
-    overflow = len(active_ids) - ADMIN_TOKEN_MAX_ACTIVE_PER_USER
-    if overflow <= 0:
-        return []
-    revoke_ids = active_ids[:overflow]
-    conn.execute(
-        update(admin_tokens)
-        .where(admin_tokens.c.id.in_(revoke_ids))
-        .values(is_active=False, last_used_at=now)
-    )
-    return revoke_ids
+    from app.domains.iam.service import _enforce_active_token_quota as _impl
+    return _impl(conn=conn, user_id=user_id, now=now, keep_token_ids=keep_token_ids)
 
 
 @admin_router.post("/users/{user_id}/tokens", response_model=AdminTokenIssueResponse, status_code=201)
@@ -43737,6 +42970,5 @@ app.include_router(ops_router)
 app.include_router(admin_router)
 app.include_router(adoption_router)
 app.include_router(public_router)
-
 
 
