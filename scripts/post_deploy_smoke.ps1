@@ -6,7 +6,7 @@ param(
   [switch]$RequireAuditChainOk,
   [int]$TimeoutSec = 20,
   [string]$DeployId = "",
-  [string]$ChecklistVersion = "2026.03.v1",
+  [string]$ChecklistVersion = "",
   [bool]$RunRunbookGate = $true,
   [bool]$RecordSmokeRun = $true
 )
@@ -40,6 +40,13 @@ function Invoke-JsonGet {
     [hashtable]$Headers = @{}
   )
   return Invoke-RestMethod -Method Get -Uri $Uri -Headers $Headers -TimeoutSec $TimeoutSec
+}
+
+function Invoke-HtmlGet {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri
+  )
+  return Invoke-WebRequest -Method Get -Uri $Uri -Headers @{ "Accept" = "text/html" } -TimeoutSec $TimeoutSec
 }
 
 function Record-SmokeRun {
@@ -89,6 +96,15 @@ try {
   }
   Add-SmokeCheck -Id "meta" -Status "ok" -Message "/meta response contains db info"
 
+  $mainShell = Invoke-HtmlGet -Uri "$BaseUrl/?tab=iam"
+  $mainShellText = "$($mainShell.Content)"
+  foreach ($marker in @("ID/PW 로그인", "권한관리", "점검 이력 조회")) {
+    if (-not $mainShellText.Contains($marker)) {
+      throw "UI core path check failed: missing marker '$marker'"
+    }
+  }
+  Add-SmokeCheck -Id "ui_main_shell" -Status "ok" -Message "Main HTML shell exposes auth/IAM/inspection entry points"
+
   if ($AdminToken -ne "") {
     $headers = @{ "X-Admin-Token" = $AdminToken }
     $deployChecklist = Invoke-JsonGet -Uri "$BaseUrl/api/ops/deploy/checklist" -Headers $headers
@@ -104,6 +120,9 @@ try {
     $rollbackReferenceSha = "$($deployChecklist.policy.rollback_guide_sha256)"
     if (-not $deployChecklist.policy.rollback_guide_sha256) {
       throw "Deploy checklist validation failed: rollback guide checksum missing"
+    }
+    if (-not $ChecklistVersion) {
+      $ChecklistVersion = "$($deployChecklist.version)"
     }
     Add-SmokeCheck -Id "rollback_guide" -Status "ok" -Message "Rollback guide presence/checksum validated ($rollbackReference)"
 

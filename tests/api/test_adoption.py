@@ -334,6 +334,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     )
     assert service_info.json()["ops_runbook_checks_archive_json_api"] == "/api/ops/runbook/checks/archive.json"
     assert service_info.json()["ops_runbook_checks_archive_csv_api"] == "/api/ops/runbook/checks/archive.csv"
+    assert service_info.json()["ops_runbook_review_run_api"] == "/api/ops/runbook/review/run"
+    assert service_info.json()["ops_runbook_review_latest_api"] == "/api/ops/runbook/review/latest"
     assert service_info.json()["ops_preflight_api"] == "/api/ops/preflight"
     assert service_info.json()["ops_alert_noise_policy_api"] == "/api/ops/alerts/noise-policy"
     assert service_info.json()["ops_admin_security_dashboard_api"] == "/api/ops/admin/security-dashboard"

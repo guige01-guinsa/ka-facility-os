@@ -435,7 +435,9 @@ DEPLOY_SMOKE_RECENT_HOURS = _env_int("DEPLOY_SMOKE_RECENT_HOURS", 48, min_value=
 DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE = _env_bool("DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE", True)
 EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE = _env_int("EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE", 20, min_value=1)
 EVIDENCE_INTEGRITY_MAX_ISSUES = _env_int("EVIDENCE_INTEGRITY_MAX_ISSUES", 50, min_value=1)
-DEPLOY_CHECKLIST_VERSION = getenv("DEPLOY_CHECKLIST_VERSION", "2026.03.v1").strip() or "2026.03.v1"
+DEPLOY_CHECKLIST_VERSION_OVERRIDE = getenv("DEPLOY_CHECKLIST_VERSION", "").strip()
+RUNBOOK_CRITICAL_REVIEW_LOOKBACK_DAYS = _env_int("RUNBOOK_CRITICAL_REVIEW_LOOKBACK_DAYS", 35, min_value=7)
+RUNBOOK_CRITICAL_REVIEW_SAMPLE_LIMIT = _env_int("RUNBOOK_CRITICAL_REVIEW_SAMPLE_LIMIT", 8, min_value=1)
 GOVERNANCE_GATE_ALLOW_WARNING = _env_bool("GOVERNANCE_GATE_ALLOW_WARNING", True)
 GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL = (
     getenv("GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL", "high").strip().lower() or "high"
@@ -450,6 +452,12 @@ GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING = _env_bool("GOVERNANCE_GATE_REQUIR
 GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS = _env_int("GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS", 72, min_value=1)
 GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK = _env_bool("GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK", False)
 GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS = _env_int("GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS", 30, min_value=7)
+GOVERNANCE_GATE_DR_WEIGHT = _env_float("GOVERNANCE_GATE_DR_WEIGHT", 2.0, min_value=1.0)
+GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT = _env_float(
+    "GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT",
+    75.0,
+    min_value=0.0,
+)
 SECURITY_HEADERS_BASE: dict[str, str] = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
@@ -940,6 +948,7 @@ W07_DEGRADATION_ALERT_EVENT_TYPE = "adoption_w07_quality_degradation"
 OPS_QUALITY_WEEKLY_JOB_NAME = "ops_quality_report_weekly"
 OPS_QUALITY_MONTHLY_JOB_NAME = "ops_quality_report_monthly"
 DR_REHEARSAL_JOB_NAME = "dr_rehearsal"
+OPS_RUNBOOK_CRITICAL_REVIEW_JOB_NAME = "ops_runbook_critical_review"
 OPS_GOVERNANCE_GATE_JOB_NAME = "ops_governance_gate"
 OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS = 30
 OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME = "ops_governance_remediation_escalation"
@@ -5143,7 +5152,170 @@ def _build_evidence_archive_integrity_batch(
     }
 
 
+def _next_month_boundary(dt: datetime) -> datetime:
+    if dt.month == 12:
+        return datetime(dt.year + 1, 1, 1, tzinfo=timezone.utc)
+    return datetime(dt.year, dt.month + 1, 1, tzinfo=timezone.utc)
+
+
+def _month_window_bounds(*, now: datetime | None = None, month_label: str | None = None) -> tuple[str, datetime, datetime]:
+    reference = now or datetime.now(timezone.utc)
+    if month_label:
+        parts = month_label.split("-", 1)
+        if len(parts) != 2:
+            raise ValueError("month must use YYYY-MM format")
+        try:
+            year = int(parts[0])
+            month = int(parts[1])
+            start = datetime(year, month, 1, tzinfo=timezone.utc)
+        except ValueError as exc:
+            raise ValueError("month must use YYYY-MM format") from exc
+    else:
+        start = datetime(reference.year, reference.month, 1, tzinfo=timezone.utc)
+    end = _next_month_boundary(start)
+    return start.strftime("%Y-%m"), start, end
+
+
+def _build_deploy_checklist_steps(
+    *,
+    rollback_guide_path: Path,
+    rollback_guide_exists: bool,
+    rollback_guide_sha256: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "phase": "pre_deploy",
+            "id": "pre_01_backup",
+            "required": True,
+            "item": "Confirm DB backup/snapshot is available.",
+        },
+        {
+            "phase": "pre_deploy",
+            "id": "pre_02_release_note",
+            "required": True,
+            "item": "Record release scope and rollback owner.",
+        },
+        {
+            "phase": "post_deploy",
+            "id": "smoke_01_health",
+            "required": True,
+            "item": "Verify /health and /meta responses.",
+        },
+        {
+            "phase": "post_deploy",
+            "id": "smoke_02_ui_main_shell",
+            "required": True,
+            "item": "Verify main HTML shell exposes 인증/IAM/점검 entry points.",
+            "path": "/?tab=iam",
+        },
+        {
+            "phase": "post_deploy",
+            "id": "smoke_03_auth_and_runbook",
+            "required": True,
+            "item": "Verify /api/auth/me and runbook checks (no critical).",
+        },
+        {
+            "phase": "post_deploy",
+            "id": "smoke_04_security",
+            "required": True,
+            "item": "Verify /api/ops/security/posture and expected rate-limit backend.",
+        },
+        {
+            "phase": "rollback_ready",
+            "id": "rollback_01_trigger",
+            "required": True,
+            "item": "Rollback command prepared (Render rollback API or dashboard).",
+        },
+        {
+            "phase": "rollback_ready",
+            "id": "rollback_02_checklist",
+            "required": True,
+            "item": "Use docs/W15_MIGRATION_ROLLBACK.md for verification sequence.",
+            "path": str(rollback_guide_path).replace("\\", "/"),
+            "exists": rollback_guide_exists,
+            "sha256": rollback_guide_sha256,
+        },
+    ]
+
+
+def _build_deploy_checklist_policy(
+    *,
+    rollback_guide_path: Path,
+    rollback_guide_exists: bool,
+    rollback_guide_sha256: str | None,
+) -> dict[str, Any]:
+    return {
+        "deploy_smoke_recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
+        "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
+        "rollback_on_failure_recommended": True,
+        "rollback_guide_required": True,
+        "rollback_guide_path": str(rollback_guide_path).replace("\\", "/"),
+        "rollback_guide_exists": rollback_guide_exists,
+        "rollback_guide_sha256": rollback_guide_sha256,
+        "ui_core_path": "/?tab=iam",
+        "ui_core_markers": ["ID/PW 로그인", "권한관리", "점검 이력 조회"],
+        "version_rule": (
+            "env_override"
+            if DEPLOY_CHECKLIST_VERSION_OVERRIDE
+            else "current_utc_month + deploy_smoke signature sequence"
+        ),
+    }
+
+
+def _build_deploy_checklist_signature(*, policy: dict[str, Any], steps: list[dict[str, Any]]) -> str:
+    canonical = json.dumps({"policy": policy, "steps": steps}, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:12]
+
+
+def _parse_deploy_checklist_revision(version: str, *, prefix: str) -> int | None:
+    candidate = version.strip()
+    expected_prefix = f"{prefix}.v"
+    if not candidate.startswith(expected_prefix):
+        return None
+    raw_revision = candidate[len(expected_prefix):]
+    if not raw_revision.isdigit():
+        return None
+    return int(raw_revision)
+
+
+def _derive_deploy_checklist_version(*, signature: str, generated_at: datetime) -> tuple[str, str]:
+    if DEPLOY_CHECKLIST_VERSION_OVERRIDE:
+        return DEPLOY_CHECKLIST_VERSION_OVERRIDE, "env_override"
+
+    prefix = generated_at.strftime("%Y.%m")
+    month_label, month_start, month_end = _month_window_bounds(now=generated_at)
+    max_revision = 0
+    matched_version: str | None = None
+    matched_revision = -1
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "deploy_smoke")
+            .where(job_runs.c.finished_at >= month_start)
+            .where(job_runs.c.finished_at < month_end)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+        ).mappings().all()
+
+    for row in rows:
+        detail = _parse_job_detail_json(row.get("detail_json"))
+        version = str(detail.get("checklist_version") or "").strip()
+        revision = _parse_deploy_checklist_revision(version, prefix=prefix)
+        if revision is not None:
+            max_revision = max(max_revision, revision)
+        detail_signature = str(detail.get("checklist_signature") or "").strip()
+        if detail_signature != signature or revision is None:
+            continue
+        if revision > matched_revision:
+            matched_version = version
+            matched_revision = revision
+
+    if matched_version:
+        return matched_version, f"deploy_smoke_signature_match:{month_label}"
+    return f"{prefix}.v{max_revision + 1}", f"auto_increment:{month_label}"
+
+
 def _build_deploy_checklist_payload() -> dict[str, Any]:
+    generated_at = datetime.now(timezone.utc)
     rollback_guide_path = Path("docs/W15_MIGRATION_ROLLBACK.md")
     rollback_guide_exists = rollback_guide_path.exists()
     rollback_guide_sha256: str | None = None
@@ -5154,65 +5326,26 @@ def _build_deploy_checklist_payload() -> dict[str, Any]:
             rollback_guide_exists = False
             rollback_guide_sha256 = None
 
+    policy = _build_deploy_checklist_policy(
+        rollback_guide_path=rollback_guide_path,
+        rollback_guide_exists=rollback_guide_exists,
+        rollback_guide_sha256=rollback_guide_sha256,
+    )
+    steps = _build_deploy_checklist_steps(
+        rollback_guide_path=rollback_guide_path,
+        rollback_guide_exists=rollback_guide_exists,
+        rollback_guide_sha256=rollback_guide_sha256,
+    )
+    signature = _build_deploy_checklist_signature(policy=policy, steps=steps)
+    version, version_source = _derive_deploy_checklist_version(signature=signature, generated_at=generated_at)
+
     return {
-        "version": DEPLOY_CHECKLIST_VERSION,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "policy": {
-            "deploy_smoke_recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
-            "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
-            "rollback_on_failure_recommended": True,
-            "rollback_guide_required": True,
-            "rollback_guide_path": str(rollback_guide_path).replace("\\", "/"),
-            "rollback_guide_exists": rollback_guide_exists,
-            "rollback_guide_sha256": rollback_guide_sha256,
-        },
-        "steps": [
-            {
-                "phase": "pre_deploy",
-                "id": "pre_01_backup",
-                "required": True,
-                "item": "Confirm DB backup/snapshot is available.",
-            },
-            {
-                "phase": "pre_deploy",
-                "id": "pre_02_release_note",
-                "required": True,
-                "item": "Record release scope and rollback owner.",
-            },
-            {
-                "phase": "post_deploy",
-                "id": "smoke_01_health",
-                "required": True,
-                "item": "Verify /health and /meta responses.",
-            },
-            {
-                "phase": "post_deploy",
-                "id": "smoke_02_auth_and_runbook",
-                "required": True,
-                "item": "Verify /api/auth/me and runbook checks (no critical).",
-            },
-            {
-                "phase": "post_deploy",
-                "id": "smoke_03_security",
-                "required": True,
-                "item": "Verify /api/ops/security/posture and expected rate-limit backend.",
-            },
-            {
-                "phase": "rollback_ready",
-                "id": "rollback_01_trigger",
-                "required": True,
-                "item": "Rollback command prepared (Render rollback API or dashboard).",
-            },
-            {
-                "phase": "rollback_ready",
-                "id": "rollback_02_checklist",
-                "required": True,
-                "item": "Use docs/W15_MIGRATION_ROLLBACK.md for verification sequence.",
-                "path": str(rollback_guide_path).replace("\\", "/"),
-                "exists": rollback_guide_exists,
-                "sha256": rollback_guide_sha256,
-            },
-        ],
+        "version": version,
+        "version_source": version_source,
+        "signature": signature,
+        "generated_at": generated_at.isoformat(),
+        "policy": policy,
+        "steps": steps,
     }
 
 
@@ -6147,6 +6280,7 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
     max_risk_level = _normalize_governance_risk_level(GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL)
     preflight = _get_startup_preflight_snapshot(refresh=False)
     runbook = _build_ops_runbook_checks_snapshot(now=checked_at)
+    deploy_checklist = _build_deploy_checklist_payload()
     security_dashboard = _build_admin_security_dashboard_snapshot(days=GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS)
     weekly_streak = _build_ops_quality_weekly_streak_snapshot()
     dr_latest = _latest_dr_rehearsal_payload()
@@ -6182,10 +6316,27 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
         "weekly_streak_target_met": GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK,
         "security_risk_within_max": True,
     }
+    rule_weights = {
+        "preflight_no_error": 1.5,
+        "runbook_no_critical": 2.0,
+        "daily_check_recent": 1.0,
+        "dr_restore_valid_recent": max(1.0, GOVERNANCE_GATE_DR_WEIGHT),
+        "deploy_smoke_binding_recent": 1.5,
+        "weekly_streak_target_met": 0.75,
+        "security_risk_within_max": 1.25,
+    }
 
     rules: list[dict[str, Any]] = []
 
-    def _append_rule(*, rule_id: str, required: bool, passed: bool, message: str, detail: dict[str, Any]) -> None:
+    def _append_rule(
+        *,
+        rule_id: str,
+        required: bool,
+        passed: bool,
+        message: str,
+        detail: dict[str, Any],
+    ) -> None:
+        weight = float(rule_weights.get(rule_id, 1.0))
         if passed:
             status = "pass"
         elif required:
@@ -6198,6 +6349,7 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
                 "required": required,
                 "status": status,
                 "passed": passed,
+                "weight": round(weight, 2),
                 "message": message,
                 "detail": detail,
             }
@@ -6318,11 +6470,22 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
     deploy_reference_match = bool(deploy_latest_detail.get("rollback_reference_match", False))
     deploy_sha_match_raw = deploy_latest_detail.get("rollback_reference_sha256_match")
     deploy_sha_match = (deploy_sha_match_raw is True) if deploy_sha_match_raw is not None else False
+    deploy_current_checklist_version = str(deploy_checklist.get("version") or "")
+    deploy_latest_checklist_version = str(deploy_latest_detail.get("checklist_version") or "")
+    deploy_checklist_version_match = (
+        deploy_latest_checklist_version != ""
+        and deploy_latest_checklist_version == deploy_current_checklist_version
+    )
+    deploy_ui_main_shell_checked = bool(deploy_latest_detail.get("ui_main_shell_checked", False))
+    deploy_ui_main_shell_status = str(deploy_latest_detail.get("ui_main_shell_status") or "missing")
+    deploy_ui_main_shell_ok = deploy_ui_main_shell_checked and deploy_ui_main_shell_status == "ok"
     deploy_binding_ok = (
         deploy_recent_ok
         and deploy_rollback_ready
         and deploy_reference_match
         and deploy_sha_match
+        and deploy_checklist_version_match
+        and deploy_ui_main_shell_ok
         and ((not DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE) or deploy_runbook_gate)
     )
     _append_rule(
@@ -6342,6 +6505,11 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
             "runbook_gate_passed": deploy_runbook_gate,
             "rollback_reference_match": deploy_reference_match,
             "rollback_reference_sha256_match": deploy_sha_match_raw,
+            "current_checklist_version": deploy_current_checklist_version,
+            "latest_checklist_version": deploy_latest_checklist_version,
+            "checklist_version_match": deploy_checklist_version_match,
+            "ui_main_shell_checked": deploy_ui_main_shell_checked,
+            "ui_main_shell_status": deploy_ui_main_shell_status,
         },
     )
 
@@ -6363,8 +6531,15 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
 
     failure_count = sum(1 for rule in rules if rule["status"] == "fail")
     warning_count = sum(1 for rule in rules if rule["status"] == "warning")
+    weighted_total = sum(float(rule.get("weight") or 0.0) for rule in rules)
+    weighted_passed = sum(float(rule.get("weight") or 0.0) for rule in rules if bool(rule.get("passed")))
+    weighted_score_percent = round((weighted_passed / weighted_total) * 100.0, 2) if weighted_total > 0 else 100.0
     decision = "go"
-    if failure_count > 0 or (not GOVERNANCE_GATE_ALLOW_WARNING and warning_count > 0):
+    if (
+        failure_count > 0
+        or (not GOVERNANCE_GATE_ALLOW_WARNING and warning_count > 0)
+        or weighted_score_percent < max(0.0, min(100.0, GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT))
+    ):
         decision = "no_go"
     summary = {
         "total_rules": len(rules),
@@ -6372,6 +6547,9 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
         "passed_rules": sum(1 for rule in rules if rule["status"] == "pass"),
         "failure_count": failure_count,
         "warning_count": warning_count,
+        "weighted_total": round(weighted_total, 2),
+        "weighted_passed": round(weighted_passed, 2),
+        "weighted_score_percent": weighted_score_percent,
     }
     return {
         "generated_at": checked_at.isoformat(),
@@ -6391,6 +6569,11 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
             "deploy_smoke_max_age_hours": max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
             "require_weekly_streak_target_met": required_rules["weekly_streak_target_met"],
             "security_dashboard_days": max(7, GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
+            "dr_weight": round(max(1.0, GOVERNANCE_GATE_DR_WEIGHT), 2),
+            "min_weighted_score_percent": round(
+                max(0.0, min(100.0, GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT)),
+                2,
+            ),
         },
     }
 
@@ -24376,6 +24559,8 @@ def _service_info_payload() -> dict[str, str]:
         "ops_runbook_checks_latest_summary_csv_api": "/api/ops/runbook/checks/latest/summary.csv",
         "ops_runbook_checks_archive_json_api": "/api/ops/runbook/checks/archive.json",
         "ops_runbook_checks_archive_csv_api": "/api/ops/runbook/checks/archive.csv",
+        "ops_runbook_review_run_api": "/api/ops/runbook/review/run",
+        "ops_runbook_review_latest_api": "/api/ops/runbook/review/latest",
         "ops_preflight_api": "/api/ops/preflight",
         "ops_alert_noise_policy_api": "/api/ops/alerts/noise-policy",
         "ops_admin_security_dashboard_api": "/api/ops/admin/security-dashboard",
@@ -35217,6 +35402,41 @@ def get_ops_deploy_checklist(
     return payload
 
 
+def _normalize_smoke_check_status(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"ok", "success", "healthy", "pass"}:
+        return "ok"
+    if raw in {"warning", "warn", "degraded", "skipped"}:
+        return "warning" if raw != "skipped" else "skipped"
+    if raw in {"critical", "failed", "error", "fatal"}:
+        return "critical"
+    return "unknown"
+
+
+def _normalize_deploy_smoke_checks(value: Any) -> list[dict[str, str]]:
+    checks: list[dict[str, str]] = []
+    if not isinstance(value, list):
+        return checks
+    for item in value[:50]:
+        if not isinstance(item, dict):
+            continue
+        checks.append(
+            {
+                "id": str(item.get("id") or "").strip(),
+                "status": _normalize_smoke_check_status(item.get("status")),
+                "message": str(item.get("message") or "").strip(),
+            }
+        )
+    return checks
+
+
+def _get_deploy_smoke_check(checks: list[dict[str, str]], check_id: str) -> dict[str, str] | None:
+    for item in checks:
+        if str(item.get("id") or "") == check_id:
+            return item
+    return None
+
+
 @ops_router.post("/deploy/smoke/record")
 def post_ops_deploy_smoke_record(
     payload: dict[str, Any],
@@ -35238,22 +35458,11 @@ def post_ops_deploy_smoke_record(
     else:
         status = "warning"
 
-    checks_raw = payload.get("checks")
-    checks: list[dict[str, Any]] = []
-    if isinstance(checks_raw, list):
-        for item in checks_raw[:50]:
-            if not isinstance(item, dict):
-                continue
-            checks.append(
-                {
-                    "id": str(item.get("id") or ""),
-                    "status": str(item.get("status") or ""),
-                    "message": str(item.get("message") or ""),
-                }
-            )
-
+    checks = _normalize_deploy_smoke_checks(payload.get("checks"))
     checklist_payload = _build_deploy_checklist_payload()
     checklist_policy = checklist_payload.get("policy") if isinstance(checklist_payload.get("policy"), dict) else {}
+    checklist_version = str(checklist_payload.get("version") or "")
+    checklist_signature = str(checklist_payload.get("signature") or "")
     expected_rollback_reference = str(
         checklist_policy.get("rollback_guide_path") or "docs/W15_MIGRATION_ROLLBACK.md"
     ).replace("\\", "/")
@@ -35269,9 +35478,22 @@ def post_ops_deploy_smoke_record(
 
     runbook_gate_passed = bool(payload.get("runbook_gate_passed", False))
     rollback_ready = bool(payload.get("rollback_ready", False))
+    provided_checklist_version = str(payload.get("checklist_version") or checklist_version).strip()
+    checklist_version_match = provided_checklist_version == checklist_version
+    ui_main_shell_check = _get_deploy_smoke_check(checks, "ui_main_shell")
+    ui_main_shell_checked = ui_main_shell_check is not None
+    ui_main_shell_status = ui_main_shell_check.get("status") if ui_main_shell_check is not None else "missing"
     if status == "success" and DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE and not runbook_gate_passed:
         status = "warning"
     if status == "success" and not rollback_ready:
+        status = "warning"
+    if status == "success" and not checklist_version_match:
+        status = "warning"
+    if status == "success" and not ui_main_shell_checked:
+        status = "warning"
+    if status == "success" and ui_main_shell_status == "critical":
+        status = "critical"
+    if status == "success" and ui_main_shell_status == "warning":
         status = "warning"
     if status == "success" and not expected_rollback_exists:
         status = "critical"
@@ -35302,12 +35524,40 @@ def post_ops_deploy_smoke_record(
             "message": rollback_binding_message,
         }
     )
+    if not checklist_version_match:
+        checks.append(
+            {
+                "id": "checklist_version_binding",
+                "status": "warning",
+                "message": f"Checklist version does not match current policy ({checklist_version}).",
+            }
+        )
+    elif checklist_version:
+        checks.append(
+            {
+                "id": "checklist_version_binding",
+                "status": "ok",
+                "message": f"Checklist version binding verified ({checklist_version}).",
+            }
+        )
+    if not ui_main_shell_checked:
+        checks.append(
+            {
+                "id": "ui_main_shell_binding",
+                "status": "warning",
+                "message": "UI core path smoke result was not provided by smoke client.",
+            }
+        )
 
     detail = {
         "deploy_id": str(payload.get("deploy_id") or ""),
         "environment": str(payload.get("environment") or ENV_NAME),
         "base_url": str(payload.get("base_url") or ""),
-        "checklist_version": str(payload.get("checklist_version") or DEPLOY_CHECKLIST_VERSION),
+        "checklist_version": provided_checklist_version or checklist_version,
+        "checklist_version_expected": checklist_version or None,
+        "checklist_version_match": checklist_version_match,
+        "checklist_signature": checklist_signature or None,
+        "checklist_version_source": str(checklist_payload.get("version_source") or "unknown"),
         "rollback_reference": provided_rollback_reference,
         "rollback_reference_expected": expected_rollback_reference,
         "rollback_reference_match": rollback_reference_match,
@@ -35317,6 +35567,10 @@ def post_ops_deploy_smoke_record(
         "rollback_reference_sha256_match": rollback_sha_match if rollback_sha_provided else None,
         "rollback_ready": rollback_ready,
         "runbook_gate_passed": runbook_gate_passed,
+        "ui_main_shell_path": str(checklist_policy.get("ui_core_path") or "/?tab=iam"),
+        "ui_main_shell_markers": checklist_policy.get("ui_core_markers", []),
+        "ui_main_shell_checked": ui_main_shell_checked,
+        "ui_main_shell_status": ui_main_shell_status,
         "notes": str(payload.get("notes") or ""),
         "checks": checks,
     }
@@ -35372,6 +35626,155 @@ def get_dashboard_summary(
     )
 
 
+def _collect_ops_runbook_critical_review_metrics(
+    *,
+    now: datetime | None = None,
+    month: str | None = None,
+    sample_limit: int | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    month_label, month_start, month_end = _month_window_bounds(now=generated_at, month_label=month)
+    lookback_cutoff = generated_at - timedelta(days=max(7, RUNBOOK_CRITICAL_REVIEW_LOOKBACK_DAYS))
+    effective_start = max(month_start, lookback_cutoff)
+    max_samples = max(1, sample_limit or RUNBOOK_CRITICAL_REVIEW_SAMPLE_LIMIT)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(job_runs.c.id, job_runs.c.status, job_runs.c.finished_at, job_runs.c.detail_json)
+            .where(job_runs.c.job_name == "deploy_smoke")
+            .where(job_runs.c.finished_at >= effective_start)
+            .where(job_runs.c.finished_at < month_end)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+        ).mappings().all()
+
+    false_positive_candidates: list[dict[str, Any]] = []
+    false_negative_candidates: list[dict[str, Any]] = []
+    for row in rows:
+        detail = _parse_job_detail_json(row.get("detail_json"))
+        checks = _normalize_deploy_smoke_checks(detail.get("checks"))
+        non_runbook_problem_checks = [
+            item
+            for item in checks
+            if item.get("status") in {"warning", "critical"}
+            and item.get("id") not in {"fatal", "runbook_gate", "runbook_checks"}
+        ]
+        finished_at = _as_optional_datetime(row.get("finished_at"))
+        candidate = {
+            "run_id": row.get("id"),
+            "status": str(row.get("status") or "unknown"),
+            "finished_at": finished_at.isoformat() if finished_at is not None else None,
+            "deploy_id": str(detail.get("deploy_id") or ""),
+            "checklist_version": str(detail.get("checklist_version") or ""),
+            "runbook_gate_passed": bool(detail.get("runbook_gate_passed", False)),
+            "problem_check_ids": [str(item.get("id") or "") for item in non_runbook_problem_checks],
+        }
+        if candidate["runbook_gate_passed"]:
+            if candidate["status"] in {"warning", "critical"} and non_runbook_problem_checks:
+                false_negative_candidates.append(candidate)
+        elif not non_runbook_problem_checks:
+            false_positive_candidates.append(candidate)
+
+    return {
+        "month": month_label,
+        "window_start": effective_start.isoformat(),
+        "window_end": month_end.isoformat(),
+        "deploy_smoke_count": len(rows),
+        "false_positive_candidate_count": len(false_positive_candidates),
+        "false_negative_candidate_count": len(false_negative_candidates),
+        "candidate_count": len(false_positive_candidates) + len(false_negative_candidates),
+        "false_positive_candidates": false_positive_candidates[:max_samples],
+        "false_negative_candidates": false_negative_candidates[:max_samples],
+        "sample_limit": max_samples,
+        "lookback_days": max(7, RUNBOOK_CRITICAL_REVIEW_LOOKBACK_DAYS),
+    }
+
+
+def _build_ops_runbook_critical_review_snapshot(
+    *,
+    now: datetime | None = None,
+    month: str | None = None,
+) -> dict[str, Any]:
+    generated_at = now or datetime.now(timezone.utc)
+    metrics = _collect_ops_runbook_critical_review_metrics(now=generated_at, month=month)
+    month_label = str(metrics.get("month") or generated_at.strftime("%Y-%m"))
+    _, month_start, month_end = _month_window_bounds(now=generated_at, month_label=month_label)
+    with get_conn() as conn:
+        review_latest = conn.execute(
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_RUNBOOK_CRITICAL_REVIEW_JOB_NAME)
+            .where(job_runs.c.finished_at >= month_start)
+            .where(job_runs.c.finished_at < month_end)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+    review_latest_model = _row_to_job_run_model(review_latest) if review_latest is not None else None
+    review_completed = review_latest_model is not None
+    deploy_smoke_count = int(metrics.get("deploy_smoke_count") or 0)
+    candidate_count = int(metrics.get("candidate_count") or 0)
+
+    if deploy_smoke_count == 0:
+        status = "ok"
+        message = f"No deploy smoke run recorded for {month_label} yet."
+    elif review_completed:
+        status = "ok"
+        message = f"Monthly runbook critical review completed for {month_label}."
+    else:
+        status = "warning"
+        message = (
+            f"Monthly runbook critical review pending for {month_label} ({candidate_count} candidate(s))."
+        )
+
+    review_detail = (
+        review_latest_model.detail
+        if review_latest_model is not None and isinstance(review_latest_model.detail, dict)
+        else {}
+    )
+    return {
+        "generated_at": generated_at.isoformat(),
+        "status": status,
+        "message": message,
+        "review_completed": review_completed,
+        "latest_review_at": review_latest_model.finished_at.isoformat() if review_latest_model is not None else None,
+        "latest_review_status": review_latest_model.status if review_latest_model is not None else None,
+        "latest_review_run_id": review_latest_model.id if review_latest_model is not None else None,
+        "latest_review_notes": review_detail.get("review_notes"),
+        **metrics,
+    }
+
+
+def run_ops_runbook_critical_review_job(*, trigger: str = "manual", month: str | None = None) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    metrics = _collect_ops_runbook_critical_review_metrics(now=started_at, month=month)
+    finished_at = datetime.now(timezone.utc)
+    month_label = str(metrics.get("month") or finished_at.strftime("%Y-%m"))
+    candidate_count = int(metrics.get("candidate_count") or 0)
+    detail = {
+        **metrics,
+        "review_completed": True,
+        "review_completed_at": finished_at.isoformat(),
+        "review_notes": (
+            "No candidate found; monthly runbook critical review acknowledged."
+            if candidate_count == 0
+            else f"Reviewed {candidate_count} runbook false positive/negative candidate(s)."
+        ),
+    }
+    run_id = _write_job_run(
+        job_name=OPS_RUNBOOK_CRITICAL_REVIEW_JOB_NAME,
+        trigger=trigger,
+        status="success",
+        started_at=started_at,
+        finished_at=finished_at,
+        detail=detail,
+    )
+    return {
+        "run_id": run_id,
+        "job_name": OPS_RUNBOOK_CRITICAL_REVIEW_JOB_NAME,
+        "status": "success",
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        **detail,
+    }
+
+
 def _build_ops_runbook_checks_snapshot(
     *,
     now: datetime | None = None,
@@ -35379,6 +35782,8 @@ def _build_ops_runbook_checks_snapshot(
 ) -> dict[str, Any]:
     generated_at = now or datetime.now(timezone.utc)
     horizon = generated_at - timedelta(minutes=max(1, horizon_minutes))
+    deploy_checklist = _build_deploy_checklist_payload()
+    runbook_review = _build_ops_runbook_critical_review_snapshot(now=generated_at)
     with get_conn() as conn:
         sla_recent = conn.execute(
             select(job_runs.c.id)
@@ -35516,6 +35921,15 @@ def _build_ops_runbook_checks_snapshot(
     deploy_smoke_rollback_ready = bool(deploy_smoke_detail.get("rollback_ready", False))
     deploy_smoke_runbook_gate_passed = bool(deploy_smoke_detail.get("runbook_gate_passed", False))
     deploy_smoke_checklist_version = str(deploy_smoke_detail.get("checklist_version") or "")
+    deploy_smoke_checklist_signature = str(deploy_smoke_detail.get("checklist_signature") or "")
+    deploy_smoke_checklist_current_version = str(deploy_checklist.get("version") or "")
+    deploy_smoke_checklist_current_signature = str(deploy_checklist.get("signature") or "")
+    deploy_smoke_version_match = (
+        deploy_smoke_checklist_version != ""
+        and deploy_smoke_checklist_version == deploy_smoke_checklist_current_version
+    )
+    deploy_smoke_ui_checked = bool(deploy_smoke_detail.get("ui_main_shell_checked", False))
+    deploy_smoke_ui_status = str(deploy_smoke_detail.get("ui_main_shell_status") or "missing")
     deploy_smoke_status_value = "ok"
     if deploy_smoke_finished_at is None:
         deploy_smoke_status_value = "warning"
@@ -35529,6 +35943,15 @@ def _build_ops_runbook_checks_snapshot(
     elif DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE and not deploy_smoke_runbook_gate_passed:
         deploy_smoke_status_value = "warning"
         deploy_smoke_message = "Deploy smoke recorded without passing runbook gate."
+    elif not deploy_smoke_version_match:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = "Deploy smoke checklist version does not match current release policy."
+    elif not deploy_smoke_ui_checked:
+        deploy_smoke_status_value = "warning"
+        deploy_smoke_message = "Deploy smoke did not include UI core path validation."
+    elif deploy_smoke_ui_status in {"warning", "critical"}:
+        deploy_smoke_status_value = "critical" if deploy_smoke_ui_status == "critical" else "warning"
+        deploy_smoke_message = "Deploy smoke reported UI core path issue."
     elif not deploy_smoke_rollback_ready:
         deploy_smoke_status_value = "warning"
         deploy_smoke_message = "Deploy smoke recorded without rollback-ready confirmation."
@@ -35660,7 +36083,25 @@ def _build_ops_runbook_checks_snapshot(
             "rollback_ready": deploy_smoke_rollback_ready,
             "runbook_gate_passed": deploy_smoke_runbook_gate_passed,
             "checklist_version": deploy_smoke_checklist_version,
+            "current_checklist_version": deploy_smoke_checklist_current_version,
+            "checklist_signature": deploy_smoke_checklist_signature,
+            "current_checklist_signature": deploy_smoke_checklist_current_signature,
+            "checklist_version_match": deploy_smoke_version_match,
+            "ui_main_shell_checked": deploy_smoke_ui_checked,
+            "ui_main_shell_status": deploy_smoke_ui_status,
+            "ui_main_shell_path": deploy_smoke_detail.get("ui_main_shell_path"),
             "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
+        },
+        {
+            "id": "runbook_critical_monthly_review",
+            "status": str(runbook_review.get("status") or "warning"),
+            "message": str(runbook_review.get("message") or "Monthly runbook critical review status unavailable."),
+            "month": runbook_review.get("month"),
+            "review_completed": bool(runbook_review.get("review_completed", False)),
+            "latest_review_at": runbook_review.get("latest_review_at"),
+            "deploy_smoke_count": int(runbook_review.get("deploy_smoke_count") or 0),
+            "false_positive_candidate_count": int(runbook_review.get("false_positive_candidate_count") or 0),
+            "false_negative_candidate_count": int(runbook_review.get("false_negative_candidate_count") or 0),
         },
         {
             "id": "migration_rollback_guide",
@@ -35852,6 +36293,7 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     rate_limit_snapshot = _rate_limit_backend_snapshot()
     signing_snapshot = _audit_signing_snapshot()
     latency_snapshot = _build_api_latency_snapshot()
+    deploy_checklist = _build_deploy_checklist_payload()
     alert_targets = _configured_alert_targets()
     mttr_policy, mttr_policy_updated_at, _ = _ensure_mttr_slo_policy()
     with get_conn() as conn:
@@ -35890,7 +36332,9 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
         "audit_archive_signing": signing_snapshot,
         "api_latency": latency_snapshot,
         "deploy_smoke_policy": {
-            "checklist_version": DEPLOY_CHECKLIST_VERSION,
+            "checklist_version": deploy_checklist.get("version"),
+            "checklist_signature": deploy_checklist.get("signature"),
+            "checklist_version_source": deploy_checklist.get("version_source"),
             "recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
             "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
             "latest_run_at": (
@@ -36253,6 +36697,71 @@ def get_ops_runbook_checks_archive_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@ops_router.post("/runbook/review/run")
+def run_ops_runbook_critical_review(
+    month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    result = run_ops_runbook_critical_review_job(trigger="api", month=month)
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_critical_review_run",
+        resource_type="ops_runbook",
+        resource_id=str(result.get("run_id") or "pending"),
+        detail={
+            "run_id": result.get("run_id"),
+            "month": result.get("month"),
+            "deploy_smoke_count": result.get("deploy_smoke_count"),
+            "false_positive_candidate_count": result.get("false_positive_candidate_count"),
+            "false_negative_candidate_count": result.get("false_negative_candidate_count"),
+        },
+    )
+    return result
+
+
+@ops_router.get("/runbook/review/latest")
+def get_ops_runbook_critical_review_latest(
+    month: Annotated[str | None, Query(pattern=r"^\d{4}-\d{2}$")] = None,
+    principal: dict[str, Any] = Depends(require_permission("admins:manage")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        stmt = (
+            select(job_runs)
+            .where(job_runs.c.job_name == OPS_RUNBOOK_CRITICAL_REVIEW_JOB_NAME)
+            .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+        )
+        if month is not None:
+            _, month_start, month_end = _month_window_bounds(month_label=month)
+            stmt = stmt.where(job_runs.c.finished_at >= month_start).where(job_runs.c.finished_at < month_end)
+        row = conn.execute(stmt.limit(1)).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No ops_runbook_critical_review run found")
+
+    model = _row_to_job_run_model(row)
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    response = {
+        "run_id": model.id,
+        "job_name": model.job_name,
+        "trigger": model.trigger,
+        "status": model.status,
+        "started_at": model.started_at.isoformat(),
+        "finished_at": model.finished_at.isoformat(),
+        **detail,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_runbook_critical_review_latest_view",
+        resource_type="ops_runbook",
+        resource_id=str(model.id),
+        detail={
+            "run_id": model.id,
+            "month": detail.get("month"),
+            "status": model.status,
+        },
+    )
+    return response
 
 
 @ops_router.get("/security/posture")

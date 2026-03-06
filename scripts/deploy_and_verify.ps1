@@ -14,7 +14,7 @@ param(
   [switch]$RollbackOnFailure,
   [string]$ExpectRateLimitBackend = "",
   [bool]$RunRunbookGate = $true,
-  [string]$ChecklistVersion = "2026.03.v1"
+  [string]$ChecklistVersion = ""
 )
 
 $ErrorActionPreference = "Stop"

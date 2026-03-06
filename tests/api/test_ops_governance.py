@@ -223,6 +223,7 @@ def test_ops_runbook_checks_endpoint(app_client: TestClient) -> None:
     assert "api_latency_p95" in ids
     assert "api_burn_rate" in ids
     assert "deploy_smoke_checklist" in ids
+    assert "runbook_critical_monthly_review" in ids
     assert "evidence_archive_integrity_batch" in ids
 
 def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
@@ -294,7 +295,10 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert checklist.status_code == 200
     checklist_body = checklist.json()
     assert checklist_body["version"]
+    assert checklist_body["version_source"]
+    assert checklist_body["signature"]
     assert len(checklist_body["steps"]) >= 5
+    assert any(step["id"] == "smoke_02_ui_main_shell" for step in checklist_body["steps"])
 
     health = app_client.get("/health")
     meta = app_client.get("/meta")
@@ -344,6 +348,7 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
             "runbook_gate_passed": True,
             "checks": [
                 {"id": "health", "status": "ok", "message": "health endpoint ok"},
+                {"id": "ui_main_shell", "status": "ok", "message": "main html shell ok"},
                 {"id": "runbook_gate", "status": "ok", "message": "no critical checks"},
             ],
         },
@@ -356,6 +361,9 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert smoke_record_body["detail"]["rollback_reference_match"] is True
     assert smoke_record_body["detail"]["rollback_reference_exists"] is True
     assert smoke_record_body["detail"]["rollback_reference_sha256_match"] is True
+    assert smoke_record_body["detail"]["checklist_version_match"] is True
+    assert smoke_record_body["detail"]["ui_main_shell_checked"] is True
+    assert smoke_record_body["detail"]["ui_main_shell_status"] == "ok"
 
     runbook = app_client.get(
         "/api/ops/runbook/checks",
@@ -366,9 +374,14 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     deploy_check = next(item for item in runbook_body["checks"] if item["id"] == "deploy_smoke_checklist")
     assert deploy_check["latest_run_status"] in {"success", "warning", "critical"}
     assert deploy_check["latest_run_at"] is not None
+    assert deploy_check["checklist_version_match"] is True
+    assert deploy_check["ui_main_shell_status"] == "ok"
 
 def test_ops_deploy_smoke_record_marks_warning_on_rollback_reference_mismatch(app_client: TestClient) -> None:
     headers = _owner_headers()
+    checklist = app_client.get("/api/ops/deploy/checklist", headers=headers)
+    assert checklist.status_code == 200
+    checklist_body = checklist.json()
     smoke_record = app_client.post(
         "/api/ops/deploy/smoke/record",
         headers=headers,
@@ -377,12 +390,13 @@ def test_ops_deploy_smoke_record_marks_warning_on_rollback_reference_mismatch(ap
             "environment": "test",
             "status": "success",
             "base_url": "http://testserver",
-            "checklist_version": "2026.03.v1",
+            "checklist_version": checklist_body["version"],
             "rollback_reference": "docs/NOT_EXISTING.md",
             "rollback_ready": True,
             "runbook_gate_passed": True,
             "checks": [
                 {"id": "health", "status": "ok", "message": "health endpoint ok"},
+                {"id": "ui_main_shell", "status": "ok", "message": "main html shell ok"},
             ],
         },
     )
@@ -563,6 +577,81 @@ def test_ops_runbook_daily_check_run_and_latest(app_client: TestClient) -> None:
     assert history.status_code == 200
     assert len(history.json()) >= 1
 
+
+def test_ops_runbook_critical_review_run_and_latest(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    checklist = app_client.get("/api/ops/deploy/checklist", headers=headers)
+    assert checklist.status_code == 200
+    checklist_body = checklist.json()
+
+    smoke_false_negative = app_client.post(
+        "/api/ops/deploy/smoke/record",
+        headers=headers,
+        json={
+            "deploy_id": "deploy-review-fn",
+            "environment": "test",
+            "status": "warning",
+            "base_url": "http://testserver",
+            "checklist_version": checklist_body["version"],
+            "rollback_reference": "docs/W15_MIGRATION_ROLLBACK.md",
+            "rollback_reference_sha256": checklist_body["policy"]["rollback_guide_sha256"],
+            "rollback_ready": True,
+            "runbook_gate_passed": True,
+            "checks": [
+                {"id": "health", "status": "ok", "message": "health endpoint ok"},
+                {"id": "ui_main_shell", "status": "warning", "message": "inspection entry point degraded"},
+            ],
+        },
+    )
+    assert smoke_false_negative.status_code == 200
+
+    smoke_false_positive = app_client.post(
+        "/api/ops/deploy/smoke/record",
+        headers=headers,
+        json={
+            "deploy_id": "deploy-review-fp",
+            "environment": "test",
+            "status": "critical",
+            "base_url": "http://testserver",
+            "checklist_version": checklist_body["version"],
+            "rollback_reference": "docs/W15_MIGRATION_ROLLBACK.md",
+            "rollback_reference_sha256": checklist_body["policy"]["rollback_guide_sha256"],
+            "rollback_ready": True,
+            "runbook_gate_passed": False,
+            "checks": [
+                {"id": "health", "status": "ok", "message": "health endpoint ok"},
+                {"id": "ui_main_shell", "status": "ok", "message": "main html shell ok"},
+                {"id": "runbook_gate", "status": "critical", "message": "critical runbook finding"},
+            ],
+        },
+    )
+    assert smoke_false_positive.status_code == 200
+
+    runbook_snapshot = app_client.get("/api/ops/runbook/checks", headers=headers)
+    assert runbook_snapshot.status_code == 200
+    review_check = next(
+        item for item in runbook_snapshot.json()["checks"] if item["id"] == "runbook_critical_monthly_review"
+    )
+    assert review_check["status"] in {"warning", "ok"}
+    assert review_check["false_positive_candidate_count"] >= 1
+    assert review_check["false_negative_candidate_count"] >= 1
+
+    review_run = app_client.post("/api/ops/runbook/review/run", headers=headers)
+    assert review_run.status_code == 200
+    review_run_body = review_run.json()
+    assert review_run_body["job_name"] == "ops_runbook_critical_review"
+    assert review_run_body["status"] == "success"
+    assert review_run_body["review_completed"] is True
+    assert review_run_body["false_positive_candidate_count"] >= 1
+    assert review_run_body["false_negative_candidate_count"] >= 1
+
+    review_latest = app_client.get("/api/ops/runbook/review/latest", headers=headers)
+    assert review_latest.status_code == 200
+    review_latest_body = review_latest.json()
+    assert review_latest_body["job_name"] == "ops_runbook_critical_review"
+    assert review_latest_body["run_id"] == review_run_body["run_id"]
+    assert review_latest_body["month"]
+
 def test_startup_preflight_signing_key_warning_when_not_required(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "preflight_signing_warning.db"
     monkeypatch.setenv("DATABASE_URL", f"sqlite:///{db_path.as_posix()}")
@@ -723,6 +812,10 @@ def test_ops_governance_gate_endpoints(app_client: TestClient) -> None:
     assert snapshot_body["decision"] in {"go", "no_go"}
     assert isinstance(snapshot_body["rules"], list)
     assert snapshot_body["summary"]["total_rules"] >= 5
+    assert snapshot_body["summary"]["weighted_score_percent"] >= 0.0
+    assert snapshot_body["policy"]["dr_weight"] >= 1.0
+    assert snapshot_body["policy"]["min_weighted_score_percent"] >= 0.0
+    assert any("weight" in item for item in snapshot_body["rules"])
 
     run = app_client.post("/api/ops/governance/gate/run", headers=_owner_headers())
     assert run.status_code == 200
