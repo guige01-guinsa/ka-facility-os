@@ -5,8 +5,8 @@
 ## 2026-03-06 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 40,555 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
-  - `tests/test_api.py`: 8,336 lines (단일 테스트 파일 집중)
+  - `app/main.py`: 37,322 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `tests/api/*.py`: 6 files, 92 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,452 lines, `app/database.py`: 945 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
@@ -17,7 +17,7 @@
 - 최근 운영 반영 상태(2026-03-06)
   - IAM 토큰/감사로그 콘솔 기능 반영
   - 메뉴탭 툴팁(영문 용어 + 한글 설명) 반영
-  - 운영 배포 `dep-d6lbm5buibrs739r6u30` + `SMOKE_OK`
+  - 운영 배포 `dep-d6ldo4vafjfc73fbki3g` + `SMOKE_OK`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -46,12 +46,11 @@
 
 ### R2. 테스트 구조 분할 (우선순위 2, 1주)
 
-- [ ] `tests/test_api.py`를 도메인별 파일로 분리
+- [x] `tests/test_api.py`를 도메인별 파일로 분리
   - `tests/api/test_auth_*.py`
-  - `tests/api/test_admin_*.py`
   - `tests/api/test_ops_*.py`
   - `tests/api/test_adoption_*.py`
-- [ ] 공통 fixture/util 모듈화 (`tests/conftest.py`, `tests/helpers/*.py`)
+- [x] 공통 fixture/util 모듈화 (`tests/conftest.py`, `tests/helpers/*.py`)
 - [ ] 배포 스모크 핵심 시나리오를 별도 `smoke` 그룹으로 태깅
 
 완료 기준:
@@ -99,7 +98,7 @@
 
 ### Week 2
 
-- [ ] Day 1-2: 테스트 파일 분할 + fixture 정리
+- [x] Day 1-2: 테스트 파일 분할 + fixture 정리 (`tests/api/test_*.py`, `tests/conftest.py`, `tests/helpers/common.py`, 전체 테스트 92 passed)
 - [ ] Day 3: 데이터/정책 메타 정합성 점검
 - [ ] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
