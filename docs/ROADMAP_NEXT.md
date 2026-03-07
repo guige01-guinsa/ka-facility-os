@@ -5,7 +5,7 @@
 ## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 23,741 lines (공개/웹 + adoption tracker + adoption KPI/policy + ops tutorial/reporting + governance/alerts/SLA policy 라우트 분리, ops security/checklist + ops quality/DR/governance + remediation/autopilot + inspection/evidence + workflow/work-order helper/service 추출 반영, 직접 route decorator 제거 완료)
+  - `app/main.py`: 19,123 lines (공개/웹 + adoption tracker + adoption KPI/policy + ops tutorial/reporting + governance/alerts/SLA policy 라우트 분리, ops security/checklist + ops quality/DR/governance + remediation/autopilot + inspection/evidence + workflow/work-order + adoption tracker helper/service 추출 반영, 직접 route decorator 제거 완료)
   - `tests/api/*.py`: 7 files, 101 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
@@ -76,6 +76,13 @@
     - `scripts/render_env_utils.ps1` 추가, `post_deploy_smoke.ps1`가 Render env의 `ADMIN_TOKEN`을 자동 조회
     - `deploy_and_verify.ps1`는 deploy hook 없이도 Render API로 직접 배포 가능
     - live 검증: `/api/auth/me` `role=owner`, `/api/ops/runbook/checks` `overall_status=ok`
+  - adoption tracker helper 추가 추출 + smoke marker 도입
+    - 런타임 커밋 `bc434c6`
+    - 운영 배포 `dep-d6m2ga450q8c73ac79bg` + `SMOKE_OK`
+    - `app.domains.adoption.tracker_service`로 `W02~W15` tracker/catalog/readiness/load/reset helper 추출
+    - `pytest.ini`에 `smoke` marker 추가, 배포 핵심 회귀 5개를 `pytest -m smoke`로 분리
+    - 검증: `pytest -q -m smoke` `5 passed, 96 deselected`, split test run total `101 passed`
+    - live 검증: `/api/adoption/w15/tracker/overview?site=HQ` `200 OK`, `/api/ops/runbook/checks` `overall_status=ok`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -101,7 +108,7 @@
 - [x] ops governance/alerts/SLA policy 라우트를 `app/domains/ops/router_governance.py`, `app/domains/ops/router_alerts.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
 - [x] tutorial/handover/adoption KPI-policy 라우트를 `app/domains/ops/router_tutorial.py`, `app/domains/ops/router_reporting.py`, `app/domains/adoption/router_ops.py`로 분리 (2026-03-07, `53401df`, deploy `dep-d6lv3p4r85hc73ae73r0`, 전체 테스트 `101 passed`, `SMOKE_OK`)
 - [x] `app/main.py`는 라우터 결합 + 앱 부트스트랩 + middleware 역할로 축소
-- [ ] helper/service 추출을 계속해 `app/main.py`를 20k lines 이하로 추가 축소 (현재 23,741 lines, 2026-03-07 `d6d43dc`)
+- [x] helper/service 추출을 계속해 `app/main.py`를 20k lines 이하로 추가 축소 (현재 19,123 lines, 2026-03-07 `bc434c6`)
 
 완료 기준:
 - `app/main.py` 52k -> 20k lines 이하
@@ -114,7 +121,7 @@
   - `tests/api/test_ops_*.py`
   - `tests/api/test_adoption_*.py`
 - [x] 공통 fixture/util 모듈화 (`tests/conftest.py`, `tests/helpers/*.py`)
-- [ ] 배포 스모크 핵심 시나리오를 별도 `smoke` 그룹으로 태깅
+- [x] 배포 스모크 핵심 시나리오를 별도 `smoke` 그룹으로 태깅 (2026-03-07, `pytest.ini`, `pytest -q -m smoke` `5 passed`)
 
 완료 기준:
 - 테스트 실패 시 도메인 영향 범위를 파일 단위로 즉시 식별 가능
@@ -185,6 +192,7 @@
 - [x] Day 5+: remediation/autopilot helper 추가 추출 (`4bfea9f`, deploy `dep-d6m0pkp4tr6s7386n830`, split test run total `101 passed`, `SMOKE_OK`)
 - [x] Day 5+: inspection/evidence helper 추가 추출 (`48019cd`, deploy `dep-d6m133bh46gs73bc4ke0`, split test run total `101 passed`, `SMOKE_OK`)
 - [x] Day 5+: workflow/work-order helper 추가 추출 + privileged smoke 자동 복구 (`d6d43dc`, deploy `dep-d6m23q7gi27c73ds4gk0`, split test run total `101 passed`, live `/api/auth/me role=owner`, `SMOKE_OK`)
+- [x] Day 5+: adoption tracker helper 추가 추출 + smoke marker 도입 (`bc434c6`, deploy `dep-d6m2ga450q8c73ac79bg`, `app/main.py` `19,123` lines, `pytest -q -m smoke` `5 passed`, split test run total `101 passed`, `SMOKE_OK`)
 
 ## 운영 규칙
 

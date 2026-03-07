@@ -677,6 +677,7 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
 ## CI and ops scripts
 
 - CI workflow: `.github/workflows/ci.yml` (`pytest -q`)
+- Smoke marker test run: `pytest -q -m smoke`
 - Deploy + smoke script:
 
 ```powershell
