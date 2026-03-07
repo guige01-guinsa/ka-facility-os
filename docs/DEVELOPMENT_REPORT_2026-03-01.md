@@ -28,6 +28,7 @@
 - 2026-03-07 기준 `workflow/work-order` helper를 `app.domains.ops.workflow_service`로 추가 추출한 런타임 커밋 `d6d43dc`를 운영 배포(`dep-d6m23q7gi27c73ds4gk0`)까지 완료했고, `scripts/render_env_utils.ps1`를 통해 privileged smoke가 운영 Render env의 `ADMIN_TOKEN`을 자동 복구하도록 정리했다.
 - 2026-03-07 기준 `W02~W15 adoption tracker` helper를 `app.domains.adoption.tracker_service`로 추가 추출한 런타임 커밋 `bc434c6`를 운영 배포(`dep-d6m2ga450q8c73ac79bg`)까지 완료했고, `pytest -m smoke`로 배포 핵심 회귀 5개를 분리했다.
 - 2026-03-07 기준 `job_runs`, `alert_deliveries`, `sla_policy_*` helper를 `app.domains.ops.record_service`로 추가 추출한 런타임 커밋 `0e38087`를 운영 배포(`dep-d6m2o6h5pdvs738nsk80`)까지 완료했고, `deploy_and_verify.ps1`가 `pytest -m smoke` 통과 후에만 배포를 진행하도록 정리했다.
+- 2026-03-07 기준 MTTR policy, alert target/render, guard, retention, dispatch, KPI/MTTR snapshot helper를 `app.domains.ops.alert_service`로 추가 추출한 런타임 커밋 `0d1507e`를 운영 배포(`dep-d6m39ep5pdvs738o2qc0`)까지 완료했고, `deploy_and_verify.ps1`가 기대 commit과 live deploy commit이 다르면 자동 재시도하며 stale process env의 잘못된 `RENDER_SERVICE_ID`도 user env 기준으로 fallback 하도록 보강했다.
 
 ## 2. 단계별 개발 내역
 
@@ -131,13 +132,15 @@
 - `workflow/work-order` helper/service를 `app.domains.ops.workflow_service`로 추가 추출.
 - `W02~W15 adoption tracker` helper/service를 `app.domains.adoption.tracker_service`로 추가 추출.
 - `job_runs`, `alert_deliveries`, `sla_policy_*` helper/service를 `app.domains.ops.record_service`로 추가 추출.
-- `app/main.py`는 `19,025` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
+- `alert MTTR policy`, `alert target/render`, `alert guard/retention/dispatch`, `alert KPI/MTTR snapshot` helper/service를 `app.domains.ops.alert_service`로 추가 추출.
+- `app/main.py`는 `17,011` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
 - 사용자 환경변수 `RENDER_SERVICE_ID`를 운영 웹서비스 `srv-d6g57jbuibrs739g5mvg`로 정정해 잘못된 서비스(`ka-part`)로의 배포 경로를 차단했다.
 - privileged smoke는 local `AdminToken` 없이도 Render env의 `ADMIN_TOKEN`을 자동 조회해 수행되며, live `/api/auth/me` `role=owner`, `/api/ops/runbook/checks` `overall_status=ok`를 확인했다.
 - `pytest.ini`에 `smoke` marker를 추가해 배포 핵심 회귀를 `pytest -q -m smoke`(`5 passed, 96 deselected`)로 분리했다.
 - `deploy_and_verify.ps1`는 이제 `python -m pytest -q -m smoke`를 먼저 실행해 `PRE_DEPLOY_SMOKE_OK`일 때만 배포를 시작한다.
+- `deploy_and_verify.ps1`는 이제 Render API의 live deploy commit이 기대 commit(`git rev-parse HEAD`)과 다를 때 자동 재시도하고, 현재 셸 process env의 `RENDER_SERVICE_ID`가 stale한 경우 user env `RENDER_SERVICE_ID`로 fallback 한다.
 - live adoption tracker 검증으로 `/api/adoption/w15/tracker/overview?site=HQ` `200 OK`를 확인했다.
-- 배포: `dep-d6m0ctk50q8c73abg7l0`, `dep-d6m0pkp4tr6s7386n830`, `dep-d6m133bh46gs73bc4ke0`, `dep-d6m23q7gi27c73ds4gk0`, `dep-d6m2ga450q8c73ac79bg`, `dep-d6m2o6h5pdvs738nsk80`, 검증: split test run total `101 passed` (`16 + 36 + 49`), `SMOKE_OK`
+- 배포: `dep-d6m0ctk50q8c73abg7l0`, `dep-d6m0pkp4tr6s7386n830`, `dep-d6m133bh46gs73bc4ke0`, `dep-d6m23q7gi27c73ds4gk0`, `dep-d6m2ga450q8c73ac79bg`, `dep-d6m2o6h5pdvs738nsk80`, `dep-d6m39ep5pdvs738o2qc0`, 검증: split test run total `101 passed` (`16 + 36 + 49`), `TARGET_SERVICE_FALLBACK`, `DEPLOY_COMMIT_MATCH`, `SMOKE_OK`
 - 배포: `dep-d6lv3p4r85hc73ae73r0`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 
 ### 안정화 스프린트(2026-03-01 반영)

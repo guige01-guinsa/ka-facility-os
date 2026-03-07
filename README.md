@@ -692,8 +692,11 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
 
 - 기본 동작은 `python -m pytest -q -m smoke`를 먼저 실행하고, 통과 시에만 실제 배포를 시작합니다.
 - 사전 smoke를 건너뛰려면 `-SkipPreDeploySmokeTests`를 사용합니다.
+- `-ExpectedCommit`를 주지 않으면 로컬 `git rev-parse HEAD`를 기대 commit으로 사용하고, live deploy commit이 다르면 자동 재시도합니다.
+- `-MaxDeployAttempts`로 commit mismatch 재시도 횟수를 조정할 수 있습니다.
 - `-DeployHookUrl`는 선택사항입니다. 비워두면 Render API `POST /v1/services/{serviceId}/deploys`를 직접 사용합니다.
 - `-ServiceId`를 생략하면 현재 셸 env `RENDER_SERVICE_ID`, 없으면 사용자 환경변수 `RENDER_SERVICE_ID`를 사용합니다.
+- 현재 셸 env의 `RENDER_SERVICE_ID`가 stale해서 예상 서비스/리포지토리 검증에 실패하면, 사용자 환경변수 `RENDER_SERVICE_ID`로 자동 fallback 합니다.
 - `-AdminToken`을 생략하면 현재 env `ADMIN_TOKEN`, 없으면 Render service env의 `ADMIN_TOKEN`을 자동 조회해 privileged smoke를 수행합니다.
 
 Direct smoke helper supports backend expectation, optional strict audit-chain gate, runbook gate, and smoke record:
