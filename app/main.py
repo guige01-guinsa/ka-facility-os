@@ -22,6 +22,7 @@ from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Annotated, Any, Callable
 from urllib import error as url_error
+from urllib import parse as url_parse
 from urllib import request as url_request
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
@@ -12034,24 +12035,70 @@ def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
     return None
 
 
-def _configured_alert_targets() -> list[str]:
-    targets: list[str] = []
+def _detect_alert_target_kind(url: str) -> str:
+    host = (url_parse.urlparse(url).hostname or "").strip().lower()
+    if host.endswith("hooks.slack.com") or host.endswith("hooks.slack-gov.com"):
+        return "slack"
+    if (
+        host.endswith("webhook.office.com")
+        or host.endswith("office.com")
+        or host.endswith("logic.azure.com")
+        or host.endswith("powerautomate.com")
+    ):
+        return "teams"
+    return "generic"
+
+
+def _parse_alert_target_spec(raw_value: str) -> dict[str, str] | None:
+    value = raw_value.strip()
+    if not value:
+        return None
+
+    kind = ""
+    url = value
+    if "::" in value:
+        prefix, remainder = value.split("::", 1)
+        normalized_prefix = prefix.strip().lower()
+        if normalized_prefix in {"generic", "slack", "teams"}:
+            kind = normalized_prefix
+            url = remainder.strip()
+    if not url:
+        return None
+    if not kind:
+        kind = _detect_alert_target_kind(url)
+    return {
+        "raw": value,
+        "url": url,
+        "kind": kind,
+    }
+
+
+def _configured_alert_target_configs() -> list[dict[str, str]]:
+    target_specs: list[str] = []
     merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
     for part in merged_raw.split(","):
         value = part.strip()
         if value:
-            targets.append(value)
+            target_specs.append(value)
     if ALERT_WEBHOOK_URL:
-        targets.append(ALERT_WEBHOOK_URL)
+        target_specs.append(ALERT_WEBHOOK_URL)
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for target in targets:
-        if target in seen:
+    configs: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in target_specs:
+        parsed = _parse_alert_target_spec(item)
+        if parsed is None:
             continue
-        seen.add(target)
-        deduped.append(target)
-    return deduped
+        target_url = parsed["url"]
+        if target_url in seen_urls:
+            continue
+        seen_urls.add(target_url)
+        configs.append(parsed)
+    return configs
+
+
+def _configured_alert_targets() -> list[str]:
+    return [item["url"] for item in _configured_alert_target_configs()]
 
 
 def _build_alert_webhook_request_headers() -> dict[str, str]:
@@ -12059,6 +12106,234 @@ def _build_alert_webhook_request_headers() -> dict[str, str]:
     if ALERT_WEBHOOK_SHARED_TOKEN:
         headers[ALERT_WEBHOOK_TOKEN_HEADER] = ALERT_WEBHOOK_SHARED_TOKEN
     return headers
+
+
+def _truncate_alert_text(value: Any, max_length: int = 240) -> str:
+    text = str(value).strip()
+    if len(text) <= max_length:
+        return text
+    return text[: max(0, max_length - 3)].rstrip() + "..."
+
+
+def _humanize_alert_event_type(event_type: str) -> str:
+    normalized = event_type.strip().lower()
+    titles = {
+        "sla_escalation": "SLA escalation alert",
+        W07_DEGRADATION_ALERT_EVENT_TYPE: "W07 quality degradation alert",
+        "ops_daily_check": "Ops daily check alert",
+        "mttr_slo_breach": "Alert MTTR SLO breach",
+        OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE: "Governance remediation escalation",
+        "alert_channel_recovery_probe": "Alert channel recovery probe",
+    }
+    if normalized in titles:
+        return titles[normalized]
+    return normalized.replace("_", " ").strip().title() or "Alert event"
+
+
+def _build_alert_message_summary(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    title = _humanize_alert_event_type(event_type)
+    facts: list[tuple[str, str]] = []
+
+    def add_fact(label: str, value: Any) -> None:
+        if value is None or value == "" or value == [] or value == {}:
+            return
+        if isinstance(value, list):
+            rendered = ", ".join(_truncate_alert_text(item, 40) for item in value[:10])
+            if len(value) > 10:
+                rendered += f" (+{len(value) - 10} more)"
+        elif isinstance(value, dict):
+            rendered = _truncate_alert_text(json.dumps(value, ensure_ascii=False, sort_keys=True), 180)
+        else:
+            rendered = _truncate_alert_text(value, 180)
+        if rendered:
+            facts.append((label, rendered))
+
+    add_fact("Event", title)
+    add_fact("Site", payload.get("site"))
+    add_fact("Checked at", payload.get("checked_at"))
+    add_fact("Status", payload.get("overall_status") or payload.get("status"))
+    add_fact("Escalated", payload.get("escalated_count"))
+    add_fact("Work orders", payload.get("work_order_ids"))
+
+    window = payload.get("window")
+    if isinstance(window, dict):
+        add_fact("Window days", window.get("days"))
+        add_fact("Incident count", window.get("incident_count"))
+        add_fact("MTTR (min)", window.get("mttr_minutes"))
+
+    policy = payload.get("policy")
+    if isinstance(policy, dict):
+        add_fact("Policy key", policy.get("policy_key"))
+        add_fact("Threshold (min)", policy.get("threshold_minutes"))
+
+    lines: list[str] = []
+    reasons = payload.get("reasons")
+    if isinstance(reasons, list) and reasons:
+        lines.append("Reasons: " + "; ".join(_truncate_alert_text(item, 80) for item in reasons[:3]))
+
+    signals = payload.get("signals")
+    if isinstance(signals, dict) and signals:
+        signal_text = ", ".join(
+            f"{key}={_truncate_alert_text(value, 40)}"
+            for key, value in list(signals.items())[:5]
+        )
+        if signal_text:
+            lines.append("Signals: " + signal_text)
+
+    metrics = payload.get("metrics")
+    if isinstance(metrics, dict) and metrics:
+        metric_text = ", ".join(
+            f"{key}={_truncate_alert_text(value, 40)}"
+            for key, value in list(metrics.items())[:5]
+        )
+        if metric_text:
+            lines.append("Metrics: " + metric_text)
+
+    top_channels = payload.get("top_channels")
+    if isinstance(top_channels, list) and top_channels:
+        rendered_channels: list[str] = []
+        for item in top_channels[:3]:
+            if isinstance(item, dict):
+                channel_name = str(item.get("target") or item.get("channel") or "unknown")
+                channel_rate = item.get("success_rate_percent")
+                if channel_rate is not None:
+                    rendered_channels.append(f"{_truncate_alert_text(channel_name, 40)} ({channel_rate}%)")
+                else:
+                    rendered_channels.append(_truncate_alert_text(channel_name, 40))
+            else:
+                rendered_channels.append(_truncate_alert_text(item, 40))
+        if rendered_channels:
+            lines.append("Top channels: " + ", ".join(rendered_channels))
+
+    checks = payload.get("checks")
+    if isinstance(checks, list) and checks:
+        warning_ids = [str(item.get("id") or "") for item in checks if isinstance(item, dict) and item.get("status") == "warning"]
+        critical_ids = [str(item.get("id") or "") for item in checks if isinstance(item, dict) and item.get("status") == "critical"]
+        if critical_ids:
+            lines.append("Critical checks: " + ", ".join(critical_ids[:5]))
+        if warning_ids:
+            lines.append("Warning checks: " + ", ".join(warning_ids[:5]))
+
+    if not lines:
+        lines.append("Alert payload received by KA Facility OS.")
+
+    summary_text = " | ".join(f"{label}: {value}" for label, value in facts if label != "Event")
+    if not summary_text:
+        summary_text = title
+
+    return {
+        "title": title,
+        "facts": facts,
+        "lines": lines,
+        "summary_text": summary_text,
+    }
+
+
+def _render_alert_payload_for_target(
+    *,
+    event_type: str,
+    payload: dict[str, Any],
+    target_kind: str,
+) -> dict[str, Any]:
+    normalized_kind = target_kind.strip().lower() or "generic"
+    if normalized_kind == "generic":
+        return payload
+
+    summary = _build_alert_message_summary(event_type, payload)
+    title = str(summary["title"])
+    facts = list(summary["facts"])
+    lines = list(summary["lines"])
+    summary_text = str(summary["summary_text"])
+
+    if normalized_kind == "slack":
+        fact_lines = "\n".join(f"*{label}:* {value}" for label, value in facts if label != "Event")
+        blocks: list[dict[str, Any]] = [
+            {
+                "type": "header",
+                "text": {"type": "plain_text", "text": _truncate_alert_text(title, 150)},
+            },
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": _truncate_alert_text(summary_text, 2900)},
+            },
+        ]
+        if fact_lines:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": _truncate_alert_text(fact_lines, 2900)},
+                }
+            )
+        if lines:
+            blocks.append(
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": _truncate_alert_text("\n".join(f"- {line}" for line in lines), 2900),
+                    },
+                }
+            )
+        return {
+            "text": _truncate_alert_text(f"{title}: {summary_text}", 2900),
+            "blocks": blocks,
+        }
+
+    if normalized_kind == "teams":
+        facts_payload = [{"title": label, "value": value} for label, value in facts[:10]]
+        body: list[dict[str, Any]] = [
+            {
+                "type": "TextBlock",
+                "size": "Medium",
+                "weight": "Bolder",
+                "text": _truncate_alert_text(title, 300),
+                "wrap": True,
+            },
+            {
+                "type": "TextBlock",
+                "text": _truncate_alert_text(summary_text, 1200),
+                "wrap": True,
+            },
+        ]
+        if facts_payload:
+            body.append({"type": "FactSet", "facts": facts_payload})
+        if lines:
+            body.append(
+                {
+                    "type": "TextBlock",
+                    "text": _truncate_alert_text("\n".join(f"- {line}" for line in lines), 2500),
+                    "wrap": True,
+                }
+            )
+        return {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "contentUrl": None,
+                    "content": {
+                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "type": "AdaptiveCard",
+                        "version": "1.4",
+                        "body": body,
+                    },
+                }
+            ],
+        }
+
+    return payload
+
+
+def _build_alert_delivery_record_payload(
+    *,
+    payload: dict[str, Any],
+    target_kind: str,
+) -> dict[str, Any]:
+    dispatch_meta = {"channel_kind": target_kind}
+    existing_dispatch = payload.get("_dispatch")
+    if isinstance(existing_dispatch, dict):
+        dispatch_meta = {**existing_dispatch, **dispatch_meta}
+    return {**payload, "_dispatch": dispatch_meta}
 
 
 def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
@@ -12771,15 +13046,17 @@ def _dispatch_alert_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
-    targets = _configured_alert_targets()
-    if not targets:
+    target_configs = _configured_alert_target_configs()
+    if not target_configs:
         return False, None, []
 
     results: list[SlaAlertChannelResult] = []
     success_count = 0
     failed_count = 0
 
-    for target in targets:
+    for target_config in target_configs:
+        target = target_config["url"]
+        target_kind = target_config["kind"]
         guard_state = _compute_alert_channel_guard_state(target, event_type=event_type)
         if ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
             guard_error = (
@@ -12794,22 +13071,30 @@ def _dispatch_alert_event(
                 target=target,
                 status="warning",
                 error=guard_error,
-                payload={
-                    **payload,
-                    "guard": {
-                        "state": guard_state.get("state_computed"),
-                        "consecutive_failures": guard_state.get("consecutive_failures"),
-                        "quarantined_until": guard_state.get("quarantined_until"),
+                payload=_build_alert_delivery_record_payload(
+                    payload={
+                        **payload,
+                        "guard": {
+                            "state": guard_state.get("state_computed"),
+                            "consecutive_failures": guard_state.get("consecutive_failures"),
+                            "quarantined_until": guard_state.get("quarantined_until"),
+                        },
                     },
-                },
+                    target_kind=target_kind,
+                ),
             )
             failed_count += 1
             results.append(SlaAlertChannelResult(target=target, success=False, error=guard_error))
             continue
 
+        rendered_payload = _render_alert_payload_for_target(
+            event_type=event_type,
+            payload=payload,
+            target_kind=target_kind,
+        )
         ok, err = _post_json_with_retries(
             url=target,
-            payload=payload,
+            payload=rendered_payload,
             retries=ALERT_WEBHOOK_RETRIES,
             timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
         )
@@ -12819,7 +13104,7 @@ def _dispatch_alert_event(
             target=target,
             status=delivery_status,
             error=err,
-            payload=payload,
+            payload=_build_alert_delivery_record_payload(payload=payload, target_kind=target_kind),
         )
         if ok:
             success_count += 1
@@ -16243,23 +16528,7 @@ def _latest_mttr_slo_breach_finished_at(max_rows: int = 50) -> datetime | None:
 
 
 def _configured_alert_targets() -> list[str]:
-    targets: list[str] = []
-    merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
-    for part in merged_raw.split(","):
-        value = part.strip()
-        if value:
-            targets.append(value)
-    if ALERT_WEBHOOK_URL:
-        targets.append(ALERT_WEBHOOK_URL)
-
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for target in targets:
-        if target in seen:
-            continue
-        seen.add(target)
-        deduped.append(target)
-    return deduped
+    return [item["url"] for item in _configured_alert_target_configs()]
 
 
 def _build_alert_webhook_request_headers() -> dict[str, str]:
@@ -16979,15 +17248,17 @@ def _dispatch_alert_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> tuple[bool, str | None, list[SlaAlertChannelResult]]:
-    targets = _configured_alert_targets()
-    if not targets:
+    target_configs = _configured_alert_target_configs()
+    if not target_configs:
         return False, None, []
 
     results: list[SlaAlertChannelResult] = []
     success_count = 0
     failed_count = 0
 
-    for target in targets:
+    for target_config in target_configs:
+        target = target_config["url"]
+        target_kind = target_config["kind"]
         guard_state = _compute_alert_channel_guard_state(target, event_type=event_type)
         if ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
             guard_error = (
@@ -17002,22 +17273,30 @@ def _dispatch_alert_event(
                 target=target,
                 status="warning",
                 error=guard_error,
-                payload={
-                    **payload,
-                    "guard": {
-                        "state": guard_state.get("state_computed"),
-                        "consecutive_failures": guard_state.get("consecutive_failures"),
-                        "quarantined_until": guard_state.get("quarantined_until"),
+                payload=_build_alert_delivery_record_payload(
+                    payload={
+                        **payload,
+                        "guard": {
+                            "state": guard_state.get("state_computed"),
+                            "consecutive_failures": guard_state.get("consecutive_failures"),
+                            "quarantined_until": guard_state.get("quarantined_until"),
+                        },
                     },
-                },
+                    target_kind=target_kind,
+                ),
             )
             failed_count += 1
             results.append(SlaAlertChannelResult(target=target, success=False, error=guard_error))
             continue
 
+        rendered_payload = _render_alert_payload_for_target(
+            event_type=event_type,
+            payload=payload,
+            target_kind=target_kind,
+        )
         ok, err = _post_json_with_retries(
             url=target,
-            payload=payload,
+            payload=rendered_payload,
             retries=ALERT_WEBHOOK_RETRIES,
             timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
         )
@@ -17027,7 +17306,7 @@ def _dispatch_alert_event(
             target=target,
             status=delivery_status,
             error=err,
-            payload=payload,
+            payload=_build_alert_delivery_record_payload(payload=payload, target_kind=target_kind),
         )
         if ok:
             success_count += 1
@@ -40532,9 +40811,14 @@ def recover_alert_channel_guard(
         "requested_by": str(principal.get("username") or "unknown"),
         "note": note or "",
     }
+    target_kind = _detect_alert_target_kind(normalized_target)
     ok, err = _post_json_with_retries(
         url=normalized_target,
-        payload=probe_payload,
+        payload=_render_alert_payload_for_target(
+            event_type=event_type or "alert_channel_recovery_probe",
+            payload=probe_payload,
+            target_kind=target_kind,
+        ),
         retries=ALERT_WEBHOOK_RETRIES,
         timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
     )
@@ -40545,7 +40829,10 @@ def recover_alert_channel_guard(
         target=normalized_target,
         status=probe_status,
         error=err,
-        payload={**probe_payload, "probe": True},
+        payload=_build_alert_delivery_record_payload(
+            payload={**probe_payload, "probe": True},
+            target_kind=target_kind,
+        ),
     )
     after = _compute_alert_channel_guard_state(
         normalized_target,
@@ -40572,6 +40859,7 @@ def recover_alert_channel_guard(
     )
     return {
         "target": normalized_target,
+        "target_kind": target_kind,
         "event_type": event_type,
         "probe_delivery_id": delivery_id,
         "probe_status": probe_status,

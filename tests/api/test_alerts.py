@@ -125,6 +125,72 @@ def test_post_json_with_retries_includes_shared_token_header(app_client: TestCli
     assert captured["token"] == "shared-secret"
     assert captured["content_type"] == "application/json"
 
+
+def test_dispatch_alert_event_formats_slack_teams_and_generic_targets(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+
+    captured: list[dict[str, object]] = []
+
+    class _DummyResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_urlopen(req, timeout):
+        captured.append(
+            {
+                "url": req.full_url,
+                "timeout": timeout,
+                "body": json.loads(req.data.decode("utf-8")),
+            }
+        )
+        return _DummyResponse()
+
+    monkeypatch.setattr(
+        main_module,
+        "ALERT_WEBHOOK_URLS",
+        ",".join(
+            [
+                "https://hooks.slack.com/services/T000/B000/XXXX",
+                "https://prod-00.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke",
+            ]
+        ),
+    )
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_URL", "https://example.internal/hook")
+    monkeypatch.setattr(main_module.url_request, "urlopen", _fake_urlopen)
+
+    ok, err, results = main_module._dispatch_alert_event(
+        event_type="sla_escalation",
+        payload={
+            "event": "sla_escalation",
+            "site": "HQ",
+            "checked_at": "2026-03-07T00:00:00Z",
+            "escalated_count": 2,
+            "work_order_ids": [101, 102],
+        },
+    )
+
+    assert ok is True
+    assert err is None
+    assert len(results) == 3
+
+    by_url = {str(item["url"]): item["body"] for item in captured}
+    slack_body = by_url["https://hooks.slack.com/services/T000/B000/XXXX"]
+    assert slack_body["text"].startswith("SLA escalation alert:")
+    assert isinstance(slack_body["blocks"], list)
+
+    teams_body = by_url["https://prod-00.logic.azure.com:443/workflows/abc/triggers/manual/paths/invoke"]
+    assert teams_body["type"] == "message"
+    assert teams_body["attachments"][0]["content"]["type"] == "AdaptiveCard"
+
+    generic_body = by_url["https://example.internal/hook"]
+    assert generic_body["event"] == "sla_escalation"
+    assert generic_body["site"] == "HQ"
+
 def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert
