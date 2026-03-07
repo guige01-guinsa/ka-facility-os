@@ -56,7 +56,7 @@
 - [x] IAM 탭에 토큰 발급/회전/폐기 + 감사로그 조회 UI 반영
 - [x] 메뉴탭 호버 풍선안내 반영(영문 용어의 한글 설명 포함)
 - [x] 운영 배포 + post-deploy smoke 완료
-- [ ] 콘솔 사용 가이드 1페이지 추가 (`/web/console` 기준 신규 사용자용)
+- [x] 콘솔 사용 가이드 1페이지 추가 (`/web/console`, `/web/console/guide`, `docs/CONSOLE_QUICKSTART.md`, 2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`)
 - [ ] IAM 탭 사용자 매뉴얼(권한/토큰/감사로그 순서) 작성
 
 완료 기준:
@@ -126,6 +126,7 @@
 최근 반영:
 - [x] R5 온보딩 허브 1차 배포 완료 (2026-03-07, `d0dac02`, deploy `dep-d6lphnlactks73flpdb0`, split test run total `101 passed`)
 - [x] 레거시/튜토리얼 풍선안내 확장 배포 완료 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`, `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`)
+- [x] 운영 콘솔 1페이지 시작 가이드 배포 완료 (2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`, live `/web/console/guide`, `SMOKE_OK`)
 
 ## 2주 실행 순서 (바로 실행용)
 
