@@ -326,6 +326,7 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       <div class="hero-links">
         <a href="/" data-tip="공개 메인: 메인 운영 셸로 이동합니다." title="공개 메인: 메인 운영 셸로 이동합니다.">공개 메인</a>
         <a href="/docs" data-tip="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다." title="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다.">스웨거 문서</a>
+        <a href="/web/console/guide" data-tip="콘솔 사용 가이드: 신규 사용자를 위한 1페이지 운영 흐름을 엽니다." title="콘솔 사용 가이드: 신규 사용자를 위한 1페이지 운영 흐름을 엽니다.">콘솔 사용 가이드</a>
         <a href="/api/service-info" data-tip="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다." title="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다.">서비스 정보 API</a>
         <a href="/api/public/modules" data-tip="모듈 API: 공개 모듈 레지스트리를 JSON으로 확인합니다." title="모듈 API: 공개 모듈 레지스트리를 JSON으로 확인합니다.">모듈 API</a>
       </div>
@@ -838,6 +839,277 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
     rendered = rendered.replace("__MODULE_COUNT__", str(len(modules)))
     rendered = rendered.replace("__SERVICE_NAME__", html.escape(service_info.get("service", "ka-facility-os")))
     return rendered
+
+
+def build_facility_console_guide_html(service_info: dict[str, str]) -> str:
+    quick_steps = [
+        (
+            "1) 인증 연결",
+            "X-Admin-Token을 입력하고 `토큰 저장`을 누른 뒤 `연결 테스트 (/api/auth/me)`로 현재 역할과 권한이 맞는지 먼저 확인합니다.",
+        ),
+        (
+            "2) 공개 정보로 화면 익히기",
+            "`공개: 서비스 정보`와 `공개: 모듈 레지스트리`를 먼저 눌러 화면 구조와 주요 API 경로를 익힙니다.",
+        ),
+        (
+            "3) 점검과 작업지시 확인",
+            "`점검 목록`에서 최근 점검을 보고, 이어서 `작업지시 목록`으로 open/acked 상태를 확인합니다. site를 넣으면 현장별로 좁혀 볼 수 있습니다.",
+        ),
+        (
+            "4) 운영 상태 요약 보기",
+            "`운영 대시보드 요약`과 `핸드오버 브리프`를 조회해 오늘 처리해야 할 일과 인수인계 이슈를 확인합니다.",
+        ),
+        (
+            "5) 보고서/정책 확인",
+            "`월간 감사 리포트`에서 month=`YYYY-MM`을 넣고 JSON 조회 또는 HTML/CSV/PDF 다운로드를 실행합니다. SLA 기준은 `SLA 정책 조회`에서 확인합니다.",
+        ),
+    ]
+    parameter_rows = [
+        ("site", "선택값", "아파트/현장 코드. 비워두면 전체 범위를 조회합니다."),
+        ("limit", "기본 20", "한 번에 가져올 건수입니다. 신규 사용자는 20으로 유지하는 편이 안전합니다."),
+        ("offset", "기본 0", "다음 페이지를 볼 때만 사용합니다."),
+        ("status", "선택값", "작업지시 상태. 예: `open`, `acked`."),
+        ("days", "기본 30", "대시보드 집계 기간입니다."),
+        ("month", "YYYY-MM", "월간 리포트 조회 시 사용합니다."),
+    ]
+    daily_flow = [
+        "1. `연결 테스트 (/api/auth/me)`로 오늘 사용할 토큰 상태를 확인한다.",
+        "2. `점검 목록`에서 오늘 점검 데이터가 정상 등록되는지 확인한다.",
+        "3. `작업지시 목록`에서 미처리(open) 건과 ACK 대기 건을 확인한다.",
+        "4. `운영 대시보드 요약`으로 누락, 지연, 최근 작업 현황을 본다.",
+        "5. 교대 직전에는 `핸드오버 브리프`를 열어 인수인계 메모를 정리한다.",
+        "6. 월말/월초에는 `월간 감사 리포트`를 조회하고 필요하면 CSV/PDF를 내려받는다.",
+    ]
+    failure_rows = [
+        ("토큰이 없어 조회를 실행할 수 없습니다.", "아직 `토큰 저장`을 하지 않았습니다. 관리자 토큰을 저장한 뒤 다시 실행합니다."),
+        ("HTTP 401 또는 403", "토큰이 만료됐거나 권한/site scope가 맞지 않습니다. `/api/auth/me` 결과를 먼저 확인합니다."),
+        ("결과 배열이 비어 있습니다.", "조건은 맞지만 현재 데이터가 없습니다. site, status, month, offset 값을 다시 확인합니다."),
+        ("월간 리포트가 비어 보입니다.", "month 형식이 `YYYY-MM`인지 확인하고, 해당 월 데이터가 실제로 있는지 점검합니다."),
+    ]
+
+    step_cards = "".join(
+        f"""
+        <article class="card step-card">
+          <h3>{html.escape(title)}</h3>
+          <p>{html.escape(body)}</p>
+        </article>
+        """
+        for title, body in quick_steps
+    )
+    parameter_html = "".join(
+        f"""
+        <tr>
+          <th>{html.escape(name)}</th>
+          <td>{html.escape(default_value)}</td>
+          <td>{html.escape(description)}</td>
+        </tr>
+        """
+        for name, default_value, description in parameter_rows
+    )
+    daily_html = "".join(f"<li>{html.escape(item)}</li>" for item in daily_flow)
+    failure_html = "".join(
+        f"""
+        <tr>
+          <th>{html.escape(message)}</th>
+          <td>{html.escape(action)}</td>
+        </tr>
+        """
+        for message, action in failure_rows
+    )
+
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>KA Facility OS - 운영 콘솔 1페이지 시작 가이드</title>
+  <style>
+    :root {{
+      --ink: #10213a;
+      --muted: #4d6381;
+      --line: #d8e3f0;
+      --card: #ffffff;
+      --bg: #f3f7ff;
+      --brand: #0c6a55;
+      --accent: #c9551b;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      color: var(--ink);
+      font-family: "SUIT", "Pretendard", "IBM Plex Sans KR", "Noto Sans KR", sans-serif;
+      background:
+        radial-gradient(860px 360px at 0% -20%, #dff5ff 0%, transparent 58%),
+        radial-gradient(760px 340px at 100% -20%, #ffeddc 0%, transparent 58%),
+        var(--bg);
+    }}
+    .wrap {{ max-width: 1120px; margin: 0 auto; padding: 18px 14px 48px; }}
+    .hero {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(145deg, #ffffff 0%, #eef8f5 52%, #fff6eb 100%);
+      box-shadow: 0 12px 28px rgba(14, 38, 70, 0.08);
+      padding: 16px;
+    }}
+    .hero h1 {{ margin: 0; font-size: 26px; }}
+    .hero p {{ margin: 8px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }}
+    .hero-links {{
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .hero-links a {{
+      text-decoration: none;
+      border: 1px solid #b7cde7;
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      color: #1f4e7d;
+      background: #f3f8ff;
+    }}
+    .grid {{
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      align-items: start;
+    }}
+    .card {{
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--card);
+      padding: 14px;
+    }}
+    .card h2 {{
+      margin: 0 0 10px;
+      font-size: 18px;
+      border-left: 4px solid var(--accent);
+      padding-left: 8px;
+    }}
+    .card h3 {{
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: var(--brand);
+    }}
+    .card p, .card li {{
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }}
+    .step-grid {{
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }}
+    .step-card {{
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }}
+    .table {{
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }}
+    .table th, .table td {{
+      border-bottom: 1px solid #e8eff8;
+      text-align: left;
+      padding: 8px;
+      vertical-align: top;
+      word-break: break-word;
+    }}
+    .table th {{
+      background: #f6f9ff;
+      color: #24486d;
+    }}
+    .callout {{
+      margin-top: 10px;
+      border: 1px solid #cce0cf;
+      border-radius: 12px;
+      background: #eefaf4;
+      padding: 10px 12px;
+      color: #245345;
+      font-size: 13px;
+      line-height: 1.6;
+    }}
+    code {{
+      font-family: "Consolas", "D2Coding", "IBM Plex Mono", monospace;
+      font-size: 12px;
+      background: #f3f7ff;
+      border: 1px solid #d7e3f1;
+      border-radius: 6px;
+      padding: 1px 5px;
+      color: #1e446e;
+    }}
+    ul, ol {{ margin: 0; padding-left: 20px; }}
+    @media (max-width: 900px) {{
+      .grid {{ grid-template-columns: 1fr; }}
+      .hero h1 {{ font-size: 22px; }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <h1>운영 콘솔 1페이지 시작 가이드</h1>
+      <p>서비스: {html.escape(service_info.get("service", "ka-facility-os"))} | 신규 사용자가 <code>/web/console</code>에서 로그인 확인, 점검 조회, 작업지시 확인, 월간 리포트 조회까지 5분 안에 따라 할 수 있도록 정리한 운영용 안내입니다.</p>
+      <div class="hero-links">
+        <a href="/web/console">운영 콘솔 열기</a>
+        <a href="/">메인 운영 셸</a>
+        <a href="/web/tutorial-simulator">튜토리얼 화면</a>
+        <a href="/api/service-info">서비스 정보 API</a>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="card">
+        <h2>5분 시작 순서</h2>
+        <div class="step-grid">
+          {step_cards}
+        </div>
+        <div class="callout">
+          처음 접속했을 때는 결과 패널이 자동으로 <code>공개: 서비스 정보</code>를 보여줍니다. 이 단계에서 화면이 정상 열리는지만 먼저 확인하면 됩니다.
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>입력값 읽는 법</h2>
+        <table class="table">
+          <thead>
+            <tr><th>필드</th><th>기본값</th><th>사용 기준</th></tr>
+          </thead>
+          <tbody>
+            {parameter_html}
+          </tbody>
+        </table>
+        <div class="callout">
+          신규 사용자는 먼저 <code>site</code>를 비워 전체 조회를 해보고, 결과가 많을 때만 site를 넣어 좁히는 방식이 안전합니다.
+        </div>
+      </article>
+
+      <article class="card">
+        <h2>일일 운영 권장 순서</h2>
+        <ol>
+          {daily_html}
+        </ol>
+      </article>
+
+      <article class="card">
+        <h2>자주 보는 오류와 조치</h2>
+        <table class="table">
+          <thead>
+            <tr><th>화면 메시지</th><th>바로 할 일</th></tr>
+          </thead>
+          <tbody>
+            {failure_html}
+          </tbody>
+        </table>
+      </article>
+    </section>
+  </div>
+</body>
+</html>
+"""
 
 def build_public_modules_html(modules_payload: dict[str, Any]) -> str:
     modules = modules_payload.get("modules", [])

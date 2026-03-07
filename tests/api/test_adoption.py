@@ -518,6 +518,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_onboarding_day1_api"] == "/api/public/onboarding/day1"
     assert service_info.json()["public_glossary_api"] == "/api/public/glossary"
     assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
+    assert service_info.json()["facility_console_guide_html"] == "/web/console/guide"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -531,6 +532,16 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_html.text
     assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
     assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
+    assert "콘솔 사용 가이드" in console_html.text
+
+    console_guide_html = app_client.get("/web/console/guide")
+    assert console_guide_html.status_code == 200
+    assert console_guide_html.headers["content-type"].startswith("text/html")
+    assert "운영 콘솔 1페이지 시작 가이드" in console_guide_html.text
+    assert "연결 테스트 (/api/auth/me)" in console_guide_html.text
+    assert "점검 목록" in console_guide_html.text
+    assert "월간 감사 리포트" in console_guide_html.text
+    assert "자주 보는 오류와 조치" in console_guide_html.text
 
     adoption_html = app_client.get("/web/adoption")
     assert adoption_html.status_code == 200
