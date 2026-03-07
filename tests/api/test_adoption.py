@@ -63,6 +63,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "adoption_w07_sla_quality_weekly_run_api" in root_json.json()
     assert "public_modules_api" in root_json.json()
     assert "public_tutorial_simulator_api" in root_json.json()
+    assert "public_onboarding_day1_api" in root_json.json()
+    assert "public_glossary_api" in root_json.json()
     assert "tutorial_simulator_html" in root_json.json()
     assert root_json.json()["adoption_portal_html"] == "/web/adoption"
     assert root_json.json()["facility_console_html"] == "/web/console"
@@ -103,6 +105,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "W10 실행 추적" in root_html.text
     assert "W11 실행 추적" in root_html.text
     assert "W15 실행 추적" in root_html.text
+    assert "처음 1일 운영 체크리스트" in root_html.text
+    assert "역할별 시작 가이드" in root_html.text
+    assert "운영 용어집" in root_html.text
     assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
@@ -505,6 +510,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
         service_info.json()["public_tutorial_simulator_sample_files_api"]
         == "/api/public/tutorial-simulator/sample-files"
     )
+    assert service_info.json()["public_onboarding_day1_api"] == "/api/public/onboarding/day1"
+    assert service_info.json()["public_glossary_api"] == "/api/public/glossary"
     assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
 
     console_html = app_client.get("/web/console")
@@ -3753,11 +3760,33 @@ def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
     assert body["public"] is True
     assert body["simulator_html"] == "/web/tutorial-simulator"
     assert body["sample_files_api"] == "/api/public/tutorial-simulator/sample-files"
+    assert body["day1_onboarding_api"] == "/api/public/onboarding/day1"
+    assert body["glossary_api"] == "/api/public/glossary"
     assert body["session_list_api"] == "/api/ops/tutorial-simulator/sessions"
     assert body["default_site"] == "Tutorial-HQ"
     assert body["quickstart"]["definition_of_done"] == "progress.status=completed and completion_percent=100"
     assert len(body["sample_files"]) >= 4
     assert any(item["id"] == "ts-core-01" for item in body["scenarios"])
+
+    onboarding_payload = app_client.get("/api/public/onboarding/day1")
+    assert onboarding_payload.status_code == 200
+    onboarding_body = onboarding_payload.json()
+    assert onboarding_body["public"] is True
+    assert onboarding_body["tutorial_simulator_html"] == "/web/tutorial-simulator"
+    assert onboarding_body["glossary_api"] == "/api/public/glossary"
+    assert onboarding_body["checklist_count"] >= 5
+    assert onboarding_body["role_guide_count"] >= 4
+    assert any(item["id"] == "create-inspection" for item in onboarding_body["day1_checklist"])
+    assert any(item["role"] == "owner" for item in onboarding_body["role_guides"])
+
+    glossary_payload = app_client.get("/api/public/glossary")
+    assert glossary_payload.status_code == 200
+    glossary_body = glossary_payload.json()
+    assert glossary_body["public"] is True
+    assert glossary_body["count"] >= 8
+    assert any(item["term"] == "SLA" for item in glossary_body["items"])
+    assert any(item["term_ko"] == "작업지시" for item in glossary_body["items"])
+    assert any(item["id"] == "compliance" for item in glossary_body["categories"])
 
     sample_files = app_client.get("/api/public/tutorial-simulator/sample-files")
     assert sample_files.status_code == 200

@@ -3943,6 +3943,216 @@ TUTORIAL_SIMULATOR_SAMPLE_FILES: list[dict[str, Any]] = [
     },
 ]
 
+PUBLIC_DAY1_ONBOARDING_STEPS: list[dict[str, Any]] = [
+    {
+        "id": "connect-auth",
+        "step_no": 1,
+        "title": "권한 확인과 기본 화면 연결",
+        "estimated_minutes": 10,
+        "recommended_role": "all",
+        "goal": "로그인 또는 AdminToken 연결이 정상인지 확인하고 메인 탭 구조를 익힌다.",
+        "success_check": "메인 화면에서 /api/auth/me 응답과 현재 역할(owner/manager/operator/auditor)을 확인한다.",
+        "links": [
+            {"label": "메인 운영 화면", "href": "/"},
+            {"label": "권한 확인 API", "href": "/api/auth/me"},
+        ],
+    },
+    {
+        "id": "create-inspection",
+        "step_no": 2,
+        "title": "OPS 점검 1건 등록",
+        "estimated_minutes": 20,
+        "recommended_role": "operator",
+        "goal": "전기직무고시/소방 점검 입력 구조를 실제로 한 건 저장한다.",
+        "success_check": "점검 탭에서 필수값 누락 없이 저장되고 점검 이력 조회에서 방금 등록한 항목이 보인다.",
+        "links": [
+            {"label": "점검 입력 API", "href": "/api/inspections"},
+            {"label": "점검 이력 조회 API", "href": "/api/inspections?limit=5"},
+        ],
+    },
+    {
+        "id": "tutorial-lifecycle",
+        "step_no": 3,
+        "title": "튜토리얼로 작업지시 ACK/완료 실습",
+        "estimated_minutes": 20,
+        "recommended_role": "operator",
+        "goal": "튜토리얼 시뮬레이터로 점검 -> 작업지시 ACK -> 완료 흐름을 끝까지 실습한다.",
+        "success_check": "세션 check 응답에서 completion_percent=100 이고 progress.status=completed 이다.",
+        "links": [
+            {"label": "튜토리얼 시뮬레이터", "href": "/web/tutorial-simulator"},
+            {"label": "세션 시작 API", "href": "/api/ops/tutorial-simulator/sessions/start"},
+        ],
+    },
+    {
+        "id": "review-reporting",
+        "step_no": 4,
+        "title": "월간리포트와 출력 링크 확인",
+        "estimated_minutes": 10,
+        "recommended_role": "manager",
+        "goal": "월간리포트 탭에서 집계 결과와 CSV/PDF/인쇄 링크를 확인한다.",
+        "success_check": "월간리포트 탭에서 요약 카드가 보이고 CSV 또는 인쇄 화면을 1회 연다.",
+        "links": [
+            {"label": "월간리포트 API", "href": "/api/reports/monthly?month=2026-03"},
+            {"label": "리포트 인쇄 화면", "href": "/reports/monthly/print"},
+        ],
+    },
+    {
+        "id": "verify-evidence-audit",
+        "step_no": 5,
+        "title": "증빙과 감사 흔적 확인",
+        "estimated_minutes": 15,
+        "recommended_role": "owner",
+        "goal": "증빙 파일, 토큰 정책, 감사 로그가 남는 구조를 이해한다.",
+        "success_check": "권한관리 탭에서 감사 로그 1건 이상을 조회하고 증빙/토큰 관련 API 위치를 확인한다.",
+        "links": [
+            {"label": "감사 무결성 API", "href": "/api/admin/audit-integrity"},
+            {"label": "토큰 정책 API", "href": "/api/admin/token-policy"},
+        ],
+    },
+]
+
+PUBLIC_ROLE_START_GUIDES: list[dict[str, Any]] = [
+    {
+        "role": "owner",
+        "role_ko": "소유자",
+        "first_focus": "사용자/권한/토큰 정책과 감사 무결성",
+        "first_actions": [
+            "권한관리 탭에서 /api/auth/me, 사용자 목록, 토큰 정책을 확인한다.",
+            "감사로그와 월간 아카이브가 내려받기 가능한지 확인한다.",
+            "runbook/gate 상태가 go 인지 확인한다.",
+        ],
+        "recommended_links": [
+            {"label": "권한관리 탭", "href": "/?tab=iam"},
+            {"label": "거버넌스 게이트 API", "href": "/api/ops/governance/gate"},
+        ],
+    },
+    {
+        "role": "manager",
+        "role_ko": "관리자",
+        "first_focus": "점검 결과 검토, 작업지시 우선순위, 월간리포트",
+        "first_actions": [
+            "운영요약과 작업지시 탭에서 high/critical 상태를 확인한다.",
+            "점검 입력 구조와 체크리스트 세트를 검토한다.",
+            "월간리포트 탭에서 출력 경로를 확인한다.",
+        ],
+        "recommended_links": [
+            {"label": "운영요약 탭", "href": "/?tab=overview"},
+            {"label": "월간리포트 탭", "href": "/?tab=reports"},
+        ],
+    },
+    {
+        "role": "operator",
+        "role_ko": "운영자",
+        "first_focus": "점검 입력, 작업지시 ACK/완료, 증빙 업로드",
+        "first_actions": [
+            "튜토리얼 시뮬레이터로 ACK/완료 흐름을 1회 실습한다.",
+            "점검 탭에서 OPS 법정점검 1건을 등록한다.",
+            "증빙 파일과 이상조치 등록 흐름을 확인한다.",
+        ],
+        "recommended_links": [
+            {"label": "점검 탭", "href": "/?tab=inspections"},
+            {"label": "튜토리얼 탭", "href": "/?tab=tutorial"},
+        ],
+    },
+    {
+        "role": "auditor",
+        "role_ko": "감사자",
+        "first_focus": "감사로그, 무결성, 리포트 원본 확인",
+        "first_actions": [
+            "감사 무결성과 월간 아카이브 다운로드를 확인한다.",
+            "월간리포트와 점검 이력의 원본 API를 조회한다.",
+            "필수 메타(checklist_version/source/applied_at)가 붙는지 검토한다.",
+        ],
+        "recommended_links": [
+            {"label": "감사 무결성 API", "href": "/api/admin/audit-integrity"},
+            {"label": "점검 조회 API", "href": "/api/inspections?limit=20"},
+        ],
+    },
+]
+
+PUBLIC_GLOSSARY_TERMS: list[dict[str, Any]] = [
+    {
+        "term": "Overview",
+        "term_ko": "운영요약",
+        "category": "console",
+        "category_ko": "화면",
+        "business_meaning": "오늘 운영 상태를 한눈에 보는 첫 화면이다. SLA, 알림, 작업 현황을 먼저 확인한다.",
+        "first_use": "메인 탭에서 가장 먼저 확인한다.",
+    },
+    {
+        "term": "Inspection",
+        "term_ko": "점검",
+        "category": "ops",
+        "category_ko": "업무",
+        "business_meaning": "전기직무고시/소방 등 법정 점검 기록 한 건을 뜻한다.",
+        "first_use": "점검 탭에서 설비/위치/결과/조치를 입력할 때 사용한다.",
+    },
+    {
+        "term": "Work Order",
+        "term_ko": "작업지시",
+        "category": "ops",
+        "category_ko": "업무",
+        "business_meaning": "이상 사항이나 후속 조치를 담당자에게 배정하는 실행 단위다.",
+        "first_use": "점검 이상 항목 발생 시 자동 또는 수동으로 등록한다.",
+    },
+    {
+        "term": "ACK",
+        "term_ko": "접수 확인",
+        "category": "workflow",
+        "category_ko": "상태",
+        "business_meaning": "작업지시를 담당자가 수락하고 처리 시작 상태로 넘기는 단계다.",
+        "first_use": "작업지시 API 또는 튜토리얼 액션에서 먼저 수행한다.",
+    },
+    {
+        "term": "SLA",
+        "term_ko": "처리기준시간",
+        "category": "governance",
+        "category_ko": "운영관리",
+        "business_meaning": "응답/처리 시간이 기준 내에 있는지 판단하는 운영 약속이다.",
+        "first_use": "운영요약, W07 품질, 거버넌스 게이트에서 확인한다.",
+    },
+    {
+        "term": "OPS Code",
+        "term_ko": "OPS 코드",
+        "category": "master-data",
+        "category_ko": "기준정보",
+        "business_meaning": "설비 또는 점검 분류를 표준화하기 위한 운영 코드다.",
+        "first_use": "점검 입력 시 설비코드/분류 자동화에 사용한다.",
+    },
+    {
+        "term": "QR Asset",
+        "term_ko": "QR 설비",
+        "category": "master-data",
+        "category_ko": "기준정보",
+        "business_meaning": "QR 태그로 식별되는 설비 마스터 정보다.",
+        "first_use": "점검 입력 화면에서 설비/위치/기본 항목 자동 채움에 사용한다.",
+    },
+    {
+        "term": "Evidence",
+        "term_ko": "증빙",
+        "category": "compliance",
+        "category_ko": "컴플라이언스",
+        "business_meaning": "사진, 파일, 메모 등 점검/완료 사실을 입증하는 자료다.",
+        "first_use": "점검 저장 후 파일 업로드나 트래커 증빙 첨부에서 사용한다.",
+    },
+    {
+        "term": "Audit Log",
+        "term_ko": "감사로그",
+        "category": "compliance",
+        "category_ko": "컴플라이언스",
+        "business_meaning": "누가 언제 무엇을 변경했는지 남기는 추적 기록이다.",
+        "first_use": "권한관리 탭에서 조회하고 월간 아카이브로 내려받는다.",
+    },
+    {
+        "term": "Runbook",
+        "term_ko": "운영 런북",
+        "category": "governance",
+        "category_ko": "운영관리",
+        "business_meaning": "장애, 경고, 배포 점검을 반복 가능하게 문서화한 운영 절차다.",
+        "first_use": "runbook check와 governance gate 결과 해석에 사용한다.",
+    },
+]
+
 POST_MVP_PLAN_START = date(2026, 6, 1)
 POST_MVP_PLAN_END = date(2026, 11, 27)
 
@@ -25183,6 +25393,8 @@ def _service_info_payload() -> dict[str, str]:
         "public_modules_api": "/api/public/modules",
         "public_tutorial_simulator_api": "/api/public/tutorial-simulator",
         "public_tutorial_simulator_sample_files_api": "/api/public/tutorial-simulator/sample-files",
+        "public_onboarding_day1_api": "/api/public/onboarding/day1",
+        "public_glossary_api": "/api/public/glossary",
         "tutorial_simulator_html": "/web/tutorial-simulator",
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
@@ -27561,6 +27773,8 @@ def _build_tutorial_simulator_payload() -> dict[str, Any]:
         "session_action_api": "/api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}",
         "session_check_api": "/api/ops/tutorial-simulator/sessions/{session_id}/check",
         "sample_files_api": "/api/public/tutorial-simulator/sample-files",
+        "day1_onboarding_api": "/api/public/onboarding/day1",
+        "glossary_api": "/api/public/glossary",
         "sample_files": sample_files_pack.get("items", []),
         "scenarios": TUTORIAL_SIMULATOR_SCENARIOS,
         "quickstart": {
@@ -27582,6 +27796,50 @@ def _build_tutorial_simulator_payload() -> dict[str, Any]:
             ],
             "verification": "All steps are validated against seeded IDs and current DB state.",
         },
+    }
+
+
+def _build_public_day1_onboarding_payload() -> dict[str, Any]:
+    total_estimated_minutes = sum(
+        max(0, int(step.get("estimated_minutes") or 0)) for step in PUBLIC_DAY1_ONBOARDING_STEPS
+    )
+    return {
+        "title": "KA Facility OS 처음 1일 운영 체크리스트",
+        "published_on": "2026-03-07",
+        "public": True,
+        "console_html": "/",
+        "tutorial_simulator_html": "/web/tutorial-simulator",
+        "tutorial_simulator_api": "/api/public/tutorial-simulator",
+        "glossary_api": "/api/public/glossary",
+        "checklist_count": len(PUBLIC_DAY1_ONBOARDING_STEPS),
+        "role_guide_count": len(PUBLIC_ROLE_START_GUIDES),
+        "total_estimated_minutes": total_estimated_minutes,
+        "day1_checklist": PUBLIC_DAY1_ONBOARDING_STEPS,
+        "role_guides": PUBLIC_ROLE_START_GUIDES,
+    }
+
+
+def _build_public_glossary_payload() -> dict[str, Any]:
+    categories: list[dict[str, str]] = []
+    seen_categories: set[str] = set()
+    for item in PUBLIC_GLOSSARY_TERMS:
+        category = str(item.get("category") or "").strip().lower()
+        if not category or category in seen_categories:
+            continue
+        seen_categories.add(category)
+        categories.append(
+            {
+                "id": category,
+                "label": str(item.get("category_ko") or category),
+            }
+        )
+    return {
+        "title": "KA Facility OS 운영 용어집",
+        "published_on": "2026-03-07",
+        "public": True,
+        "count": len(PUBLIC_GLOSSARY_TERMS),
+        "categories": categories,
+        "items": PUBLIC_GLOSSARY_TERMS,
     }
 
 
@@ -29297,6 +29555,16 @@ def get_public_tutorial_simulator(request: Request) -> Any:
     if "text/html" in accept:
         return HTMLResponse(_build_tutorial_simulator_html(payload))
     return payload
+
+
+@public_router.get("/onboarding/day1")
+def get_public_onboarding_day1() -> dict[str, Any]:
+    return _build_public_day1_onboarding_payload()
+
+
+@public_router.get("/glossary")
+def get_public_glossary() -> dict[str, Any]:
+    return _build_public_glossary_payload()
 
 
 @public_router.get("/tutorial-simulator/sample-files")

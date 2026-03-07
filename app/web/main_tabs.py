@@ -1580,6 +1580,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div class="mini-links">
               <a href="/web/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 화면 열기</a>
               <a href="/api/public/tutorial-simulator" target="_blank" rel="noopener">튜토리얼 JSON API</a>
+              <a href="/api/public/onboarding/day1" target="_blank" rel="noopener">처음 1일 체크리스트 API</a>
+              <a href="/api/public/glossary" target="_blank" rel="noopener">운영 용어집 API</a>
               <a href="/api/public/tutorial-simulator/sample-files" target="_blank" rel="noopener">튜토리얼 샘플 파일</a>
               <a href="/api/ops/tutorial-simulator/sessions/start" target="_blank" rel="noopener">세션 시작 API</a>
               <a href="/api/ops/tutorial-simulator/sessions" target="_blank" rel="noopener">세션 목록 API</a>
@@ -1600,6 +1602,29 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
                 </tbody>
               </table>
             </div>
+          </div>
+          <div class="box">
+            <h3>처음 1일 운영 체크리스트</h3>
+            <div id="tutorialDay1Meta" class="meta">조회 전</div>
+            <div id="tutorialDay1Cards" class="adopt-grid">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>역할별 시작 가이드</h3>
+            <div id="tutorialRoleGuides" class="adopt-grid">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>운영 용어집</h3>
+            <div class="filter-row">
+              <input id="tutorialGlossarySearch" placeholder="검색: ACK, SLA, 점검, 증빙" />
+              <select id="tutorialGlossaryCategory">
+                <option value="all">category: all</option>
+              </select>
+              <input id="tutorialGlossaryReserved1" value="GET /api/public/glossary" disabled />
+              <input id="tutorialGlossaryReserved2" value="영문/한글/업무 의미 검색" disabled />
+              <button id="runTutorialGlossaryBtn" class="btn run" type="button">용어집 새로고침</button>
+            </div>
+            <div id="tutorialGlossaryMeta" class="meta">조회 전</div>
+            <div id="tutorialGlossaryTable" class="empty">데이터 없음</div>
           </div>
         </div>
       </div>
@@ -1656,6 +1681,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       let w07LastCompletion = null;
       let w07ActionResults = [];
       let w07CompleteModalResolver = null;
+      let tutorialOnboardingPayload = null;
+      let tutorialGlossaryPayload = null;
       const OPS_SPECIAL_CHECKLISTS = {ops_special_checklists_json};
       const OPS_RESULT_OPTIONS = [
         {{ value: "normal", label: "정상" }},
@@ -2157,6 +2184,210 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           return "<tr>" + tds + "</tr>";
         }}).join("");
         return '<div class="table-wrap"><table><thead><tr>' + head + '</tr></thead><tbody>' + body + "</tbody></table></div>";
+      }}
+
+      function renderMiniLinks(links) {{
+        if (!Array.isArray(links) || links.length === 0) {{
+          return "";
+        }}
+        const items = links
+          .filter((row) => row && row.href)
+          .map((row) => {{
+            const href = escapeHtml(row.href || "#");
+            const label = escapeHtml(row.label || row.href || "link");
+            return '<a href="' + href + '" target="_blank" rel="noopener">' + label + "</a>";
+          }})
+          .join("");
+        if (!items) {{
+          return "";
+        }}
+        return '<div class="mini-links">' + items + "</div>";
+      }}
+
+      function renderTutorialDay1Cards(steps) {{
+        if (!Array.isArray(steps) || steps.length === 0) {{
+          return renderEmpty("체크리스트가 없습니다.");
+        }}
+        return steps.map((step) => {{
+          const stepNo = escapeHtml(step.step_no ?? "");
+          const role = escapeHtml(step.recommended_role || "all");
+          const title = escapeHtml(step.title || "-");
+          const minutes = escapeHtml(step.estimated_minutes ?? 0);
+          const goal = escapeHtml(step.goal || "-");
+          const successCheck = escapeHtml(step.success_check || "-");
+          return (
+            '<div class="card">' +
+              '<div class="k">Step ' + stepNo + ' · 추천 역할: ' + role + "</div>" +
+              '<div style="margin-top:6px; font-size:16px; font-weight:800;">' + title + "</div>" +
+              '<div class="sub">예상 소요 ' + minutes + "분</div>" +
+              '<div style="margin-top:8px; font-size:12px; color:#35587f;">목표: ' + goal + "</div>" +
+              '<div style="margin-top:6px; font-size:12px; color:#35587f;">완료 확인: ' + successCheck + "</div>" +
+              renderMiniLinks(step.links) +
+            "</div>"
+          );
+        }}).join("");
+      }}
+
+      function renderTutorialRoleGuides(guides) {{
+        if (!Array.isArray(guides) || guides.length === 0) {{
+          return renderEmpty("역할별 가이드가 없습니다.");
+        }}
+        return guides.map((guide) => {{
+          const role = escapeHtml(guide.role || "-");
+          const roleKo = escapeHtml(guide.role_ko || "-");
+          const focus = escapeHtml(guide.first_focus || "-");
+          const actions = Array.isArray(guide.first_actions) ? guide.first_actions : [];
+          const actionHtml = actions.length === 0
+            ? '<div style="margin-top:6px; font-size:12px; color:#35587f;">시작 액션이 없습니다.</div>'
+            : actions
+              .map((item, index) => '<div style="margin-top:6px; font-size:12px; color:#35587f;">' + escapeHtml(String(index + 1) + ". " + item) + "</div>")
+              .join("");
+          return (
+            '<div class="card">' +
+              '<div class="k">' + role.toUpperCase() + " · " + roleKo + "</div>" +
+              '<div style="margin-top:6px; font-size:15px; font-weight:800;">' + focus + "</div>" +
+              actionHtml +
+              renderMiniLinks(guide.recommended_links) +
+            "</div>"
+          );
+        }}).join("");
+      }}
+
+      function populateTutorialGlossaryCategories(categories) {{
+        const selectNode = document.getElementById("tutorialGlossaryCategory");
+        if (!selectNode) {{
+          return;
+        }}
+        const currentValue = String(selectNode.value || "all");
+        const options = ['<option value="all">category: all</option>'];
+        if (Array.isArray(categories)) {{
+          categories.forEach((category) => {{
+            if (!category || !category.id) {{
+              return;
+            }}
+            options.push(
+              '<option value="'
+              + escapeHtml(category.id)
+              + '">'
+              + escapeHtml(category.label || category.id)
+              + "</option>"
+            );
+          }});
+        }}
+        selectNode.innerHTML = options.join("");
+        selectNode.value = Array.from(selectNode.options).some((option) => option.value === currentValue)
+          ? currentValue
+          : "all";
+      }}
+
+      function applyTutorialGlossaryFilters() {{
+        const metaNode = document.getElementById("tutorialGlossaryMeta");
+        const tableNode = document.getElementById("tutorialGlossaryTable");
+        const searchNode = document.getElementById("tutorialGlossarySearch");
+        const categoryNode = document.getElementById("tutorialGlossaryCategory");
+        if (!metaNode || !tableNode) {{
+          return;
+        }}
+        const payload = tutorialGlossaryPayload || {{}};
+        const items = Array.isArray(payload.items) ? payload.items : [];
+        const search = String(searchNode && searchNode.value ? searchNode.value : "").trim().toLowerCase();
+        const category = String(categoryNode && categoryNode.value ? categoryNode.value : "all").trim().toLowerCase() || "all";
+        const filtered = items.filter((item) => {{
+          const itemCategory = String(item.category || "").trim().toLowerCase();
+          if (category !== "all" && itemCategory !== category) {{
+            return false;
+          }}
+          if (!search) {{
+            return true;
+          }}
+          const haystack = [
+            item.term,
+            item.term_ko,
+            item.category_ko,
+            item.business_meaning,
+            item.first_use,
+          ]
+            .map((value) => String(value || "").toLowerCase())
+            .join(" ");
+          return haystack.includes(search);
+        }});
+        metaNode.textContent =
+          "용어 "
+          + String(filtered.length)
+          + "/"
+          + String(items.length)
+          + " | published="
+          + String(payload.published_on || "-")
+          + " | category="
+          + String(category);
+        const rows = filtered.map((item) => {{
+          return {{
+            term: String(item.term || "-"),
+            term_ko: String(item.term_ko || "-"),
+            category: String(item.category_ko || item.category || "-"),
+            business_meaning: String(item.business_meaning || "-"),
+            first_use: String(item.first_use || "-"),
+          }};
+        }});
+        tableNode.innerHTML = renderTable(rows, [
+          {{ key: "term", label: "영문" }},
+          {{ key: "term_ko", label: "한글" }},
+          {{ key: "category", label: "분류" }},
+          {{ key: "business_meaning", label: "업무 의미" }},
+          {{ key: "first_use", label: "처음 어디서 쓰는가" }},
+        ]);
+      }}
+
+      async function runTutorialOnboarding() {{
+        const metaNode = document.getElementById("tutorialDay1Meta");
+        const cardsNode = document.getElementById("tutorialDay1Cards");
+        const guidesNode = document.getElementById("tutorialRoleGuides");
+        if (!metaNode || !cardsNode || !guidesNode) {{
+          return;
+        }}
+        metaNode.textContent = "온보딩 체크리스트 조회 중...";
+        try {{
+          tutorialOnboardingPayload = await fetchJson("/api/public/onboarding/day1", false);
+          const steps = Array.isArray(tutorialOnboardingPayload.day1_checklist)
+            ? tutorialOnboardingPayload.day1_checklist
+            : [];
+          const guides = Array.isArray(tutorialOnboardingPayload.role_guides)
+            ? tutorialOnboardingPayload.role_guides
+            : [];
+          cardsNode.innerHTML = renderTutorialDay1Cards(steps);
+          guidesNode.innerHTML = renderTutorialRoleGuides(guides);
+          metaNode.textContent =
+            "체크리스트 "
+            + String(steps.length)
+            + "개 | 역할 가이드 "
+            + String(guides.length)
+            + "개 | 예상 "
+            + String(tutorialOnboardingPayload.total_estimated_minutes || 0)
+            + "분";
+        }} catch (err) {{
+          cardsNode.innerHTML = renderEmpty("온보딩 체크리스트를 불러오지 못했습니다.");
+          guidesNode.innerHTML = renderEmpty("역할별 가이드를 불러오지 못했습니다.");
+          metaNode.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runTutorialGlossary(forceRefresh) {{
+        const metaNode = document.getElementById("tutorialGlossaryMeta");
+        const tableNode = document.getElementById("tutorialGlossaryTable");
+        if (!metaNode || !tableNode) {{
+          return;
+        }}
+        metaNode.textContent = "용어집 조회 중...";
+        try {{
+          if (!tutorialGlossaryPayload || forceRefresh) {{
+            tutorialGlossaryPayload = await fetchJson("/api/public/glossary", false);
+          }}
+          populateTutorialGlossaryCategories(tutorialGlossaryPayload.categories);
+          applyTutorialGlossaryFilters();
+        }} catch (err) {{
+          tableNode.innerHTML = renderEmpty("운영 용어집을 불러오지 못했습니다.");
+          metaNode.textContent = "조회 실패: " + err.message;
+        }}
       }}
 
       function renderEvidenceTable(rows, trackerPhase) {{
@@ -8723,6 +8954,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       document.getElementById("inCreateQrId").addEventListener("change", () => applySelectedQrAssetToForm({{ overwriteFields: true }}));
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
+      document.getElementById("runTutorialGlossaryBtn").addEventListener("click", () => runTutorialGlossary(true));
+      document.getElementById("tutorialGlossarySearch").addEventListener("input", applyTutorialGlossaryFilters);
+      document.getElementById("tutorialGlossaryCategory").addEventListener("change", applyTutorialGlossaryFilters);
       document.getElementById("w02TrackBootstrapBtn").addEventListener("click", runW02TrackerBootstrap);
       document.getElementById("w02TrackRefreshBtn").addEventListener("click", runW02Tracker);
       document.getElementById("w02ReadinessBtn").addEventListener("click", runW02Readiness);
@@ -8888,6 +9122,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       activate("{selected_tab}", false);
 
       runAdoption();
+      runTutorialOnboarding();
+      runTutorialGlossary(false);
       if (savedToken) {{
         runAuthMe().then(() => runOverview()).catch(() => {{
           setAuthState("토큰 상태: 저장되어 있으나 인증 실패. 토큰을 다시 확인하세요.");
