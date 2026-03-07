@@ -13,6 +13,7 @@ from sqlalchemy import select
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
 
+@pytest.mark.smoke
 def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None:
     root_json = app_client.get("/")
     assert root_json.status_code == 200

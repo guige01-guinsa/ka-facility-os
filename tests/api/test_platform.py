@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
 
+@pytest.mark.smoke
 def test_health_and_meta(app_client: TestClient) -> None:
     health = app_client.get("/health")
     assert health.status_code == 200

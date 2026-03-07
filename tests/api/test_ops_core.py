@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
 
+@pytest.mark.smoke
 def test_inspection_evidence_upload_list_download(app_client: TestClient) -> None:
     headers = _owner_headers()
     inspected_at = datetime.now(timezone.utc).isoformat()

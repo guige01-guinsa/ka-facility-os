@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
 
+@pytest.mark.smoke
 def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     me = app_client.get("/api/auth/me", headers=_owner_headers())
     assert me.status_code == 200

@@ -414,6 +414,7 @@ def test_ops_security_posture_endpoint(app_client: TestClient) -> None:
     assert body["alerting"]["w07_quality_archive_enabled"] is True
     assert body["token_policy"]["max_ttl_days"] == 30
 
+@pytest.mark.smoke
 def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: TestClient) -> None:
     headers = _owner_headers()
 
