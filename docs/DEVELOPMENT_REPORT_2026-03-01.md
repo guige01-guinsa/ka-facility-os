@@ -10,6 +10,7 @@
 - 보안(RBAC, 토큰 정책, 레이트리밋, 감사무결성)과 운영자동화(Cron, 스모크, 런북)를 내재화했다.
 - 최신 안정화 스프린트(성능/신뢰성/데이터 무결성) 항목을 운영 API로 반영했다.
 - 2026-03-07 기준 runbook 오탐 경고를 정리하고 샘플 증빙 누락 blob 복구 로직을 운영에 반영했다.
+- 2026-03-07 기준 W07 품질 알림 내부 webhook 채널을 운영에 연결해 runbook `overall_status=ok` 상태를 만들었다.
 
 ## 2. 단계별 개발 내역
 
@@ -108,7 +109,22 @@
   - 배포: `dep-d6lmemkhg0os73aske20`
   - post-deploy smoke: `SMOKE_OK`
   - live runbook 결과: `alert_retry_recent`, `alert_retention_recent`, `ops_quality_weekly_report_streak`, `api_latency_p95`, `api_burn_rate`, `evidence_archive_integrity_batch` 정상화
-  - 현재 남은 실경고: `w07_quality_alert_channel` (품질 알림 webhook target 미설정)
+  - 당시 남은 실경고: `w07_quality_alert_channel` (품질 알림 webhook target 미설정)
+
+### 알림 채널 연결 업데이트(2026-03-07 반영)
+- 내부 webhook sink API 추가
+  - `POST /api/ops/alerts/webhook/internal`
+  - `X-Alert-Webhook-Token` shared token 검증 방식 적용
+- alert dispatcher 공통 헤더 보강
+  - outbound webhook 요청에 shared token 헤더 자동 포함
+- 운영 채널 연결 결과
+  - 커밋: `aec572a`
+  - 배포: `dep-d6ln61p5pdvs73a7b54g`(internal route), `dep-d6ln7engi27c73dne7dg`(운영 env 적용)
+  - post-deploy smoke: `SMOKE_OK`
+  - direct webhook probe: HTTP `202`
+  - guard recover probe: `probe_status=success`
+  - live runbook 결과: `overall_status=ok`, `w07_quality_alert_channel=status=ok`
+  - live governance gate: `decision=go`, `weighted_score_percent=100.0`
 
 ## 3. 공통 보안/운영 고도화(횡단영역)
 - RBAC 사용자/권한/사이트 스코프 모델 운영화.
@@ -124,6 +140,7 @@
 - W15 마이그레이션은 forward-only 정책이며 롤백 가이드 문서화 완료:
   - `docs/W15_MIGRATION_ROLLBACK.md`
 - 2026-03-07 운영 기준 거버넌스 게이트는 `go`, runbook overall status는 `warning`이며 원인은 `w07_quality_alert_channel` 1건이다.
+- 2026-03-07 후속 운영 기준 내부 webhook 연결까지 완료되어 runbook overall status는 `ok`, governance gate는 `go`(`weighted_score_percent=100.0`)다.
 
 ## 5. 잔여 리스크 및 개선 필요 포인트
 - `app/main.py` 단일 파일 규모가 커 유지보수/리스크 증가.
@@ -135,4 +152,4 @@
 1. 모듈 공통화: 트래커 UI/JS 공통 컴포넌트로 리팩터링
 2. 관측 강화: 지연/오류/SLO 지표 영속 저장 + 주간 요약 자동 발행
 3. 거버넌스: startup preflight + DR 리허설 자동화 + 권한 감사 대시보드 강화
-4. 알림 운영: W07 webhook 채널 실제 연결 또는 품질 알림 정책 비활성 기준 확정
+4. 알림 운영: 내부 webhook을 외부 Slack/Teams/사내 알림 채널로 확장할 운영 기준 수립

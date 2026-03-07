@@ -5,8 +5,8 @@
 ## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 38,025 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
-  - `tests/api/*.py`: 7 files, 97 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
+  - `app/main.py`: 38,055 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `tests/api/*.py`: 7 files, 100 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
@@ -35,7 +35,14 @@
     - 운영 배포 `dep-d6lmemkhg0os73aske20` + `SMOKE_OK`
     - `alert_retry_recent`, `alert_retention_recent`, `ops_quality_weekly_report_streak`, `api_latency_p95`, `api_burn_rate`, `evidence_archive_integrity_batch` 정상화
     - 샘플 증빙 누락 blob 다운로드 self-heal 적용
-    - 현재 남은 실경고: `w07_quality_alert_channel` (webhook target 미구성)
+    - 당시 남은 실경고: `w07_quality_alert_channel` (webhook target 미구성)
+  - W07 품질 알림 내부 webhook 채널 운영 연결 완료
+    - 런타임 커밋 `aec572a`
+    - 운영 배포 `dep-d6ln61p5pdvs73a7b54g`(route 반영), `dep-d6ln7engi27c73dne7dg`(env 적용) + `SMOKE_OK`
+    - internal webhook API `/api/ops/alerts/webhook/internal` 추가
+    - guard recover probe `probe_status=success`
+    - `/api/ops/runbook/checks` `overall_status=ok`
+    - `/api/ops/governance/gate` `weighted_score_percent=100.0`
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -92,10 +99,12 @@
 - [x] DR rehearsal 결과를 governance gate 가중치에 반영 (2026-03-07, `dr_weight`, `weighted_score_percent`)
 - [x] 배포 체크리스트 버전 자동 증분 규칙 정의 (2026-03-07, `current_utc_month + deploy_smoke signature sequence`)
 - [x] 비차단 운영 경고 오탐 제거 + 샘플 증빙 self-heal 반영 (2026-03-07, `7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, `SMOKE_OK`)
+- [x] W07 품질 알림 내부 webhook 채널 연결 (2026-03-07, `aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, `SMOKE_OK`, probe `success`)
 
 완료 기준:
 - `deploy -> smoke -> runbook -> gate` 전 과정이 같은 버전 기준으로 연결
 - 실트래픽이 없는 idle 구간 때문에 runbook이 warning으로 오염되지 않을 것
+- W07 품질 알림 채널이 실제 수신 가능 상태이며 runbook `overall_status=ok`를 유지할 것
 
 ### R5. 신규 사용자 온보딩 (우선순위 5, 1주)
 
@@ -122,6 +131,7 @@
 - [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영 + 감사로그 사전 + audit archive v2, 전체 테스트 92 passed)
 - [x] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강 (`dc1cad8`, deploy `dep-d6ll79vtskes73c2cf6g`, `SMOKE_OK`, runbook review run `840`)
 - [x] Day 4-5: 비차단 운영 경고 오탐 정리 + 샘플 증빙 복구 (`7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, 전체 테스트 97 passed, live runbook warning은 `w07_quality_alert_channel`만 남음)
+- [x] Day 5: W07 품질 알림 내부 webhook 연결 + 운영 probe (`aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, 전체 테스트 100 passed, live runbook `overall_status=ok`)
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
 
 ## 운영 규칙
