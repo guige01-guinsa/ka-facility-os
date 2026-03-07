@@ -130,8 +130,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "로그아웃" in root_html.text
     assert "토큰 발급 / 회전 / 폐기" in root_html.text
     assert "감사 로그 조회" in root_html.text
-    assert "IAM 사용자 매뉴얼" in root_html.text
+    assert "사용 설명서 열기" in root_html.text
     assert "/web/iam-guide" in root_html.text
+    assert "/web/tutorial-guide" in root_html.text
     assert "Overview(운영요약)" in root_html.text
     assert "IAM(권한관리)" in root_html.text
     assert "요약 새로고침" in root_html.text
@@ -520,6 +521,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_onboarding_day1_api"] == "/api/public/onboarding/day1"
     assert service_info.json()["public_glossary_api"] == "/api/public/glossary"
     assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
+    assert service_info.json()["tutorial_guide_html"] == "/web/tutorial-guide"
     assert service_info.json()["facility_console_guide_html"] == "/web/console/guide"
     assert service_info.json()["iam_guide_html"] == "/web/iam-guide"
 
@@ -535,7 +537,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_html.text
     assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
     assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
-    assert "콘솔 사용 가이드" in console_html.text
+    assert "사용 설명서 열기" in console_html.text
 
     console_guide_html = app_client.get("/web/console/guide")
     assert console_guide_html.status_code == 200
@@ -553,6 +555,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "내 권한 조회" in iam_guide_html.text
     assert "토큰 발급" in iam_guide_html.text
     assert "감사 로그 조회" in iam_guide_html.text
+
+    tutorial_guide_html = app_client.get("/web/tutorial-guide")
+    assert tutorial_guide_html.status_code == 200
+    assert tutorial_guide_html.headers["content-type"].startswith("text/html")
+    assert "튜토리얼 사용 설명서" in tutorial_guide_html.text
+    assert "세션 시작" in tutorial_guide_html.text
+    assert "ACK 실행" in tutorial_guide_html.text
+    assert "완료 판정" in tutorial_guide_html.text
 
     adoption_html = app_client.get("/web/adoption")
     assert adoption_html.status_code == 200
@@ -3850,6 +3860,8 @@ def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
     assert simulator_html.status_code == 200
     assert simulator_html.headers.get("content-type", "").startswith("text/html")
     assert "Tutorial Simulator" in simulator_html.text
+    assert "사용 설명서 열기" in simulator_html.text
+    assert "/web/tutorial-guide" in simulator_html.text
     assert "세션 시작: 선택한 시나리오와 site로 신규 실습 세션을 시작합니다." in simulator_html.text
     assert "ACK 실행: 현재 세션의 작업지시를 ACK 처리합니다." in simulator_html.text
     assert "완료 판정: 현재 세션의 완료율과 단계 충족 여부를 점검합니다." in simulator_html.text

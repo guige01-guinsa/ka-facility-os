@@ -60,6 +60,7 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       <h1>KA Facility OS Tutorial Simulator</h1>
       <p class="caption">검증 샘플데이터/파일 기반으로 신규 사용자가 실습 실행부터 완료판정까지 한 화면에서 진행할 수 있습니다.</p>
       <div class="links">
+        <a href="/web/tutorial-guide" data-tip="사용 설명서 열기: 튜토리얼 실습 절차와 완료 기준을 새 창으로 엽니다." title="사용 설명서 열기: 튜토리얼 실습 절차와 완료 기준을 새 창으로 엽니다.">사용 설명서 열기</a>
         <a href="/api/public/tutorial-simulator" data-tip="튜토리얼 JSON API: 시나리오, quickstart, sample file 경로를 JSON으로 확인합니다." title="튜토리얼 JSON API: 시나리오, quickstart, sample file 경로를 JSON으로 확인합니다.">튜토리얼 JSON API</a>
         <a href="/api/public/tutorial-simulator/sample-files" data-tip="샘플 파일 API: 실습용 JSON/Markdown 파일 목록을 확인합니다." title="샘플 파일 API: 실습용 JSON/Markdown 파일 목록을 확인합니다.">샘플 파일 API</a>
         <a href="/api/public/modules" data-tip="시설 모듈: 공개 모듈 레지스트리를 확인합니다." title="시설 모듈: 공개 모듈 레지스트리를 확인합니다.">시설 모듈</a>
@@ -337,5 +338,141 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
   </script>
 </body>
 </html>
-"""
+    """
     return html_doc.replace("__TUTORIAL_PAYLOAD_JSON__", payload_json)
+
+
+def build_tutorial_guide_html(payload: dict[str, Any]) -> str:
+    sample_files_api = str(payload.get("sample_files_api") or "/api/public/tutorial-simulator/sample-files")
+    session_start_api = str(payload.get("session_start_api") or "/api/ops/tutorial-simulator/sessions/start")
+    session_list_api = str(payload.get("sessions_api") or "/api/ops/tutorial-simulator/sessions")
+    session_action_api = str(payload.get("session_action_api") or "/api/ops/tutorial-simulator/sessions/{session_id}/actions/{action}")
+    session_check_api = str(payload.get("session_check_api") or "/api/ops/tutorial-simulator/sessions/{session_id}/check")
+    html_doc = f"""
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>튜토리얼 사용 설명서</title>
+  <style>
+    :root {{ --bg:#f3f7ff; --panel:#ffffff; --line:#cad8ee; --ink:#16304e; --muted:#52708f; --soft:#eef5ff; --accent:#0d604f; }}
+    * {{ box-sizing:border-box; }}
+    body {{ margin:0; background:radial-gradient(880px 320px at 0% -10%, #dceeff 0%, transparent 60%), radial-gradient(760px 300px at 100% -8%, #f8ecd9 0%, transparent 62%), var(--bg); color:var(--ink); font-family:"SUIT","Pretendard","Noto Sans KR",sans-serif; }}
+    .wrap {{ max-width:1040px; margin:0 auto; padding:20px 14px 56px; display:grid; gap:12px; }}
+    .card {{ background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:16px; box-shadow:0 12px 28px rgba(10,33,60,.08); }}
+    .hero {{ background:linear-gradient(145deg,#fff 0%,#edf5ff 60%,#eef9f3 100%); }}
+    h1 {{ margin:0; font-size:28px; }}
+    h2 {{ margin:0 0 8px; font-size:19px; }}
+    p, li {{ font-size:14px; line-height:1.6; }}
+    .caption {{ margin:8px 0 0; color:var(--muted); }}
+    .links {{ margin-top:12px; display:flex; flex-wrap:wrap; gap:8px; }}
+    .links a {{ text-decoration:none; border:1px solid #b7cde8; background:var(--soft); color:#23517e; border-radius:999px; padding:7px 11px; font-size:12px; font-weight:800; }}
+    .grid {{ display:grid; grid-template-columns:1.1fr 1fr; gap:12px; }}
+    .step-table {{ width:100%; border-collapse:collapse; font-size:13px; }}
+    .step-table th, .step-table td {{ border:1px solid var(--line); padding:8px 9px; text-align:left; vertical-align:top; }}
+    .step-table th {{ background:#eef5ff; }}
+    .note {{ border:1px dashed #c5d6ea; border-radius:12px; background:#fbfdff; padding:12px; color:#294d75; }}
+    code {{ font-family:"Consolas","D2Coding","IBM Plex Mono",monospace; font-size:12px; color:#174b75; }}
+    ul {{ margin:8px 0 0; padding-left:18px; }}
+    @media (max-width: 920px) {{ .grid {{ grid-template-columns:1fr; }} }}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card hero">
+      <h1>튜토리얼 사용 설명서</h1>
+      <p class="caption">신규 사용자가 실습용 샘플 데이터를 기준으로 세션 시작부터 ACK, COMPLETE, 완료 판정까지 따라갈 수 있는 1페이지 가이드입니다.</p>
+      <div class="links">
+        <a href="/web/tutorial-simulator">튜토리얼 화면</a>
+        <a href="/api/public/tutorial-simulator">튜토리얼 JSON API</a>
+        <a href="{sample_files_api}">샘플 파일 API</a>
+        <a href="/web/console/guide">운영 콘솔 가이드</a>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>1. 시작 전 준비</h2>
+        <ul>
+          <li><code>X-Admin-Token</code>을 준비하고 튜토리얼 화면의 <code>토큰 저장</code> 후 <code>권한 확인</code>을 실행합니다.</li>
+          <li>기본 site는 <code>Tutorial-HQ</code>를 그대로 써도 됩니다.</li>
+          <li>샘플 요청 바디와 체크리스트는 <code>{sample_files_api}</code>에서 내려받아 실습 기준으로 사용합니다.</li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>2. 완료 기준</h2>
+        <ul>
+          <li>세션 시작 성공</li>
+          <li>ACK 실행 성공</li>
+          <li>COMPLETE 실행 성공</li>
+          <li>완료 판정에서 단계 충족과 완료율 확인</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="card">
+      <h2>3. 실습 순서</h2>
+      <table class="step-table">
+        <thead>
+          <tr><th>순서</th><th>화면 동작</th><th>API 기준</th><th>확인 포인트</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><code>세션 시작</code></td>
+            <td><code>POST {session_start_api}</code></td>
+            <td><code>session_id</code>와 seed inspection/work_order가 생성되는지 확인합니다.</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><code>최근 세션</code> 또는 <code>세션 조회</code></td>
+            <td><code>GET {session_list_api}</code></td>
+            <td>방금 만든 세션의 상태가 보이는지 확인합니다.</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><code>ACK 실행</code></td>
+            <td><code>POST {session_action_api.replace("{action}", "ack_work_order")}</code></td>
+            <td>작업지시 ACK 이후 단계 진행률이 올라가는지 확인합니다.</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><code>COMPLETE 실행</code></td>
+            <td><code>POST {session_action_api.replace("{action}", "complete_work_order")}</code></td>
+            <td>완료 처리 후 진행률과 상태가 변경되는지 확인합니다.</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><code>완료 판정</code></td>
+            <td><code>POST {session_check_api}</code></td>
+            <td>완료율, definition of done 충족 여부를 최종 확인합니다.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <h2>4. 자주 쓰는 값</h2>
+        <ul>
+          <li><code>scenario_id</code>: 기본값은 <code>ts-core-01</code></li>
+          <li><code>site</code>: 기본값은 <code>Tutorial-HQ</code></li>
+          <li><code>assignee</code>: 예시 <code>Ops Trainee</code></li>
+          <li><code>resolution_notes</code>: 예시 <code>Tutorial completion</code></li>
+        </ul>
+      </article>
+      <article class="card">
+        <h2>5. 자주 보는 오류와 조치</h2>
+        <div class="note">
+          <p><strong>401/403</strong>: 토큰이 없거나 권한이 부족합니다. 먼저 <code>권한 확인</code>으로 현재 로그인 상태를 확인합니다.</p>
+          <p><strong>session_id 없음</strong>: <code>세션 시작</code>을 먼저 실행하지 않았습니다. 시작 후 자동 채움 값을 사용합니다.</p>
+          <p><strong>완료율이 안 올라감</strong>: ACK 또는 COMPLETE 둘 중 하나가 빠졌습니다. 단계 순서를 다시 실행합니다.</p>
+        </div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
+"""
+    return html_doc

@@ -104,7 +104,10 @@ from app.web.public_pages import (
     build_public_main_page_html as _web_build_public_main_page_html,
     build_w04_common_mistakes_html as _web_build_w04_common_mistakes_html,
 )
-from app.web.tutorial import build_tutorial_simulator_html as _web_build_tutorial_simulator_html
+from app.web.tutorial import (
+    build_tutorial_guide_html as _web_build_tutorial_guide_html,
+    build_tutorial_simulator_html as _web_build_tutorial_simulator_html,
+)
 
 from app.schemas import (
     AlertRetryRunRequest,
@@ -25398,6 +25401,7 @@ def _service_info_payload() -> dict[str, str]:
         "public_onboarding_day1_api": "/api/public/onboarding/day1",
         "public_glossary_api": "/api/public/glossary",
         "tutorial_simulator_html": "/web/tutorial-simulator",
+        "tutorial_guide_html": "/web/tutorial-guide",
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "facility_console_guide_html": "/web/console/guide",
@@ -29452,6 +29456,11 @@ def facility_console_guide() -> HTMLResponse:
 @app.get("/web/iam-guide", response_model=None)
 def iam_guide() -> HTMLResponse:
     return HTMLResponse(_build_iam_guide_html(_service_info_payload()))
+
+
+@app.get("/web/tutorial-guide", response_model=None)
+def tutorial_guide() -> HTMLResponse:
+    return HTMLResponse(_web_build_tutorial_guide_html(_build_tutorial_simulator_payload()))
 
 
 @app.get("/web/adoption", response_model=None)
