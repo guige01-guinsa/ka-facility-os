@@ -24,6 +24,15 @@
 2. false negative > 1.0% 이면 즉시 임계치 재검토 + 탐지 로직 보정
 3. 연속 2주 초과 시 runbook `critical`로 승격
 
+## 채널 운영 기준
+- 내부 기본 채널은 `POST /api/ops/alerts/webhook/internal` 을 사용합니다.
+- 외부 채널은 아래 순서로 확장합니다.
+  1. Slack/Teams webhook URL secret 등록
+  2. `ALERT_WEBHOOK_URL` 또는 `ALERT_WEBHOOK_URLS`에 target 추가
+  3. host 기반 auto-detect 또는 `slack::`, `teams::`, `generic::` prefix 사용
+  4. `/api/ops/alerts/channels/guard/recover` probe 성공 확인
+- 외부 채널 URL이 없을 때는 내부 채널을 유지하고, placeholder URL은 운영 env에 넣지 않습니다.
+
 ## 감사 로그 연계
 - 정책 조회: `ops_alert_noise_policy_view`
 - 주간 품질 리포트와 함께 정책 기준값이 기록됩니다.

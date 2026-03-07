@@ -11,6 +11,7 @@
 - 최신 안정화 스프린트(성능/신뢰성/데이터 무결성) 항목을 운영 API로 반영했다.
 - 2026-03-07 기준 runbook 오탐 경고를 정리하고 샘플 증빙 누락 blob 복구 로직을 운영에 반영했다.
 - 2026-03-07 기준 W07 품질 알림 내부 webhook 채널을 운영에 연결해 runbook `overall_status=ok` 상태를 만들었다.
+- 2026-03-07 기준 Slack/Teams 외부 채널 payload adapter를 배포해 실제 webhook URL secret만 추가하면 외부 운영 채널로 확장 가능한 상태를 만들었다.
 
 ## 2. 단계별 개발 내역
 
@@ -126,6 +127,18 @@
   - live runbook 결과: `overall_status=ok`, `w07_quality_alert_channel=status=ok`
   - live governance gate: `decision=go`, `weighted_score_percent=100.0`
 
+### 외부 채널 확장 업데이트(2026-03-07 반영)
+- Slack/Teams adapter 지원 추가
+  - host auto-detect: `hooks.slack.com`, `logic.azure.com`, `office.com`
+  - explicit prefix: `slack::`, `teams::`, `generic::`
+  - 현재 운영 기본 target은 내부 webhook 유지
+- 운영 배포 결과
+  - 커밋: `9b9679b`
+  - 배포: `dep-d6lnmsi4d50c73ceirt0`
+  - post-deploy smoke: `SMOKE_OK`
+  - internal webhook probe 및 guard recover는 기존과 동일하게 `success`
+  - 실제 Slack/Teams 전환에는 고객측 secret webhook URL 추가만 필요
+
 ## 3. 공통 보안/운영 고도화(횡단영역)
 - RBAC 사용자/권한/사이트 스코프 모델 운영화.
 - 관리자 토큰 수명/회전/유휴 정책 강화.
@@ -152,4 +165,4 @@
 1. 모듈 공통화: 트래커 UI/JS 공통 컴포넌트로 리팩터링
 2. 관측 강화: 지연/오류/SLO 지표 영속 저장 + 주간 요약 자동 발행
 3. 거버넌스: startup preflight + DR 리허설 자동화 + 권한 감사 대시보드 강화
-4. 알림 운영: 내부 webhook을 외부 Slack/Teams/사내 알림 채널로 확장할 운영 기준 수립
+4. 알림 운영: 실제 Slack/Teams/사내 알림 secret URL 등록 및 채널별 운영 책임자 지정

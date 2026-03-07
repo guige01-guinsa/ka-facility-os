@@ -43,6 +43,11 @@
     - guard recover probe `probe_status=success`
     - `/api/ops/runbook/checks` `overall_status=ok`
     - `/api/ops/governance/gate` `weighted_score_percent=100.0`
+  - Slack/Teams 외부 채널 adapter 지원 배포
+    - 런타임 커밋 `9b9679b`
+    - 운영 배포 `dep-d6lnmsi4d50c73ceirt0` + `SMOKE_OK`
+    - host auto-detect(`hooks.slack.com`, `logic.azure.com`, `office.com`) + explicit prefix(`slack::`, `teams::`, `generic::`) 지원
+    - 현재 운영 target은 내부 webhook 유지, 실제 외부 secret URL만 추가하면 확장 가능
 
 ## 재정의 로드맵 (실행 체크리스트)
 
@@ -100,6 +105,7 @@
 - [x] 배포 체크리스트 버전 자동 증분 규칙 정의 (2026-03-07, `current_utc_month + deploy_smoke signature sequence`)
 - [x] 비차단 운영 경고 오탐 제거 + 샘플 증빙 self-heal 반영 (2026-03-07, `7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, `SMOKE_OK`)
 - [x] W07 품질 알림 내부 webhook 채널 연결 (2026-03-07, `aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, `SMOKE_OK`, probe `success`)
+- [x] Slack/Teams 외부 채널 payload adapter 배포 (2026-03-07, `9b9679b`, deploy `dep-d6lnmsi4d50c73ceirt0`, `SMOKE_OK`)
 
 완료 기준:
 - `deploy -> smoke -> runbook -> gate` 전 과정이 같은 버전 기준으로 연결
@@ -132,6 +138,7 @@
 - [x] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강 (`dc1cad8`, deploy `dep-d6ll79vtskes73c2cf6g`, `SMOKE_OK`, runbook review run `840`)
 - [x] Day 4-5: 비차단 운영 경고 오탐 정리 + 샘플 증빙 복구 (`7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, 전체 테스트 97 passed, live runbook warning은 `w07_quality_alert_channel`만 남음)
 - [x] Day 5: W07 품질 알림 내부 webhook 연결 + 운영 probe (`aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, 전체 테스트 100 passed, live runbook `overall_status=ok`)
+- [x] Day 5+: Slack/Teams 외부 채널 adapter 지원 (`9b9679b`, deploy `dep-d6lnmsi4d50c73ceirt0`, 전체 테스트 101 passed, 운영은 내부 target 유지)
 - [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
 
 ## 운영 규칙

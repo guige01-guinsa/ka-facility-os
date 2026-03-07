@@ -361,8 +361,9 @@ Render cron target commands:
 - `python -m app.jobs.adoption_w07_weekly --days 14` (`30 23 * * 5`)
 
 Optional alert webhook env:
-- `ALERT_WEBHOOK_URL` (sync false secret env)
+- `ALERT_WEBHOOK_URL` (sync false secret env, single target)
 - `ALERT_WEBHOOK_URLS` (comma-separated, multi-channel broadcast)
+- `ALERT_WEBHOOK_SHARED_TOKEN` (internal webhook sink auth header for `X-Alert-Webhook-Token`)
 - `ALERT_WEBHOOK_TIMEOUT_SEC` (default `5`)
 - `ALERT_WEBHOOK_RETRIES` (default `3`)
 - `OPS_DAILY_CHECK_ALERT_LEVEL` (`off|critical|warning|always`, default `critical`)
@@ -378,6 +379,20 @@ Optional alert webhook env:
 - `ALERT_MTTR_SLO_RECOVER_MAX_TARGETS` (default `30`)
 - `ALERT_MTTR_SLO_NOTIFY_ENABLED` (default `true`)
 - `ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE` (default `mttr_slo_breach`)
+
+Alert target syntax:
+- plain URL: host-based auto detect
+  - `https://hooks.slack.com/...` -> Slack payload
+  - `https://...logic.azure.com/...` or `https://...office.com/...` -> Teams payload
+  - anything else -> generic JSON payload
+- explicit prefix:
+  - `slack::https://hooks.slack.com/...`
+  - `teams::https://...logic.azure.com/...`
+  - `generic::https://example.internal/hook`
+
+Internal sink:
+- `POST /api/ops/alerts/webhook/internal`
+- expects `X-Alert-Webhook-Token` when `ALERT_WEBHOOK_SHARED_TOKEN` is configured
 - `ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES` (default `120`)
 - `ALERT_MTTR_SLO_TOP_CHANNELS` (default `15`)
 - `W07_QUALITY_ALERT_ENABLED` (default `true`)
