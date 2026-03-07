@@ -127,6 +127,7 @@
 - [x] R5 온보딩 허브 1차 배포 완료 (2026-03-07, `d0dac02`, deploy `dep-d6lphnlactks73flpdb0`, split test run total `101 passed`)
 - [x] 레거시/튜토리얼 풍선안내 확장 배포 완료 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`, `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`)
 - [x] 운영 콘솔 1페이지 시작 가이드 배포 완료 (2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`, live `/web/console/guide`, `SMOKE_OK`)
+- [x] IAM 탭 링크 버튼 + HTML 가이드 배포 완료 (2026-03-07, `9179d7c`, deploy `dep-d6lrth7tskes73dk2ebg`, live `/web/iam-guide`, `SMOKE_OK`)
 
 ## 2주 실행 순서 (바로 실행용)
 
