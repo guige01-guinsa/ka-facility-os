@@ -95,6 +95,7 @@ from app.web.facility_console import (
     build_facility_console_guide_html as _web_build_facility_console_guide_html,
     build_public_modules_html as _web_build_public_modules_html,
 )
+from app.web.iam_guide import build_iam_guide_html as _web_build_iam_guide_html
 from app.web.main_tabs import (
     build_shared_tracker_execution_box_html as _web_build_shared_tracker_execution_box_html,
     build_system_main_tabs_html as _web_build_system_main_tabs_html,
@@ -25400,6 +25401,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "facility_console_guide_html": "/web/console/guide",
+        "iam_guide_html": "/web/iam-guide",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_internal_webhook_api": "/api/ops/alerts/webhook/internal",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
@@ -28419,6 +28421,10 @@ def _build_facility_console_guide_html(service_info: dict[str, str]) -> str:
     return _web_build_facility_console_guide_html(service_info)
 
 
+def _build_iam_guide_html(service_info: dict[str, str]) -> str:
+    return _web_build_iam_guide_html(service_info)
+
+
 def _build_public_modules_html(modules_payload: dict[str, Any]) -> str:
     return _web_build_public_modules_html(modules_payload)
 
@@ -29441,6 +29447,11 @@ def facility_console() -> HTMLResponse:
 @app.get("/web/console/guide", response_model=None)
 def facility_console_guide() -> HTMLResponse:
     return HTMLResponse(_build_facility_console_guide_html(_service_info_payload()))
+
+
+@app.get("/web/iam-guide", response_model=None)
+def iam_guide() -> HTMLResponse:
+    return HTMLResponse(_build_iam_guide_html(_service_info_payload()))
 
 
 @app.get("/web/adoption", response_model=None)

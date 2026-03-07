@@ -909,6 +909,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
 
         <div id="panelIam" class="tab-panel" role="tabpanel">
           <p class="tab-caption">owner/manager가 로그인 세션, 사용자 권한, 계정 상태를 한 화면에서 관리합니다.</p>
+          <div class="mini-links">
+            <a id="iamGuideLink" href="/web/iam-guide" target="_blank" rel="noopener">IAM 사용자 매뉴얼</a>
+          </div>
           <div class="box">
             <h3>내 세션 / 권한 / 로그아웃</h3>
             <div class="filter-row">
@@ -1714,6 +1717,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runIamMeBtn: "내 권한 조회: 현재 로그인한 사용자 정보와 권한 범위를 확인합니다.",
         runIamLogoutBtn: "로그아웃: 현재 토큰을 서버 기준으로 종료합니다.",
         runIamTokenPolicyBtn: "토큰 정책 조회: 만료, 회전, idle 제한 정책을 확인합니다.",
+        iamGuideLink: "IAM 사용자 매뉴얼: 권한 확인, 사용자 관리, 토큰, 감사 로그 절차를 새 창으로 엽니다.",
         runIamUsersBtn: "사용자 조회: 역할·활성 상태·검색어 기준으로 사용자 목록을 조회합니다.",
         runIamCreateUserBtn: "사용자 생성: 새 사용자 계정과 기본 권한을 등록합니다.",
         runIamPickUserBtn: "사용자 선택: 입력한 user_id의 정보를 아래 수정 폼에 불러옵니다.",

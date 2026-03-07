@@ -130,6 +130,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "로그아웃" in root_html.text
     assert "토큰 발급 / 회전 / 폐기" in root_html.text
     assert "감사 로그 조회" in root_html.text
+    assert "IAM 사용자 매뉴얼" in root_html.text
+    assert "/web/iam-guide" in root_html.text
     assert "Overview(운영요약)" in root_html.text
     assert "IAM(권한관리)" in root_html.text
     assert "요약 새로고침" in root_html.text
@@ -519,6 +521,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["public_glossary_api"] == "/api/public/glossary"
     assert service_info.json()["tutorial_simulator_html"] == "/web/tutorial-simulator"
     assert service_info.json()["facility_console_guide_html"] == "/web/console/guide"
+    assert service_info.json()["iam_guide_html"] == "/web/iam-guide"
 
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
@@ -542,6 +545,14 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "점검 목록" in console_guide_html.text
     assert "월간 감사 리포트" in console_guide_html.text
     assert "자주 보는 오류와 조치" in console_guide_html.text
+
+    iam_guide_html = app_client.get("/web/iam-guide")
+    assert iam_guide_html.status_code == 200
+    assert iam_guide_html.headers["content-type"].startswith("text/html")
+    assert "IAM 탭 사용자 매뉴얼" in iam_guide_html.text
+    assert "내 권한 조회" in iam_guide_html.text
+    assert "토큰 발급" in iam_guide_html.text
+    assert "감사 로그 조회" in iam_guide_html.text
 
     adoption_html = app_client.get("/web/adoption")
     assert adoption_html.status_code == 200
