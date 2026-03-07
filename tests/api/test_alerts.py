@@ -455,6 +455,7 @@ def test_alert_channel_mttr_kpi_api(app_client: TestClient) -> None:
 
 def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch) -> None:
     import app.database as db_module
+    import app.domains.ops.alert_service as alert_service
     import app.main as main_module
     from sqlalchemy import insert
 
@@ -525,7 +526,7 @@ def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch
     assert policy_set.json()["meta"]["updated_at"] == policy_set.json()["updated_at"]
 
     monkeypatch.setattr(
-        main_module,
+        alert_service,
         "run_alert_guard_recover_job",
         lambda **kwargs: {
             "run_id": 987,
@@ -539,7 +540,7 @@ def test_alert_mttr_slo_policy_and_check_api(app_client: TestClient, monkeypatch
         },
     )
     monkeypatch.setattr(
-        main_module,
+        alert_service,
         "_dispatch_alert_event",
         lambda **kwargs: (
             True,
