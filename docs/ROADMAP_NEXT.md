@@ -5,15 +5,17 @@
 ## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 28,973 lines (공개/웹 + adoption tracker + ops governance/alerts/SLA policy 라우트 분리, 현재 남은 직접 라우트는 tutorial/handover/adoption KPI 중심)
+  - `app/main.py`: 29,908 lines (공개/웹 + adoption tracker + adoption KPI/policy + ops tutorial/reporting + governance/alerts/SLA policy 라우트 분리, 직접 route decorator 제거 완료)
   - `tests/api/*.py`: 7 files, 101 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
   - `service-info`, `/`, `/web/*`, `/api/public/*` 공개 진입 경로는 `app.domains.public.router`로 이동
   - `W02~W15 adoption tracker`는 `app.domains.adoption.router_tracker`로 이동
+  - `W04~W15 adoption KPI/policy`는 `app.domains.adoption.router_ops`로 이동
   - `ops governance/alert/SLA policy`는 `app.domains.ops.router_governance`, `router_alerts`로 이동
-  - 단, tutorial/handover/adoption KPI 정책 블록은 여전히 `app/main.py`에 남아 있음
+  - `tutorial simulator`, `dashboard trends`, `handover brief`는 `app.domains.ops.router_tutorial`, `router_reporting`으로 이동
+  - `app/main.py`에는 직접 route decorator가 없고, 앱 부트스트랩/미들웨어/호환 helper만 남아 있음
 - 운영 자동화 상태
   - 배포/스모크/런북/거버넌스/리메디에이션 자동화는 운영 가능한 수준
   - cron job 블루프린트도 다수 구성됨
@@ -74,7 +76,9 @@
 - [x] 공개/웹 진입 라우트를 `app/domains/public/router.py`로 분리 (2026-03-07, `fd72f0f`, deploy `dep-d6ltbui4d50c73ch9500`, 전체 테스트 `101 passed`)
 - [x] adoption tracker 라우트를 `app/domains/adoption/router_tracker.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
 - [x] ops governance/alerts/SLA policy 라우트를 `app/domains/ops/router_governance.py`, `app/domains/ops/router_alerts.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
-- [ ] `app/main.py`는 라우터 결합 + 앱 부트스트랩 역할로 축소
+- [x] tutorial/handover/adoption KPI-policy 라우트를 `app/domains/ops/router_tutorial.py`, `app/domains/ops/router_reporting.py`, `app/domains/adoption/router_ops.py`로 분리 (2026-03-07, `53401df`, deploy `dep-d6lv3p4r85hc73ae73r0`, 전체 테스트 `101 passed`, `SMOKE_OK`)
+- [x] `app/main.py`는 라우터 결합 + 앱 부트스트랩 + middleware 역할로 축소
+- [ ] helper/service 추출을 계속해 `app/main.py`를 20k lines 이하로 추가 축소
 
 완료 기준:
 - `app/main.py` 52k -> 20k lines 이하
