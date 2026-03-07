@@ -108,6 +108,11 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "처음 1일 운영 체크리스트" in root_html.text
     assert "역할별 시작 가이드" in root_html.text
     assert "운영 용어집" in root_html.text
+    assert "권한 확인: 현재 토큰으로 /api/auth/me를 호출해 사용자와 역할을 확인합니다." in root_html.text
+    assert "요약 새로고침: 운영요약 데이터와 핵심 지표를 다시 조회합니다." in root_html.text
+    assert "점검 저장: 법정점검 1건을 저장하고 필요 시 작업지시/증빙 업로드를 이어서 처리합니다." in root_html.text
+    assert "사용자 생성: 새 사용자 계정과 기본 권한을 등록합니다." in root_html.text
+    assert "용어집 새로고침: 운영 용어집을 다시 불러와 검색 기준에 맞게 보여줍니다." in root_html.text
     assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text

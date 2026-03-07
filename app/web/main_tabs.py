@@ -168,10 +168,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       background: #ebfaf5;
       box-shadow: inset 0 -2px 0 #77c7b4;
     }}
-    .tab-btn[data-tip] {{
+    [data-tip] {{
       position: relative;
     }}
-    .tab-btn[data-tip]::after {{
+    [data-tip]::after {{
       content: attr(data-tip);
       position: absolute;
       left: 50%;
@@ -195,7 +195,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       text-align: left;
       transition: opacity 130ms ease, transform 130ms ease;
     }}
-    .tab-btn[data-tip]::before {{
+    [data-tip]::before {{
       content: "";
       position: absolute;
       left: 50%;
@@ -209,13 +209,13 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       transition: opacity 130ms ease;
       z-index: 41;
     }}
-    .tab-btn[data-tip]:hover::after,
-    .tab-btn[data-tip]:focus-visible::after {{
+    [data-tip]:hover::after,
+    [data-tip]:focus-visible::after {{
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }}
-    .tab-btn[data-tip]:hover::before,
-    .tab-btn[data-tip]:focus-visible::before {{
+    [data-tip]:hover::before,
+    [data-tip]:focus-visible::before {{
       opacity: 1;
     }}
     .shell {{
@@ -1683,6 +1683,89 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       let w07CompleteModalResolver = null;
       let tutorialOnboardingPayload = null;
       let tutorialGlossaryPayload = null;
+      const UI_TOOLTIP_TEXT_BY_ID = {{
+        saveTokenBtn: "토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다.",
+        testTokenBtn: "권한 확인: 현재 토큰으로 /api/auth/me를 호출해 사용자와 역할을 확인합니다.",
+        clearTokenBtn: "토큰 지우기: 저장된 관리자 토큰을 브라우저에서 삭제합니다.",
+        openLoginModalBtn: "ID/PW 로그인: 사용자 이름과 비밀번호로 새 관리자 토큰을 발급받습니다.",
+        openSignupModalBtn: "사용자 신규가입: owner 또는 manager가 새 사용자를 생성할 때 사용합니다.",
+        logoutBtn: "로그아웃: 현재 토큰을 종료하고 브라우저 저장값을 정리합니다.",
+        closeLoginModalBtn: "닫기: 로그인 창을 닫습니다.",
+        loginBtn: "로그인 실행: 입력한 ID/PW로 토큰 발급을 시도합니다.",
+        closeSignupModalBtn: "닫기: 신규가입 창을 닫습니다.",
+        signupBtn: "가입 실행: 입력한 사용자 정보를 기준으로 계정을 생성합니다.",
+        runOverviewBtn: "요약 새로고침: 운영요약 데이터와 핵심 지표를 다시 조회합니다.",
+        runOverviewGuardRecoverDryBtn: "배치복구 점검: Alert Guard(알림 보호) 복구를 점검 모드로 미리 실행합니다.",
+        runOverviewGuardRecoverRunBtn: "배치복구 실행: 격리 또는 경고 상태 채널 복구를 실제 실행합니다.",
+        runOverviewGuardRecoverLatestBtn: "최근 결과: 가장 최근 알림 채널 복구 결과를 조회합니다.",
+        runWorkordersBtn: "작업지시 조회: 조건에 맞는 작업지시 목록을 조회합니다.",
+        inChecklistAllNormalBtn: "전체 정상: 현재 체크리스트 모든 항목을 정상으로 일괄 설정합니다.",
+        inChecklistAllNaBtn: "전체 N/A: 현재 체크리스트 모든 항목을 N/A로 일괄 설정합니다.",
+        inChecklistResetBtn: "체크리스트 재구성: 설비군과 템플릿 기준으로 점검 항목을 다시 만듭니다.",
+        inCreateInspectionBtn: "점검 저장: 법정점검 1건을 저장하고 필요 시 작업지시/증빙 업로드를 이어서 처리합니다.",
+        runInspectionsBtn: "점검 조회: 등록된 점검 이력을 조건별로 조회합니다.",
+        runInspectionEvidenceBtn: "증빙 목록 조회: 선택한 inspection_id의 사진·증빙 파일 목록을 가져옵니다.",
+        runInspectionImportValidationBtn: "검증 리포트 조회: 엑셀 Import 검증 결과를 최신 상태로 조회합니다.",
+        inspectionImportValidationCsvLink: "CSV 다운로드: 엑셀 Import 검증 리포트를 CSV 파일로 내려받습니다.",
+        runReportsBtn: "리포트 조회: 월간 집계 결과와 출력 링크를 조회합니다.",
+        reportPrintLink: "HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.",
+        reportCsvLink: "CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.",
+        reportPdfLink: "PDF 다운로드: 현재 월간리포트를 PDF 파일로 내려받습니다.",
+        runIamMeBtn: "내 권한 조회: 현재 로그인한 사용자 정보와 권한 범위를 확인합니다.",
+        runIamLogoutBtn: "로그아웃: 현재 토큰을 서버 기준으로 종료합니다.",
+        runIamTokenPolicyBtn: "토큰 정책 조회: 만료, 회전, idle 제한 정책을 확인합니다.",
+        runIamUsersBtn: "사용자 조회: 역할·활성 상태·검색어 기준으로 사용자 목록을 조회합니다.",
+        runIamCreateUserBtn: "사용자 생성: 새 사용자 계정과 기본 권한을 등록합니다.",
+        runIamPickUserBtn: "사용자 선택: 입력한 user_id의 정보를 아래 수정 폼에 불러옵니다.",
+        runIamUpdateUserBtn: "사용자 수정: 표시명, 역할, 권한, 사이트 범위를 수정합니다.",
+        runIamSetPasswordBtn: "비밀번호 변경: 선택한 사용자의 새 비밀번호를 적용합니다.",
+        runIamDeactivateUserBtn: "비활성화: 선택한 사용자 계정을 로그인 불가 상태로 전환합니다.",
+        runIamDeleteUserBtn: "사용자 삭제: 선택한 사용자를 운영 목록에서 제거하고 비활성 상태로 정리합니다.",
+        runIamTokensBtn: "토큰 조회: 사용자별 관리자 토큰 목록과 상태를 조회합니다.",
+        runIamIssueTokenBtn: "토큰 발급: 선택한 사용자의 새 토큰을 1회 발급합니다.",
+        runIamPickTokenBtn: "토큰 선택: 입력한 token_id를 회전 또는 폐기 대상으로 선택합니다.",
+        runIamRotateTokenBtn: "토큰 회전: 기존 토큰을 비활성화하고 새 토큰을 발급합니다.",
+        runIamRevokeTokenBtn: "토큰 폐기: 선택한 토큰을 즉시 비활성화합니다.",
+        runIamAuditBtn: "감사 로그 조회: action, actor, limit 조건으로 감사 로그를 검색합니다.",
+        runAdoptionBtn: "정착 계획 새로고침: 교육자료, 실행표, KPI 패키지를 다시 조회합니다.",
+        adoptScheduleCsv: "Schedule CSV: 정착 계획 일정을 CSV 파일로 내려받습니다.",
+        adoptScheduleIcs: "Schedule ICS: 정착 계획 일정을 캘린더용 ICS 파일로 내려받습니다.",
+        w04FunnelRefreshBtn: "W04 퍼널 새로고침: 첫 성공 퍼널과 상위 블로커 현황을 다시 조회합니다.",
+        w05ConsistencyRefreshBtn: "W05 지표 새로고침: Usage Consistency(사용 정착도) 지표를 갱신합니다.",
+        w06RhythmRefreshBtn: "W06 리듬 새로고침: Operational Rhythm(운영 리듬) 지표를 갱신합니다.",
+        w07QualityRefreshBtn: "W07 품질 새로고침: SLA Quality(품질) 대시보드를 다시 조회합니다.",
+        w08DisciplineRefreshBtn: "W08 리포트 새로고침: Report Discipline(보고 규율) 지표를 조회합니다.",
+        w09KpiRefreshBtn: "W09 KPI 새로고침: KPI Operation(지표 운영) 현황을 갱신합니다.",
+        w10KpiRefreshBtn: "W10 지표 새로고침: Self-serve Support(셀프 지원) 지표를 갱신합니다.",
+        w11KpiRefreshBtn: "W11 지표 새로고침: Scale Readiness(확장 준비도) 지표를 갱신합니다.",
+        w15KpiRefreshBtn: "W15 지표 새로고침: Operations Efficiency(운영 효율) 지표를 갱신합니다.",
+        w07TrackBootstrapBtn: "W07 항목 생성: W07 실행 추적 항목을 site 기준으로 초기 생성합니다.",
+        w07TrackNextBtn: "다음 미완료: 현재 목록에서 아직 끝나지 않은 다음 항목으로 이동합니다.",
+        w07TrackUpdateBtn: "상태 저장: 선택 항목의 상태, 메모, 증빙을 저장합니다.",
+        w07TrackRefreshBtn: "추적현황 새로고침: W07 실행 추적 목록을 다시 조회합니다.",
+        w07SelectVisibleBtn: "현재 목록 전체 선택: 지금 화면에 보이는 항목을 한 번에 선택합니다.",
+        w07ClearSelectionBtn: "선택 해제: 현재 선택된 W07 항목을 모두 해제합니다.",
+        w07BulkApplyBtn: "선택 항목 일괄 저장: 선택된 W07 항목에 같은 상태를 일괄 적용합니다.",
+        w07ReadinessBtn: "완료 판정: W07 완료 가능 여부와 blocker를 점검합니다.",
+        w07CompleteBtn: "W07 완료 확정: 완료 판정 통과 후 W07을 완료 처리합니다.",
+        w07CompleteAndWeeklyBtn: "W07 완료+주간실행: 완료 처리 후 주간 자동화까지 이어서 실행합니다.",
+        w07DownloadPackageBtn: "W07 완료 패키지 다운로드: 증빙 포함 완료 패키지를 ZIP으로 내려받습니다.",
+        w07CompleteModalCancel: "취소: 완료 확정 창을 닫고 작업을 취소합니다.",
+        w07CompleteModalConfirm: "확정 실행: W07 완료 확정을 실제 실행합니다.",
+        w07WeeklyRunBtn: "W07 주간 실행: SLA 품질 주간 점검을 즉시 실행합니다.",
+        w07WeeklyLatestBtn: "최근 실행 조회: 마지막 주간 실행 결과를 조회합니다.",
+        w07WeeklyTrendsBtn: "트렌드 조회: 주간 품질 추이를 시계열로 조회합니다.",
+        runTutorialGlossaryBtn: "용어집 새로고침: 운영 용어집을 다시 불러와 검색 기준에 맞게 보여줍니다.",
+      }};
+      const SHARED_TRACKER_PHASE_LABELS = {{
+        w02: "W02",
+        w03: "W03",
+        w04: "W04",
+        w09: "W09",
+        w10: "W10",
+        w11: "W11",
+        w15: "W15",
+      }};
       const OPS_SPECIAL_CHECKLISTS = {ops_special_checklists_json};
       const OPS_RESULT_OPTIONS = [
         {{ value: "normal", label: "정상" }},
@@ -1719,6 +1802,42 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
 
       function setAuthState(text) {{
         authState.textContent = text;
+      }}
+
+      function setElementTooltip(element, text) {{
+        if (!element || !text) {{
+          return;
+        }}
+        element.setAttribute("data-tip", text);
+        element.setAttribute("title", text);
+      }}
+
+      function applyStaticUiTooltips() {{
+        Object.entries(UI_TOOLTIP_TEXT_BY_ID).forEach(([id, text]) => {{
+          setElementTooltip(document.getElementById(id), text);
+        }});
+        Object.entries(SHARED_TRACKER_PHASE_LABELS).forEach(([phaseCode, phaseLabel]) => {{
+          setElementTooltip(
+            document.getElementById(phaseCode + "TrackBootstrapBtn"),
+            phaseLabel + " 항목 생성: site 기준 실행 추적 항목을 초기 생성합니다."
+          );
+          setElementTooltip(
+            document.getElementById(phaseCode + "TrackUpdateBtn"),
+            phaseLabel + " 상태 저장: 담당자, 상태, 완료 체크와 증빙 메모를 저장합니다."
+          );
+          setElementTooltip(
+            document.getElementById(phaseCode + "TrackRefreshBtn"),
+            phaseLabel + " 추적현황 새로고침: 현재 실행 추적 항목을 다시 조회합니다."
+          );
+          setElementTooltip(
+            document.getElementById(phaseCode + "ReadinessBtn"),
+            phaseLabel + " 완료 판정: blocker와 준비도 조건을 점검합니다."
+          );
+          setElementTooltip(
+            document.getElementById(phaseCode + "CompleteBtn"),
+            phaseLabel + " 완료 확정: 완료 판정 후 phase를 실제 완료 상태로 전환합니다."
+          );
+        }});
       }}
 
       function updateAuthStateFromToken() {{
@@ -2814,7 +2933,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               "<td>" + escapeHtml(row.is_active ? "true" : "false") + "</td>" +
               "<td>" + escapeHtml(scopeText) + "</td>" +
               "<td>" + escapeHtml(permsText) + "</td>" +
-              '<td><button class="btn soft iam-select-user" type="button" data-user-id="' + escapeHtml(userId) + '">선택</button></td>' +
+              '<td><button class="btn soft iam-select-user" type="button" data-user-id="' + escapeHtml(userId) + '" data-tip="선택: 이 사용자를 아래 수정 및 권한 폼으로 불러옵니다." title="선택: 이 사용자를 아래 수정 및 권한 폼으로 불러옵니다.">선택</button></td>' +
             "</tr>"
           );
         }}).join("");
@@ -3138,7 +3257,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               "<td>" + escapeHtml(row.last_used_at || "") + "</td>" +
               "<td>" + escapeHtml(row.created_at || "") + "</td>" +
               "<td>" + escapeHtml(Boolean(row.must_rotate) ? "true" : "false") + "</td>" +
-              '<td><button class="btn soft iam-select-token" type="button" data-token-id="' + escapeHtml(tokenId) + '">선택</button></td>' +
+              '<td><button class="btn soft iam-select-token" type="button" data-token-id="' + escapeHtml(tokenId) + '" data-tip="선택: 이 토큰을 회전 또는 폐기 대상으로 지정합니다." title="선택: 이 토큰을 회전 또는 폐기 대상으로 지정합니다.">선택</button></td>' +
             "</tr>"
           );
         }}).join("");
@@ -3366,7 +3485,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               "<td>" + escapeHtml(row.resource_type || "") + "</td>" +
               "<td>" + escapeHtml(row.resource_id || "") + "</td>" +
               "<td>" + escapeHtml(row.status || "") + "</td>" +
-              '<td><button class="btn soft iam-select-audit" type="button" data-audit-id="' + escapeHtml(logId) + '">상세</button></td>' +
+              '<td><button class="btn soft iam-select-audit" type="button" data-audit-id="' + escapeHtml(logId) + '" data-tip="상세: 이 감사 로그의 detail JSON을 아래 패널에 표시합니다." title="상세: 이 감사 로그의 detail JSON을 아래 패널에 표시합니다.">상세</button></td>' +
             "</tr>"
           );
         }}).join("");
@@ -9049,6 +9168,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         tokenInput.value = savedToken;
       }}
       updateAuthStateFromToken();
+      applyStaticUiTooltips();
       updateReportLinks();
       bindOpsElectricalChecklistHandlers();
       populateOpsChecklistSetSelector();
