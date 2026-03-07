@@ -122,6 +122,9 @@
 완료 기준:
 - 신규 사용자 질문 빈도 상위 10개 항목을 UI에서 자체 해결 가능
 
+최근 반영:
+- [x] R5 온보딩 허브 1차 배포 완료 (2026-03-07, `d0dac02`, deploy `dep-d6lphnlactks73flpdb0`, split test run total `101 passed`)
+
 ## 2주 실행 순서 (바로 실행용)
 
 ### Week 1

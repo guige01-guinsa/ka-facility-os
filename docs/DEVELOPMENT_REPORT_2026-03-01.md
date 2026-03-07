@@ -12,7 +12,7 @@
 - 2026-03-07 기준 runbook 오탐 경고를 정리하고 샘플 증빙 누락 blob 복구 로직을 운영에 반영했다.
 - 2026-03-07 기준 W07 품질 알림 내부 webhook 채널을 운영에 연결해 runbook `overall_status=ok` 상태를 만들었다.
 - 2026-03-07 기준 Slack/Teams 외부 채널 payload adapter를 배포해 실제 webhook URL secret만 추가하면 외부 운영 채널로 확장 가능한 상태를 만들었다.
-- 2026-03-07 기준 신규 사용자용 `처음 1일 운영 체크리스트`, 역할별 시작 가이드, 운영 용어집 API/UI를 튜토리얼 탭에 반영했다.
+- 2026-03-07 기준 신규 사용자용 `처음 1일 운영 체크리스트`, 역할별 시작 가이드, 운영 용어집 API/UI를 튜토리얼 탭에 반영했고 운영 배포(`dep-d6lphnlactks73flpdb0`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -84,6 +84,7 @@
 - 튜토리얼 탭에서 `처음 1일 운영 체크리스트`와 역할별 시작 가이드를 바로 조회할 수 있게 구성.
 - 공개 API `GET /api/public/onboarding/day1`, `GET /api/public/glossary` 추가.
 - 영문 메뉴/용어를 한글 업무 의미와 함께 설명하는 운영 용어집 UI 제공.
+- 배포: `dep-d6lphnlactks73flpdb0`, 검증: split test run total `101 passed`, `SMOKE_OK`
 
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.
