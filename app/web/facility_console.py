@@ -77,6 +77,54 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       background: #f4f8ff;
     }
     .hero-links a:hover { border-color: #87addb; background: #e8f2ff; }
+    [data-tip] { position: relative; }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 8px);
+      transform: translateX(-50%) translateY(-3px);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 60;
+      width: max-content;
+      max-width: 280px;
+      border: 1px solid #b8cde6;
+      border-radius: 10px;
+      background: #ffffff;
+      color: #1f456d;
+      box-shadow: 0 10px 20px rgba(13, 40, 70, 0.12);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+      padding: 7px 9px;
+      white-space: normal;
+      text-align: left;
+      transition: opacity 130ms ease, transform 130ms ease;
+    }
+    [data-tip]::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: calc(100% + 2px);
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-bottom: 6px solid #b8cde6;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 130ms ease;
+      z-index: 61;
+    }
+    [data-tip]:hover::after,
+    [data-tip]:focus-visible::after {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+    [data-tip]:hover::before,
+    [data-tip]:focus-visible::before {
+      opacity: 1;
+    }
     .section {
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -276,10 +324,10 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       <h1>KA Facility OS 시설관리 운영 콘솔</h1>
       <p>서비스: __SERVICE_NAME__ | API 결과를 브라우저에서 표/카드로 즉시 확인하는 HTML 콘솔입니다. JSON API는 그대로 유지되며, 이 화면은 사람 중심 운영 뷰입니다.</p>
       <div class="hero-links">
-        <a href="/">공개 메인</a>
-        <a href="/docs">스웨거 문서</a>
-        <a href="/api/service-info">서비스 정보 API</a>
-        <a href="/api/public/modules">모듈 API</a>
+        <a href="/" data-tip="공개 메인: 메인 운영 셸로 이동합니다." title="공개 메인: 메인 운영 셸로 이동합니다.">공개 메인</a>
+        <a href="/docs" data-tip="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다." title="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다.">스웨거 문서</a>
+        <a href="/api/service-info" data-tip="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다." title="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다.">서비스 정보 API</a>
+        <a href="/api/public/modules" data-tip="모듈 API: 공개 모듈 레지스트리를 JSON으로 확인합니다." title="모듈 API: 공개 모듈 레지스트리를 JSON으로 확인합니다.">모듈 API</a>
       </div>
     </header>
 
@@ -451,6 +499,29 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       const resultMeta = document.getElementById('resultMeta');
       const resultView = document.getElementById('resultView');
       const resultRaw = document.getElementById('resultRaw');
+      const STATIC_TOOLTIP_TEXT_BY_ID = {
+        saveTokenBtn: '토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다.',
+        testTokenBtn: '연결 테스트: 현재 토큰으로 /api/auth/me를 호출해 권한과 역할을 확인합니다.',
+        clearTokenBtn: '토큰 지우기: 저장된 관리자 토큰을 브라우저에서 제거합니다.',
+        reportPrintLink: 'HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.',
+        reportCsvLink: 'CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.',
+        reportPdfLink: 'PDF 다운로드: 현재 월간리포트를 PDF 파일로 내려받습니다.',
+      };
+      const PANEL_TOOLTIP_TEXT = {
+        serviceInfo: '조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다.',
+        publicModules: '조회 실행: 공개 모듈 레지스트리를 사람이 읽기 쉬운 표로 조회합니다.',
+        authMe: '조회 실행: 현재 토큰의 사용자, 역할, site scope를 확인합니다.',
+        inspections: '조회 실행: 점검 목록을 조건별로 조회합니다.',
+        workOrders: '조회 실행: 작업지시 목록을 상태와 site 기준으로 조회합니다.',
+        dashboardSummary: '조회 실행: 운영 대시보드 요약과 핵심 지표를 조회합니다.',
+        alertChannelKpi: '조회 실행: 알림 채널 KPI를 최근 기간 기준으로 조회합니다.',
+        alertChannelGuard: '조회 실행: 알림 채널 보호 상태와 guard 현황을 조회합니다.',
+        alertRetentionPolicy: '정책 조회: 알림 데이터 보관정책을 조회합니다.',
+        alertRetentionLatest: '최근 실행 조회: 최근 알림 보관 정리 작업 결과를 조회합니다.',
+        handoverBrief: '조회 실행: 인수인계 브리프를 site 기준으로 조회합니다.',
+        monthlyReport: 'JSON 조회: 월간리포트 원본 JSON을 조회합니다.',
+        slaPolicy: '조회 실행: SLA 정책을 site 기준으로 조회합니다.',
+      };
 
       const panelDefs = {
         serviceInfo: { path: '/api/service-info', auth: false, params: [] },
@@ -540,6 +611,21 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
           .replaceAll('>', '&gt;')
           .replaceAll('"', '&quot;')
           .replaceAll("'", '&#39;');
+      }
+
+      function setTooltip(element, text) {
+        if (!element || !text) return;
+        element.setAttribute('data-tip', text);
+        element.setAttribute('title', text);
+      }
+
+      function applyTooltips() {
+        Object.entries(STATIC_TOOLTIP_TEXT_BY_ID).forEach(([id, text]) => {
+          setTooltip(document.getElementById(id), text);
+        });
+        document.querySelectorAll('.run-btn[data-panel]').forEach((btn) => {
+          setTooltip(btn, PANEL_TOOLTIP_TEXT[btn.dataset.panel] || '조회 실행: 선택한 패널의 데이터를 조회합니다.');
+        });
       }
 
       function getToken() {
@@ -738,6 +824,7 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       const storedToken = getToken();
       if (storedToken) tokenInput.value = storedToken;
       updateTokenState();
+      applyTooltips();
       updateReportLinks();
       runPanel('serviceInfo');
     })();

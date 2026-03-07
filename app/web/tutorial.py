@@ -26,6 +26,11 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
     .caption { margin:6px 0 0; color:var(--muted); font-size:13px; }
     .links { margin-top:10px; display:flex; flex-wrap:wrap; gap:8px; }
     .links a { text-decoration:none; border:1px solid #b9cde9; background:#eef5ff; color:#215080; border-radius:999px; padding:6px 10px; font-size:12px; font-weight:800; }
+    [data-tip] { position: relative; }
+    [data-tip]::after { content: attr(data-tip); position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%) translateY(-3px); opacity: 0; pointer-events: none; z-index: 60; width: max-content; max-width: 280px; border: 1px solid #b8cde6; border-radius: 10px; background: #ffffff; color: #1f456d; box-shadow: 0 10px 20px rgba(13, 40, 70, 0.12); font-size: 12px; font-weight: 700; line-height: 1.35; padding: 7px 9px; white-space: normal; text-align: left; transition: opacity 130ms ease, transform 130ms ease; }
+    [data-tip]::before { content: ""; position: absolute; left: 50%; top: calc(100% + 2px); transform: translateX(-50%); border-left: 6px solid transparent; border-right: 6px solid transparent; border-bottom: 6px solid #b8cde6; opacity: 0; pointer-events: none; transition: opacity 130ms ease; z-index: 61; }
+    [data-tip]:hover::after, [data-tip]:focus-visible::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+    [data-tip]:hover::before, [data-tip]:focus-visible::before { opacity: 1; }
     .row { display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:8px; margin-top:8px; }
     .grid2 { display:grid; grid-template-columns:1.08fr 1fr; gap:12px; }
     .grid3 { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
@@ -55,10 +60,10 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       <h1>KA Facility OS Tutorial Simulator</h1>
       <p class="caption">검증 샘플데이터/파일 기반으로 신규 사용자가 실습 실행부터 완료판정까지 한 화면에서 진행할 수 있습니다.</p>
       <div class="links">
-        <a href="/api/public/tutorial-simulator">튜토리얼 JSON API</a>
-        <a href="/api/public/tutorial-simulator/sample-files">샘플 파일 API</a>
-        <a href="/api/public/modules">시설 모듈</a>
-        <a href="/web/console">운영 콘솔</a>
+        <a href="/api/public/tutorial-simulator" data-tip="튜토리얼 JSON API: 시나리오, quickstart, sample file 경로를 JSON으로 확인합니다." title="튜토리얼 JSON API: 시나리오, quickstart, sample file 경로를 JSON으로 확인합니다.">튜토리얼 JSON API</a>
+        <a href="/api/public/tutorial-simulator/sample-files" data-tip="샘플 파일 API: 실습용 JSON/Markdown 파일 목록을 확인합니다." title="샘플 파일 API: 실습용 JSON/Markdown 파일 목록을 확인합니다.">샘플 파일 API</a>
+        <a href="/api/public/modules" data-tip="시설 모듈: 공개 모듈 레지스트리를 확인합니다." title="시설 모듈: 공개 모듈 레지스트리를 확인합니다.">시설 모듈</a>
+        <a href="/web/console" data-tip="운영 콘솔: 레거시 콘솔 화면으로 이동합니다." title="운영 콘솔: 레거시 콘솔 화면으로 이동합니다.">운영 콘솔</a>
       </div>
       <div class="chips">
         <span id="chipValidatedOn">validated_on: -</span>
@@ -150,6 +155,18 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       const stepsTable = document.getElementById("stepsTable");
       const sessionMeta = document.getElementById("sessionMeta");
       const resultJson = document.getElementById("resultJson");
+      const TOOLTIP_TEXT_BY_ID = {
+        saveTokenBtn: "토큰 저장: 현재 입력한 X-Admin-Token을 브라우저 세션에 저장합니다.",
+        testTokenBtn: "권한 확인: 현재 토큰으로 /api/auth/me를 호출해 역할을 확인합니다.",
+        clearTokenBtn: "토큰 지우기: 저장된 튜토리얼 토큰을 브라우저에서 제거합니다.",
+        startSessionBtn: "세션 시작: 선택한 시나리오와 site로 신규 실습 세션을 시작합니다.",
+        reloadSessionBtn: "세션 조회: 현재 session_id의 최신 상태를 다시 조회합니다.",
+        listSessionsBtn: "최근 세션: 최근에 생성된 실습 세션 목록을 조회합니다.",
+        ackBtn: "ACK 실행: 현재 세션의 작업지시를 ACK 처리합니다.",
+        completeBtn: "COMPLETE 실행: 현재 세션의 작업지시를 완료 처리합니다.",
+        checkBtn: "완료 판정: 현재 세션의 완료율과 단계 충족 여부를 점검합니다.",
+        resetBtn: "RESET: 튜토리얼 세션의 작업지시 상태를 초기화합니다.",
+      };
 
       function esc(v) { return String(v == null ? "" : v).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;"); }
       function token() { return String(window.sessionStorage.getItem(TOKEN_KEY) || ""); }
@@ -158,6 +175,8 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       function setResult(data) { try { resultJson.textContent = JSON.stringify(data, null, 2); } catch { resultJson.textContent = String(data); } }
       function headers() { const h = { Accept: "application/json" }; const t = token(); if (t) h["X-Admin-Token"] = t; return h; }
       function errText(d) { if (d == null) return ""; if (typeof d === "string") return d; if (Array.isArray(d)) return d.map((x) => typeof x === "string" ? x : JSON.stringify(x)).join(" | "); if (typeof d === "object" && d.detail != null) return errText(d.detail); try { return JSON.stringify(d); } catch { return String(d); } }
+      function setTooltip(element, text) { if (!element || !text) return; element.setAttribute("data-tip", text); element.setAttribute("title", text); }
+      function applyTooltips() { Object.entries(TOOLTIP_TEXT_BY_ID).forEach(([id, text]) => setTooltip(document.getElementById(id), text)); }
       async function req(method, url, body) {
         const h = headers();
         const init = { method, headers: h };
@@ -193,7 +212,7 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
           + `<td>${esc(i.title || "")}</td>`
           + `<td>${esc(i.scenario_id || "")}</td>`
           + `<td>${esc(i.file_name || "")}</td>`
-          + `<td><a href="${esc(i.download_url || "#")}" target="_blank" rel="noopener">다운로드</a></td>`
+          + `<td><a href="${esc(i.download_url || "#")}" target="_blank" rel="noopener" data-tip="다운로드: 검증 샘플 파일을 내려받습니다." title="다운로드: 검증 샘플 파일을 내려받습니다.">다운로드</a></td>`
           + "</tr>").join("");
         sampleFiles.innerHTML = '<table><thead><tr><th>sample_id</th><th>title</th><th>scenario</th><th>file</th><th>download</th></tr></thead><tbody>' + rows + "</tbody></table>";
       }
@@ -254,7 +273,7 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
         const items = Array.isArray(data.items) ? data.items : [];
         if (!items.length) { sessionsTable.innerHTML = '<div class="empty">최근 세션 없음</div>'; setResult(data); return; }
         const rows = items.map((x) => "<tr>"
-          + `<td><button class="btn pick-session" data-session-id="${Number(x.session_id || 0)}" type="button">${Number(x.session_id || 0)}</button></td>`
+          + `<td><button class="btn pick-session" data-session-id="${Number(x.session_id || 0)}" type="button" data-tip="세션 선택: 이 session_id를 불러와 진행률과 결과를 조회합니다." title="세션 선택: 이 session_id를 불러와 진행률과 결과를 조회합니다.">${Number(x.session_id || 0)}</button></td>`
           + `<td>${esc(x.scenario_id || "")}</td>`
           + `<td>${esc(x.site || "")}</td>`
           + `<td>${esc(x.work_order_id || "")}</td>`
@@ -305,6 +324,7 @@ def build_tutorial_simulator_html(payload: dict[str, Any]) -> str:
       renderBasics();
       renderSampleFiles();
       renderSession(null);
+      applyTooltips();
       bind();
       const t = token();
       if (t) {

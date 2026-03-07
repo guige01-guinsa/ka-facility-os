@@ -527,6 +527,10 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "결과 보기" in console_html.text
     assert "알림 채널 KPI (7/30일)" in console_html.text
     assert "알림 데이터 보관정책" in console_html.text
+    assert "토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다." in console_html.text
+    assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_html.text
+    assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
+    assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
 
     adoption_html = app_client.get("/web/adoption")
     assert adoption_html.status_code == 200
@@ -3824,6 +3828,9 @@ def test_tutorial_simulator_session_flow(app_client: TestClient) -> None:
     assert simulator_html.status_code == 200
     assert simulator_html.headers.get("content-type", "").startswith("text/html")
     assert "Tutorial Simulator" in simulator_html.text
+    assert "세션 시작: 선택한 시나리오와 site로 신규 실습 세션을 시작합니다." in simulator_html.text
+    assert "ACK 실행: 현재 세션의 작업지시를 ACK 처리합니다." in simulator_html.text
+    assert "완료 판정: 현재 세션의 완료율과 단계 충족 여부를 점검합니다." in simulator_html.text
 
     start = app_client.post(
         "/api/ops/tutorial-simulator/sessions/start",
