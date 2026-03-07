@@ -14,6 +14,7 @@
 - 2026-03-07 기준 Slack/Teams 외부 채널 payload adapter를 배포해 실제 webhook URL secret만 추가하면 외부 운영 채널로 확장 가능한 상태를 만들었다.
 - 2026-03-07 기준 신규 사용자용 `처음 1일 운영 체크리스트`, 역할별 시작 가이드, 운영 용어집 API/UI를 튜토리얼 탭에 반영했고 운영 배포(`dep-d6lphnlactks73flpdb0`)까지 완료했다.
 - 2026-03-07 기준 메인 운영 화면의 주요 버튼/액션에 한글 풍선안내를 추가해 신규 사용자의 첫 사용 장벽을 낮췄고 운영 배포(`dep-d6lppgkhg0os73atrv6g`)까지 완료했다.
+- 2026-03-07 기준 같은 풍선안내 체계를 레거시 콘솔(`/web/console`)과 튜토리얼 단독 화면(`/web/tutorial-simulator`)까지 확장했고 운영 배포(`dep-d6lqtvftskes73djm2bg`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -88,6 +89,8 @@
 - 배포: `dep-d6lphnlactks73flpdb0`, 검증: split test run total `101 passed`, `SMOKE_OK`
 - 메인 탭 주요 버튼/액션(권한, 점검, 리포트, IAM, W02~W15 실행추적)에 풍선안내(data-tip) 확장 적용.
 - 배포: `dep-d6lppgkhg0os73atrv6g`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`
+- 레거시 콘솔(`/web/console`)의 조회/다운로드/토큰 버튼과 튜토리얼 단독 화면(`/web/tutorial-simulator`)의 세션 실행 버튼에도 동일한 한글 풍선안내(data-tip) 체계 확장 적용.
+- 배포: `dep-d6lqtvftskes73djm2bg`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`
 
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.

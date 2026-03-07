@@ -118,12 +118,14 @@
 - [x] “처음 1일 운영 체크리스트” UI 제공 (튜토리얼 탭 연동, 2026-03-07)
 - [x] 용어집(영문/한글/업무 의미) API + 화면 제공 (2026-03-07)
 - [x] 역할별(owner/manager/operator/auditor) 시작 가이드 제공 (2026-03-07)
+- [x] 레거시 콘솔(`/web/console`)과 튜토리얼 단독 화면(`/web/tutorial-simulator`)에도 동일한 풍선안내 체계 확장 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`)
 
 완료 기준:
 - 신규 사용자 질문 빈도 상위 10개 항목을 UI에서 자체 해결 가능
 
 최근 반영:
 - [x] R5 온보딩 허브 1차 배포 완료 (2026-03-07, `d0dac02`, deploy `dep-d6lphnlactks73flpdb0`, split test run total `101 passed`)
+- [x] 레거시/튜토리얼 풍선안내 확장 배포 완료 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`, `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`)
 
 ## 2주 실행 순서 (바로 실행용)
 
@@ -142,7 +144,7 @@
 - [x] Day 4-5: 비차단 운영 경고 오탐 정리 + 샘플 증빙 복구 (`7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, 전체 테스트 97 passed, live runbook warning은 `w07_quality_alert_channel`만 남음)
 - [x] Day 5: W07 품질 알림 내부 webhook 연결 + 운영 probe (`aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, 전체 테스트 100 passed, live runbook `overall_status=ok`)
 - [x] Day 5+: Slack/Teams 외부 채널 adapter 지원 (`9b9679b`, deploy `dep-d6lnmsi4d50c73ceirt0`, 전체 테스트 101 passed, 운영은 내부 target 유지)
-- [ ] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포
+- [x] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포 (`d0dac02`, `06c09ea`, `9469d60`, deploy `dep-d6lphnlactks73flpdb0`/`dep-d6lppgkhg0os73atrv6g`/`dep-d6lqtvftskes73djm2bg`)
 
 ## 운영 규칙
 
