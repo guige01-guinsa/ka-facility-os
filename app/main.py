@@ -4605,7 +4605,6 @@ app = FastAPI(
 ops_router = APIRouter(prefix="/api/ops", tags=["ops"])
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
 adoption_router = APIRouter(prefix="/api/adoption", tags=["adoption"])
-public_router = APIRouter(prefix="/api/public", tags=["public"])
 
 
 def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: int, payload: Any) -> str:
@@ -29438,698 +29437,6 @@ def _build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: s
     return _web_build_system_main_tabs_html(service_info, initial_tab=initial_tab)
 
 
-@app.get("/api/service-info")
-def service_info() -> dict[str, str]:
-    return _service_info_payload()
-
-
-@app.get("/web/console", response_model=None)
-def facility_console() -> HTMLResponse:
-    return HTMLResponse(_build_facility_console_html(_service_info_payload(), _facility_modules_payload()))
-
-
-@app.get("/web/console/guide", response_model=None)
-def facility_console_guide() -> HTMLResponse:
-    return HTMLResponse(_build_facility_console_guide_html(_service_info_payload()))
-
-
-@app.get("/web/iam-guide", response_model=None)
-def iam_guide() -> HTMLResponse:
-    return HTMLResponse(_build_iam_guide_html(_service_info_payload()))
-
-
-@app.get("/web/tutorial-guide", response_model=None)
-def tutorial_guide() -> HTMLResponse:
-    return HTMLResponse(_web_build_tutorial_guide_html(_build_tutorial_simulator_payload()))
-
-
-@app.get("/web/adoption", response_model=None)
-def adoption_portal() -> HTMLResponse:
-    return HTMLResponse(_build_public_main_page_html(_service_info_payload(), _adoption_plan_payload()))
-
-
-@app.get("/web/tutorial-simulator", response_model=None)
-def tutorial_simulator_portal() -> HTMLResponse:
-    return HTMLResponse(_build_tutorial_simulator_html(_build_tutorial_simulator_payload()))
-
-
-@app.get("/", response_model=None)
-def root(request: Request) -> Any:
-    accept = request.headers.get("accept", "").lower()
-    if "text/html" in accept:
-        selected_tab = request.query_params.get("tab", "").strip().lower()
-        return HTMLResponse(_build_system_main_tabs_html(_service_info_payload(), initial_tab=selected_tab))
-    return _service_info_payload()
-
-
-@public_router.get("/adoption-plan")
-def get_public_adoption_plan() -> dict[str, Any]:
-    return _adoption_plan_payload()
-
-
-@public_router.get("/adoption-plan/campaign")
-def get_public_adoption_campaign() -> dict[str, Any]:
-    plan = _adoption_plan_payload()
-    return {
-        "title": plan.get("title"),
-        "public": plan.get("public", True),
-        "campaign_kit": plan.get("campaign_kit", {}),
-    }
-
-
-@public_router.get("/adoption-plan/w02")
-def get_public_adoption_w02() -> dict[str, Any]:
-    return _adoption_w02_payload()
-
-
-@public_router.get("/adoption-plan/w03")
-def get_public_adoption_w03() -> dict[str, Any]:
-    return _adoption_w03_payload()
-
-
-@public_router.get("/adoption-plan/w04")
-def get_public_adoption_w04() -> dict[str, Any]:
-    return _adoption_w04_payload()
-
-
-@public_router.get("/adoption-plan/w05")
-def get_public_adoption_w05() -> dict[str, Any]:
-    return _adoption_w05_payload()
-
-
-@public_router.get("/adoption-plan/w06")
-def get_public_adoption_w06() -> dict[str, Any]:
-    return _adoption_w06_payload()
-
-
-@public_router.get("/adoption-plan/w07")
-def get_public_adoption_w07() -> dict[str, Any]:
-    return _adoption_w07_payload()
-
-
-@public_router.get("/adoption-plan/w08")
-def get_public_adoption_w08() -> dict[str, Any]:
-    return _adoption_w08_payload()
-
-
-@public_router.get("/adoption-plan/w09")
-def get_public_adoption_w09() -> dict[str, Any]:
-    return _adoption_w09_payload()
-
-
-@public_router.get("/adoption-plan/w10")
-def get_public_adoption_w10() -> dict[str, Any]:
-    return _adoption_w10_payload()
-
-
-@public_router.get("/adoption-plan/w11")
-def get_public_adoption_w11() -> dict[str, Any]:
-    return _adoption_w11_payload()
-
-
-@public_router.get("/adoption-plan/w12")
-def get_public_adoption_w12() -> dict[str, Any]:
-    return _adoption_w12_payload()
-
-
-@public_router.get("/adoption-plan/w13")
-def get_public_adoption_w13() -> dict[str, Any]:
-    return _adoption_w13_payload()
-
-
-@public_router.get("/adoption-plan/w14")
-def get_public_adoption_w14() -> dict[str, Any]:
-    return _adoption_w14_payload()
-
-
-
-@public_router.get("/adoption-plan/w15")
-def get_public_adoption_w15() -> dict[str, Any]:
-    return _adoption_w15_payload()
-
-
-
-
-@public_router.get("/modules", response_model=None)
-def get_public_modules(request: Request) -> Any:
-    payload = _facility_modules_payload()
-    accept = request.headers.get("accept", "").lower()
-    if "text/html" in accept:
-        return HTMLResponse(_build_public_modules_html(payload))
-    return payload
-
-
-@public_router.get("/tutorial-simulator", response_model=None)
-def get_public_tutorial_simulator(request: Request) -> Any:
-    payload = _build_tutorial_simulator_payload()
-    accept = request.headers.get("accept", "").lower()
-    if "text/html" in accept:
-        return HTMLResponse(_build_tutorial_simulator_html(payload))
-    return payload
-
-
-@public_router.get("/onboarding/day1")
-def get_public_onboarding_day1() -> dict[str, Any]:
-    return _build_public_day1_onboarding_payload()
-
-
-@public_router.get("/glossary")
-def get_public_glossary() -> dict[str, Any]:
-    return _build_public_glossary_payload()
-
-
-@public_router.get("/tutorial-simulator/sample-files")
-def get_public_tutorial_simulator_sample_files() -> dict[str, Any]:
-    return _tutorial_simulator_sample_files_payload()
-
-
-@public_router.get("/tutorial-simulator/sample-files/{sample_id}", response_model=None)
-def download_public_tutorial_simulator_sample_file(sample_id: str) -> Response:
-    artifact = _find_tutorial_simulator_sample_file(sample_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="Tutorial simulator sample file not found")
-    file_name = _safe_download_filename(
-        str(artifact.get("file_name") or f"{sample_id}.txt"),
-        fallback="tutorial-sample.txt",
-        max_length=120,
-    )
-    content_type = str(artifact.get("content_type") or "text/plain").strip().lower() or "text/plain"
-    if content_type not in TUTORIAL_SIMULATOR_SAMPLE_ALLOWED_CONTENT_TYPES:
-        content_type = "text/plain"
-    body = str(artifact.get("content") or "").encode("utf-8")
-    if content_type.startswith("text/"):
-        media_type = f"{content_type}; charset=utf-8"
-    else:
-        media_type = content_type
-    return Response(
-        content=body,
-        media_type=media_type,
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/schedule.csv")
-def get_public_adoption_plan_schedule_csv() -> Response:
-    plan = _adoption_plan_payload()
-    csv_text = _build_adoption_plan_schedule_csv(plan)
-    file_name = f"ka-facility-os-adoption-plan-{ADOPTION_PLAN_START.isoformat()}-{ADOPTION_PLAN_END.isoformat()}.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/schedule.ics")
-def get_public_adoption_plan_schedule_ics() -> Response:
-    plan = _adoption_plan_payload()
-    ics_text = _build_adoption_plan_schedule_ics(plan)
-    file_name = f"ka-facility-os-adoption-plan-{ADOPTION_PLAN_START.isoformat()}-{ADOPTION_PLAN_END.isoformat()}.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w02/checklist.csv")
-def get_public_adoption_w02_checklist_csv() -> Response:
-    payload = _adoption_w02_payload()
-    csv_text = _build_adoption_w02_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w02-sop-sandbox-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w02/schedule.ics")
-def get_public_adoption_w02_schedule_ics() -> Response:
-    payload = _adoption_w02_payload()
-    ics_text = _build_adoption_w02_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w02-sop-sandbox.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w03/checklist.csv")
-def get_public_adoption_w03_checklist_csv() -> Response:
-    payload = _adoption_w03_payload()
-    csv_text = _build_adoption_w03_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w03-go-live-onboarding-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w03/schedule.ics")
-def get_public_adoption_w03_schedule_ics() -> Response:
-    payload = _adoption_w03_payload()
-    ics_text = _build_adoption_w03_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w03-go-live-onboarding.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w04/checklist.csv")
-def get_public_adoption_w04_checklist_csv() -> Response:
-    payload = _adoption_w04_payload()
-    csv_text = _build_adoption_w04_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w04-first-success-acceleration-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w04/schedule.ics")
-def get_public_adoption_w04_schedule_ics() -> Response:
-    payload = _adoption_w04_payload()
-    ics_text = _build_adoption_w04_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w04-first-success-acceleration.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w04/common-mistakes")
-def get_public_adoption_w04_common_mistakes(
-    site: Annotated[str | None, Query()] = None,
-    days: Annotated[int, Query(ge=1, le=90)] = 30,
-) -> dict[str, Any]:
-    return _build_w04_common_mistakes_payload(site=site, days=days, allowed_sites=None)
-
-
-@app.get("/web/adoption/w04/common-mistakes", response_model=None)
-def get_public_adoption_w04_common_mistakes_html(
-    site: Annotated[str | None, Query()] = None,
-    days: Annotated[int, Query(ge=1, le=90)] = 30,
-) -> HTMLResponse:
-    payload = _build_w04_common_mistakes_payload(site=site, days=days, allowed_sites=None)
-    return HTMLResponse(_build_w04_common_mistakes_html(payload))
-
-
-@public_router.get("/adoption-plan/w05/missions.csv")
-def get_public_adoption_w05_missions_csv() -> Response:
-    payload = _adoption_w05_payload()
-    csv_text = _build_adoption_w05_missions_csv(payload)
-    file_name = "ka-facility-os-adoption-w05-usage-consistency-missions.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w05/schedule.ics")
-def get_public_adoption_w05_schedule_ics() -> Response:
-    payload = _adoption_w05_payload()
-    ics_text = _build_adoption_w05_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w05-usage-consistency.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w05/help-docs")
-def get_public_adoption_w05_help_docs() -> dict[str, Any]:
-    payload = _adoption_w05_payload()
-    return {
-        "title": "W05 Help Docs v2",
-        "public": True,
-        "timeline": payload.get("timeline", {}),
-        "items": payload.get("help_docs", []),
-    }
-
-
-@public_router.get("/adoption-plan/w06/checklist.csv")
-def get_public_adoption_w06_checklist_csv() -> Response:
-    payload = _adoption_w06_payload()
-    csv_text = _build_adoption_w06_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w06-operational-rhythm-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w06/schedule.ics")
-def get_public_adoption_w06_schedule_ics() -> Response:
-    payload = _adoption_w06_payload()
-    ics_text = _build_adoption_w06_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w06-operational-rhythm.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w06/rbac-audit-template")
-def get_public_adoption_w06_rbac_audit_template() -> dict[str, Any]:
-    payload = _adoption_w06_payload()
-    return {
-        "title": "W06 RBAC Audit Template",
-        "public": True,
-        "timeline": payload.get("timeline", {}),
-        "items": payload.get("rbac_audit_checklist", []),
-    }
-
-
-@public_router.get("/adoption-plan/w07/checklist.csv")
-def get_public_adoption_w07_checklist_csv() -> Response:
-    payload = _adoption_w07_payload()
-    csv_text = _build_adoption_w07_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w07-sla-quality-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w07/schedule.ics")
-def get_public_adoption_w07_schedule_ics() -> Response:
-    payload = _adoption_w07_payload()
-    ics_text = _build_adoption_w07_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w07-sla-quality.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w07/coaching-playbook")
-def get_public_adoption_w07_coaching_playbook() -> dict[str, Any]:
-    payload = _adoption_w07_payload()
-    return {
-        "title": "W07 Coaching Playbook",
-        "public": True,
-        "timeline": payload.get("timeline", {}),
-        "items": payload.get("coaching_plays", []),
-    }
-
-
-@public_router.get("/adoption-plan/w08/checklist.csv")
-def get_public_adoption_w08_checklist_csv() -> Response:
-    payload = _adoption_w08_payload()
-    csv_text = _build_adoption_w08_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w08-report-discipline-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w08/schedule.ics")
-def get_public_adoption_w08_schedule_ics() -> Response:
-    payload = _adoption_w08_payload()
-    ics_text = _build_adoption_w08_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w08-report-discipline.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w09/checklist.csv")
-def get_public_adoption_w09_checklist_csv() -> Response:
-    payload = _adoption_w09_payload()
-    csv_text = _build_adoption_w09_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w09-kpi-operation-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w09/schedule.ics")
-def get_public_adoption_w09_schedule_ics() -> Response:
-    payload = _adoption_w09_payload()
-    ics_text = _build_adoption_w09_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w09-kpi-operation.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w10/checklist.csv")
-def get_public_adoption_w10_checklist_csv() -> Response:
-    payload = _adoption_w10_payload()
-    csv_text = _build_adoption_w10_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w10-self-serve-support-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w10/schedule.ics")
-def get_public_adoption_w10_schedule_ics() -> Response:
-    payload = _adoption_w10_payload()
-    ics_text = _build_adoption_w10_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w10-self-serve-support.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w11/checklist.csv")
-def get_public_adoption_w11_checklist_csv() -> Response:
-    payload = _adoption_w11_payload()
-    csv_text = _build_adoption_w11_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w11-scale-readiness-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w11/schedule.ics")
-def get_public_adoption_w11_schedule_ics() -> Response:
-    payload = _adoption_w11_payload()
-    ics_text = _build_adoption_w11_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w11-scale-readiness.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w12/checklist.csv")
-def get_public_adoption_w12_checklist_csv() -> Response:
-    payload = _adoption_w12_payload()
-    csv_text = _build_adoption_w12_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w12-closure-handoff-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w12/schedule.ics")
-def get_public_adoption_w12_schedule_ics() -> Response:
-    payload = _adoption_w12_payload()
-    ics_text = _build_adoption_w12_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w12-closure-handoff.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w13/checklist.csv")
-def get_public_adoption_w13_checklist_csv() -> Response:
-    payload = _adoption_w13_payload()
-    csv_text = _build_adoption_w13_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w13-continuous-improvement-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w13/schedule.ics")
-def get_public_adoption_w13_schedule_ics() -> Response:
-    payload = _adoption_w13_payload()
-    ics_text = _build_adoption_w13_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w13-continuous-improvement.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w14/checklist.csv")
-def get_public_adoption_w14_checklist_csv() -> Response:
-    payload = _adoption_w14_payload()
-    csv_text = _build_adoption_w14_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w14-stability-sprint-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w14/schedule.ics")
-def get_public_adoption_w14_schedule_ics() -> Response:
-    payload = _adoption_w14_payload()
-    ics_text = _build_adoption_w14_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w14-stability-sprint.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-
-@public_router.get("/adoption-plan/w15/checklist.csv")
-def get_public_adoption_w15_checklist_csv() -> Response:
-    payload = _adoption_w15_payload()
-    csv_text = _build_adoption_w15_checklist_csv(payload)
-    file_name = "ka-facility-os-adoption-w15-operations-efficiency-checklist.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/adoption-plan/w15/schedule.ics")
-def get_public_adoption_w15_schedule_ics() -> Response:
-    payload = _adoption_w15_payload()
-    ics_text = _build_adoption_w15_schedule_ics(payload)
-    file_name = "ka-facility-os-adoption-w15-operations-efficiency.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-
-
-@public_router.get("/adoption-plan/w08/reporting-sop")
-def get_public_adoption_w08_reporting_sop() -> dict[str, Any]:
-    payload = _adoption_w08_payload()
-    return {
-        "title": "W08 Reporting SOP",
-        "public": True,
-        "count": len(payload.get("reporting_sop", [])),
-        "items": payload.get("reporting_sop", []),
-    }
-
-
-@public_router.get("/adoption-plan/w02/sample-files")
-def get_public_adoption_w02_sample_files() -> dict[str, Any]:
-    return _w02_sample_files_payload()
-
-
-@public_router.get("/adoption-plan/w02/sample-files/{sample_id}", response_model=None)
-def download_public_adoption_w02_sample_file(sample_id: str) -> Response:
-    artifact = _find_w02_sample_file(sample_id)
-    if artifact is None:
-        raise HTTPException(status_code=404, detail="W02 sample file not found")
-
-    file_name = _safe_download_filename(
-        str(artifact.get("file_name") or f"{sample_id}.txt"),
-        fallback="w02-sample.txt",
-        max_length=120,
-    )
-    content_type = str(artifact.get("content_type") or "text/plain").strip().lower() or "text/plain"
-    if content_type not in EVIDENCE_ALLOWED_CONTENT_TYPES:
-        content_type = "text/plain"
-    content_text = str(artifact.get("content") or "")
-    return Response(
-        content=content_text.encode("utf-8"),
-        media_type=f"{content_type}; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/post-mvp")
-def get_public_post_mvp_plan() -> dict[str, Any]:
-    return _post_mvp_payload()
-
-
-@public_router.get("/post-mvp/backlog.csv")
-def get_public_post_mvp_backlog_csv() -> Response:
-    plan = _post_mvp_payload()
-    csv_text = _build_post_mvp_backlog_csv(plan)
-    file_name = f"ka-facility-os-post-mvp-backlog-{POST_MVP_PLAN_START.isoformat()}-{POST_MVP_PLAN_END.isoformat()}.csv"
-    return Response(
-        content=csv_text,
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/post-mvp/releases.ics")
-def get_public_post_mvp_releases_ics() -> Response:
-    plan = _post_mvp_payload()
-    ics_text = _build_post_mvp_release_ics(plan)
-    file_name = f"ka-facility-os-post-mvp-releases-{POST_MVP_PLAN_START.isoformat()}-{POST_MVP_PLAN_END.isoformat()}.ics"
-    return Response(
-        content=ics_text,
-        media_type="text/calendar; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-    )
-
-
-@public_router.get("/post-mvp/kpi-dashboard")
-def get_public_post_mvp_kpi_dashboard() -> dict[str, Any]:
-    plan = _post_mvp_payload()
-    return {
-        "title": plan.get("title"),
-        "public": plan.get("public", True),
-        "timeline": plan.get("timeline", {}),
-        "kpi_dashboard_spec": plan.get("kpi_dashboard_spec", []),
-    }
-
-
-@public_router.get("/post-mvp/risks")
-def get_public_post_mvp_risks() -> dict[str, Any]:
-    plan = _post_mvp_payload()
-    return {
-        "title": plan.get("title"),
-        "public": plan.get("public", True),
-        "timeline": plan.get("timeline", {}),
-        "risk_register": plan.get("risk_register", []),
-    }
-
-
 @adoption_router.post("/w02/tracker/bootstrap", response_model=W02TrackerBootstrapResponse)
 def bootstrap_w02_tracker_items(
     payload: W02TrackerBootstrapRequest,
@@ -41931,6 +41238,95 @@ def restore_sla_policy_revision(
 from app.domains.iam.router_auth import router as iam_auth_router
 from app.domains.iam.router_admin import router as iam_admin_router
 from app.domains.ops.router_core import router as ops_core_router
+from app.domains.public.router import PublicRouteDeps, build_router as build_public_router
+
+public_router = build_public_router(
+    PublicRouteDeps(
+        service_info_payload=_service_info_payload,
+        facility_modules_payload=_facility_modules_payload,
+        build_public_modules_html=_build_public_modules_html,
+        build_tutorial_simulator_payload=_build_tutorial_simulator_payload,
+        build_tutorial_simulator_html=_build_tutorial_simulator_html,
+        build_tutorial_guide_html=_web_build_tutorial_guide_html,
+        build_public_day1_onboarding_payload=_build_public_day1_onboarding_payload,
+        build_public_glossary_payload=_build_public_glossary_payload,
+        tutorial_simulator_sample_files_payload=_tutorial_simulator_sample_files_payload,
+        find_tutorial_simulator_sample_file=_find_tutorial_simulator_sample_file,
+        tutorial_simulator_sample_allowed_content_types=TUTORIAL_SIMULATOR_SAMPLE_ALLOWED_CONTENT_TYPES,
+        build_system_main_tabs_html=lambda service_info, initial_tab: _build_system_main_tabs_html(
+            service_info,
+            initial_tab=initial_tab,
+        ),
+        build_facility_console_html=_build_facility_console_html,
+        build_facility_console_guide_html=_build_facility_console_guide_html,
+        build_iam_guide_html=_build_iam_guide_html,
+        build_public_main_page_html=_build_public_main_page_html,
+        adoption_plan_payload=_adoption_plan_payload,
+        adoption_plan_start=ADOPTION_PLAN_START,
+        adoption_plan_end=ADOPTION_PLAN_END,
+        build_adoption_plan_schedule_csv=_build_adoption_plan_schedule_csv,
+        build_adoption_plan_schedule_ics=_build_adoption_plan_schedule_ics,
+        week_payload_builders={
+            'w02': _adoption_w02_payload,
+            'w03': _adoption_w03_payload,
+            'w04': _adoption_w04_payload,
+            'w05': _adoption_w05_payload,
+            'w06': _adoption_w06_payload,
+            'w07': _adoption_w07_payload,
+            'w08': _adoption_w08_payload,
+            'w09': _adoption_w09_payload,
+            'w10': _adoption_w10_payload,
+            'w11': _adoption_w11_payload,
+            'w12': _adoption_w12_payload,
+            'w13': _adoption_w13_payload,
+            'w14': _adoption_w14_payload,
+            'w15': _adoption_w15_payload,
+        },
+        week_checklist_csv_builders={
+            'w02': _build_adoption_w02_checklist_csv,
+            'w03': _build_adoption_w03_checklist_csv,
+            'w04': _build_adoption_w04_checklist_csv,
+            'w06': _build_adoption_w06_checklist_csv,
+            'w07': _build_adoption_w07_checklist_csv,
+            'w08': _build_adoption_w08_checklist_csv,
+            'w09': _build_adoption_w09_checklist_csv,
+            'w10': _build_adoption_w10_checklist_csv,
+            'w11': _build_adoption_w11_checklist_csv,
+            'w12': _build_adoption_w12_checklist_csv,
+            'w13': _build_adoption_w13_checklist_csv,
+            'w14': _build_adoption_w14_checklist_csv,
+            'w15': _build_adoption_w15_checklist_csv,
+        },
+        week_schedule_ics_builders={
+            'w02': _build_adoption_w02_schedule_ics,
+            'w03': _build_adoption_w03_schedule_ics,
+            'w04': _build_adoption_w04_schedule_ics,
+            'w05': _build_adoption_w05_schedule_ics,
+            'w06': _build_adoption_w06_schedule_ics,
+            'w07': _build_adoption_w07_schedule_ics,
+            'w08': _build_adoption_w08_schedule_ics,
+            'w09': _build_adoption_w09_schedule_ics,
+            'w10': _build_adoption_w10_schedule_ics,
+            'w11': _build_adoption_w11_schedule_ics,
+            'w12': _build_adoption_w12_schedule_ics,
+            'w13': _build_adoption_w13_schedule_ics,
+            'w14': _build_adoption_w14_schedule_ics,
+            'w15': _build_adoption_w15_schedule_ics,
+        },
+        build_w04_common_mistakes_payload=_build_w04_common_mistakes_payload,
+        build_w04_common_mistakes_html=_build_w04_common_mistakes_html,
+        build_adoption_w05_missions_csv=_build_adoption_w05_missions_csv,
+        w02_sample_files_payload=_w02_sample_files_payload,
+        find_w02_sample_file=_find_w02_sample_file,
+        evidence_allowed_content_types=EVIDENCE_ALLOWED_CONTENT_TYPES,
+        safe_download_filename=_safe_download_filename,
+        post_mvp_payload=_post_mvp_payload,
+        post_mvp_plan_start=POST_MVP_PLAN_START,
+        post_mvp_plan_end=POST_MVP_PLAN_END,
+        build_post_mvp_backlog_csv=_build_post_mvp_backlog_csv,
+        build_post_mvp_release_ics=_build_post_mvp_release_ics,
+    )
+)
 
 app.include_router(iam_auth_router)
 app.include_router(ops_core_router)
@@ -41939,3 +41335,4 @@ app.include_router(iam_admin_router)
 app.include_router(admin_router)
 app.include_router(adoption_router)
 app.include_router(public_router)
+
