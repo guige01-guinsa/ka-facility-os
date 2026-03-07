@@ -1,6 +1,5 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$DeployHookUrl,
+  [string]$DeployHookUrl = "",
   [string]$ServiceId = "",
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
@@ -42,6 +41,14 @@ function Get-ServiceInfo {
   return Invoke-RestMethod -Method Get -Uri "$apiBase/services/$ServiceId" -Headers $headers
 }
 
+function Start-Deploy {
+  if (-not [string]::IsNullOrWhiteSpace($DeployHookUrl)) {
+    Invoke-WebRequest -Method Post -Uri $DeployHookUrl -UseBasicParsing | Out-Null
+    return
+  }
+  Invoke-RestMethod -Method Post -Uri "$apiBase/services/$ServiceId/deploys" -Headers $headers -Body "{}" | Out-Null
+}
+
 function Try-Rollback {
   param([string]$DeployId)
   try {
@@ -73,7 +80,7 @@ $before = Get-Deploys -Limit 20
 $lastLive = ($before | ForEach-Object { $_.deploy } | Where-Object { $_.status -eq "live" } | Select-Object -First 1)
 $lastLiveId = if ($lastLive) { $lastLive.id } else { "" }
 
-Invoke-WebRequest -Method Post -Uri $DeployHookUrl -UseBasicParsing | Out-Null
+Start-Deploy
 
 $deadline = (Get-Date).AddSeconds($MaxWaitSeconds)
 $targetDeploy = $null

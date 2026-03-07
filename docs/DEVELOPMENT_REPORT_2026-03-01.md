@@ -25,6 +25,7 @@
 - 2026-03-07 기준 사용자 환경변수 `RENDER_SERVICE_ID`를 실제 운영 웹서비스 `srv-d6g57jbuibrs739g5mvg`로 바로잡았고, `ops quality / DR rehearsal / governance gate-remediation` helper를 `app.domains.ops.service`로 추가 추출한 런타임 커밋 `7c17db2`를 운영 배포(`dep-d6m0ctk50q8c73abg7l0`)까지 완료했다.
 - 2026-03-07 기준 `W21~W30 remediation/autopilot` helper를 `app.domains.ops.remediation_service`로 추가 추출한 런타임 커밋 `4bfea9f`를 운영 배포(`dep-d6m0pkp4tr6s7386n830`)까지 완료했다.
 - 2026-03-07 기준 `inspection/evidence` helper를 `app.domains.ops.inspection_service`로 추가 추출한 런타임 커밋 `48019cd`를 운영 배포(`dep-d6m133bh46gs73bc4ke0`)까지 완료했다.
+- 2026-03-07 기준 `workflow/work-order` helper를 `app.domains.ops.workflow_service`로 추가 추출한 런타임 커밋 `d6d43dc`를 운영 배포(`dep-d6m23q7gi27c73ds4gk0`)까지 완료했고, `scripts/render_env_utils.ps1`를 통해 privileged smoke가 운영 Render env의 `ADMIN_TOKEN`을 자동 복구하도록 정리했다.
 
 ## 2. 단계별 개발 내역
 
@@ -125,9 +126,11 @@
 - `ops quality`, `DR rehearsal`, `governance gate/remediation` helper/service를 `app.domains.ops.service`로 추가 추출.
 - `W21~W30 remediation/autopilot` helper/service를 `app.domains.ops.remediation_service`로 추가 추출.
 - `inspection/evidence` helper/service를 `app.domains.ops.inspection_service`로 추가 추출.
-- `app/main.py`는 `23,908` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
+- `workflow/work-order` helper/service를 `app.domains.ops.workflow_service`로 추가 추출.
+- `app/main.py`는 `23,741` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
 - 사용자 환경변수 `RENDER_SERVICE_ID`를 운영 웹서비스 `srv-d6g57jbuibrs739g5mvg`로 정정해 잘못된 서비스(`ka-part`)로의 배포 경로를 차단했다.
-- 배포: `dep-d6m0ctk50q8c73abg7l0`, `dep-d6m0pkp4tr6s7386n830`, `dep-d6m133bh46gs73bc4ke0`, 검증: split test run total `101 passed` (`16 + 36 + 49`), `SMOKE_OK`
+- privileged smoke는 local `AdminToken` 없이도 Render env의 `ADMIN_TOKEN`을 자동 조회해 수행되며, live `/api/auth/me` `role=owner`, `/api/ops/runbook/checks` `overall_status=ok`를 확인했다.
+- 배포: `dep-d6m0ctk50q8c73abg7l0`, `dep-d6m0pkp4tr6s7386n830`, `dep-d6m133bh46gs73bc4ke0`, `dep-d6m23q7gi27c73ds4gk0`, 검증: split test run total `101 passed` (`16 + 36 + 49`), `SMOKE_OK`
 - 배포: `dep-d6lv3p4r85hc73ae73r0`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 
 ### 안정화 스프린트(2026-03-01 반영)

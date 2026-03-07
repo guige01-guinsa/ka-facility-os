@@ -681,28 +681,32 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
 
 ```powershell
 .\scripts\deploy_and_verify.ps1 `
-  -DeployHookUrl "https://api.render.com/deploy/<serviceId>?key=<hookKey>" `
   -ServiceId "<render-service-id>" `
   -BaseUrl "https://ops.ka-part.com" `
-  -AdminToken "<owner-token>" `
   -ExpectRateLimitBackend "redis" `
   -RunRunbookGate $true `
   -ChecklistVersion "2026.03.v1" `
   -RollbackOnFailure
 ```
 
+- `-DeployHookUrl`는 선택사항입니다. 비워두면 Render API `POST /v1/services/{serviceId}/deploys`를 직접 사용합니다.
+- `-ServiceId`를 생략하면 현재 셸 env `RENDER_SERVICE_ID`, 없으면 사용자 환경변수 `RENDER_SERVICE_ID`를 사용합니다.
+- `-AdminToken`을 생략하면 현재 env `ADMIN_TOKEN`, 없으면 Render service env의 `ADMIN_TOKEN`을 자동 조회해 privileged smoke를 수행합니다.
+
 Direct smoke helper supports backend expectation, optional strict audit-chain gate, runbook gate, and smoke record:
 
 ```powershell
 .\scripts\post_deploy_smoke.ps1 `
   -BaseUrl "https://ops.ka-part.com" `
-  -AdminToken "<owner-token>" `
+  -ServiceId "<render-service-id>" `
   -ExpectRateLimitBackend "redis" `
   -DeployId "<render-deploy-id>" `
   -ChecklistVersion "2026.03.v1" `
   -RunRunbookGate $true `
   -RecordSmokeRun $true
 ```
+
+- `post_deploy_smoke.ps1`도 `-AdminToken` 없이 실행 가능하며, 같은 우선순위(`ADMIN_TOKEN` env -> Render env `ADMIN_TOKEN`)로 관리자 토큰을 복구합니다.
 
 - Local/CI release gate helper:
 
