@@ -18,6 +18,7 @@
 - 2026-03-07 기준 운영 콘솔 신규 사용자용 1페이지 시작 가이드를 `/web/console/guide`와 `docs/CONSOLE_QUICKSTART.md`로 추가했고 운영 배포(`dep-d6lrcqlm5p6s73fhueh0`)까지 완료했다.
 - 2026-03-07 기준 IAM 탭 운영 절차를 `권한 확인 -> 사용자 관리 -> 토큰 처리 -> 감사 검증` 순서로 정리한 문서 `docs/IAM_TAB_USER_MANUAL.md`를 추가했다.
 - 2026-03-07 기준 메인 `IAM` 탭 안에서 바로 열 수 있는 링크 버튼과 HTML 가이드 `/web/iam-guide`를 추가했고 운영 배포(`dep-d6lrth7tskes73dk2ebg`)까지 완료했다.
+- 2026-03-07 기준 `IAM`, 레거시 콘솔, 튜토리얼 화면의 가이드 링크 문구를 `사용 설명서 열기`로 통일했고, 신규 튜토리얼 HTML 가이드 `/web/tutorial-guide`를 운영 배포(`dep-d6lsqjua2pns73cq4ch0`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -98,8 +99,10 @@
 - 배포: `dep-d6lrcqlm5p6s73fhueh0`, 검증: live `/web/console/guide` 확인, `SMOKE_OK`
 - IAM 탭 사용자 매뉴얼 `docs/IAM_TAB_USER_MANUAL.md` 추가.
 - 문서 전용 변경으로 별도 운영 배포는 수행하지 않음.
-- IAM 탭 상단에 `IAM 사용자 매뉴얼` 링크 버튼 추가, 별도 HTML 가이드 `/web/iam-guide` 배포.
+- IAM 탭 상단에 HTML 가이드 `/web/iam-guide` 링크 버튼 추가.
 - 배포: `dep-d6lrth7tskes73dk2ebg`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, live `/web/iam-guide` 확인, `SMOKE_OK`
+- `IAM`, 레거시 콘솔, 튜토리얼 화면의 가이드 링크 문구를 `사용 설명서 열기`로 통일하고 튜토리얼 HTML 가이드 `/web/tutorial-guide` 추가.
+- 배포: `dep-d6lsqjua2pns73cq4ch0`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, live `/web/tutorial-guide` 확인, `SMOKE_OK`
 
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.
