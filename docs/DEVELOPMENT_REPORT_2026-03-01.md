@@ -23,6 +23,7 @@
 - 2026-03-07 기준 `W02~W15 adoption tracker`, `ops governance`, `alerts`, `SLA policy` 라우트를 도메인 모듈로 분리했고 운영 배포(`dep-d6luh8nkijhs73fna6r0`)까지 완료했다.
 - 2026-03-07 기준 tutorial simulator, dashboard/handover, `W04~W15 adoption KPI/policy` 라우트를 각각 `app.domains.ops.router_tutorial`, `app.domains.ops.router_reporting`, `app.domains.adoption.router_ops`로 분리했고 운영 배포(`dep-d6lv3p4r85hc73ae73r0`)까지 완료했다.
 - 2026-03-07 기준 사용자 환경변수 `RENDER_SERVICE_ID`를 실제 운영 웹서비스 `srv-d6g57jbuibrs739g5mvg`로 바로잡았고, `ops quality / DR rehearsal / governance gate-remediation` helper를 `app.domains.ops.service`로 추가 추출한 런타임 커밋 `7c17db2`를 운영 배포(`dep-d6m0ctk50q8c73abg7l0`)까지 완료했다.
+- 2026-03-07 기준 `W21~W30 remediation/autopilot` helper를 `app.domains.ops.remediation_service`로 추가 추출한 런타임 커밋 `4bfea9f`를 운영 배포(`dep-d6m0pkp4tr6s7386n830`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -121,9 +122,10 @@
 - 배포: `dep-d6luh8nkijhs73fna6r0`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 - tutorial simulator, dashboard/handover, `W04~W15 adoption KPI/policy` 라우트를 `app/domains/ops/router_tutorial.py`, `app/domains/ops/router_reporting.py`, `app/domains/adoption/router_ops.py`로 분리.
 - `ops quality`, `DR rehearsal`, `governance gate/remediation` helper/service를 `app.domains.ops.service`로 추가 추출.
-- `app/main.py`는 `25,744` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
+- `W21~W30 remediation/autopilot` helper/service를 `app.domains.ops.remediation_service`로 추가 추출.
+- `app/main.py`는 `24,054` lines이며 직접 route decorator가 없는 상태로 더 축소됐다.
 - 사용자 환경변수 `RENDER_SERVICE_ID`를 운영 웹서비스 `srv-d6g57jbuibrs739g5mvg`로 정정해 잘못된 서비스(`ka-part`)로의 배포 경로를 차단했다.
-- 배포: `dep-d6m0ctk50q8c73abg7l0`, 검증: split test run total `101 passed` (`16 + 36 + 20 + 29`), `SMOKE_OK`
+- 배포: `dep-d6m0ctk50q8c73abg7l0`, `dep-d6m0pkp4tr6s7386n830`, 검증: split test run total `101 passed` (`16 + 36 + 20 + 29`), `SMOKE_OK`
 - 배포: `dep-d6lv3p4r85hc73ae73r0`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 
 ### 안정화 스프린트(2026-03-01 반영)
