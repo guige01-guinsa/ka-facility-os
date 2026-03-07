@@ -63,6 +63,68 @@ def test_ops_daily_check_alert_delivery_on_warning(app_client: TestClient, monke
     assert str(row["event_type"]) == "ops_daily_check"
     assert str(row["status"]) in {"failed", "warning", "success"}
 
+
+def test_internal_alert_webhook_requires_shared_token_when_configured(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_SHARED_TOKEN", "shared-secret")
+
+    forbidden = app_client.post(
+        "/api/ops/alerts/webhook/internal",
+        json={"event_type": "probe"},
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"] == "Invalid internal alert webhook token"
+
+    accepted = app_client.post(
+        "/api/ops/alerts/webhook/internal",
+        json={"event_type": "probe"},
+        headers={"X-Alert-Webhook-Token": "shared-secret"},
+    )
+    assert accepted.status_code == 202
+    body = accepted.json()
+    assert body["accepted"] is True
+    assert body["event_type"] == "probe"
+
+
+def test_post_json_with_retries_includes_shared_token_header(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+
+    captured: dict[str, object] = {}
+
+    class _DummyResponse:
+        status = 202
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_urlopen(req, timeout):
+        captured["url"] = req.full_url
+        captured["timeout"] = timeout
+        captured["token"] = req.headers.get("X-alert-webhook-token")
+        captured["content_type"] = req.headers.get("Content-type")
+        return _DummyResponse()
+
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_SHARED_TOKEN", "shared-secret")
+    monkeypatch.setattr(main_module.url_request, "urlopen", _fake_urlopen)
+
+    ok, err = main_module._post_json_with_retries(
+        url="https://alerts.example.internal/hook",
+        payload={"event_type": "probe"},
+        retries=1,
+        timeout_sec=2,
+    )
+
+    assert ok is True
+    assert err is None
+    assert captured["url"] == "https://alerts.example.internal/hook"
+    assert captured["timeout"] == 2
+    assert captured["token"] == "shared-secret"
+    assert captured["content_type"] == "application/json"
+
 def test_alert_delivery_list_and_retry(app_client: TestClient) -> None:
     import app.database as db_module
     from sqlalchemy import insert

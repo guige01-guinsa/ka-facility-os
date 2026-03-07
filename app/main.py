@@ -300,6 +300,8 @@ ENV_NAME = getenv("ENV", "local").lower()
 ALLOW_INSECURE_LOCAL_AUTH = _env_bool("ALLOW_INSECURE_LOCAL_AUTH", True)
 ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
 ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
+ALERT_WEBHOOK_SHARED_TOKEN = getenv("ALERT_WEBHOOK_SHARED_TOKEN", "").strip()
+ALERT_WEBHOOK_TOKEN_HEADER = "X-Alert-Webhook-Token"
 ALERT_WEBHOOK_TIMEOUT_SEC = float(getenv("ALERT_WEBHOOK_TIMEOUT_SEC", "5"))
 ALERT_WEBHOOK_RETRIES = int(getenv("ALERT_WEBHOOK_RETRIES", "3"))
 OPS_DAILY_CHECK_ALERT_LEVEL = getenv("OPS_DAILY_CHECK_ALERT_LEVEL", "critical").strip().lower() or "critical"
@@ -12052,6 +12054,13 @@ def _configured_alert_targets() -> list[str]:
     return deduped
 
 
+def _build_alert_webhook_request_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if ALERT_WEBHOOK_SHARED_TOKEN:
+        headers[ALERT_WEBHOOK_TOKEN_HEADER] = ALERT_WEBHOOK_SHARED_TOKEN
+    return headers
+
+
 def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
     normalized = (value or "").strip().lower()
     if normalized in {"off", "none", "disabled"}:
@@ -12737,7 +12746,7 @@ def _post_json_with_retries(
             url=url,
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers=_build_alert_webhook_request_headers(),
         )
         try:
             with url_request.urlopen(req, timeout=timeout_sec) as resp:
@@ -16253,6 +16262,13 @@ def _configured_alert_targets() -> list[str]:
     return deduped
 
 
+def _build_alert_webhook_request_headers() -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    if ALERT_WEBHOOK_SHARED_TOKEN:
+        headers[ALERT_WEBHOOK_TOKEN_HEADER] = ALERT_WEBHOOK_SHARED_TOKEN
+    return headers
+
+
 def _normalize_ops_daily_check_alert_level(value: str | None) -> str:
     normalized = (value or "").strip().lower()
     if normalized in {"off", "none", "disabled"}:
@@ -16938,7 +16954,7 @@ def _post_json_with_retries(
             url=url,
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json"},
+            headers=_build_alert_webhook_request_headers(),
         )
         try:
             with url_request.urlopen(req, timeout=timeout_sec) as resp:
@@ -24892,6 +24908,7 @@ def _service_info_payload() -> dict[str, str]:
         "adoption_portal_html": "/web/adoption",
         "facility_console_html": "/web/console",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
+        "alert_internal_webhook_api": "/api/ops/alerts/webhook/internal",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
         "alert_channel_mttr_kpi_api": "/api/ops/alerts/kpi/mttr",
         "alert_mttr_slo_policy_api": "/api/ops/alerts/mttr-slo/policy",
@@ -40246,6 +40263,26 @@ def list_alert_deliveries(
     with get_conn() as conn:
         rows = conn.execute(stmt).mappings().all()
     return [_row_to_alert_delivery_model(row) for row in rows]
+
+
+@ops_router.post("/alerts/webhook/internal", status_code=202)
+def receive_internal_alert_webhook(
+    payload: dict[str, Any],
+    alert_webhook_token: Annotated[str | None, Header(alias=ALERT_WEBHOOK_TOKEN_HEADER)] = None,
+) -> dict[str, Any]:
+    if ALERT_WEBHOOK_SHARED_TOKEN:
+        provided_token = alert_webhook_token or ""
+        if not secrets.compare_digest(provided_token, ALERT_WEBHOOK_SHARED_TOKEN):
+            raise HTTPException(status_code=403, detail="Invalid internal alert webhook token")
+    elif ENV_NAME not in {"local", "test"}:
+        raise HTTPException(status_code=503, detail="Internal alert webhook token is not configured")
+
+    event_type = str(payload.get("event_type") or payload.get("event") or "unknown").strip() or "unknown"
+    return {
+        "accepted": True,
+        "event_type": event_type,
+        "received_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @ops_router.get("/alerts/kpi/channels")

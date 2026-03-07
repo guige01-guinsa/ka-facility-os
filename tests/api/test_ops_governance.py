@@ -262,6 +262,19 @@ def test_runbook_alert_checks_are_ok_without_pending_alert_backlog(app_client: T
     assert checks["alert_retention_recent"]["candidate_count"] == 0
 
 
+def test_w07_quality_alert_channel_is_ok_when_webhook_target_configured(app_client: TestClient, monkeypatch) -> None:
+    import app.main as main_module
+
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_URL", "https://alerts.example.internal/hook")
+    monkeypatch.setattr(main_module, "ALERT_WEBHOOK_URLS", "")
+
+    snapshot = main_module._build_ops_runbook_checks_snapshot()
+    checks = {item["id"]: item for item in snapshot["checks"]}
+
+    assert checks["w07_quality_alert_channel"]["status"] == "ok"
+    assert checks["w07_quality_alert_channel"]["webhook_target_count"] == 1
+
+
 def test_weekly_streak_uses_recent_success_as_anchor_during_ramp_up(app_client: TestClient) -> None:
     import app.main as main_module
     from sqlalchemy import delete, insert

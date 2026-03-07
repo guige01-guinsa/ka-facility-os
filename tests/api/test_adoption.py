@@ -488,6 +488,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["ops_deploy_checklist_api"] == "/api/ops/deploy/checklist"
     assert service_info.json()["ops_deploy_smoke_record_api"] == "/api/ops/deploy/smoke/record"
     assert service_info.json()["alert_channel_kpi_api"] == "/api/ops/alerts/kpi/channels"
+    assert service_info.json()["alert_internal_webhook_api"] == "/api/ops/alerts/webhook/internal"
     assert service_info.json()["alert_channel_mttr_kpi_api"] == "/api/ops/alerts/kpi/mttr"
     assert service_info.json()["alert_mttr_slo_policy_api"] == "/api/ops/alerts/mttr-slo/policy"
     assert service_info.json()["alert_mttr_slo_run_api"] == "/api/ops/alerts/mttr-slo/check/run"
