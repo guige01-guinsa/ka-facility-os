@@ -13,6 +13,7 @@
 - 2026-03-07 기준 W07 품질 알림 내부 webhook 채널을 운영에 연결해 runbook `overall_status=ok` 상태를 만들었다.
 - 2026-03-07 기준 Slack/Teams 외부 채널 payload adapter를 배포해 실제 webhook URL secret만 추가하면 외부 운영 채널로 확장 가능한 상태를 만들었다.
 - 2026-03-07 기준 신규 사용자용 `처음 1일 운영 체크리스트`, 역할별 시작 가이드, 운영 용어집 API/UI를 튜토리얼 탭에 반영했고 운영 배포(`dep-d6lphnlactks73flpdb0`)까지 완료했다.
+- 2026-03-07 기준 메인 운영 화면의 주요 버튼/액션에 한글 풍선안내를 추가해 신규 사용자의 첫 사용 장벽을 낮췄고 운영 배포(`dep-d6lppgkhg0os73atrv6g`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -85,6 +86,8 @@
 - 공개 API `GET /api/public/onboarding/day1`, `GET /api/public/glossary` 추가.
 - 영문 메뉴/용어를 한글 업무 의미와 함께 설명하는 운영 용어집 UI 제공.
 - 배포: `dep-d6lphnlactks73flpdb0`, 검증: split test run total `101 passed`, `SMOKE_OK`
+- 메인 탭 주요 버튼/액션(권한, 점검, 리포트, IAM, W02~W15 실행추적)에 풍선안내(data-tip) 확장 적용.
+- 배포: `dep-d6lppgkhg0os73atrv6g`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`
 
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.
