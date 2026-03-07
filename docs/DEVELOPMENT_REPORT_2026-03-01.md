@@ -16,6 +16,7 @@
 - 2026-03-07 기준 메인 운영 화면의 주요 버튼/액션에 한글 풍선안내를 추가해 신규 사용자의 첫 사용 장벽을 낮췄고 운영 배포(`dep-d6lppgkhg0os73atrv6g`)까지 완료했다.
 - 2026-03-07 기준 같은 풍선안내 체계를 레거시 콘솔(`/web/console`)과 튜토리얼 단독 화면(`/web/tutorial-simulator`)까지 확장했고 운영 배포(`dep-d6lqtvftskes73djm2bg`)까지 완료했다.
 - 2026-03-07 기준 운영 콘솔 신규 사용자용 1페이지 시작 가이드를 `/web/console/guide`와 `docs/CONSOLE_QUICKSTART.md`로 추가했고 운영 배포(`dep-d6lrcqlm5p6s73fhueh0`)까지 완료했다.
+- 2026-03-07 기준 IAM 탭 운영 절차를 `권한 확인 -> 사용자 관리 -> 토큰 처리 -> 감사 검증` 순서로 정리한 문서 `docs/IAM_TAB_USER_MANUAL.md`를 추가했다.
 
 ## 2. 단계별 개발 내역
 
@@ -94,6 +95,8 @@
 - 배포: `dep-d6lqtvftskes73djm2bg`, 검증: `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`
 - 레거시 콘솔 상단에서 바로 열 수 있는 1페이지 시작 가이드 HTML(`/web/console/guide`)와 저장용 문서(`docs/CONSOLE_QUICKSTART.md`) 추가.
 - 배포: `dep-d6lrcqlm5p6s73fhueh0`, 검증: live `/web/console/guide` 확인, `SMOKE_OK`
+- IAM 탭 사용자 매뉴얼 `docs/IAM_TAB_USER_MANUAL.md` 추가.
+- 문서 전용 변경으로 별도 운영 배포는 수행하지 않음.
 
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.

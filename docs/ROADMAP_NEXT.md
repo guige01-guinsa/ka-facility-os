@@ -57,7 +57,7 @@
 - [x] 메뉴탭 호버 풍선안내 반영(영문 용어의 한글 설명 포함)
 - [x] 운영 배포 + post-deploy smoke 완료
 - [x] 콘솔 사용 가이드 1페이지 추가 (`/web/console`, `/web/console/guide`, `docs/CONSOLE_QUICKSTART.md`, 2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`)
-- [ ] IAM 탭 사용자 매뉴얼(권한/토큰/감사로그 순서) 작성
+- [x] IAM 탭 사용자 매뉴얼(권한/토큰/감사로그 순서) 작성 (`docs/IAM_TAB_USER_MANUAL.md`, 2026-03-07, docs-only)
 
 완료 기준:
 - 운영 콘솔에서 신규 사용자 10분 내 기본 흐름(로그인→점검→작업지시→리포트) 수행 가능
