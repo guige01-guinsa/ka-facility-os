@@ -19,6 +19,7 @@
 - 2026-03-07 기준 IAM 탭 운영 절차를 `권한 확인 -> 사용자 관리 -> 토큰 처리 -> 감사 검증` 순서로 정리한 문서 `docs/IAM_TAB_USER_MANUAL.md`를 추가했다.
 - 2026-03-07 기준 메인 `IAM` 탭 안에서 바로 열 수 있는 링크 버튼과 HTML 가이드 `/web/iam-guide`를 추가했고 운영 배포(`dep-d6lrth7tskes73dk2ebg`)까지 완료했다.
 - 2026-03-07 기준 `IAM`, 레거시 콘솔, 튜토리얼 화면의 가이드 링크 문구를 `사용 설명서 열기`로 통일했고, 신규 튜토리얼 HTML 가이드 `/web/tutorial-guide`를 운영 배포(`dep-d6lsqjua2pns73cq4ch0`)까지 완료했다.
+- 2026-03-07 기준 공개/웹 진입 경로(`/`, `/web/*`, `/api/public/*`, `/api/service-info`)를 `app.domains.public.router`로 분리했고 운영 배포(`dep-d6ltbui4d50c73ch9500`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -107,6 +108,11 @@
 ### W15: Ops Efficiency
 - 운영 효율 지표/정책/트래커/API 구현.
 - W07~W14 운영 흐름을 상위 운영효율 관점으로 집계/관리.
+
+### 구조 분해 업데이트(2026-03-07 반영)
+- 공개/웹 진입 라우트(`/`, `/web/*`, `/api/public/*`, `/api/service-info`)를 `app/domains/public/router.py`로 분리.
+- `app/main.py`의 직접 `@app.get`는 `health`, `meta`만 남도록 정리.
+- 배포: `dep-d6ltbui4d50c73ch9500`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 
 ### 안정화 스프린트(2026-03-01 반영)
 - 성능: 주요 API P95 지연 모니터 API 추가

@@ -5,11 +5,12 @@
 ## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 38,055 lines (HTML + IAM + OPS core route 1차 분리 반영, 여전히 API + JS + 정책/배치 로직 집중)
+  - `app/main.py`: 38,137 lines (공개/웹 진입 라우트는 `app.domains.public.router`로 분리, 현재 직접 `@app.get`는 `health/meta`만 유지)
   - `tests/api/*.py`: 7 files, 100 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
+  - `service-info`, `/`, `/web/*`, `/api/public/*` 공개 진입 경로는 `app.domains.public.router`로 이동
   - 단, 실제 구현은 여전히 `app/main.py` 단일 파일에 집중
 - 운영 자동화 상태
   - 배포/스모크/런북/거버넌스/리메디에이션 자동화는 운영 가능한 수준
@@ -68,6 +69,7 @@
 - [x] `app/main.py`에서 HTML 빌더를 `app/web/*.py`로 분리 (2026-03-06, `app/web/main_tabs.py`, `app/web/public_pages.py`, `app/web/facility_console.py`, `app/web/tutorial.py`)
 - [x] 인증/권한/토큰/감사 로직을 `app/domains/iam/*.py`로 1차 분리 (2026-03-06, `security.py`/`service.py` + `router_auth.py`/`router_admin.py` 추출, `app.main` 호환 래퍼 유지)
 - [x] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 1차 분리 (2026-03-06, `router_core.py`로 workflow-locks/inspections/work-orders/reports route 추출)
+- [x] 공개/웹 진입 라우트를 `app/domains/public/router.py`로 분리 (2026-03-07, `fd72f0f`, deploy `dep-d6ltbui4d50c73ch9500`, 전체 테스트 `101 passed`)
 - [ ] `app/main.py`는 라우터 결합 + 앱 부트스트랩 역할로 축소
 
 완료 기준:
