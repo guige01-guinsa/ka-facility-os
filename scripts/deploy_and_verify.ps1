@@ -1,8 +1,7 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$DeployHookUrl,
-  [Parameter(Mandatory = $true)]
-  [string]$ServiceId,
+  [string]$ServiceId = "",
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
   [string]$ExpectedServiceName = "ka-facility-os",
@@ -18,6 +17,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/render_env_utils.ps1"
+$ServiceId = Resolve-RenderServiceId -ServiceId $ServiceId
+if ($ServiceId -eq "") {
+  throw "Render service id is required (param -ServiceId or env RENDER_SERVICE_ID)."
+}
 
 if ($RenderApiKey -eq "") {
   $RenderApiKey = $env:RENDER_API_KEY
@@ -101,6 +105,8 @@ if ($targetDeploy.status -ne "live") {
 & "$PSScriptRoot/post_deploy_smoke.ps1" `
   -BaseUrl $BaseUrl `
   -AdminToken $AdminToken `
+  -ServiceId $ServiceId `
+  -RenderApiKey $RenderApiKey `
   -ExpectRateLimitBackend $ExpectRateLimitBackend `
   -DeployId $targetDeploy.id `
   -ChecklistVersion $ChecklistVersion `

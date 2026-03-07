@@ -2,6 +2,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
   [string]$AdminToken = "",
+  [string]$ServiceId = "",
+  [string]$RenderApiKey = "",
+  [string]$AdminTokenEnvKey = "ADMIN_TOKEN",
   [string]$ExpectRateLimitBackend = "",
   [switch]$RequireAuditChainOk,
   [int]$TimeoutSec = 20,
@@ -12,6 +15,9 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot/render_env_utils.ps1"
+$ServiceId = Resolve-RenderServiceId -ServiceId $ServiceId
+$AdminToken = Resolve-RenderAdminToken -AdminToken $AdminToken -ServiceId $ServiceId -RenderApiKey $RenderApiKey -EnvKey $AdminTokenEnvKey
 $startedAt = (Get-Date).ToUniversalTime()
 $smokeChecks = @()
 $overallStatus = "success"
@@ -184,7 +190,8 @@ try {
       Add-SmokeCheck -Id "runbook_gate" -Status "skipped" -Message "Runbook gate disabled by parameter"
     }
   } else {
-    Add-SmokeCheck -Id "admin_checks" -Status "skipped" -Message "Admin token not provided; auth/runbook/security checks skipped"
+    $skipMessage = "Admin token not provided or could not be resolved; auth/runbook/security checks skipped"
+    Add-SmokeCheck -Id "admin_checks" -Status "skipped" -Message $skipMessage
     if ($RunRunbookGate) {
       $runbookGatePassed = $false
     } else {
