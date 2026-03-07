@@ -12,7 +12,9 @@ param(
   [switch]$RollbackOnFailure,
   [string]$ExpectRateLimitBackend = "",
   [bool]$RunRunbookGate = $true,
-  [string]$ChecklistVersion = ""
+  [string]$ChecklistVersion = "",
+  [switch]$SkipPreDeploySmokeTests,
+  [string]$PythonCommand = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -31,6 +33,7 @@ if ($RenderApiKey -eq "") {
 
 $apiBase = "https://api.render.com/v1"
 $headers = @{ Authorization = "Bearer $RenderApiKey" }
+$projectRoot = Split-Path -Parent $PSScriptRoot
 
 function Get-Deploys {
   param([int]$Limit = 10)
@@ -47,6 +50,24 @@ function Start-Deploy {
     return
   }
   Invoke-RestMethod -Method Post -Uri "$apiBase/services/$ServiceId/deploys" -Headers $headers -Body "{}" | Out-Null
+}
+
+function Invoke-PreDeploySmokeTests {
+  if ($SkipPreDeploySmokeTests) {
+    Write-Output "PRE_DEPLOY_SMOKE_SKIPPED"
+    return
+  }
+  Push-Location $projectRoot
+  try {
+    & $PythonCommand -m pytest -q -m smoke
+    $exitCode = $LASTEXITCODE
+  } finally {
+    Pop-Location
+  }
+  if ($exitCode -ne 0) {
+    throw "Pre-deploy smoke tests failed (python -m pytest -q -m smoke)."
+  }
+  Write-Output "PRE_DEPLOY_SMOKE_OK"
 }
 
 function Try-Rollback {
@@ -80,6 +101,7 @@ $before = Get-Deploys -Limit 20
 $lastLive = ($before | ForEach-Object { $_.deploy } | Where-Object { $_.status -eq "live" } | Select-Object -First 1)
 $lastLiveId = if ($lastLive) { $lastLive.id } else { "" }
 
+Invoke-PreDeploySmokeTests
 Start-Deploy
 
 $deadline = (Get-Date).AddSeconds($MaxWaitSeconds)
