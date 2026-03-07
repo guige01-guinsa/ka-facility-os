@@ -5,13 +5,15 @@
 ## 2026-03-07 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 38,137 lines (공개/웹 진입 라우트는 `app.domains.public.router`로 분리, 현재 직접 `@app.get`는 `health/meta`만 유지)
-  - `tests/api/*.py`: 7 files, 100 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
+  - `app/main.py`: 28,973 lines (공개/웹 + adoption tracker + ops governance/alerts/SLA policy 라우트 분리, 현재 남은 직접 라우트는 tutorial/handover/adoption KPI 중심)
+  - `tests/api/*.py`: 7 files, 101 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
   - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
   - `service-info`, `/`, `/web/*`, `/api/public/*` 공개 진입 경로는 `app.domains.public.router`로 이동
-  - 단, 실제 구현은 여전히 `app/main.py` 단일 파일에 집중
+  - `W02~W15 adoption tracker`는 `app.domains.adoption.router_tracker`로 이동
+  - `ops governance/alert/SLA policy`는 `app.domains.ops.router_governance`, `router_alerts`로 이동
+  - 단, tutorial/handover/adoption KPI 정책 블록은 여전히 `app/main.py`에 남아 있음
 - 운영 자동화 상태
   - 배포/스모크/런북/거버넌스/리메디에이션 자동화는 운영 가능한 수준
   - cron job 블루프린트도 다수 구성됨
@@ -70,6 +72,8 @@
 - [x] 인증/권한/토큰/감사 로직을 `app/domains/iam/*.py`로 1차 분리 (2026-03-06, `security.py`/`service.py` + `router_auth.py`/`router_admin.py` 추출, `app.main` 호환 래퍼 유지)
 - [x] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 1차 분리 (2026-03-06, `router_core.py`로 workflow-locks/inspections/work-orders/reports route 추출)
 - [x] 공개/웹 진입 라우트를 `app/domains/public/router.py`로 분리 (2026-03-07, `fd72f0f`, deploy `dep-d6ltbui4d50c73ch9500`, 전체 테스트 `101 passed`)
+- [x] adoption tracker 라우트를 `app/domains/adoption/router_tracker.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
+- [x] ops governance/alerts/SLA policy 라우트를 `app/domains/ops/router_governance.py`, `app/domains/ops/router_alerts.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
 - [ ] `app/main.py`는 라우터 결합 + 앱 부트스트랩 역할로 축소
 
 완료 기준:

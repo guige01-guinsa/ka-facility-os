@@ -20,6 +20,7 @@
 - 2026-03-07 기준 메인 `IAM` 탭 안에서 바로 열 수 있는 링크 버튼과 HTML 가이드 `/web/iam-guide`를 추가했고 운영 배포(`dep-d6lrth7tskes73dk2ebg`)까지 완료했다.
 - 2026-03-07 기준 `IAM`, 레거시 콘솔, 튜토리얼 화면의 가이드 링크 문구를 `사용 설명서 열기`로 통일했고, 신규 튜토리얼 HTML 가이드 `/web/tutorial-guide`를 운영 배포(`dep-d6lsqjua2pns73cq4ch0`)까지 완료했다.
 - 2026-03-07 기준 공개/웹 진입 경로(`/`, `/web/*`, `/api/public/*`, `/api/service-info`)를 `app.domains.public.router`로 분리했고 운영 배포(`dep-d6ltbui4d50c73ch9500`)까지 완료했다.
+- 2026-03-07 기준 `W02~W15 adoption tracker`, `ops governance`, `alerts`, `SLA policy` 라우트를 도메인 모듈로 분리했고 운영 배포(`dep-d6luh8nkijhs73fna6r0`)까지 완료했다.
 
 ## 2. 단계별 개발 내역
 
@@ -113,6 +114,10 @@
 - 공개/웹 진입 라우트(`/`, `/web/*`, `/api/public/*`, `/api/service-info`)를 `app/domains/public/router.py`로 분리.
 - `app/main.py`의 직접 `@app.get`는 `health`, `meta`만 남도록 정리.
 - 배포: `dep-d6ltbui4d50c73ch9500`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
+- `W02~W15 adoption tracker`를 `app/domains/adoption/router_tracker.py`로 분리.
+- `ops governance`, `alerts`, `SLA policy` 라우트를 `app/domains/ops/router_governance.py`, `app/domains/ops/router_alerts.py`로 분리.
+- `app/main.py`는 `28,973` lines까지 감소했고, 남은 직접 라우트는 tutorial/handover/adoption KPI 정책 블록 중심이다.
+- 배포: `dep-d6luh8nkijhs73fna6r0`, 검증: `pytest -q` `101 passed`, `SMOKE_OK`
 
 ### 안정화 스프린트(2026-03-01 반영)
 - 성능: 주요 API P95 지연 모니터 API 추가
