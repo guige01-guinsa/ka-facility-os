@@ -38,7 +38,7 @@ def upgrade() -> None:
             sa.Column("unit_number", sa.String(length=40), nullable=False),
             sa.Column("occupant_name", sa.String(length=120), nullable=True),
             sa.Column("area_sqm", sa.Float(), nullable=True),
-            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
+            sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         )
