@@ -2077,8 +2077,12 @@ class OfficialDocumentOverdueSyncRead(BaseModel):
 
 class IntegratedMonthlyFacilityReportRead(BaseModel):
     generated_at: datetime
-    month: str
+    period_type: Literal["monthly", "annual"] = "monthly"
+    period_label: str = ""
+    month: Optional[str] = None
+    year: Optional[int] = None
     site: Optional[str] = None
+    merged_sections: list[str] = Field(default_factory=list)
     inspections: dict[str, Any] = Field(default_factory=dict)
     work_orders: dict[str, Any] = Field(default_factory=dict)
     official_documents: dict[str, Any] = Field(default_factory=dict)

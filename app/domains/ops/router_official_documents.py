@@ -5,7 +5,9 @@ from __future__ import annotations
 import csv
 import html
 import io
+import json
 import re
+import zipfile
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -39,8 +41,6 @@ router = APIRouter(tags=["official-documents"])
 _allowed_sites_for_principal = main_module._allowed_sites_for_principal
 _append_work_order_event = main_module._append_work_order_event
 _as_optional_datetime = main_module._as_optional_datetime
-_build_monthly_report_csv = main_module._build_monthly_report_csv
-_build_monthly_report_pdf = main_module._build_monthly_report_pdf
 _is_allowed_evidence_content_type = main_module._is_allowed_evidence_content_type
 _normalize_evidence_storage_backend = main_module._normalize_evidence_storage_backend
 _read_evidence_blob = main_module._read_evidence_blob
@@ -50,14 +50,15 @@ _safe_download_filename = main_module._safe_download_filename
 _scan_evidence_bytes = main_module._scan_evidence_bytes
 _to_utc = main_module._to_utc
 _write_audit_log = main_module._write_audit_log
+_write_job_run = main_module._write_job_run
 _write_evidence_blob = main_module._write_evidence_blob
-build_monthly_report = main_module.build_monthly_report
 run_sla_escalation_job = main_module.run_sla_escalation_job
 require_permission = main_module.require_permission
 
 _DOC_STATUSES = {"received", "in_progress", "closed", "canceled"}
 _DOC_PRIORITIES = {"low", "medium", "high", "critical"}
 _ATTACHMENT_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+_OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME = "official_document_overdue_sync"
 
 
 def _normalize_doc_status(value: Any) -> str:
@@ -156,6 +157,36 @@ def _normalize_month_label(value: str) -> str:
     return normalized
 
 
+def _normalize_period_filters(month: str | None, year: int | None) -> tuple[str | None, int | None]:
+    if month and year is not None:
+        raise HTTPException(status_code=422, detail="month and year cannot be used together")
+    normalized_month = _normalize_month_label(month) if month else None
+    normalized_year = int(year) if year is not None else None
+    if normalized_year is not None and (normalized_year < 2000 or normalized_year > 2100):
+        raise HTTPException(status_code=422, detail="year must be between 2000 and 2100")
+    return normalized_month, normalized_year
+
+
+def _zip_safe_segment(value: str | None, *, default: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z가-힣._-]+", "_", str(value or "").strip())
+    normalized = normalized.strip("._-")
+    return normalized or default
+
+
+def _download_safe_segment(value: str | None, *, default: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(value or "").strip())
+    normalized = normalized.strip("._-")
+    return normalized or default
+
+
+def _json_or_scalar(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    if value is None:
+        return ""
+    return str(value)
+
+
 def _period_bounds(*, period_type: str, month: str | None = None, year: int | None = None) -> tuple[datetime, datetime, str]:
     if period_type == "monthly":
         normalized_month = _normalize_month_label(month or datetime.now(timezone.utc).strftime("%Y-%m"))
@@ -172,6 +203,19 @@ def _period_bounds(*, period_type: str, month: str | None = None, year: int | No
     start = datetime(target_year, 1, 1, tzinfo=timezone.utc)
     end = datetime(target_year + 1, 1, 1, tzinfo=timezone.utc)
     return start, end, str(target_year)
+
+
+def _build_official_document_automation_principal(*, site: str | None = None) -> dict[str, Any]:
+    scope = [site] if site else [main_module.SITE_SCOPE_ALL]
+    return {
+        "user_id": None,
+        "username": "official-doc-automation",
+        "display_name": "Official Document Automation",
+        "role": "owner",
+        "permissions": ["*"],
+        "site_scope": scope,
+        "is_legacy": False,
+    }
 
 
 def _row_to_official_document_model(row: dict[str, Any]) -> OfficialDocumentRead:
@@ -441,6 +485,56 @@ def _run_official_document_overdue_sync(
     )
 
 
+def run_official_document_overdue_sync_job(
+    *,
+    site: str | None = None,
+    dry_run: bool = False,
+    limit: int = 100,
+    trigger: str = "manual",
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    started_at = datetime.now(timezone.utc)
+    actor = principal or _build_official_document_automation_principal(site=site)
+    status = "success"
+    detail: dict[str, Any] = {
+        "site": site,
+        "dry_run": dry_run,
+        "limit": limit,
+    }
+    try:
+        allowed_sites = _allowed_sites_for_principal(actor) if site is None else None
+        result = _run_official_document_overdue_sync(
+            principal=actor,
+            site=site,
+            allowed_sites=allowed_sites,
+            dry_run=dry_run,
+            limit=limit,
+        )
+        detail.update(result.model_dump(mode="json"))
+        return detail
+    except Exception as exc:
+        status = "failed"
+        detail["error"] = str(exc)
+        raise
+    finally:
+        finished_at = datetime.now(timezone.utc)
+        detail.update(
+            {
+                "job_name": _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME,
+                "trigger": trigger,
+                "actor_username": str(actor.get("username") or "unknown"),
+            }
+        )
+        _write_job_run(
+            job_name=_OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME,
+            trigger=trigger,
+            status=status,
+            started_at=started_at,
+            finished_at=finished_at,
+            detail=detail,
+        )
+
+
 def _build_official_document_report(
     *,
     period_type: str,
@@ -689,32 +783,142 @@ def _build_official_document_report_print_html(report: OfficialDocumentClosureRe
 """
 
 
-def _build_integrated_monthly_report(
+def _build_period_ops_summary(
     *,
-    month: str | None,
+    start: datetime,
+    end: datetime,
+    period_label: str,
     site: str | None,
     allowed_sites: list[str] | None,
-) -> IntegratedMonthlyFacilityReportRead:
-    monthly_report = build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
-    official_report = _build_official_document_report(
-        period_type="monthly",
-        month=monthly_report.month,
-        site=site,
-        allowed_sites=allowed_sites,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    inspections_stmt = (
+        select(inspections)
+        .where(inspections.c.inspected_at >= start)
+        .where(inspections.c.inspected_at < end)
     )
-    stmt = select(
-        utility_billing_statements.c.utility_type,
-        func.count(utility_billing_statements.c.id).label("statement_count"),
-        func.sum(utility_billing_statements.c.total_amount).label("total_amount"),
-        func.sum(utility_billing_statements.c.common_fee).label("common_fee_total"),
-    ).where(utility_billing_statements.c.billing_month == monthly_report.month)
+    work_orders_stmt = (
+        select(work_orders)
+        .where(work_orders.c.created_at >= start)
+        .where(work_orders.c.created_at < end)
+    )
+    if site is not None:
+        inspections_stmt = inspections_stmt.where(inspections.c.site == site)
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return {
+                "generated_at": now,
+                "period_label": period_label,
+                "site": site,
+                "inspections": {
+                    "total": 0,
+                    "risk_counts": {"normal": 0, "warning": 0, "danger": 0},
+                    "top_risk_flags": {},
+                },
+                "work_orders": {
+                    "total": 0,
+                    "status_counts": {"open": 0, "acked": 0, "completed": 0, "canceled": 0},
+                    "escalated_count": 0,
+                    "overdue_open_count": 0,
+                    "completion_rate_percent": 0.0,
+                    "avg_resolution_hours": None,
+                },
+            }
+        inspections_stmt = inspections_stmt.where(inspections.c.site.in_(allowed_sites))
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        inspection_rows = conn.execute(inspections_stmt).mappings().all()
+        work_order_rows = conn.execute(work_orders_stmt).mappings().all()
+
+    risk_counts = {"normal": 0, "warning": 0, "danger": 0}
+    flag_counts: dict[str, int] = {}
+    for row in inspection_rows:
+        risk_level = str(row.get("risk_level") or "normal")
+        risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
+        for flag in str(row.get("risk_flags") or "").split(","):
+            normalized_flag = flag.strip()
+            if not normalized_flag:
+                continue
+            flag_counts[normalized_flag] = flag_counts.get(normalized_flag, 0) + 1
+
+    status_counts = {"open": 0, "acked": 0, "completed": 0, "canceled": 0}
+    escalated_count = 0
+    overdue_open_count = 0
+    resolution_hours: list[float] = []
+    for row in work_order_rows:
+        status = str(row.get("status") or "open")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if row.get("is_escalated"):
+            escalated_count += 1
+
+        due_at = _as_optional_datetime(row.get("due_at"))
+        if due_at is not None and status not in {"completed", "canceled"} and due_at < now:
+            overdue_open_count += 1
+
+        created_at = _as_optional_datetime(row.get("created_at"))
+        completed_at = _as_optional_datetime(row.get("completed_at"))
+        if created_at is not None and completed_at is not None:
+            hours = (completed_at - created_at).total_seconds() / 3600
+            if hours >= 0:
+                resolution_hours.append(hours)
+
+    total_work_orders = len(work_order_rows)
+    completed_count = status_counts.get("completed", 0)
+    completion_rate = round((completed_count / total_work_orders * 100), 2) if total_work_orders else 0.0
+    avg_resolution_hours = round(sum(resolution_hours) / len(resolution_hours), 2) if resolution_hours else None
+    return {
+        "generated_at": now,
+        "period_label": period_label,
+        "site": site,
+        "inspections": {
+            "total": len(inspection_rows),
+            "risk_counts": risk_counts,
+            "top_risk_flags": dict(sorted(flag_counts.items(), key=lambda item: item[1], reverse=True)[:10]),
+        },
+        "work_orders": {
+            "total": total_work_orders,
+            "status_counts": status_counts,
+            "escalated_count": escalated_count,
+            "overdue_open_count": overdue_open_count,
+            "completion_rate_percent": completion_rate,
+            "avg_resolution_hours": avg_resolution_hours,
+        },
+    }
+
+
+def _build_integrated_billing_summary(
+    *,
+    start: datetime,
+    end: datetime,
+    site: str | None,
+    allowed_sites: list[str] | None,
+) -> dict[str, Any]:
+    start_label = start.strftime("%Y-%m")
+    end_label = end.strftime("%Y-%m")
+    stmt = (
+        select(
+            utility_billing_statements.c.utility_type,
+            func.count(utility_billing_statements.c.id).label("statement_count"),
+            func.sum(utility_billing_statements.c.total_amount).label("total_amount"),
+            func.sum(utility_billing_statements.c.common_fee).label("common_fee_total"),
+        )
+        .where(utility_billing_statements.c.billing_month >= start_label)
+        .where(utility_billing_statements.c.billing_month < end_label)
+    )
     if site is not None:
         stmt = stmt.where(utility_billing_statements.c.site == site)
     elif allowed_sites is not None:
         if allowed_sites:
             stmt = stmt.where(utility_billing_statements.c.site.in_(allowed_sites))
         else:
-            stmt = stmt.where(utility_billing_statements.c.site == "__NO_SITE__")
+            return {
+                "statement_count": 0,
+                "utility_totals": {},
+                "total_amount": 0.0,
+                "common_fee_total": 0.0,
+            }
 
     billing_summary: dict[str, Any] = {
         "statement_count": 0,
@@ -731,19 +935,57 @@ def _build_integrated_monthly_report(
         common_fee_total = round(float(row[3] or 0), 2)
         billing_summary["statement_count"] += statement_count
         billing_summary["total_amount"] = round(float(billing_summary["total_amount"]) + total_amount, 2)
-        billing_summary["common_fee_total"] = round(float(billing_summary["common_fee_total"]) + common_fee_total, 2)
+        billing_summary["common_fee_total"] = round(
+            float(billing_summary["common_fee_total"]) + common_fee_total,
+            2,
+        )
         billing_summary["utility_totals"][utility_type] = {
             "statement_count": statement_count,
             "total_amount": total_amount,
             "common_fee_total": common_fee_total,
         }
+    return billing_summary
 
+
+def _build_integrated_report(
+    *,
+    period_type: str,
+    site: str | None,
+    month: str | None = None,
+    year: int | None = None,
+    allowed_sites: list[str] | None,
+) -> IntegratedMonthlyFacilityReportRead:
+    start, end, period_label = _period_bounds(period_type=period_type, month=month, year=year)
+    ops_summary = _build_period_ops_summary(
+        start=start,
+        end=end,
+        period_label=period_label,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    official_report = _build_official_document_report(
+        period_type=period_type,
+        month=month,
+        year=year,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    billing_summary = _build_integrated_billing_summary(
+        start=start,
+        end=end,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
     return IntegratedMonthlyFacilityReportRead(
-        generated_at=datetime.now(timezone.utc),
-        month=monthly_report.month,
-        site=monthly_report.site,
-        inspections=monthly_report.inspections,
-        work_orders=monthly_report.work_orders,
+        generated_at=ops_summary["generated_at"],
+        period_type="monthly" if period_type == "monthly" else "annual",
+        period_label=period_label,
+        month=period_label if period_type == "monthly" else None,
+        year=int(period_label) if period_type == "annual" else None,
+        site=site,
+        merged_sections=["ops_inspections", "ops_work_orders", "official_documents", "utility_billing"],
+        inspections=ops_summary["inspections"],
+        work_orders=ops_summary["work_orders"],
         official_documents={
             "total_documents": official_report.total_documents,
             "closed_in_period": official_report.closed_in_period,
@@ -756,12 +998,16 @@ def _build_integrated_monthly_report(
     )
 
 
-def _build_integrated_monthly_report_csv(report: IntegratedMonthlyFacilityReportRead) -> str:
+def _build_integrated_report_csv(report: IntegratedMonthlyFacilityReportRead) -> str:
     buffer = io.StringIO()
     writer = csv.writer(buffer)
-    writer.writerow(["month", report.month])
+    writer.writerow(["period_type", report.period_type])
+    writer.writerow(["period_label", report.period_label])
+    writer.writerow(["month", report.month or ""])
+    writer.writerow(["year", report.year or ""])
     writer.writerow(["site", report.site or "ALL"])
     writer.writerow(["generated_at", report.generated_at.isoformat()])
+    writer.writerow(["merged_sections", ",".join(report.merged_sections)])
     writer.writerow([])
     writer.writerow(["section", "key", "value"])
     for section_name, section_payload in (
@@ -771,24 +1017,26 @@ def _build_integrated_monthly_report_csv(report: IntegratedMonthlyFacilityReport
         ("billing", report.billing),
     ):
         for key, value in section_payload.items():
-            writer.writerow([section_name, key, value])
+            writer.writerow([section_name, key, _json_or_scalar(value)])
     return buffer.getvalue()
 
 
-def _build_integrated_monthly_report_print_html(report: IntegratedMonthlyFacilityReportRead) -> str:
+def _build_integrated_report_print_html(report: IntegratedMonthlyFacilityReportRead) -> str:
     def _render_rows(section: dict[str, Any]) -> str:
         return "".join(
-            f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(str(value))}</td></tr>"
+            f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(_json_or_scalar(value))}</td></tr>"
             for key, value in section.items()
         ) or "<tr><td colspan='2'>No data</td></tr>"
 
+    title_label = "Integrated Monthly Facility Report" if report.period_type == "monthly" else "Integrated Annual Facility Report"
+    month_or_year_label = report.month or str(report.year or report.period_label)
     return f"""
 <!doctype html>
 <html lang=\"en\">
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Integrated Monthly Facility Report {html.escape(report.month)}</title>
+  <title>{html.escape(title_label)} {html.escape(month_or_year_label)}</title>
   <style>
     @page {{ size: A4; margin: 12mm; }}
     body {{ font-family: Arial, sans-serif; color: #111; }}
@@ -801,11 +1049,13 @@ def _build_integrated_monthly_report_print_html(report: IntegratedMonthlyFacilit
   </style>
 </head>
 <body>
-  <h1>Integrated Monthly Facility Report ({html.escape(report.month)})</h1>
+  <h1>{html.escape(title_label)} ({html.escape(month_or_year_label)})</h1>
   <table class=\"summary\">
-    <tr><td>Month</td><td>{html.escape(report.month)}</td></tr>
+    <tr><td>Period Type</td><td>{html.escape(report.period_type)}</td></tr>
+    <tr><td>Period</td><td>{html.escape(report.period_label)}</td></tr>
     <tr><td>Site</td><td>{html.escape(report.site or 'ALL')}</td></tr>
     <tr><td>Generated At</td><td>{html.escape(report.generated_at.isoformat())}</td></tr>
+    <tr><td>Merged Sections</td><td>{html.escape(', '.join(report.merged_sections))}</td></tr>
   </table>
   <h2>법정점검 / OPS 점검</h2>
   <table><tbody>{_render_rows(report.inspections)}</tbody></table>
@@ -818,6 +1068,241 @@ def _build_integrated_monthly_report_print_html(report: IntegratedMonthlyFacilit
 </body>
 </html>
 """
+
+
+def _build_integrated_report_pdf(report: IntegratedMonthlyFacilityReportRead) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF generator dependency not installed") from exc
+
+    def _flatten_section_lines(title: str, payload: dict[str, Any], *, indent: int = 0) -> list[str]:
+        lines = [title]
+        prefix = "  " * indent
+        for key, value in payload.items():
+            if isinstance(value, dict):
+                lines.append(f"{prefix}{key}:")
+                lines.extend(_flatten_section_lines("", value, indent=indent + 1)[1:])
+                continue
+            lines.append(f"{prefix}{key}: {_json_or_scalar(value)}")
+        return lines
+
+    title = "Integrated Monthly Facility Report" if report.period_type == "monthly" else "Integrated Annual Facility Report"
+    period_value = report.month or str(report.year or report.period_label)
+    lines = [
+        f"{title} ({period_value})",
+        "",
+        f"Period Type: {report.period_type}",
+        f"Period Label: {report.period_label}",
+        f"Site: {report.site or 'ALL'}",
+        f"Generated At: {report.generated_at.isoformat()}",
+        f"Merged Sections: {', '.join(report.merged_sections)}",
+        "",
+    ]
+    for section_title, payload in (
+        ("[Inspection Summary]", report.inspections),
+        ("[Work Order Summary]", report.work_orders),
+        ("[Official Document Summary]", report.official_documents),
+        ("[Utility Billing Summary]", report.billing),
+    ):
+        lines.extend(_flatten_section_lines(section_title, payload))
+        lines.append("")
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    _, height = A4
+    margin_left = 36
+    y = height - 40
+    pdf.setFont("Helvetica", 10)
+    for line in lines:
+        if y < 40:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 10)
+            y = height - 40
+        pdf.drawString(margin_left, y, line[:180])
+        y -= 14
+    pdf.save()
+    return buf.getvalue()
+
+
+def _load_filtered_official_document_rows(
+    *,
+    site: str | None,
+    organization: str | None,
+    status: str | None,
+    month: str | None,
+    year: int | None,
+    allowed_sites: list[str] | None,
+) -> list[dict[str, Any]]:
+    normalized_month, normalized_year = _normalize_period_filters(month, year)
+    stmt = select(official_documents)
+    if site is not None:
+        stmt = stmt.where(official_documents.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return []
+        stmt = stmt.where(official_documents.c.site.in_(allowed_sites))
+    if organization:
+        stmt = stmt.where(official_documents.c.organization == organization)
+    if status:
+        stmt = stmt.where(official_documents.c.status == _normalize_doc_status(status))
+    if normalized_month is not None:
+        start, end, _ = _period_bounds(period_type="monthly", month=normalized_month)
+        stmt = stmt.where(official_documents.c.received_at >= start).where(official_documents.c.received_at < end)
+    elif normalized_year is not None:
+        start, end, _ = _period_bounds(period_type="annual", year=normalized_year)
+        stmt = stmt.where(official_documents.c.received_at >= start).where(official_documents.c.received_at < end)
+    stmt = stmt.order_by(
+        official_documents.c.organization.asc(),
+        official_documents.c.received_at.desc(),
+        official_documents.c.id.desc(),
+    )
+    with get_conn() as conn:
+        rows = [_ensure_registry_fields(conn, dict(row)) for row in conn.execute(stmt).mappings().all()]
+        count_map = _attachment_count_map(conn, [int(row["id"]) for row in rows])
+    return [{**row, "attachment_count": count_map.get(int(row["id"]), 0)} for row in rows]
+
+
+def _load_attachment_rows_for_documents(document_ids: list[int]) -> list[dict[str, Any]]:
+    if not document_ids:
+        return []
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(official_document_attachments)
+            .where(official_document_attachments.c.document_id.in_(document_ids))
+            .order_by(
+                official_document_attachments.c.document_id.asc(),
+                official_document_attachments.c.uploaded_at.asc(),
+                official_document_attachments.c.id.asc(),
+            )
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _build_official_document_registry_csv(rows: list[dict[str, Any]]) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "id",
+            "site",
+            "organization",
+            "organization_code",
+            "registry_number",
+            "document_number",
+            "title",
+            "document_type",
+            "status",
+            "priority",
+            "received_at",
+            "due_at",
+            "linked_inspection_id",
+            "linked_work_order_id",
+            "attachment_count",
+            "closed_at",
+        ]
+    )
+    for row in rows:
+        writer.writerow(
+            [
+                int(row["id"]),
+                str(row["site"]),
+                str(row.get("organization") or ""),
+                str(row.get("organization_code") or ""),
+                str(row.get("registry_number") or ""),
+                str(row.get("document_number") or ""),
+                str(row.get("title") or ""),
+                str(row.get("document_type") or ""),
+                _normalize_doc_status(row.get("status")),
+                _normalize_doc_priority(row.get("priority")),
+                _to_utc(row["received_at"]).isoformat(),
+                _to_utc(row["due_at"]).isoformat() if row.get("due_at") else "",
+                row.get("linked_inspection_id") or "",
+                row.get("linked_work_order_id") or "",
+                int(row.get("attachment_count") or 0),
+                _to_utc(row["closed_at"]).isoformat() if row.get("closed_at") else "",
+            ]
+        )
+    return buffer.getvalue()
+
+
+def _build_official_document_attachments_zip(
+    *,
+    document_rows: list[dict[str, Any]],
+    attachment_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not attachment_rows:
+        raise HTTPException(status_code=404, detail="No official document attachments matched the filters")
+    document_map = {int(row["id"]): row for row in document_rows}
+    manifest_buffer = io.StringIO()
+    manifest_writer = csv.writer(manifest_buffer)
+    manifest_writer.writerow(
+        [
+            "document_id",
+            "site",
+            "organization",
+            "registry_number",
+            "document_number",
+            "attachment_id",
+            "file_name",
+            "content_type",
+            "file_size",
+            "sha256",
+            "zip_path",
+            "blob_status",
+        ]
+    )
+    payload = io.BytesIO()
+    archived_count = 0
+    missing_blob_count = 0
+    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for row in attachment_rows:
+            document_row = document_map.get(int(row["document_id"]))
+            if document_row is None:
+                continue
+            folder_name = "/".join(
+                [
+                    _zip_safe_segment(str(document_row.get("site") or "site"), default="site"),
+                    _zip_safe_segment(str(document_row.get("organization") or "organization"), default="organization"),
+                    _zip_safe_segment(str(document_row.get("registry_number") or document_row["id"]), default="registry"),
+                ]
+            )
+            file_name = _safe_download_filename(str(row.get("file_name") or f"attachment-{row['id']}.bin"))
+            zip_path = f"{folder_name}/{int(row['id'])}_{file_name}"
+            file_bytes = _read_evidence_blob(row=row)
+            blob_status = "ok"
+            if file_bytes is None:
+                blob_status = "missing_blob"
+                missing_blob_count += 1
+            else:
+                archive.writestr(zip_path, file_bytes)
+                archived_count += 1
+            manifest_writer.writerow(
+                [
+                    int(document_row["id"]),
+                    str(document_row["site"]),
+                    str(document_row.get("organization") or ""),
+                    str(document_row.get("registry_number") or ""),
+                    str(document_row.get("document_number") or ""),
+                    int(row["id"]),
+                    file_name,
+                    str(row.get("content_type") or "application/octet-stream"),
+                    int(row.get("file_size") or 0),
+                    str(row.get("sha256") or ""),
+                    zip_path,
+                    blob_status,
+                ]
+            )
+        archive.writestr("manifest.csv", manifest_buffer.getvalue().encode("utf-8"))
+    if archived_count <= 0:
+        raise HTTPException(status_code=404, detail="Attachment blobs were not available for ZIP export")
+    return {
+        "file_bytes": payload.getvalue(),
+        "attachment_count": archived_count,
+        "missing_blob_count": missing_blob_count,
+        "document_count": len(document_rows),
+    }
 
 
 @router.get("/api/official-documents", response_model=list[OfficialDocumentRead])
@@ -1164,6 +1649,108 @@ def download_official_document_attachment(
     )
 
 
+@router.get("/api/official-documents/attachments/zip")
+def download_official_document_attachments_zip(
+    site: str | None = None,
+    organization: str | None = None,
+    status: str | None = None,
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    principal: dict[str, Any] = Depends(require_permission("official_docs:read")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    document_rows = _load_filtered_official_document_rows(
+        site=site,
+        organization=organization,
+        status=status,
+        month=month,
+        year=year,
+        allowed_sites=allowed_sites,
+    )
+    attachment_rows = _load_attachment_rows_for_documents([int(row["id"]) for row in document_rows])
+    bundle = _build_official_document_attachments_zip(
+        document_rows=document_rows,
+        attachment_rows=attachment_rows,
+    )
+    normalized_month, normalized_year = _normalize_period_filters(month, year)
+    period_label = normalized_month or (str(normalized_year) if normalized_year is not None else "all")
+    site_label = _download_safe_segment(site or "all", default="all")
+    organization_label = _download_safe_segment(organization or "all", default="all")
+    file_name = f"official-document-attachments-{site_label}-{organization_label}-{period_label}.zip"
+    _write_audit_log(
+        principal=principal,
+        action="official_document_attachment_export_zip",
+        resource_type="official_document_attachment",
+        resource_id=f"{site or 'ALL'}:{organization or 'ALL'}:{period_label}",
+        detail={
+            "site": site,
+            "organization": organization,
+            "status": status,
+            "month": normalized_month,
+            "year": normalized_year,
+            "document_count": bundle["document_count"],
+            "attachment_count": bundle["attachment_count"],
+            "missing_blob_count": bundle["missing_blob_count"],
+        },
+    )
+    return Response(
+        content=bundle["file_bytes"],
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Document-Count": str(bundle["document_count"]),
+            "X-Attachment-Count": str(bundle["attachment_count"]),
+        },
+    )
+
+
+@router.get("/api/official-documents/registry/csv")
+def export_official_document_registry_csv(
+    site: str | None = None,
+    organization: str | None = None,
+    status: str | None = None,
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    rows = _load_filtered_official_document_rows(
+        site=site,
+        organization=organization,
+        status=status,
+        month=month,
+        year=year,
+        allowed_sites=allowed_sites,
+    )
+    csv_text = _build_official_document_registry_csv(rows)
+    normalized_month, normalized_year = _normalize_period_filters(month, year)
+    period_label = normalized_month or (str(normalized_year) if normalized_year is not None else "all")
+    site_label = _download_safe_segment(site or "all", default="all")
+    organization_label = _download_safe_segment(organization or "all", default="all")
+    file_name = f"official-document-registry-{site_label}-{organization_label}-{period_label}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="official_document_registry_export_csv",
+        resource_type="report",
+        resource_id=f"{site or 'ALL'}:{organization or 'ALL'}:{period_label}",
+        detail={
+            "site": site,
+            "organization": organization,
+            "status": status,
+            "month": normalized_month,
+            "year": normalized_year,
+            "row_count": len(rows),
+        },
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
 @router.post("/api/official-documents/overdue/run", response_model=OfficialDocumentOverdueSyncRead)
 def run_official_document_overdue_sync(
     site: str | None = Query(default=None),
@@ -1322,7 +1909,12 @@ def get_integrated_monthly_report(
         dry_run=False,
         limit=50,
     )
-    return _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
+    return _build_integrated_report(
+        period_type="monthly",
+        month=month,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
 
 
 @router.get("/api/reports/monthly/integrated/csv")
@@ -1333,21 +1925,57 @@ def get_integrated_monthly_report_csv(
 ) -> Response:
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
-    report = _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
-    csv_text = _build_integrated_monthly_report_csv(report)
+    report = _build_integrated_report(
+        period_type="monthly",
+        month=month,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    csv_text = _build_integrated_report_csv(report)
     site_label = (report.site or "all").replace(" ", "_")
-    file_name = f"integrated-monthly-report-{report.month}-{site_label}.csv"
+    file_name = f"integrated-monthly-report-{report.period_label}-{site_label}.csv"
     _write_audit_log(
         principal=principal,
         action="integrated_monthly_report_export_csv",
         resource_type="report",
-        resource_id=f"integrated:{report.month}:{report.site or 'ALL'}",
+        resource_id=f"integrated:monthly:{report.period_label}:{report.site or 'ALL'}",
         detail={"month": report.month, "site": report.site},
     )
     return Response(
         content=csv_text,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename=\"{file_name}\"'},
+    )
+
+
+@router.get("/api/reports/monthly/integrated/pdf")
+def get_integrated_monthly_report_pdf(
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_report(
+        period_type="monthly",
+        month=month,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    pdf_bytes = _build_integrated_report_pdf(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"integrated-monthly-report-{report.period_label}-{site_label}.pdf"
+    _write_audit_log(
+        principal=principal,
+        action="integrated_monthly_report_export_pdf",
+        resource_type="report",
+        resource_id=f"integrated:monthly:{report.period_label}:{report.site or 'ALL'}",
+        detail={"month": report.month, "site": report.site},
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 
@@ -1359,6 +1987,113 @@ def print_integrated_monthly_report(
 ) -> str:
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
-    report = _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
-    return _build_integrated_monthly_report_print_html(report)
+    report = _build_integrated_report(
+        period_type="monthly",
+        month=month,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    return _build_integrated_report_print_html(report)
+
+
+@router.get("/api/reports/annual/integrated", response_model=IntegratedMonthlyFacilityReportRead)
+def get_integrated_annual_report(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> IntegratedMonthlyFacilityReportRead:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=False,
+        limit=50,
+    )
+    return _build_integrated_report(
+        period_type="annual",
+        year=year,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+
+
+@router.get("/api/reports/annual/integrated/csv")
+def get_integrated_annual_report_csv(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_report(
+        period_type="annual",
+        year=year,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    csv_text = _build_integrated_report_csv(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"integrated-annual-report-{report.period_label}-{site_label}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="integrated_annual_report_export_csv",
+        resource_type="report",
+        resource_id=f"integrated:annual:{report.period_label}:{report.site or 'ALL'}",
+        detail={"year": report.year, "site": report.site},
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.get("/api/reports/annual/integrated/pdf")
+def get_integrated_annual_report_pdf(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_report(
+        period_type="annual",
+        year=year,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    pdf_bytes = _build_integrated_report_pdf(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"integrated-annual-report-{report.period_label}-{site_label}.pdf"
+    _write_audit_log(
+        principal=principal,
+        action="integrated_annual_report_export_pdf",
+        resource_type="report",
+        resource_id=f"integrated:annual:{report.period_label}:{report.site or 'ALL'}",
+        detail={"year": report.year, "site": report.site},
+    )
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.get("/reports/annual/integrated/print", response_class=HTMLResponse)
+def print_integrated_annual_report(
+    year: int | None = Query(default=None, ge=2000, le=2100),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> str:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_report(
+        period_type="annual",
+        year=year,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    return _build_integrated_report_print_html(report)
 

@@ -1080,6 +1080,27 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="officialAttachmentTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>기관별 접수대장 / 첨부 일괄 출력</h3>
+            <div class="filter-row">
+              <input id="officialExportSite" placeholder="site (예: HQ)" />
+              <input id="officialExportOrganization" placeholder="기관명(선택)" />
+              <select id="officialExportStatus">
+                <option value="">status: all</option>
+                <option value="received">received</option>
+                <option value="in_progress">in_progress</option>
+                <option value="closed">closed</option>
+                <option value="canceled">canceled</option>
+              </select>
+              <input id="officialExportMonth" placeholder="month YYYY-MM" />
+              <input id="officialExportYear" placeholder="year YYYY (month 비우면 사용)" />
+            </div>
+            <div class="mini-links">
+              <a id="officialAttachmentZipLink" href="/api/official-documents/attachments/zip" target="_blank" rel="noopener">첨부 ZIP 일괄 다운로드</a>
+              <a id="officialRegistryCsvLink" href="/api/official-documents/registry/csv" target="_blank" rel="noopener">접수대장 CSV</a>
+            </div>
+            <div class="meta">기관별 접수대장과 첨부 원본을 month 또는 year 기준으로 한 번에 출력합니다.</div>
+          </div>
+          <div class="box">
             <h3>공문 목록 조회</h3>
             <div class="filter-row">
               <input id="officialDocsSite" placeholder="site (예: HQ)" />
@@ -1121,6 +1142,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <button id="runOfficialDocMonthlyReportBtn" class="btn run" type="button">월 보고서 조회</button>
               <button id="runOfficialDocAnnualReportBtn" class="btn" type="button">연차 보고서 조회</button>
               <button id="runOfficialIntegratedMonthlyReportBtn" class="btn" type="button">통합 월간보고서 조회</button>
+              <button id="runOfficialIntegratedAnnualReportBtn" class="btn" type="button">통합 연차보고서 조회</button>
             </div>
             <div class="mini-links">
               <a id="officialReportMonthlyPrintLink" href="/reports/official-documents/monthly/print" target="_blank" rel="noopener">월 보고서 인쇄</a>
@@ -1129,6 +1151,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <a id="officialReportAnnualCsvLink" href="/api/reports/official-documents/annual/csv" target="_blank" rel="noopener">연차 CSV</a>
               <a id="officialReportIntegratedPrintLink" href="/reports/monthly/integrated/print" target="_blank" rel="noopener">통합 월간 인쇄</a>
               <a id="officialReportIntegratedCsvLink" href="/api/reports/monthly/integrated/csv" target="_blank" rel="noopener">통합 월간 CSV</a>
+              <a id="officialReportIntegratedPdfLink" href="/api/reports/monthly/integrated/pdf" target="_blank" rel="noopener">통합 월간 PDF</a>
+              <a id="officialReportIntegratedAnnualPrintLink" href="/reports/annual/integrated/print" target="_blank" rel="noopener">통합 연차 인쇄</a>
+              <a id="officialReportIntegratedAnnualCsvLink" href="/api/reports/annual/integrated/csv" target="_blank" rel="noopener">통합 연차 CSV</a>
+              <a id="officialReportIntegratedAnnualPdfLink" href="/api/reports/annual/integrated/pdf" target="_blank" rel="noopener">통합 연차 PDF</a>
             </div>
             <div id="officialReportMeta" class="meta">조회 전</div>
             <div id="officialReportSummary" class="cards"></div>
@@ -1142,6 +1168,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           <p class="tab-caption">월간 리포트 집계와 출력 링크를 제공합니다.</p>
           <div class="filter-row">
             <input id="rpMonth" placeholder="month (YYYY-MM)" />
+            <input id="rpYear" placeholder="year (YYYY)" />
             <input id="rpSite" placeholder="site (optional)" />
             <input id="rpReserved1" value="reports" disabled />
             <input id="rpReserved2" value="summary" disabled />
@@ -1157,6 +1184,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF</a>
               <a id="reportIntegratedPrintLink" href="/reports/monthly/integrated/print" target="_blank" rel="noopener">통합 월간 인쇄</a>
               <a id="reportIntegratedCsvLink" href="/api/reports/monthly/integrated/csv" target="_blank" rel="noopener">통합 월간 CSV</a>
+              <a id="reportIntegratedPdfLink" href="/api/reports/monthly/integrated/pdf" target="_blank" rel="noopener">통합 월간 PDF</a>
+              <a id="reportIntegratedAnnualPrintLink" href="/reports/annual/integrated/print" target="_blank" rel="noopener">통합 연차 인쇄</a>
+              <a id="reportIntegratedAnnualCsvLink" href="/api/reports/annual/integrated/csv" target="_blank" rel="noopener">통합 연차 CSV</a>
+              <a id="reportIntegratedAnnualPdfLink" href="/api/reports/annual/integrated/pdf" target="_blank" rel="noopener">통합 연차 PDF</a>
             </div>
             <pre id="reportsRaw" class="mono">{{}}</pre>
           </div>
@@ -1984,23 +2015,34 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runOfficialDocCloseBtn: "공문 종결: 종결보고서 제목과 결과를 저장하고 상태를 closed로 변경합니다.",
         runOfficialAttachmentUploadBtn: "첨부 업로드: 공문 원본 PDF 또는 현장 사진을 공문 ID에 연결해 저장합니다.",
         runOfficialAttachmentListBtn: "첨부 목록 조회: 선택한 공문 ID의 PDF/사진 첨부 목록을 가져옵니다.",
+        officialAttachmentZipLink: "첨부 ZIP 일괄 다운로드: site·기관·기간 조건에 맞는 공문 첨부를 ZIP과 manifest로 묶어 내려받습니다.",
+        officialRegistryCsvLink: "접수대장 CSV: 기관별 공문 접수대장과 상태, 접수번호, 연동 정보를 CSV로 출력합니다.",
         runOfficialDocsBtn: "공문 목록 조회: 기관, 상태, site 기준으로 공문 목록을 조회합니다.",
         runOfficialOverdueSyncBtn: "기한초과 자동화 실행: 기한 지난 공문을 찾아 작업지시를 자동 생성하고 SLA 알림을 연동합니다.",
         runOfficialDocMonthlyReportBtn: "월 보고서 조회: 공문 종결/잔여 현황을 월 단위로 집계합니다.",
         runOfficialDocAnnualReportBtn: "연차 보고서 조회: 공문 종결/잔여 현황을 연 단위로 집계합니다.",
         runOfficialIntegratedMonthlyReportBtn: "통합 월간보고서 조회: 관리비·법정점검·공문 종결 현황을 한 번에 집계합니다.",
+        runOfficialIntegratedAnnualReportBtn: "통합 연차보고서 조회: 연간 관리비·법정점검·공문 종결 현황을 한 번에 집계합니다.",
         officialReportMonthlyPrintLink: "월 보고서 인쇄: 월 종결보고서를 인쇄용 HTML로 엽니다.",
         officialReportMonthlyCsvLink: "월 CSV: 월 종결보고서를 CSV 파일로 내려받습니다.",
         officialReportAnnualPrintLink: "연차 보고서 인쇄: 연차 종결보고서를 인쇄용 HTML로 엽니다.",
         officialReportAnnualCsvLink: "연차 CSV: 연차 종결보고서를 CSV 파일로 내려받습니다.",
         officialReportIntegratedPrintLink: "통합 월간 인쇄: 관리비·법정점검·공문 종결을 묶은 인쇄용 보고서를 엽니다.",
         officialReportIntegratedCsvLink: "통합 월간 CSV: 관리비·법정점검·공문 종결 집계를 CSV 파일로 내려받습니다.",
+        officialReportIntegratedPdfLink: "통합 월간 PDF: 관리비·법정점검·공문 종결을 병합한 PDF를 내려받습니다.",
+        officialReportIntegratedAnnualPrintLink: "통합 연차 인쇄: 연간 통합 운영보고서를 인쇄용 HTML로 엽니다.",
+        officialReportIntegratedAnnualCsvLink: "통합 연차 CSV: 연간 통합 운영보고서를 CSV로 내려받습니다.",
+        officialReportIntegratedAnnualPdfLink: "통합 연차 PDF: 연간 통합 운영보고서를 병합 PDF로 내려받습니다.",
         runReportsBtn: "리포트 조회: 월간 집계 결과와 출력 링크를 조회합니다.",
         reportPrintLink: "HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.",
         reportCsvLink: "CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.",
         reportPdfLink: "PDF 다운로드: 현재 월간리포트를 PDF 파일로 내려받습니다.",
         reportIntegratedPrintLink: "통합 월간 인쇄: 기존 월간리포트와 공문/관리비 통합본을 인쇄 화면으로 엽니다.",
         reportIntegratedCsvLink: "통합 월간 CSV: 기존 월간리포트와 공문/관리비 통합본을 CSV로 내려받습니다.",
+        reportIntegratedPdfLink: "통합 월간 PDF: 기존 월간리포트와 공문/관리비 통합본을 PDF로 내려받습니다.",
+        reportIntegratedAnnualPrintLink: "통합 연차 인쇄: 연간 통합 운영보고서를 인쇄 화면으로 엽니다.",
+        reportIntegratedAnnualCsvLink: "통합 연차 CSV: 연간 통합 운영보고서를 CSV로 내려받습니다.",
+        reportIntegratedAnnualPdfLink: "통합 연차 PDF: 연간 통합 운영보고서를 PDF로 내려받습니다.",
         runIamMeBtn: "내 권한 조회: 현재 로그인한 사용자 정보와 권한 범위를 확인합니다.",
         runIamLogoutBtn: "로그아웃: 현재 토큰을 서버 기준으로 종료합니다.",
         runIamTokenPolicyBtn: "토큰 정책 조회: 만료, 회전, idle 제한 정책을 확인합니다.",
@@ -5608,6 +5650,23 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById("officialReportAnnualCsvLink").setAttribute("href", "/api/reports/official-documents/annual/csv" + (annualQuery ? "?" + annualQuery : ""));
         document.getElementById("officialReportIntegratedPrintLink").setAttribute("href", "/reports/monthly/integrated/print" + (monthlyQuery ? "?" + monthlyQuery : ""));
         document.getElementById("officialReportIntegratedCsvLink").setAttribute("href", "/api/reports/monthly/integrated/csv" + (monthlyQuery ? "?" + monthlyQuery : ""));
+        document.getElementById("officialReportIntegratedPdfLink").setAttribute("href", "/api/reports/monthly/integrated/pdf" + (monthlyQuery ? "?" + monthlyQuery : ""));
+        document.getElementById("officialReportIntegratedAnnualPrintLink").setAttribute("href", "/reports/annual/integrated/print" + (annualQuery ? "?" + annualQuery : ""));
+        document.getElementById("officialReportIntegratedAnnualCsvLink").setAttribute("href", "/api/reports/annual/integrated/csv" + (annualQuery ? "?" + annualQuery : ""));
+        document.getElementById("officialReportIntegratedAnnualPdfLink").setAttribute("href", "/api/reports/annual/integrated/pdf" + (annualQuery ? "?" + annualQuery : ""));
+      }}
+
+      function updateOfficialBulkExportLinks() {{
+        const query = buildQuery([
+          {{ key: "site", id: "officialExportSite" }},
+          {{ key: "organization", id: "officialExportOrganization" }},
+          {{ key: "status", id: "officialExportStatus" }},
+          {{ key: "month", id: "officialExportMonth" }},
+          {{ key: "year", id: "officialExportYear" }},
+        ]);
+        const suffix = query ? "?" + query : "";
+        document.getElementById("officialAttachmentZipLink").setAttribute("href", "/api/official-documents/attachments/zip" + suffix);
+        document.getElementById("officialRegistryCsvLink").setAttribute("href", "/api/official-documents/registry/csv" + suffix);
       }}
 
       function renderOfficialReport(report) {{
@@ -5677,16 +5736,18 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         )).join("");
       }}
 
-      function renderIntegratedMonthlyReport(report) {{
+      function renderIntegratedReport(report) {{
         const summary = document.getElementById("officialIntegratedReportSummary");
         const raw = document.getElementById("officialIntegratedReportRaw");
         const cards = [
-          ["Month", report.month || ""],
+          ["Period", report.period_label || report.month || report.year || ""],
+          ["Period Type", report.period_type || "monthly"],
           ["Site", report.site || "ALL"],
           ["Inspections", (report.inspections && report.inspections.total) || 0],
           ["Work Orders", (report.work_orders && report.work_orders.total) || 0],
           ["Official Docs Closed", (report.official_documents && report.official_documents.closed_in_period) || 0],
           ["Billing Total", (report.billing && report.billing.total_amount) || 0],
+          ["Merged Sections", ((report.merged_sections || []).length ? report.merged_sections.join(", ") : "-")],
         ];
         summary.innerHTML = cards.map((item) => (
           '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + '</div></div>'
@@ -5956,9 +6017,27 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           ]);
           const report = await fetchJson("/api/reports/monthly/integrated" + (query ? "?" + query : ""), true);
           meta.textContent = "통합 월간보고서 성공: " + String(report.month || "");
-          renderIntegratedMonthlyReport(report);
+          renderIntegratedReport(report);
         }} catch (err) {{
           meta.textContent = "통합 월간보고서 실패: " + err.message;
+          document.getElementById("officialIntegratedReportSummary").innerHTML = "";
+          document.getElementById("officialIntegratedReportRaw").textContent = err.message;
+        }}
+      }}
+
+      async function runOfficialIntegratedAnnualReport() {{
+        const meta = document.getElementById("officialReportMeta");
+        updateOfficialReportLinks();
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialReportSite" }},
+            {{ key: "year", id: "officialReportYear" }},
+          ]);
+          const report = await fetchJson("/api/reports/annual/integrated" + (query ? "?" + query : ""), true);
+          meta.textContent = "통합 연차보고서 성공: " + String(report.period_label || report.year || "");
+          renderIntegratedReport(report);
+        }} catch (err) {{
+          meta.textContent = "통합 연차보고서 실패: " + err.message;
           document.getElementById("officialIntegratedReportSummary").innerHTML = "";
           document.getElementById("officialIntegratedReportRaw").textContent = err.message;
         }}
@@ -5969,12 +6048,21 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           {{ key: "month", id: "rpMonth" }},
           {{ key: "site", id: "rpSite" }}
         ]);
+        const annualQuery = buildQuery([
+          {{ key: "year", id: "rpYear" }},
+          {{ key: "site", id: "rpSite" }}
+        ]);
         const suffix = query ? "?" + query : "";
+        const annualSuffix = annualQuery ? "?" + annualQuery : "";
         document.getElementById("reportPrintLink").setAttribute("href", "/reports/monthly/print" + suffix);
         document.getElementById("reportCsvLink").setAttribute("href", "/api/reports/monthly/csv" + suffix);
         document.getElementById("reportPdfLink").setAttribute("href", "/api/reports/monthly/pdf" + suffix);
         document.getElementById("reportIntegratedPrintLink").setAttribute("href", "/reports/monthly/integrated/print" + suffix);
         document.getElementById("reportIntegratedCsvLink").setAttribute("href", "/api/reports/monthly/integrated/csv" + suffix);
+        document.getElementById("reportIntegratedPdfLink").setAttribute("href", "/api/reports/monthly/integrated/pdf" + suffix);
+        document.getElementById("reportIntegratedAnnualPrintLink").setAttribute("href", "/reports/annual/integrated/print" + annualSuffix);
+        document.getElementById("reportIntegratedAnnualCsvLink").setAttribute("href", "/api/reports/annual/integrated/csv" + annualSuffix);
+        document.getElementById("reportIntegratedAnnualPdfLink").setAttribute("href", "/api/reports/annual/integrated/pdf" + annualSuffix);
       }}
 
       async function runReports() {{
@@ -10103,6 +10191,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       document.getElementById("runOfficialDocMonthlyReportBtn").addEventListener("click", runOfficialDocumentMonthlyReport);
       document.getElementById("runOfficialDocAnnualReportBtn").addEventListener("click", runOfficialDocumentAnnualReport);
       document.getElementById("runOfficialIntegratedMonthlyReportBtn").addEventListener("click", runOfficialIntegratedMonthlyReport);
+      document.getElementById("runOfficialIntegratedAnnualReportBtn").addEventListener("click", runOfficialIntegratedAnnualReport);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("runTutorialGlossaryBtn").addEventListener("click", () => runTutorialGlossary(true));
@@ -10190,13 +10279,26 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById(phaseCode + "CompleteBtn").addEventListener("click", handlers.complete);
         document.getElementById(phaseCode + "TrackUpdateBtn").addEventListener("click", handlers.update);
       }});
-      ["rpMonth", "rpSite"].forEach((id) => {{
+      ["rpMonth", "rpYear", "rpSite"].forEach((id) => {{
         const node = document.getElementById(id);
-        if (node) node.addEventListener("input", updateReportLinks);
+        if (node) {{
+          node.addEventListener("input", updateReportLinks);
+          node.addEventListener("change", updateReportLinks);
+        }}
       }});
       ["officialReportSite", "officialReportMonth", "officialReportYear"].forEach((id) => {{
         const node = document.getElementById(id);
-        if (node) node.addEventListener("input", updateOfficialReportLinks);
+        if (node) {{
+          node.addEventListener("input", updateOfficialReportLinks);
+          node.addEventListener("change", updateOfficialReportLinks);
+        }}
+      }});
+      ["officialExportSite", "officialExportOrganization", "officialExportStatus", "officialExportMonth", "officialExportYear"].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node) {{
+          node.addEventListener("input", updateOfficialBulkExportLinks);
+          node.addEventListener("change", updateOfficialBulkExportLinks);
+        }}
       }});
 
       const savedToken = getToken();
@@ -10207,6 +10309,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       applyStaticUiTooltips();
       updateReportLinks();
       updateOfficialReportLinks();
+      updateOfficialBulkExportLinks();
       bindOpsElectricalChecklistHandlers();
       populateOpsChecklistSetSelector();
       populateOpsCodeSelector();
@@ -10229,8 +10332,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         "billingStatementsSite",
         "officialDocSite",
         "officialDocsSite",
+        "officialExportSite",
         "officialOverdueSite",
         "officialReportSite",
+        "rpSite",
       ].forEach((id) => {{
         const node = document.getElementById(id);
         if (node && !node.value) {{

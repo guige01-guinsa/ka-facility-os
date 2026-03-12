@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import io
+import zipfile
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -97,6 +99,30 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert downloaded.status_code == 200
     assert downloaded.content == b"%PDF-1.4 official document"
     assert len(downloaded.headers["x-attachment-sha256"]) == 64
+
+    attachment_zip = app_client.get(
+        f"/api/official-documents/attachments/zip?site=HQ&organization=%ED%95%9C%EC%A0%84&month={month_label}",
+        headers=headers,
+    )
+    assert attachment_zip.status_code == 200
+    assert attachment_zip.headers["content-type"].startswith("application/zip")
+    with zipfile.ZipFile(io.BytesIO(attachment_zip.content)) as archive:
+        names = archive.namelist()
+        assert "manifest.csv" in names
+        assert any(name.endswith("kepco-origin.pdf") for name in names)
+        manifest_text = archive.read("manifest.csv").decode("utf-8")
+        assert "registry_number" in manifest_text
+        assert "kepco-origin.pdf" in manifest_text
+
+    registry_csv = app_client.get(
+        f"/api/official-documents/registry/csv?site=HQ&organization=%ED%95%9C%EC%A0%84&month={month_label}",
+        headers=headers,
+    )
+    assert registry_csv.status_code == 200
+    assert registry_csv.headers["content-type"].startswith("text/csv")
+    assert "official-document-registry" in registry_csv.headers["content-disposition"]
+    assert "registry_number" in registry_csv.text
+    assert "KEPCO-2026-0312" in registry_csv.text
 
     listed = app_client.get("/api/official-documents?site=HQ", headers=headers)
     assert listed.status_code == 200
@@ -263,6 +289,8 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     )
     assert integrated.status_code == 200
     integrated_body = integrated.json()
+    assert integrated_body["period_type"] == "monthly"
+    assert integrated_body["period_label"] == month_label
     assert integrated_body["month"] == month_label
     assert integrated_body["billing"]["statement_count"] >= 1
     assert integrated_body["official_documents"]["total_documents"] >= 2
@@ -274,6 +302,14 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert integrated_csv.status_code == 200
     assert "integrated-monthly-report" in integrated_csv.headers["content-disposition"]
 
+    integrated_pdf = app_client.get(
+        f"/api/reports/monthly/integrated/pdf?site=HQ&month={month_label}",
+        headers=headers,
+    )
+    assert integrated_pdf.status_code == 200
+    assert integrated_pdf.headers["content-type"].startswith("application/pdf")
+    assert integrated_pdf.content.startswith(b"%PDF")
+
     integrated_print = app_client.get(
         f"/reports/monthly/integrated/print?site=HQ&month={month_label}",
         headers=headers,
@@ -281,16 +317,55 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert integrated_print.status_code == 200
     assert "Integrated Monthly Facility Report" in integrated_print.text
 
+    integrated_annual = app_client.get(
+        f"/api/reports/annual/integrated?site=HQ&year={year_value}",
+        headers=headers,
+    )
+    assert integrated_annual.status_code == 200
+    integrated_annual_body = integrated_annual.json()
+    assert integrated_annual_body["period_type"] == "annual"
+    assert integrated_annual_body["period_label"] == str(year_value)
+    assert integrated_annual_body["year"] == year_value
+    assert "utility_billing" in integrated_annual_body["merged_sections"]
+
+    integrated_annual_csv = app_client.get(
+        f"/api/reports/annual/integrated/csv?site=HQ&year={year_value}",
+        headers=headers,
+    )
+    assert integrated_annual_csv.status_code == 200
+    assert "integrated-annual-report" in integrated_annual_csv.headers["content-disposition"]
+
+    integrated_annual_pdf = app_client.get(
+        f"/api/reports/annual/integrated/pdf?site=HQ&year={year_value}",
+        headers=headers,
+    )
+    assert integrated_annual_pdf.status_code == 200
+    assert integrated_annual_pdf.headers["content-type"].startswith("application/pdf")
+    assert integrated_annual_pdf.content.startswith(b"%PDF")
+
+    integrated_annual_print = app_client.get(
+        f"/reports/annual/integrated/print?site=HQ&year={year_value}",
+        headers=headers,
+    )
+    assert integrated_annual_print.status_code == 200
+    assert "Integrated Annual Facility Report" in integrated_annual_print.text
+
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     service_body = service_info.json()
     assert service_body["official_documents_api"] == "/api/official-documents"
     assert service_body["official_document_attachments_api"] == "/api/official-documents/{document_id}/attachments"
+    assert service_body["official_document_attachment_zip_api"] == "/api/official-documents/attachments/zip"
+    assert service_body["official_document_registry_csv_api"] == "/api/official-documents/registry/csv"
     assert service_body["official_document_overdue_run_api"] == "/api/official-documents/overdue/run"
+    assert service_body["official_document_overdue_cron_job"] == "python -m app.jobs.official_document_overdue"
     assert service_body["official_document_monthly_report_api"] == "/api/reports/official-documents/monthly"
     assert service_body["official_document_annual_report_print_html"] == "/reports/official-documents/annual/print"
     assert service_body["integrated_monthly_report_api"] == "/api/reports/monthly/integrated"
+    assert service_body["integrated_monthly_report_pdf_api"] == "/api/reports/monthly/integrated/pdf"
     assert service_body["integrated_monthly_report_print_html"] == "/reports/monthly/integrated/print"
+    assert service_body["integrated_annual_report_api"] == "/api/reports/annual/integrated"
+    assert service_body["integrated_annual_report_pdf_api"] == "/api/reports/annual/integrated/pdf"
 
     html_page = app_client.get("/?tab=documents", headers={"Accept": "text/html"})
     assert html_page.status_code == 200
@@ -300,6 +375,10 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert "runOfficialAttachmentUploadBtn" in html_page.text
     assert "runOfficialOverdueSyncBtn" in html_page.text
     assert "officialReportIntegratedPrintLink" in html_page.text
+    assert "officialAttachmentZipLink" in html_page.text
+    assert "officialRegistryCsvLink" in html_page.text
+    assert "runOfficialIntegratedAnnualReportBtn" in html_page.text
+    assert "officialReportIntegratedAnnualPdfLink" in html_page.text
 
 
 def test_official_document_report_counts_open_overdue_items(app_client: TestClient) -> None:
@@ -334,3 +413,45 @@ def test_official_document_report_counts_open_overdue_items(app_client: TestClie
     assert body["open_documents"] >= 1
     assert body["overdue_open_documents"] >= 1
     assert body["organization_counts"]["수도사업소"] >= 1
+
+
+def test_official_document_overdue_cron_job_records_job_run(app_client: TestClient) -> None:
+    import app.main as main_module
+
+    headers = _owner_headers()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    created = app_client.post(
+        "/api/official-documents",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "organization": "구청",
+            "title": "배수펌프 정비 결과 제출",
+            "document_type": "water",
+            "priority": "high",
+            "received_at": now.isoformat(),
+            "due_at": (now - timedelta(days=3)).isoformat(),
+            "required_action": "기한초과 자동화 검증",
+            "summary": "cron job 대상",
+        },
+    )
+    assert created.status_code == 201
+
+    result = main_module.run_official_document_overdue_sync_job(
+        site="HQ",
+        dry_run=False,
+        limit=20,
+        trigger="cron",
+    )
+    assert result["candidate_count"] >= 1
+    assert result["work_order_created_count"] + result["linked_existing_work_order_count"] >= 1
+    assert result["job_name"] == "official_document_overdue_sync"
+    assert result["trigger"] == "cron"
+
+    job_runs = app_client.get("/api/ops/job-runs?job_name=official_document_overdue_sync", headers=headers)
+    assert job_runs.status_code == 200
+    rows = job_runs.json()
+    assert rows
+    assert rows[0]["job_name"] == "official_document_overdue_sync"
+    assert rows[0]["trigger"] == "cron"

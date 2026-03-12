@@ -1,3 +1,4 @@
+import asyncio
 import csv
 import base64
 import hashlib
@@ -304,6 +305,26 @@ def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
 ADMIN_TOKEN = getenv("ADMIN_TOKEN", "").strip()
 ENV_NAME = getenv("ENV", "local").lower()
 ALLOW_INSECURE_LOCAL_AUTH = _env_bool("ALLOW_INSECURE_LOCAL_AUTH", True)
+OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED = _env_bool(
+    "OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED",
+    ENV_NAME in {"prod", "production"},
+)
+OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INTERVAL_MINUTES = _env_int(
+    "OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INTERVAL_MINUTES",
+    30,
+    min_value=1,
+)
+OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_LIMIT = _env_int(
+    "OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_LIMIT",
+    100,
+    min_value=1,
+)
+OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_SITE = getenv("OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_SITE", "").strip() or None
+OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INITIAL_DELAY_SEC = _env_int(
+    "OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INITIAL_DELAY_SEC",
+    60,
+    min_value=0,
+)
 ALERT_WEBHOOK_URL = getenv("ALERT_WEBHOOK_URL", "").strip()
 ALERT_WEBHOOK_URLS = getenv("ALERT_WEBHOOK_URLS", "").strip()
 ALERT_WEBHOOK_SHARED_TOKEN = getenv("ALERT_WEBHOOK_SHARED_TOKEN", "").strip()
@@ -4633,7 +4654,21 @@ async def app_lifespan(_: FastAPI) -> AsyncIterator[None]:
         ]
         detail = ", ".join(blocking_checks) if blocking_checks else "unknown"
         raise RuntimeError(f"Startup preflight failed with blocking errors: {detail}")
-    yield
+    overdue_scheduler_task: asyncio.Task[None] | None = None
+    if OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED:
+        overdue_scheduler_task = asyncio.create_task(
+            _official_document_overdue_scheduler_loop(),
+            name="official-document-overdue-scheduler",
+        )
+    try:
+        yield
+    finally:
+        if overdue_scheduler_task is not None:
+            overdue_scheduler_task.cancel()
+            try:
+                await overdue_scheduler_task
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(
@@ -14388,7 +14423,13 @@ def _service_info_payload() -> dict[str, str]:
         "official_document_close_api": "/api/official-documents/{document_id}/close",
         "official_document_attachments_api": "/api/official-documents/{document_id}/attachments",
         "official_document_attachment_download_api": "/api/official-documents/attachments/{attachment_id}/download",
+        "official_document_attachment_zip_api": "/api/official-documents/attachments/zip",
+        "official_document_registry_csv_api": "/api/official-documents/registry/csv",
         "official_document_overdue_run_api": "/api/official-documents/overdue/run",
+        "official_document_overdue_cron_job": "python -m app.jobs.official_document_overdue",
+        "official_document_overdue_scheduler_mode": (
+            "background" if OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED else "disabled"
+        ),
         "official_document_monthly_report_api": "/api/reports/official-documents/monthly",
         "official_document_monthly_report_csv_api": "/api/reports/official-documents/monthly/csv",
         "official_document_monthly_report_print_html": "/reports/official-documents/monthly/print",
@@ -14397,7 +14438,12 @@ def _service_info_payload() -> dict[str, str]:
         "official_document_annual_report_print_html": "/reports/official-documents/annual/print",
         "integrated_monthly_report_api": "/api/reports/monthly/integrated",
         "integrated_monthly_report_csv_api": "/api/reports/monthly/integrated/csv",
+        "integrated_monthly_report_pdf_api": "/api/reports/monthly/integrated/pdf",
         "integrated_monthly_report_print_html": "/reports/monthly/integrated/print",
+        "integrated_annual_report_api": "/api/reports/annual/integrated",
+        "integrated_annual_report_csv_api": "/api/reports/annual/integrated/csv",
+        "integrated_annual_report_pdf_api": "/api/reports/annual/integrated/pdf",
+        "integrated_annual_report_print_html": "/reports/annual/integrated/print",
         "billing_units_api": "/api/billing/units",
         "billing_rate_policies_api": "/api/billing/rate-policies",
         "billing_meter_readings_api": "/api/billing/meter-readings",
@@ -18478,6 +18524,44 @@ def _build_ops_security_posture_snapshot(*, now: datetime | None = None) -> dict
     from app.domains.ops.router_governance import _build_ops_security_posture_snapshot as _impl
 
     return _impl(now=now)
+
+
+def run_official_document_overdue_sync_job(
+    *,
+    site: str | None = None,
+    dry_run: bool = False,
+    limit: int = 100,
+    trigger: str = "manual",
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    from app.domains.ops.router_official_documents import run_official_document_overdue_sync_job as _impl
+
+    return _impl(
+        site=site,
+        dry_run=dry_run,
+        limit=limit,
+        trigger=trigger,
+        principal=principal,
+    )
+
+
+async def _official_document_overdue_scheduler_loop() -> None:
+    initial_delay = max(0, OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INITIAL_DELAY_SEC)
+    interval_seconds = max(60, OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INTERVAL_MINUTES * 60)
+    if initial_delay > 0:
+        await asyncio.sleep(initial_delay)
+    while True:
+        try:
+            run_official_document_overdue_sync_job(
+                site=OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_SITE,
+                dry_run=False,
+                limit=OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_LIMIT,
+                trigger="scheduler",
+            )
+        except Exception:
+            # Job failures are recorded in job_runs by the job wrapper itself.
+            pass
+        await asyncio.sleep(interval_seconds)
 
 
 
