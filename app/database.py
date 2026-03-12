@@ -1088,6 +1088,32 @@ utility_billing_statements = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
+official_documents = Table(
+    "official_documents",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("organization", String(120), nullable=False),
+    Column("document_number", String(80), nullable=True),
+    Column("title", String(200), nullable=False),
+    Column("document_type", String(40), nullable=False, default="general"),
+    Column("status", String(20), nullable=False, default="received"),
+    Column("priority", String(20), nullable=False, default="medium"),
+    Column("received_at", DateTime(timezone=True), nullable=False),
+    Column("due_at", DateTime(timezone=True), nullable=True),
+    Column("required_action", Text, nullable=False, default=""),
+    Column("summary", Text, nullable=False, default=""),
+    Column("linked_inspection_id", Integer, nullable=True),
+    Column("linked_work_order_id", Integer, nullable=True),
+    Column("closed_report_title", String(200), nullable=True),
+    Column("closure_summary", Text, nullable=False, default=""),
+    Column("closure_result", Text, nullable=False, default=""),
+    Column("closed_at", DateTime(timezone=True), nullable=True),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

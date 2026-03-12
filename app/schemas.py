@@ -1933,3 +1933,104 @@ class UtilityBillingRunResult(BaseModel):
     run: UtilityBillingRunRead
     statements: list[UtilityBillingStatementRead]
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+OfficialDocumentStatus = Literal["received", "in_progress", "closed", "canceled"]
+OfficialDocumentPriority = Literal["low", "medium", "high", "critical"]
+
+
+class OfficialDocumentCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    organization: str = Field(min_length=1, max_length=120)
+    document_number: Optional[str] = Field(default=None, max_length=80)
+    title: str = Field(min_length=1, max_length=200)
+    document_type: str = Field(default="general", min_length=1, max_length=40)
+    priority: OfficialDocumentPriority = "medium"
+    received_at: datetime
+    due_at: Optional[datetime] = None
+    required_action: str = ""
+    summary: str = ""
+    linked_inspection_id: Optional[int] = Field(default=None, ge=1)
+    linked_work_order_id: Optional[int] = Field(default=None, ge=1)
+
+
+class OfficialDocumentUpdate(BaseModel):
+    organization: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    document_number: Optional[str] = Field(default=None, max_length=80)
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    document_type: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    status: Optional[OfficialDocumentStatus] = None
+    priority: Optional[OfficialDocumentPriority] = None
+    received_at: Optional[datetime] = None
+    due_at: Optional[datetime] = None
+    required_action: Optional[str] = None
+    summary: Optional[str] = None
+    linked_inspection_id: Optional[int] = Field(default=None, ge=1)
+    linked_work_order_id: Optional[int] = Field(default=None, ge=1)
+
+
+class OfficialDocumentCloseRequest(BaseModel):
+    closed_report_title: str = Field(min_length=1, max_length=200)
+    closure_summary: str = Field(min_length=1)
+    closure_result: str = ""
+    closed_at: Optional[datetime] = None
+
+
+class OfficialDocumentRead(BaseModel):
+    id: int
+    site: str
+    organization: str
+    document_number: Optional[str] = None
+    title: str
+    document_type: str
+    status: OfficialDocumentStatus
+    priority: OfficialDocumentPriority
+    received_at: datetime
+    due_at: Optional[datetime] = None
+    required_action: str
+    summary: str
+    linked_inspection_id: Optional[int] = None
+    linked_work_order_id: Optional[int] = None
+    closed_report_title: Optional[str] = None
+    closure_summary: str
+    closure_result: str
+    closed_at: Optional[datetime] = None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class OfficialDocumentClosureReportEntryRead(BaseModel):
+    id: int
+    site: str
+    organization: str
+    document_number: Optional[str] = None
+    title: str
+    document_type: str
+    status: OfficialDocumentStatus
+    priority: OfficialDocumentPriority
+    received_at: datetime
+    due_at: Optional[datetime] = None
+    linked_inspection_id: Optional[int] = None
+    linked_work_order_id: Optional[int] = None
+    closed_report_title: Optional[str] = None
+    closure_summary: str
+    closure_result: str
+    closed_at: Optional[datetime] = None
+    is_overdue: bool = False
+
+
+class OfficialDocumentClosureReportRead(BaseModel):
+    generated_at: datetime
+    site: Optional[str] = None
+    period_type: Literal["monthly", "annual"]
+    period_label: str
+    total_documents: int
+    closed_in_period: int
+    open_documents: int
+    overdue_open_documents: int
+    linked_inspection_documents: int
+    linked_work_order_documents: int
+    organization_counts: dict[str, int] = Field(default_factory=dict)
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    entries: list[OfficialDocumentClosureReportEntryRead] = Field(default_factory=list)

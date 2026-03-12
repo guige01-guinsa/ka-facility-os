@@ -74,7 +74,7 @@ def build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) -
 _build_shared_tracker_execution_box_html = build_shared_tracker_execution_box_html
 
 def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
-    allowed_tabs = {"overview", "workorders", "inspections", "billing", "reports", "iam", "adoption", "tutorial"}
+    allowed_tabs = {"overview", "workorders", "inspections", "billing", "documents", "reports", "iam", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
     w02_tracker_box_html = _build_shared_tracker_execution_box_html("w02", "W02")
     w03_tracker_box_html = _build_shared_tracker_execution_box_html("w03", "W03")
@@ -642,6 +642,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         <button class="tab-btn" type="button" role="tab" data-tab="workorders" data-tip="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다." title="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다.">작업지시</button>
         <button class="tab-btn" type="button" role="tab" data-tab="inspections" data-tip="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다." title="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다.">점검</button>
         <button class="tab-btn" type="button" role="tab" data-tab="billing" data-tip="Billing(요금부과): 전기·수도 검침, 공용요금 면적배부, 월 부과를 관리합니다." title="Billing(요금부과): 전기·수도 검침, 공용요금 면적배부, 월 부과를 관리합니다.">요금부과</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="documents" data-tip="Official Documents(공문관리): 기관별 공문 접수, 작업 연동, 종결보고서를 관리합니다." title="Official Documents(공문관리): 기관별 공문 접수, 작업 연동, 종결보고서를 관리합니다.">공문관리</button>
         <button class="tab-btn" type="button" role="tab" data-tab="reports" data-tip="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다." title="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다.">월간리포트</button>
         <button class="tab-btn" type="button" role="tab" data-tab="iam" data-tip="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다." title="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다.">권한관리</button>
         <button class="tab-btn" type="button" role="tab" data-tab="adoption" data-tip="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다." title="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다.">사용자 정착 계획</button>
@@ -1008,6 +1009,97 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="billingRunMeta" class="meta">생성 전</div>
             <div id="billingRunSummary" class="cards"></div>
             <div id="billingStatementsTable" class="empty">데이터 없음</div>
+          </div>
+        </div>
+
+        <div id="panelDocuments" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">기관별 공문 접수부터 점검/작업지시 연동, 종결보고서와 월/연차 출력까지 한 화면에서 관리합니다.</p>
+          <div class="box">
+            <h3>공문 등록 / 수정 / 종결</h3>
+            <div class="ops-form-grid">
+              <input id="officialDocId" placeholder="공문 ID (수정/종결 시 입력)" />
+              <input id="officialDocSite" placeholder="site (예: HQ)" />
+              <input id="officialDocOrganization" placeholder="기관명 (예: 한전, 수도사업소, 소방서)" />
+              <input id="officialDocNumber" placeholder="공문번호 (선택)" />
+              <input id="officialDocTitle" placeholder="공문 제목" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="officialDocType" placeholder="공문유형 (예: 전기, 수도, 소방, 일반)" />
+              <select id="officialDocPriority">
+                <option value="medium">priority: medium</option>
+                <option value="high">priority: high</option>
+                <option value="critical">priority: critical</option>
+                <option value="low">priority: low</option>
+              </select>
+              <input id="officialDocReceivedAt" type="datetime-local" />
+              <input id="officialDocDueAt" type="datetime-local" />
+              <select id="officialDocStatus">
+                <option value="received">status: received</option>
+                <option value="in_progress">status: in_progress</option>
+                <option value="closed">status: closed</option>
+                <option value="canceled">status: canceled</option>
+              </select>
+            </div>
+            <div class="ops-form-grid">
+              <input id="officialDocInspectionId" placeholder="linked inspection_id (선택)" />
+              <input id="officialDocWorkOrderId" placeholder="linked work_order_id (선택)" />
+              <input id="officialDocCloseTitle" class="span-3" placeholder="종결보고서 제목(종결 시)" />
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="officialDocRequiredAction" class="span-5" placeholder="요구조치 / 이행지시 내용을 입력"></textarea>
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="officialDocSummary" class="span-5" placeholder="접수 요약 / 진행 메모"></textarea>
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="officialDocClosureSummary" class="span-3" placeholder="종결 요약(종결 시)"></textarea>
+              <textarea id="officialDocClosureResult" class="span-2" placeholder="종결 결과 / 기관 회신 내용"></textarea>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runOfficialDocCreateBtn" class="btn run" type="button">공문 등록</button>
+              <button id="runOfficialDocLoadBtn" class="btn" type="button">공문 1건 조회</button>
+              <button id="runOfficialDocUpdateBtn" class="btn" type="button">공문 수정</button>
+              <button id="runOfficialDocCloseBtn" class="btn run" type="button">공문 종결</button>
+            </div>
+            <div id="officialDocEditMeta" class="meta">입력 대기</div>
+          </div>
+          <div class="box">
+            <h3>공문 목록 조회</h3>
+            <div class="filter-row">
+              <input id="officialDocsSite" placeholder="site (예: HQ)" />
+              <input id="officialDocsOrganization" placeholder="기관명 필터(선택)" />
+              <select id="officialDocsStatus">
+                <option value="">status: all</option>
+                <option value="received">received</option>
+                <option value="in_progress">in_progress</option>
+                <option value="closed">closed</option>
+                <option value="canceled">canceled</option>
+              </select>
+              <input id="officialDocsLimit" value="20" placeholder="limit" />
+              <input id="officialDocsOffset" value="0" placeholder="offset" />
+              <button id="runOfficialDocsBtn" class="btn run" type="button">공문 목록 조회</button>
+            </div>
+            <div id="officialDocsMeta" class="meta">조회 전</div>
+            <div id="officialDocsTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>종결보고서 출력</h3>
+            <div class="filter-row">
+              <input id="officialReportSite" placeholder="site (예: HQ)" />
+              <input id="officialReportMonth" placeholder="month YYYY-MM" />
+              <input id="officialReportYear" placeholder="year YYYY" />
+              <button id="runOfficialDocMonthlyReportBtn" class="btn run" type="button">월 보고서 조회</button>
+              <button id="runOfficialDocAnnualReportBtn" class="btn" type="button">연차 보고서 조회</button>
+            </div>
+            <div class="mini-links">
+              <a id="officialReportMonthlyPrintLink" href="/reports/official-documents/monthly/print" target="_blank" rel="noopener">월 보고서 인쇄</a>
+              <a id="officialReportMonthlyCsvLink" href="/api/reports/official-documents/monthly/csv" target="_blank" rel="noopener">월 CSV</a>
+              <a id="officialReportAnnualPrintLink" href="/reports/official-documents/annual/print" target="_blank" rel="noopener">연차 보고서 인쇄</a>
+              <a id="officialReportAnnualCsvLink" href="/api/reports/official-documents/annual/csv" target="_blank" rel="noopener">연차 CSV</a>
+            </div>
+            <div id="officialReportMeta" class="meta">조회 전</div>
+            <div id="officialReportSummary" class="cards"></div>
+            <div id="officialReportEntries" class="empty">데이터 없음</div>
           </div>
         </div>
 
@@ -1770,6 +1862,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         workorders: document.getElementById("panelWorkorders"),
         inspections: document.getElementById("panelInspections"),
         billing: document.getElementById("panelBilling"),
+        documents: document.getElementById("panelDocuments"),
         reports: document.getElementById("panelReports"),
         iam: document.getElementById("panelIam"),
         adoption: document.getElementById("panelAdoption"),
@@ -1848,6 +1941,17 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runBillingReadingsBtn: "검침 조회: 월별 검침 이력을 조회합니다.",
         runBillingGenerateBtn: "월 부과 생성: 세대요금과 공용요금을 합쳐 면적비 기준 월 부과를 생성합니다.",
         runBillingStatementsBtn: "부과내역 조회: 생성된 전기/수도 부과 명세를 조회합니다.",
+        runOfficialDocCreateBtn: "공문 등록: 기관별 공문을 접수하고 점검/작업지시 연동 정보를 함께 저장합니다.",
+        runOfficialDocLoadBtn: "공문 1건 조회: 공문 ID로 상세 내용을 불러와 수정/종결 폼에 채웁니다.",
+        runOfficialDocUpdateBtn: "공문 수정: 접수요약, 기한, 상태, 연동 대상을 갱신합니다.",
+        runOfficialDocCloseBtn: "공문 종결: 종결보고서 제목과 결과를 저장하고 상태를 closed로 변경합니다.",
+        runOfficialDocsBtn: "공문 목록 조회: 기관, 상태, site 기준으로 공문 목록을 조회합니다.",
+        runOfficialDocMonthlyReportBtn: "월 보고서 조회: 공문 종결/잔여 현황을 월 단위로 집계합니다.",
+        runOfficialDocAnnualReportBtn: "연차 보고서 조회: 공문 종결/잔여 현황을 연 단위로 집계합니다.",
+        officialReportMonthlyPrintLink: "월 보고서 인쇄: 월 종결보고서를 인쇄용 HTML로 엽니다.",
+        officialReportMonthlyCsvLink: "월 CSV: 월 종결보고서를 CSV 파일로 내려받습니다.",
+        officialReportAnnualPrintLink: "연차 보고서 인쇄: 연차 종결보고서를 인쇄용 HTML로 엽니다.",
+        officialReportAnnualCsvLink: "연차 CSV: 연차 종결보고서를 CSV 파일로 내려받습니다.",
         runReportsBtn: "리포트 조회: 월간 집계 결과와 출력 링크를 조회합니다.",
         reportPrintLink: "HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.",
         reportCsvLink: "CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.",
@@ -5418,6 +5522,251 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }} catch (err) {{
           table.innerHTML = renderEmpty("부과내역 조회 실패");
           meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      function fillOfficialDocumentForm(doc) {{
+        document.getElementById("officialDocId").value = doc.id || "";
+        document.getElementById("officialDocSite").value = doc.site || "";
+        document.getElementById("officialDocOrganization").value = doc.organization || "";
+        document.getElementById("officialDocNumber").value = doc.document_number || "";
+        document.getElementById("officialDocTitle").value = doc.title || "";
+        document.getElementById("officialDocType").value = doc.document_type || "general";
+        document.getElementById("officialDocPriority").value = doc.priority || "medium";
+        document.getElementById("officialDocStatus").value = doc.status || "received";
+        document.getElementById("officialDocReceivedAt").value = formatDateTimeLocal(doc.received_at);
+        document.getElementById("officialDocDueAt").value = formatDateTimeLocal(doc.due_at);
+        document.getElementById("officialDocInspectionId").value = doc.linked_inspection_id || "";
+        document.getElementById("officialDocWorkOrderId").value = doc.linked_work_order_id || "";
+        document.getElementById("officialDocRequiredAction").value = doc.required_action || "";
+        document.getElementById("officialDocSummary").value = doc.summary || "";
+        document.getElementById("officialDocCloseTitle").value = doc.closed_report_title || "";
+        document.getElementById("officialDocClosureSummary").value = doc.closure_summary || "";
+        document.getElementById("officialDocClosureResult").value = doc.closure_result || "";
+      }}
+
+      function updateOfficialReportLinks() {{
+        const monthlyQuery = buildQuery([
+          {{ key: "site", id: "officialReportSite" }},
+          {{ key: "month", id: "officialReportMonth" }},
+        ]);
+        const annualQuery = buildQuery([
+          {{ key: "site", id: "officialReportSite" }},
+          {{ key: "year", id: "officialReportYear" }},
+        ]);
+        document.getElementById("officialReportMonthlyPrintLink").setAttribute("href", "/reports/official-documents/monthly/print" + (monthlyQuery ? "?" + monthlyQuery : ""));
+        document.getElementById("officialReportMonthlyCsvLink").setAttribute("href", "/api/reports/official-documents/monthly/csv" + (monthlyQuery ? "?" + monthlyQuery : ""));
+        document.getElementById("officialReportAnnualPrintLink").setAttribute("href", "/reports/official-documents/annual/print" + (annualQuery ? "?" + annualQuery : ""));
+        document.getElementById("officialReportAnnualCsvLink").setAttribute("href", "/api/reports/official-documents/annual/csv" + (annualQuery ? "?" + annualQuery : ""));
+      }}
+
+      function renderOfficialReport(report) {{
+        const summary = document.getElementById("officialReportSummary");
+        const entries = document.getElementById("officialReportEntries");
+        const summaryItems = [
+          ["Period", report.period_label],
+          ["Site", report.site || "ALL"],
+          ["Total Documents", report.total_documents || 0],
+          ["Closed In Period", report.closed_in_period || 0],
+          ["Open Documents", report.open_documents || 0],
+          ["Overdue Open", report.overdue_open_documents || 0],
+          ["Linked Inspections", report.linked_inspection_documents || 0],
+          ["Linked Work Orders", report.linked_work_order_documents || 0],
+        ];
+        summary.innerHTML = summaryItems.map((item) => (
+          '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + "</div></div>"
+        )).join("");
+        entries.innerHTML = renderTable(report.entries || [], [
+          {{ key: "id", label: "ID" }},
+          {{ key: "organization", label: "기관" }},
+          {{ key: "document_number", label: "공문번호" }},
+          {{ key: "title", label: "제목" }},
+          {{ key: "status", label: "상태" }},
+          {{ key: "priority", label: "우선순위" }},
+          {{ key: "linked_inspection_id", label: "점검" }},
+          {{ key: "linked_work_order_id", label: "작업지시" }},
+          {{ key: "closed_report_title", label: "종결제목" }},
+          {{ key: "closed_at", label: "종결일시" }},
+        ]);
+      }}
+
+      async function runOfficialDocuments() {{
+        const meta = document.getElementById("officialDocsMeta");
+        const table = document.getElementById("officialDocsTable");
+        meta.textContent = "공문 목록 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialDocsSite" }},
+            {{ key: "organization", id: "officialDocsOrganization" }},
+            {{ key: "status", id: "officialDocsStatus" }},
+            {{ key: "limit", id: "officialDocsLimit" }},
+            {{ key: "offset", id: "officialDocsOffset" }},
+          ]);
+          const rows = await fetchJson("/api/official-documents" + (query ? "?" + query : ""), true);
+          meta.textContent = "공문 " + String(rows.length) + "건";
+          table.innerHTML = renderTable(rows, [
+            {{ key: "id", label: "ID" }},
+            {{ key: "site", label: "site" }},
+            {{ key: "organization", label: "기관" }},
+            {{ key: "document_number", label: "공문번호" }},
+            {{ key: "title", label: "제목" }},
+            {{ key: "status", label: "상태" }},
+            {{ key: "priority", label: "우선순위" }},
+            {{ key: "due_at", label: "기한" }},
+            {{ key: "linked_inspection_id", label: "점검" }},
+            {{ key: "linked_work_order_id", label: "작업지시" }},
+          ]);
+        }} catch (err) {{
+          meta.textContent = "조회 실패: " + err.message;
+          table.innerHTML = renderEmpty("공문 목록 조회 실패");
+        }}
+      }}
+
+      async function runOfficialDocumentCreate() {{
+        const meta = document.getElementById("officialDocEditMeta");
+        try {{
+          const payload = {{
+            site: (document.getElementById("officialDocSite").value || "").trim(),
+            organization: (document.getElementById("officialDocOrganization").value || "").trim(),
+            document_number: (document.getElementById("officialDocNumber").value || "").trim() || null,
+            title: (document.getElementById("officialDocTitle").value || "").trim(),
+            document_type: (document.getElementById("officialDocType").value || "").trim() || "general",
+            priority: (document.getElementById("officialDocPriority").value || "medium").trim(),
+            received_at: new Date(document.getElementById("officialDocReceivedAt").value || "").toISOString(),
+            due_at: (document.getElementById("officialDocDueAt").value || "").trim()
+              ? new Date(document.getElementById("officialDocDueAt").value).toISOString()
+              : null,
+            required_action: (document.getElementById("officialDocRequiredAction").value || "").trim(),
+            summary: (document.getElementById("officialDocSummary").value || "").trim(),
+            linked_inspection_id: parseOptionalNumber(document.getElementById("officialDocInspectionId").value, null),
+            linked_work_order_id: parseOptionalNumber(document.getElementById("officialDocWorkOrderId").value, null),
+          }};
+          meta.textContent = "등록 중...";
+          const created = await fetchJson("/api/official-documents", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          fillOfficialDocumentForm(created);
+          meta.textContent = "등록 성공: 공문 ID " + String(created.id);
+          await runOfficialDocuments();
+        }} catch (err) {{
+          meta.textContent = "등록 실패: " + err.message;
+        }}
+      }}
+
+      async function runOfficialDocumentLoad() {{
+        const meta = document.getElementById("officialDocEditMeta");
+        try {{
+          const idValue = Number(document.getElementById("officialDocId").value || "");
+          if (!Number.isFinite(idValue) || idValue <= 0) {{
+            throw new Error("공문 ID가 필요합니다.");
+          }}
+          meta.textContent = "조회 중...";
+          const doc = await fetchJson("/api/official-documents/" + encodeURIComponent(String(Math.trunc(idValue))), true);
+          fillOfficialDocumentForm(doc);
+          meta.textContent = "조회 성공: 공문 ID " + String(doc.id);
+        }} catch (err) {{
+          meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runOfficialDocumentUpdate() {{
+        const meta = document.getElementById("officialDocEditMeta");
+        try {{
+          const idValue = Number(document.getElementById("officialDocId").value || "");
+          if (!Number.isFinite(idValue) || idValue <= 0) {{
+            throw new Error("공문 ID가 필요합니다.");
+          }}
+          const payload = {{
+            organization: (document.getElementById("officialDocOrganization").value || "").trim(),
+            document_number: (document.getElementById("officialDocNumber").value || "").trim() || null,
+            title: (document.getElementById("officialDocTitle").value || "").trim(),
+            document_type: (document.getElementById("officialDocType").value || "").trim() || "general",
+            status: (document.getElementById("officialDocStatus").value || "received").trim(),
+            priority: (document.getElementById("officialDocPriority").value || "medium").trim(),
+            received_at: new Date(document.getElementById("officialDocReceivedAt").value || "").toISOString(),
+            due_at: (document.getElementById("officialDocDueAt").value || "").trim()
+              ? new Date(document.getElementById("officialDocDueAt").value).toISOString()
+              : null,
+            required_action: (document.getElementById("officialDocRequiredAction").value || "").trim(),
+            summary: (document.getElementById("officialDocSummary").value || "").trim(),
+            linked_inspection_id: parseOptionalNumber(document.getElementById("officialDocInspectionId").value, null),
+            linked_work_order_id: parseOptionalNumber(document.getElementById("officialDocWorkOrderId").value, null),
+          }};
+          meta.textContent = "수정 중...";
+          const doc = await fetchJson("/api/official-documents/" + encodeURIComponent(String(Math.trunc(idValue))), true, {{
+            method: "PATCH",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          fillOfficialDocumentForm(doc);
+          meta.textContent = "수정 성공: 공문 ID " + String(doc.id);
+          await runOfficialDocuments();
+        }} catch (err) {{
+          meta.textContent = "수정 실패: " + err.message;
+        }}
+      }}
+
+      async function runOfficialDocumentClose() {{
+        const meta = document.getElementById("officialDocEditMeta");
+        try {{
+          const idValue = Number(document.getElementById("officialDocId").value || "");
+          if (!Number.isFinite(idValue) || idValue <= 0) {{
+            throw new Error("공문 ID가 필요합니다.");
+          }}
+          const payload = {{
+            closed_report_title: (document.getElementById("officialDocCloseTitle").value || "").trim(),
+            closure_summary: (document.getElementById("officialDocClosureSummary").value || "").trim(),
+            closure_result: (document.getElementById("officialDocClosureResult").value || "").trim(),
+          }};
+          meta.textContent = "종결 중...";
+          const doc = await fetchJson("/api/official-documents/" + encodeURIComponent(String(Math.trunc(idValue))) + "/close", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          fillOfficialDocumentForm(doc);
+          meta.textContent = "종결 성공: 공문 ID " + String(doc.id);
+          await runOfficialDocuments();
+        }} catch (err) {{
+          meta.textContent = "종결 실패: " + err.message;
+        }}
+      }}
+
+      async function runOfficialDocumentMonthlyReport() {{
+        const meta = document.getElementById("officialReportMeta");
+        updateOfficialReportLinks();
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialReportSite" }},
+            {{ key: "month", id: "officialReportMonth" }},
+          ]);
+          const report = await fetchJson("/api/reports/official-documents/monthly" + (query ? "?" + query : ""), true);
+          meta.textContent = "월 보고서 성공: " + String(report.period_label);
+          renderOfficialReport(report);
+        }} catch (err) {{
+          meta.textContent = "월 보고서 실패: " + err.message;
+          document.getElementById("officialReportSummary").innerHTML = "";
+          document.getElementById("officialReportEntries").innerHTML = renderEmpty("월 보고서 조회 실패");
+        }}
+      }}
+
+      async function runOfficialDocumentAnnualReport() {{
+        const meta = document.getElementById("officialReportMeta");
+        updateOfficialReportLinks();
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialReportSite" }},
+            {{ key: "year", id: "officialReportYear" }},
+          ]);
+          const report = await fetchJson("/api/reports/official-documents/annual" + (query ? "?" + query : ""), true);
+          meta.textContent = "연차 보고서 성공: " + String(report.period_label);
+          renderOfficialReport(report);
+        }} catch (err) {{
+          meta.textContent = "연차 보고서 실패: " + err.message;
+          document.getElementById("officialReportSummary").innerHTML = "";
+          document.getElementById("officialReportEntries").innerHTML = renderEmpty("연차 보고서 조회 실패");
         }}
       }}
 
@@ -9547,6 +9896,13 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       document.getElementById("runBillingReadingsBtn").addEventListener("click", runBillingReadings);
       document.getElementById("runBillingGenerateBtn").addEventListener("click", runBillingGenerate);
       document.getElementById("runBillingStatementsBtn").addEventListener("click", runBillingStatements);
+      document.getElementById("runOfficialDocCreateBtn").addEventListener("click", runOfficialDocumentCreate);
+      document.getElementById("runOfficialDocLoadBtn").addEventListener("click", runOfficialDocumentLoad);
+      document.getElementById("runOfficialDocUpdateBtn").addEventListener("click", runOfficialDocumentUpdate);
+      document.getElementById("runOfficialDocCloseBtn").addEventListener("click", runOfficialDocumentClose);
+      document.getElementById("runOfficialDocsBtn").addEventListener("click", runOfficialDocuments);
+      document.getElementById("runOfficialDocMonthlyReportBtn").addEventListener("click", runOfficialDocumentMonthlyReport);
+      document.getElementById("runOfficialDocAnnualReportBtn").addEventListener("click", runOfficialDocumentAnnualReport);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("runTutorialGlossaryBtn").addEventListener("click", () => runTutorialGlossary(true));
@@ -9638,6 +9994,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         const node = document.getElementById(id);
         if (node) node.addEventListener("input", updateReportLinks);
       }});
+      ["officialReportSite", "officialReportMonth", "officialReportYear"].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node) node.addEventListener("input", updateOfficialReportLinks);
+      }});
 
       const savedToken = getToken();
       if (savedToken) {{
@@ -9646,6 +10006,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       updateAuthStateFromToken();
       applyStaticUiTooltips();
       updateReportLinks();
+      updateOfficialReportLinks();
       bindOpsElectricalChecklistHandlers();
       populateOpsChecklistSetSelector();
       populateOpsCodeSelector();
@@ -9666,6 +10027,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         "billingReadingSite",
         "billingRunSite",
         "billingStatementsSite",
+        "officialDocSite",
+        "officialDocsSite",
+        "officialReportSite",
       ].forEach((id) => {{
         const node = document.getElementById(id);
         if (node && !node.value) {{
@@ -9678,12 +10042,21 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         "billingReadingMonth",
         "billingRunMonth",
         "billingStatementsMonth",
+        "officialReportMonth",
       ].forEach((id) => {{
         const node = document.getElementById(id);
         if (node && !node.value) {{
           node.value = currentMonthLabel();
         }}
       }});
+      const officialDocReceivedAtNode = document.getElementById("officialDocReceivedAt");
+      if (officialDocReceivedAtNode && !(officialDocReceivedAtNode.value || "").trim()) {{
+        officialDocReceivedAtNode.value = currentLocalDatetimeInputValue();
+      }}
+      const officialReportYearNode = document.getElementById("officialReportYear");
+      if (officialReportYearNode && !(officialReportYearNode.value || "").trim()) {{
+        officialReportYearNode.value = String(new Date().getFullYear());
+      }}
       if (!document.getElementById("billingReadingReader").value && authProfile && authProfile.username) {{
         document.getElementById("billingReadingReader").value = String(authProfile.username);
       }}

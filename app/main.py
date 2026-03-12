@@ -521,6 +521,9 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "work_orders:read",
         "work_orders:write",
         "work_orders:escalate",
+        "official_docs:read",
+        "official_docs:write",
+        "official_docs:close",
         "reports:read",
         "reports:export",
         "billing:read",
@@ -562,6 +565,9 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "inspections:write",
         "work_orders:read",
         "work_orders:write",
+        "official_docs:read",
+        "official_docs:write",
+        "official_docs:close",
         "billing:read",
         "billing:write",
         "workflow_locks:read",
@@ -598,6 +604,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
     "auditor": {
         "inspections:read",
         "work_orders:read",
+        "official_docs:read",
         "reports:read",
         "reports:export",
         "billing:read",
@@ -3631,6 +3638,18 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "Meter Readings", "href": "/api/billing/meter-readings"},
             {"label": "Common Charges", "href": "/api/billing/common-charges"},
             {"label": "Billing Statements", "href": "/api/billing/statements"},
+        ],
+    },
+    {
+        "id": "official-documents",
+        "name": "Official Documents",
+        "name_ko": "기관별 공문관리",
+        "description": "기관별 공문 접수, 점검/작업지시 연동, 종결보고서 관리와 월/연차 출력까지 운영합니다.",
+        "kpi_hint": "Official document close rate",
+        "links": [
+            {"label": "Official Documents", "href": "/api/official-documents"},
+            {"label": "Monthly Closure Report", "href": "/api/reports/official-documents/monthly"},
+            {"label": "Annual Closure Report", "href": "/api/reports/official-documents/annual"},
         ],
     },
     {
@@ -14362,6 +14381,15 @@ def _service_info_payload() -> dict[str, str]:
         "facility_console_html": "/web/console",
         "facility_console_guide_html": "/web/console/guide",
         "iam_guide_html": "/web/iam-guide",
+        "official_documents_api": "/api/official-documents",
+        "official_document_detail_api": "/api/official-documents/{document_id}",
+        "official_document_close_api": "/api/official-documents/{document_id}/close",
+        "official_document_monthly_report_api": "/api/reports/official-documents/monthly",
+        "official_document_monthly_report_csv_api": "/api/reports/official-documents/monthly/csv",
+        "official_document_monthly_report_print_html": "/reports/official-documents/monthly/print",
+        "official_document_annual_report_api": "/api/reports/official-documents/annual",
+        "official_document_annual_report_csv_api": "/api/reports/official-documents/annual/csv",
+        "official_document_annual_report_print_html": "/reports/official-documents/annual/print",
         "billing_units_api": "/api/billing/units",
         "billing_rate_policies_api": "/api/billing/rate-policies",
         "billing_meter_readings_api": "/api/billing/meter-readings",
@@ -18483,6 +18511,7 @@ from app.domains.adoption.router_tracker import build_router as build_adoption_t
 from app.domains.ops.router_billing import router as ops_billing_router
 from app.domains.ops.router_core import router as ops_core_router
 from app.domains.ops.router_governance import router as ops_governance_router
+from app.domains.ops.router_official_documents import router as ops_official_documents_router
 from app.domains.ops.router_alerts import admin_router as ops_sla_admin_router, router as ops_alerts_router
 from app.domains.ops.router_reporting import build_router as build_ops_reporting_router
 from app.domains.ops.router_tutorial import build_router as build_ops_tutorial_router
@@ -18580,6 +18609,7 @@ app.include_router(iam_auth_router)
 app.include_router(ops_billing_router)
 app.include_router(ops_core_router)
 app.include_router(ops_governance_router)
+app.include_router(ops_official_documents_router)
 app.include_router(ops_alerts_router)
 ops_reporting_router = build_ops_reporting_router(globals())
 ops_tutorial_router = build_ops_tutorial_router(globals())
