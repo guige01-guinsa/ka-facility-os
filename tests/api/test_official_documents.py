@@ -67,12 +67,42 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     )
     assert created.status_code == 201
     document_id = int(created.json()["id"])
+    assert created.json()["registry_number"].startswith("한전-HQ-")
+    assert created.json()["organization_code"] == "한전"
     assert created.json()["linked_inspection_id"] == inspection_id
     assert created.json()["linked_work_order_id"] == work_order_id
+
+    uploaded = app_client.post(
+        f"/api/official-documents/{document_id}/attachments",
+        headers=headers,
+        data={"note": "원본 스캔본"},
+        files={"file": ("kepco-origin.pdf", b"%PDF-1.4 official document", "application/pdf")},
+    )
+    assert uploaded.status_code == 201
+    attachment_id = int(uploaded.json()["id"])
+    assert uploaded.json()["file_name"] == "kepco-origin.pdf"
+
+    attachments = app_client.get(
+        f"/api/official-documents/{document_id}/attachments",
+        headers=headers,
+    )
+    assert attachments.status_code == 200
+    assert len(attachments.json()) == 1
+    assert attachments.json()[0]["note"] == "원본 스캔본"
+
+    downloaded = app_client.get(
+        f"/api/official-documents/attachments/{attachment_id}/download",
+        headers=headers,
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"%PDF-1.4 official document"
+    assert len(downloaded.headers["x-attachment-sha256"]) == 64
 
     listed = app_client.get("/api/official-documents?site=HQ", headers=headers)
     assert listed.status_code == 200
     assert any(int(row["id"]) == document_id for row in listed.json())
+    listed_map = {int(row["id"]): row for row in listed.json()}
+    assert listed_map[document_id]["attachment_count"] == 1
 
     closed = app_client.post(
         f"/api/official-documents/{document_id}/close",
@@ -100,6 +130,7 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert monthly_body["linked_inspection_documents"] >= 1
     assert monthly_body["linked_work_order_documents"] >= 1
     assert any(int(entry["id"]) == document_id for entry in monthly_body["entries"])
+    assert any(int(entry["id"]) == document_id and int(entry["attachment_count"]) == 1 for entry in monthly_body["entries"])
 
     annual = app_client.get(
         f"/api/reports/official-documents/annual?site=HQ&year={year_value}",
@@ -127,18 +158,148 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert monthly_print.status_code == 200
     assert "Official Document Closure Report" in monthly_print.text
 
+    overdue_created = app_client.post(
+        "/api/official-documents",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "organization": "소방서",
+            "title": "소방 펌프실 보완 요청",
+            "document_type": "fire",
+            "priority": "critical",
+            "received_at": now.isoformat(),
+            "due_at": (now - timedelta(days=2)).isoformat(),
+            "required_action": "기한 초과 공문 자동화 점검",
+            "summary": "자동 생성 대상",
+        },
+    )
+    assert overdue_created.status_code == 201
+    overdue_document_id = int(overdue_created.json()["id"])
+    overdue_sync = app_client.post(
+        "/api/official-documents/overdue/run?site=HQ&limit=20",
+        headers=headers,
+    )
+    assert overdue_sync.status_code == 200
+    overdue_body = overdue_sync.json()
+    assert overdue_body["candidate_count"] >= 1
+    assert overdue_body["work_order_created_count"] + overdue_body["linked_existing_work_order_count"] >= 1
+    assert overdue_document_id in overdue_body["document_ids"]
+
+    overdue_loaded = app_client.get(f"/api/official-documents/{overdue_document_id}", headers=headers)
+    assert overdue_loaded.status_code == 200
+    assert overdue_loaded.json()["linked_work_order_id"] is not None
+
+    for payload in [
+        {
+            "site": "HQ",
+            "building": "101동",
+            "unit_number": "1201호",
+            "occupant_name": "Moon",
+            "area_sqm": 84.5,
+        }
+    ]:
+        created_unit = app_client.post("/api/billing/units", headers=headers, json=payload)
+        assert created_unit.status_code == 201
+
+    billing_policy = app_client.post(
+        "/api/billing/rate-policies",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "utility_type": "electricity",
+            "effective_month": month_label,
+            "basic_fee": 1000,
+            "unit_rate": 100,
+            "sewage_rate_per_unit": 0,
+            "service_fee": 300,
+            "vat_rate": 0.1,
+            "tiers": [],
+            "notes": "통합보고 테스트",
+        },
+    )
+    assert billing_policy.status_code == 201
+    billing_common = app_client.post(
+        "/api/billing/common-charges",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "billing_month": month_label,
+            "utility_type": "electricity",
+            "charge_category": "공용전기",
+            "amount": 8450,
+        },
+    )
+    assert billing_common.status_code == 201
+    reading = app_client.post(
+        "/api/billing/meter-readings",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "building": "101동",
+            "unit_number": "1201호",
+            "utility_type": "electricity",
+            "reading_month": month_label,
+            "previous_reading": 1000,
+            "current_reading": 1075,
+            "reader_name": "owner_ci",
+        },
+    )
+    assert reading.status_code == 201
+    generated = app_client.post(
+        "/api/billing/runs/generate",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "billing_month": month_label,
+            "utility_type": "electricity",
+            "replace_existing": True,
+        },
+    )
+    assert generated.status_code == 200
+
+    integrated = app_client.get(
+        f"/api/reports/monthly/integrated?site=HQ&month={month_label}",
+        headers=headers,
+    )
+    assert integrated.status_code == 200
+    integrated_body = integrated.json()
+    assert integrated_body["month"] == month_label
+    assert integrated_body["billing"]["statement_count"] >= 1
+    assert integrated_body["official_documents"]["total_documents"] >= 2
+
+    integrated_csv = app_client.get(
+        f"/api/reports/monthly/integrated/csv?site=HQ&month={month_label}",
+        headers=headers,
+    )
+    assert integrated_csv.status_code == 200
+    assert "integrated-monthly-report" in integrated_csv.headers["content-disposition"]
+
+    integrated_print = app_client.get(
+        f"/reports/monthly/integrated/print?site=HQ&month={month_label}",
+        headers=headers,
+    )
+    assert integrated_print.status_code == 200
+    assert "Integrated Monthly Facility Report" in integrated_print.text
+
     service_info = app_client.get("/api/service-info")
     assert service_info.status_code == 200
     service_body = service_info.json()
     assert service_body["official_documents_api"] == "/api/official-documents"
+    assert service_body["official_document_attachments_api"] == "/api/official-documents/{document_id}/attachments"
+    assert service_body["official_document_overdue_run_api"] == "/api/official-documents/overdue/run"
     assert service_body["official_document_monthly_report_api"] == "/api/reports/official-documents/monthly"
     assert service_body["official_document_annual_report_print_html"] == "/reports/official-documents/annual/print"
+    assert service_body["integrated_monthly_report_api"] == "/api/reports/monthly/integrated"
+    assert service_body["integrated_monthly_report_print_html"] == "/reports/monthly/integrated/print"
 
     html_page = app_client.get("/?tab=documents", headers={"Accept": "text/html"})
     assert html_page.status_code == 200
     assert 'data-tab="documents"' in html_page.text
     assert "runOfficialDocCreateBtn" in html_page.text
     assert "officialReportMonthlyPrintLink" in html_page.text
+    assert "runOfficialAttachmentUploadBtn" in html_page.text
+    assert "runOfficialOverdueSyncBtn" in html_page.text
+    assert "officialReportIntegratedPrintLink" in html_page.text
 
 
 def test_official_document_report_counts_open_overdue_items(app_client: TestClient) -> None:

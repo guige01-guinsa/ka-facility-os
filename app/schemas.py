@@ -1942,6 +1942,8 @@ OfficialDocumentPriority = Literal["low", "medium", "high", "critical"]
 class OfficialDocumentCreate(BaseModel):
     site: str = Field(min_length=1, max_length=120)
     organization: str = Field(min_length=1, max_length=120)
+    organization_code: Optional[str] = Field(default=None, max_length=40)
+    registry_number: Optional[str] = Field(default=None, max_length=80)
     document_number: Optional[str] = Field(default=None, max_length=80)
     title: str = Field(min_length=1, max_length=200)
     document_type: str = Field(default="general", min_length=1, max_length=40)
@@ -1956,6 +1958,8 @@ class OfficialDocumentCreate(BaseModel):
 
 class OfficialDocumentUpdate(BaseModel):
     organization: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    organization_code: Optional[str] = Field(default=None, max_length=40)
+    registry_number: Optional[str] = Field(default=None, max_length=80)
     document_number: Optional[str] = Field(default=None, max_length=80)
     title: Optional[str] = Field(default=None, min_length=1, max_length=200)
     document_type: Optional[str] = Field(default=None, min_length=1, max_length=40)
@@ -1980,6 +1984,8 @@ class OfficialDocumentRead(BaseModel):
     id: int
     site: str
     organization: str
+    organization_code: Optional[str] = None
+    registry_number: Optional[str] = None
     document_number: Optional[str] = None
     title: str
     document_type: str
@@ -1995,6 +2001,7 @@ class OfficialDocumentRead(BaseModel):
     closure_summary: str
     closure_result: str
     closed_at: Optional[datetime] = None
+    attachment_count: int = 0
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -2004,6 +2011,8 @@ class OfficialDocumentClosureReportEntryRead(BaseModel):
     id: int
     site: str
     organization: str
+    organization_code: Optional[str] = None
+    registry_number: Optional[str] = None
     document_number: Optional[str] = None
     title: str
     document_type: str
@@ -2017,6 +2026,7 @@ class OfficialDocumentClosureReportEntryRead(BaseModel):
     closure_summary: str
     closure_result: str
     closed_at: Optional[datetime] = None
+    attachment_count: int = 0
     is_overdue: bool = False
 
 
@@ -2034,3 +2044,42 @@ class OfficialDocumentClosureReportRead(BaseModel):
     organization_counts: dict[str, int] = Field(default_factory=dict)
     status_counts: dict[str, int] = Field(default_factory=dict)
     entries: list[OfficialDocumentClosureReportEntryRead] = Field(default_factory=list)
+
+
+class OfficialDocumentAttachmentRead(BaseModel):
+    id: int
+    document_id: int
+    site: str
+    file_name: str
+    content_type: str
+    file_size: int
+    storage_backend: str
+    sha256: str
+    malware_scan_status: str
+    malware_scan_engine: Optional[str] = None
+    malware_scanned_at: Optional[datetime] = None
+    note: str = ""
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class OfficialDocumentOverdueSyncRead(BaseModel):
+    checked_at: datetime
+    site: Optional[str] = None
+    dry_run: bool = False
+    candidate_count: int
+    work_order_created_count: int
+    linked_existing_work_order_count: int
+    document_ids: list[int] = Field(default_factory=list)
+    work_order_ids: list[int] = Field(default_factory=list)
+    alert_run: dict[str, Any] = Field(default_factory=dict)
+
+
+class IntegratedMonthlyFacilityReportRead(BaseModel):
+    generated_at: datetime
+    month: str
+    site: Optional[str] = None
+    inspections: dict[str, Any] = Field(default_factory=dict)
+    work_orders: dict[str, Any] = Field(default_factory=dict)
+    official_documents: dict[str, Any] = Field(default_factory=dict)
+    billing: dict[str, Any] = Field(default_factory=dict)

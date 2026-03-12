@@ -5,20 +5,31 @@ from __future__ import annotations
 import csv
 import html
 import io
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import HTMLResponse
-from sqlalchemy import insert, select, update
+from sqlalchemy import func, insert, select, update
 
 from app import main as main_module
-from app.database import get_conn, inspections, official_documents, work_orders
+from app.database import (
+    get_conn,
+    inspections,
+    official_document_attachments,
+    official_documents,
+    utility_billing_statements,
+    work_orders,
+)
 from app.schemas import (
+    IntegratedMonthlyFacilityReportRead,
+    OfficialDocumentAttachmentRead,
     OfficialDocumentCloseRequest,
     OfficialDocumentClosureReportEntryRead,
     OfficialDocumentClosureReportRead,
     OfficialDocumentCreate,
+    OfficialDocumentOverdueSyncRead,
     OfficialDocumentRead,
     OfficialDocumentUpdate,
 )
@@ -26,13 +37,27 @@ from app.schemas import (
 router = APIRouter(tags=["official-documents"])
 
 _allowed_sites_for_principal = main_module._allowed_sites_for_principal
+_append_work_order_event = main_module._append_work_order_event
+_as_optional_datetime = main_module._as_optional_datetime
+_build_monthly_report_csv = main_module._build_monthly_report_csv
+_build_monthly_report_pdf = main_module._build_monthly_report_pdf
+_is_allowed_evidence_content_type = main_module._is_allowed_evidence_content_type
+_normalize_evidence_storage_backend = main_module._normalize_evidence_storage_backend
+_read_evidence_blob = main_module._read_evidence_blob
 _require_site_access = main_module._require_site_access
+_row_to_work_order_model = main_module._row_to_work_order_model
+_safe_download_filename = main_module._safe_download_filename
+_scan_evidence_bytes = main_module._scan_evidence_bytes
 _to_utc = main_module._to_utc
 _write_audit_log = main_module._write_audit_log
+_write_evidence_blob = main_module._write_evidence_blob
+build_monthly_report = main_module.build_monthly_report
+run_sla_escalation_job = main_module.run_sla_escalation_job
 require_permission = main_module.require_permission
 
 _DOC_STATUSES = {"received", "in_progress", "closed", "canceled"}
 _DOC_PRIORITIES = {"low", "medium", "high", "critical"}
+_ATTACHMENT_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 
 
 def _normalize_doc_status(value: Any) -> str:
@@ -47,6 +72,79 @@ def _normalize_doc_priority(value: Any) -> str:
     if normalized not in _DOC_PRIORITIES:
         raise HTTPException(status_code=422, detail="priority must be low, medium, high, or critical")
     return normalized
+
+
+def _normalize_org_code(value: str | None, *, organization: str) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        candidate = str(organization or "").strip()
+    candidate = re.sub(r"[^0-9A-Za-z가-힣]+", "", candidate).upper()
+    candidate = candidate[:16]
+    if not candidate:
+        candidate = "ORG"
+    return candidate
+
+
+def _next_registry_number(
+    conn: Any,
+    *,
+    site: str,
+    organization_code: str,
+    received_at: datetime,
+) -> str:
+    year_label = _to_utc(received_at).strftime("%Y")
+    prefix = f"{organization_code}-{site.strip()}-{year_label}-"
+    rows = conn.execute(
+        select(official_documents.c.registry_number)
+        .where(official_documents.c.site == site)
+        .where(official_documents.c.organization_code == organization_code)
+        .where(official_documents.c.received_at >= datetime(int(year_label), 1, 1, tzinfo=timezone.utc))
+        .where(official_documents.c.received_at < datetime(int(year_label) + 1, 1, 1, tzinfo=timezone.utc))
+        .order_by(official_documents.c.id.desc())
+    ).all()
+    max_seq = 0
+    for row in rows:
+        value = str(row[0] or "").strip()
+        if not value.startswith(prefix):
+            continue
+        try:
+            max_seq = max(max_seq, int(value.rsplit("-", 1)[1]))
+        except (IndexError, ValueError):
+            continue
+    return f"{prefix}{max_seq + 1:04d}"
+
+
+def _attachment_count_map(conn: Any, document_ids: list[int]) -> dict[int, int]:
+    if not document_ids:
+        return {}
+    rows = conn.execute(
+        select(
+            official_document_attachments.c.document_id,
+            func.count(official_document_attachments.c.id).label("attachment_count"),
+        )
+        .where(official_document_attachments.c.document_id.in_(document_ids))
+        .group_by(official_document_attachments.c.document_id)
+    ).all()
+    return {int(row[0]): int(row[1] or 0) for row in rows}
+
+
+def _row_to_attachment_model(row: dict[str, Any]) -> OfficialDocumentAttachmentRead:
+    return OfficialDocumentAttachmentRead(
+        id=int(row["id"]),
+        document_id=int(row["document_id"]),
+        site=str(row["site"]),
+        file_name=str(row["file_name"]),
+        content_type=str(row.get("content_type") or "application/octet-stream"),
+        file_size=int(row.get("file_size") or 0),
+        storage_backend=_normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")),
+        sha256=str(row.get("sha256") or ""),
+        malware_scan_status=str(row.get("malware_scan_status") or "unknown"),
+        malware_scan_engine=row.get("malware_scan_engine"),
+        malware_scanned_at=_to_utc(row["malware_scanned_at"]) if row.get("malware_scanned_at") else None,
+        note=str(row.get("note") or ""),
+        uploaded_by=str(row.get("uploaded_by") or "system"),
+        uploaded_at=_to_utc(row["uploaded_at"]),
+    )
 
 
 def _normalize_month_label(value: str) -> str:
@@ -81,6 +179,8 @@ def _row_to_official_document_model(row: dict[str, Any]) -> OfficialDocumentRead
         id=int(row["id"]),
         site=str(row["site"]),
         organization=str(row["organization"]),
+        organization_code=str(row["organization_code"]) if row.get("organization_code") else None,
+        registry_number=str(row["registry_number"]) if row.get("registry_number") else None,
         document_number=str(row["document_number"]) if row.get("document_number") else None,
         title=str(row["title"]),
         document_type=str(row.get("document_type") or "general"),
@@ -96,6 +196,7 @@ def _row_to_official_document_model(row: dict[str, Any]) -> OfficialDocumentRead
         closure_summary=str(row.get("closure_summary") or ""),
         closure_result=str(row.get("closure_result") or ""),
         closed_at=_to_utc(row["closed_at"]) if row.get("closed_at") else None,
+        attachment_count=int(row.get("attachment_count") or 0),
         created_by=str(row.get("created_by") or "system"),
         created_at=_to_utc(row["created_at"]),
         updated_at=_to_utc(row["updated_at"]),
@@ -107,10 +208,25 @@ def _load_official_document_or_404(document_id: int, principal: dict[str, Any]) 
         row = conn.execute(
             select(official_documents).where(official_documents.c.id == document_id).limit(1)
         ).mappings().first()
+        count_map = _attachment_count_map(conn, [document_id])
     if row is None:
         raise HTTPException(status_code=404, detail="Official document not found")
-    _require_site_access(principal, str(row["site"]))
-    return dict(row)
+    payload = dict(row)
+    payload["attachment_count"] = count_map.get(document_id, 0)
+    _require_site_access(principal, str(payload["site"]))
+    return payload
+
+
+def _load_official_document_attachment_or_404(attachment_id: int, principal: dict[str, Any]) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = conn.execute(
+            select(official_document_attachments).where(official_document_attachments.c.id == attachment_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Official document attachment not found")
+    payload = dict(row)
+    _require_site_access(principal, str(payload["site"]))
+    return payload
 
 
 def _validate_linked_resources(
@@ -143,6 +259,188 @@ def _validate_linked_resources(
             raise HTTPException(status_code=400, detail="linked_work_order_id site must match document site")
 
 
+def _ensure_registry_fields(conn: Any, row: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(row)
+    next_values: dict[str, Any] = {}
+    organization_code = str(payload.get("organization_code") or "").strip()
+    if not organization_code:
+        organization_code = _normalize_org_code(None, organization=str(payload.get("organization") or ""))
+        next_values["organization_code"] = organization_code
+    registry_number = str(payload.get("registry_number") or "").strip()
+    if not registry_number:
+        registry_number = _next_registry_number(
+            conn,
+            site=str(payload["site"]),
+            organization_code=organization_code,
+            received_at=_to_utc(payload["received_at"]),
+        )
+        next_values["registry_number"] = registry_number
+    if next_values:
+        next_values["updated_at"] = datetime.now(timezone.utc)
+        conn.execute(
+            update(official_documents)
+            .where(official_documents.c.id == int(payload["id"]))
+            .values(**next_values)
+        )
+        payload.update(next_values)
+    payload["organization_code"] = organization_code
+    payload["registry_number"] = registry_number
+    return payload
+
+
+def _create_overdue_work_order_for_document(
+    conn: Any,
+    *,
+    row: dict[str, Any],
+    principal: dict[str, Any],
+    now: datetime,
+) -> int:
+    actor_username = str(principal.get("username") or "unknown")
+    due_at = _to_utc(row["due_at"]) if row.get("due_at") else now - timedelta(minutes=1)
+    work_order_priority = "critical" if str(row.get("priority") or "medium") == "critical" else "high"
+    title = f"[공문기한초과] {str(row.get('title') or '').strip()[:160]}"
+    description_lines = [
+        f"기관: {str(row.get('organization') or '').strip()}",
+        f"접수대장번호: {str(row.get('registry_number') or '-').strip() or '-'}",
+        f"공문번호: {str(row.get('document_number') or '-').strip() or '-'}",
+        f"요구조치: {str(row.get('required_action') or '').strip()}",
+        f"진행메모: {str(row.get('summary') or '').strip()}",
+        "자동생성 사유: 공문 기한 초과",
+    ]
+    result = conn.execute(
+        insert(work_orders).values(
+            title=title,
+            description="\n".join(item for item in description_lines if item),
+            site=str(row["site"]),
+            location=f"기관공문/{str(row.get('organization') or '미상')[:80]}",
+            priority=work_order_priority,
+            status="open",
+            assignee=None,
+            reporter=actor_username,
+            inspection_id=row.get("linked_inspection_id"),
+            due_at=due_at,
+            acknowledged_at=None,
+            completed_at=None,
+            resolution_notes="",
+            is_escalated=False,
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    work_order_id = int(result.inserted_primary_key[0])
+    _append_work_order_event(
+        conn,
+        work_order_id=work_order_id,
+        event_type="created",
+        actor_username=actor_username,
+        from_status=None,
+        to_status="open",
+        note="공문 기한 초과로 자동 생성",
+        detail={
+            "source": "official_document_overdue",
+            "official_document_id": int(row["id"]),
+            "registry_number": row.get("registry_number"),
+            "organization": row.get("organization"),
+        },
+    )
+    conn.execute(
+        update(official_documents)
+        .where(official_documents.c.id == int(row["id"]))
+        .values(
+            linked_work_order_id=work_order_id,
+            status="in_progress" if str(row.get("status") or "received") == "received" else row.get("status"),
+            updated_at=now,
+        )
+    )
+    return work_order_id
+
+
+def _run_official_document_overdue_sync(
+    *,
+    principal: dict[str, Any],
+    site: str | None,
+    allowed_sites: list[str] | None,
+    dry_run: bool,
+    limit: int,
+) -> OfficialDocumentOverdueSyncRead:
+    now = datetime.now(timezone.utc)
+    stmt = (
+        select(official_documents)
+        .where(official_documents.c.due_at.is_not(None))
+        .where(official_documents.c.due_at < now)
+        .where(official_documents.c.status.in_(["received", "in_progress"]))
+        .order_by(official_documents.c.due_at.asc(), official_documents.c.id.asc())
+        .limit(limit)
+    )
+    if site is not None:
+        stmt = stmt.where(official_documents.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return OfficialDocumentOverdueSyncRead(
+                checked_at=now,
+                site=site,
+                dry_run=dry_run,
+                candidate_count=0,
+                work_order_created_count=0,
+                linked_existing_work_order_count=0,
+                document_ids=[],
+                work_order_ids=[],
+                alert_run={},
+            )
+        stmt = stmt.where(official_documents.c.site.in_(allowed_sites))
+
+    created_work_order_ids: list[int] = []
+    linked_existing_count = 0
+    candidate_document_ids: list[int] = []
+
+    with get_conn() as conn:
+        rows = [dict(item) for item in conn.execute(stmt).mappings().all()]
+        for raw_row in rows:
+            row = _ensure_registry_fields(conn, raw_row)
+            linked_work_order_id = row.get("linked_work_order_id")
+            linked_row = None
+            if linked_work_order_id is not None:
+                linked_row = conn.execute(
+                    select(work_orders).where(work_orders.c.id == int(linked_work_order_id)).limit(1)
+                ).mappings().first()
+            if linked_work_order_id is not None and linked_row is not None:
+                candidate_document_ids.append(int(row["id"]))
+                linked_existing_count += 1
+                continue
+            candidate_document_ids.append(int(row["id"]))
+            if dry_run:
+                continue
+            created_work_order_ids.append(
+                _create_overdue_work_order_for_document(conn, row=row, principal=principal, now=now)
+            )
+
+    alert_run: dict[str, Any] = {}
+    if not dry_run and candidate_document_ids:
+        sla_result = run_sla_escalation_job(
+            site=site,
+            dry_run=False,
+            limit=max(limit, len(candidate_document_ids)),
+            allowed_sites=allowed_sites,
+            trigger="official_document_overdue",
+        )
+        if hasattr(sla_result, "model_dump"):
+            alert_run = sla_result.model_dump(mode="json")
+        else:
+            alert_run = sla_result.dict()
+
+    return OfficialDocumentOverdueSyncRead(
+        checked_at=now,
+        site=site,
+        dry_run=dry_run,
+        candidate_count=len(candidate_document_ids),
+        work_order_created_count=len(created_work_order_ids),
+        linked_existing_work_order_count=linked_existing_count,
+        document_ids=candidate_document_ids,
+        work_order_ids=created_work_order_ids,
+        alert_run=alert_run,
+    )
+
+
 def _build_official_document_report(
     *,
     period_type: str,
@@ -164,7 +462,8 @@ def _build_official_document_report(
         official_documents.c.id.desc(),
     )
     with get_conn() as conn:
-        rows = [dict(row) for row in conn.execute(stmt).mappings().all()]
+        rows = [_ensure_registry_fields(conn, dict(row)) for row in conn.execute(stmt).mappings().all()]
+        count_map = _attachment_count_map(conn, [int(row["id"]) for row in rows])
 
     entries: list[OfficialDocumentClosureReportEntryRead] = []
     organization_counts: dict[str, int] = {}
@@ -206,6 +505,8 @@ def _build_official_document_report(
                 id=int(row["id"]),
                 site=str(row["site"]),
                 organization=organization,
+                organization_code=str(row["organization_code"]) if row.get("organization_code") else None,
+                registry_number=str(row["registry_number"]) if row.get("registry_number") else None,
                 document_number=str(row["document_number"]) if row.get("document_number") else None,
                 title=str(row["title"]),
                 document_type=str(row.get("document_type") or "general"),
@@ -219,6 +520,7 @@ def _build_official_document_report(
                 closure_summary=str(row.get("closure_summary") or ""),
                 closure_result=str(row.get("closure_result") or ""),
                 closed_at=closed_at,
+                attachment_count=count_map.get(int(row["id"]), 0),
                 is_overdue=is_overdue,
             )
         )
@@ -263,15 +565,17 @@ def _build_official_document_report_csv(report: OfficialDocumentClosureReportRea
         writer.writerow([key, value])
     writer.writerow([])
     writer.writerow([
-        "id", "site", "organization", "document_number", "title", "document_type", "status", "priority",
+        "id", "site", "organization", "organization_code", "registry_number", "document_number", "title", "document_type", "status", "priority",
         "received_at", "due_at", "linked_inspection_id", "linked_work_order_id", "closed_report_title",
-        "closure_summary", "closure_result", "closed_at", "is_overdue",
+        "closure_summary", "closure_result", "closed_at", "attachment_count", "is_overdue",
     ])
     for entry in report.entries:
         writer.writerow([
             entry.id,
             entry.site,
             entry.organization,
+            entry.organization_code or "",
+            entry.registry_number or "",
             entry.document_number or "",
             entry.title,
             entry.document_type,
@@ -285,6 +589,7 @@ def _build_official_document_report_csv(report: OfficialDocumentClosureReportRea
             entry.closure_summary,
             entry.closure_result,
             entry.closed_at.isoformat() if entry.closed_at else "",
+            entry.attachment_count,
             "yes" if entry.is_overdue else "no",
         ])
     return buffer.getvalue()
@@ -316,6 +621,7 @@ def _build_official_document_report_print_html(report: OfficialDocumentClosureRe
             "<tr>"
             f"<td>{entry.id}</td>"
             f"<td>{html.escape(entry.organization)}</td>"
+            f"<td>{html.escape(entry.registry_number or '-')}</td>"
             f"<td>{html.escape(entry.document_number or '-')}</td>"
             f"<td>{html.escape(entry.title)}</td>"
             f"<td>{html.escape(entry.status)}</td>"
@@ -327,11 +633,12 @@ def _build_official_document_report_print_html(report: OfficialDocumentClosureRe
             f"<td>{html.escape(entry.closed_report_title or '-')}</td>"
             f"<td>{html.escape(entry.closure_summary or '-')}</td>"
             f"<td>{html.escape(entry.closed_at.isoformat() if entry.closed_at else '-')}</td>"
+            f"<td>{entry.attachment_count}</td>"
             f"<td>{'YES' if entry.is_overdue else 'NO'}</td>"
             "</tr>"
         )
         for entry in report.entries
-    ) or "<tr><td colspan='14'>No entries</td></tr>"
+    ) or "<tr><td colspan='16'>No entries</td></tr>"
 
     return f"""
 <!doctype html>
@@ -370,13 +677,144 @@ def _build_official_document_report_print_html(report: OfficialDocumentClosureRe
   <table>
     <thead>
       <tr>
-        <th>ID</th><th>Organization</th><th>Doc No</th><th>Title</th><th>Status</th><th>Priority</th>
+        <th>ID</th><th>Organization</th><th>Registry No</th><th>Doc No</th><th>Title</th><th>Status</th><th>Priority</th>
         <th>Received At</th><th>Due At</th><th>Inspection</th><th>Work Order</th>
-        <th>Closure Title</th><th>Closure Summary</th><th>Closed At</th><th>Overdue</th>
+        <th>Closure Title</th><th>Closure Summary</th><th>Closed At</th><th>Attachments</th><th>Overdue</th>
       </tr>
     </thead>
     <tbody>{entry_rows}</tbody>
   </table>
+</body>
+</html>
+"""
+
+
+def _build_integrated_monthly_report(
+    *,
+    month: str | None,
+    site: str | None,
+    allowed_sites: list[str] | None,
+) -> IntegratedMonthlyFacilityReportRead:
+    monthly_report = build_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
+    official_report = _build_official_document_report(
+        period_type="monthly",
+        month=monthly_report.month,
+        site=site,
+        allowed_sites=allowed_sites,
+    )
+    stmt = select(
+        utility_billing_statements.c.utility_type,
+        func.count(utility_billing_statements.c.id).label("statement_count"),
+        func.sum(utility_billing_statements.c.total_amount).label("total_amount"),
+        func.sum(utility_billing_statements.c.common_fee).label("common_fee_total"),
+    ).where(utility_billing_statements.c.billing_month == monthly_report.month)
+    if site is not None:
+        stmt = stmt.where(utility_billing_statements.c.site == site)
+    elif allowed_sites is not None:
+        if allowed_sites:
+            stmt = stmt.where(utility_billing_statements.c.site.in_(allowed_sites))
+        else:
+            stmt = stmt.where(utility_billing_statements.c.site == "__NO_SITE__")
+
+    billing_summary: dict[str, Any] = {
+        "statement_count": 0,
+        "utility_totals": {},
+        "total_amount": 0.0,
+        "common_fee_total": 0.0,
+    }
+    with get_conn() as conn:
+        rows = conn.execute(stmt.group_by(utility_billing_statements.c.utility_type)).all()
+    for row in rows:
+        utility_type = str(row[0] or "unknown")
+        statement_count = int(row[1] or 0)
+        total_amount = round(float(row[2] or 0), 2)
+        common_fee_total = round(float(row[3] or 0), 2)
+        billing_summary["statement_count"] += statement_count
+        billing_summary["total_amount"] = round(float(billing_summary["total_amount"]) + total_amount, 2)
+        billing_summary["common_fee_total"] = round(float(billing_summary["common_fee_total"]) + common_fee_total, 2)
+        billing_summary["utility_totals"][utility_type] = {
+            "statement_count": statement_count,
+            "total_amount": total_amount,
+            "common_fee_total": common_fee_total,
+        }
+
+    return IntegratedMonthlyFacilityReportRead(
+        generated_at=datetime.now(timezone.utc),
+        month=monthly_report.month,
+        site=monthly_report.site,
+        inspections=monthly_report.inspections,
+        work_orders=monthly_report.work_orders,
+        official_documents={
+            "total_documents": official_report.total_documents,
+            "closed_in_period": official_report.closed_in_period,
+            "open_documents": official_report.open_documents,
+            "overdue_open_documents": official_report.overdue_open_documents,
+            "organization_counts": official_report.organization_counts,
+            "status_counts": official_report.status_counts,
+        },
+        billing=billing_summary,
+    )
+
+
+def _build_integrated_monthly_report_csv(report: IntegratedMonthlyFacilityReportRead) -> str:
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["month", report.month])
+    writer.writerow(["site", report.site or "ALL"])
+    writer.writerow(["generated_at", report.generated_at.isoformat()])
+    writer.writerow([])
+    writer.writerow(["section", "key", "value"])
+    for section_name, section_payload in (
+        ("inspections", report.inspections),
+        ("work_orders", report.work_orders),
+        ("official_documents", report.official_documents),
+        ("billing", report.billing),
+    ):
+        for key, value in section_payload.items():
+            writer.writerow([section_name, key, value])
+    return buffer.getvalue()
+
+
+def _build_integrated_monthly_report_print_html(report: IntegratedMonthlyFacilityReportRead) -> str:
+    def _render_rows(section: dict[str, Any]) -> str:
+        return "".join(
+            f"<tr><td>{html.escape(str(key))}</td><td>{html.escape(str(value))}</td></tr>"
+            for key, value in section.items()
+        ) or "<tr><td colspan='2'>No data</td></tr>"
+
+    return f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <title>Integrated Monthly Facility Report {html.escape(report.month)}</title>
+  <style>
+    @page {{ size: A4; margin: 12mm; }}
+    body {{ font-family: Arial, sans-serif; color: #111; }}
+    h1 {{ margin-bottom: 8px; font-size: 22px; }}
+    h2 {{ margin-top: 18px; margin-bottom: 6px; font-size: 15px; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 10px; }}
+    th, td {{ border: 1px solid #d8dee8; padding: 6px; font-size: 12px; vertical-align: top; text-align: left; }}
+    th {{ background: #f5f8fc; }}
+    .summary td:first-child {{ width: 32%; background: #f5f8fc; font-weight: 700; }}
+  </style>
+</head>
+<body>
+  <h1>Integrated Monthly Facility Report ({html.escape(report.month)})</h1>
+  <table class=\"summary\">
+    <tr><td>Month</td><td>{html.escape(report.month)}</td></tr>
+    <tr><td>Site</td><td>{html.escape(report.site or 'ALL')}</td></tr>
+    <tr><td>Generated At</td><td>{html.escape(report.generated_at.isoformat())}</td></tr>
+  </table>
+  <h2>법정점검 / OPS 점검</h2>
+  <table><tbody>{_render_rows(report.inspections)}</tbody></table>
+  <h2>작업지시 / SLA</h2>
+  <table><tbody>{_render_rows(report.work_orders)}</tbody></table>
+  <h2>공문 종결보고</h2>
+  <table><tbody>{_render_rows(report.official_documents)}</tbody></table>
+  <h2>관리비 부과(전기/수도)</h2>
+  <table><tbody>{_render_rows(report.billing)}</tbody></table>
 </body>
 </html>
 """
@@ -392,11 +830,18 @@ def list_official_documents(
     principal: dict[str, Any] = Depends(require_permission("official_docs:read")),
 ) -> list[OfficialDocumentRead]:
     _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=False,
+        limit=min(limit, 50),
+    )
     stmt = select(official_documents)
     if site:
         stmt = stmt.where(official_documents.c.site == site)
     else:
-        allowed_sites = _allowed_sites_for_principal(principal)
         if allowed_sites is not None:
             stmt = stmt.where(official_documents.c.site.in_(allowed_sites))
     if status:
@@ -405,8 +850,9 @@ def list_official_documents(
         stmt = stmt.where(official_documents.c.organization == organization)
     stmt = stmt.order_by(official_documents.c.updated_at.desc(), official_documents.c.id.desc()).limit(limit).offset(offset)
     with get_conn() as conn:
-        rows = conn.execute(stmt).mappings().all()
-    return [_row_to_official_document_model(dict(row)) for row in rows]
+        rows = [_ensure_registry_fields(conn, dict(row)) for row in conn.execute(stmt).mappings().all()]
+        count_map = _attachment_count_map(conn, [int(row["id"]) for row in rows])
+    return [_row_to_official_document_model({**row, "attachment_count": count_map.get(int(row["id"]), 0)}) for row in rows]
 
 
 @router.post("/api/official-documents", response_model=OfficialDocumentRead, status_code=201)
@@ -416,6 +862,7 @@ def create_official_document(
 ) -> OfficialDocumentRead:
     _require_site_access(principal, payload.site)
     now = datetime.now(timezone.utc)
+    actor_username = str(principal.get("username") or "unknown")
     with get_conn() as conn:
         _validate_linked_resources(
             conn,
@@ -424,10 +871,19 @@ def create_official_document(
             linked_work_order_id=payload.linked_work_order_id,
             principal=principal,
         )
+        organization_code = _normalize_org_code(payload.organization_code, organization=payload.organization)
+        registry_number = (payload.registry_number or "").strip() or _next_registry_number(
+            conn,
+            site=payload.site,
+            organization_code=organization_code,
+            received_at=payload.received_at,
+        )
         result = conn.execute(
             insert(official_documents).values(
                 site=payload.site,
                 organization=payload.organization.strip(),
+                organization_code=organization_code,
+                registry_number=registry_number,
                 document_number=(payload.document_number or "").strip() or None,
                 title=payload.title.strip(),
                 document_type=payload.document_type.strip(),
@@ -439,7 +895,7 @@ def create_official_document(
                 summary=payload.summary.strip(),
                 linked_inspection_id=payload.linked_inspection_id,
                 linked_work_order_id=payload.linked_work_order_id,
-                created_by=str(principal.get("username") or "system"),
+                created_by=actor_username,
                 created_at=now,
                 updated_at=now,
             )
@@ -450,7 +906,16 @@ def create_official_document(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to load created official document")
-    model = _row_to_official_document_model(dict(row))
+    model = _row_to_official_document_model({**dict(row), "attachment_count": 0})
+    if model.due_at is not None and model.status != "closed" and model.due_at < now:
+        _run_official_document_overdue_sync(
+            principal=principal,
+            site=model.site,
+            allowed_sites=None,
+            dry_run=False,
+            limit=10,
+        )
+        model = _row_to_official_document_model(_load_official_document_or_404(int(document_id), principal))
     _write_audit_log(
         principal=principal,
         action="official_document_create",
@@ -459,6 +924,8 @@ def create_official_document(
         detail={
             "site": model.site,
             "organization": model.organization,
+            "organization_code": model.organization_code,
+            "registry_number": model.registry_number,
             "document_number": model.document_number,
             "linked_inspection_id": model.linked_inspection_id,
             "linked_work_order_id": model.linked_work_order_id,
@@ -487,6 +954,10 @@ def update_official_document(
     values: dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
     if payload.organization is not None:
         values["organization"] = payload.organization.strip()
+    if payload.organization_code is not None:
+        values["organization_code"] = _normalize_org_code(payload.organization_code, organization=str(payload.organization or current["organization"]))
+    if payload.registry_number is not None:
+        values["registry_number"] = payload.registry_number.strip() or None
     if payload.document_number is not None:
         values["document_number"] = payload.document_number.strip() or None
     if payload.title is not None:
@@ -526,13 +997,26 @@ def update_official_document(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to load updated official document")
-    model = _row_to_official_document_model(dict(row))
+    model = _row_to_official_document_model(_load_official_document_or_404(document_id, principal))
+    if model.due_at is not None and model.status != "closed" and model.due_at < datetime.now(timezone.utc):
+        _run_official_document_overdue_sync(
+            principal=principal,
+            site=model.site,
+            allowed_sites=None,
+            dry_run=False,
+            limit=10,
+        )
+        model = _row_to_official_document_model(_load_official_document_or_404(document_id, principal))
     _write_audit_log(
         principal=principal,
         action="official_document_update",
         resource_type="official_document",
         resource_id=str(model.id),
-        detail={"status": model.status},
+        detail={
+            "status": model.status,
+            "registry_number": model.registry_number,
+            "linked_work_order_id": model.linked_work_order_id,
+        },
     )
     return model
 
@@ -563,7 +1047,7 @@ def close_official_document(
         ).mappings().first()
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to load closed official document")
-    model = _row_to_official_document_model(dict(row))
+    model = _row_to_official_document_model(_load_official_document_or_404(document_id, principal))
     _write_audit_log(
         principal=principal,
         action="official_document_close",
@@ -579,6 +1063,138 @@ def close_official_document(
     return model
 
 
+@router.get("/api/official-documents/{document_id}/attachments", response_model=list[OfficialDocumentAttachmentRead])
+def list_official_document_attachments(
+    document_id: int,
+    principal: dict[str, Any] = Depends(require_permission("official_docs:read")),
+) -> list[OfficialDocumentAttachmentRead]:
+    current = _load_official_document_or_404(document_id, principal)
+    with get_conn() as conn:
+        rows = conn.execute(
+            select(official_document_attachments)
+            .where(official_document_attachments.c.document_id == document_id)
+            .order_by(official_document_attachments.c.uploaded_at.desc(), official_document_attachments.c.id.desc())
+        ).mappings().all()
+    return [_row_to_attachment_model(dict(row)) for row in rows if str(row.get("site") or "") == str(current["site"])]
+
+
+@router.post("/api/official-documents/{document_id}/attachments", response_model=OfficialDocumentAttachmentRead, status_code=201)
+async def upload_official_document_attachment(
+    document_id: int,
+    file: UploadFile = File(...),
+    note: str = Form(default=""),
+    principal: dict[str, Any] = Depends(require_permission("official_docs:write")),
+) -> OfficialDocumentAttachmentRead:
+    current = _load_official_document_or_404(document_id, principal)
+    content_type = (file.content_type or "").strip().lower()
+    if content_type not in _ATTACHMENT_CONTENT_TYPES or not _is_allowed_evidence_content_type(content_type):
+        raise HTTPException(status_code=415, detail="Only PDF/JPEG/PNG attachments are supported")
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="Attachment is empty")
+    sha256 = main_module.hashlib.sha256(file_bytes).hexdigest()
+    scan_status, scan_engine, scan_reason = _scan_evidence_bytes(file_bytes=file_bytes, content_type=content_type)
+    storage_backend, storage_key, stored_bytes = _write_evidence_blob(
+        file_name=file.filename or "official-document-attachment.bin",
+        file_bytes=file_bytes,
+        sha256_digest=sha256,
+    )
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        result = conn.execute(
+            insert(official_document_attachments).values(
+                document_id=document_id,
+                site=str(current["site"]),
+                file_name=(file.filename or "attachment.bin").strip(),
+                content_type=content_type or "application/octet-stream",
+                file_size=len(file_bytes),
+                storage_backend=storage_backend,
+                storage_key=storage_key,
+                file_bytes=stored_bytes,
+                sha256=sha256,
+                malware_scan_status=scan_status,
+                malware_scan_engine=scan_engine,
+                malware_scanned_at=now,
+                note=(note or "").strip(),
+                uploaded_by=str(principal.get("username") or "unknown"),
+                uploaded_at=now,
+            )
+        )
+        attachment_id = int(result.inserted_primary_key[0])
+        row = conn.execute(
+            select(official_document_attachments).where(official_document_attachments.c.id == attachment_id).limit(1)
+        ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to load created attachment")
+    model = _row_to_attachment_model(dict(row))
+    _write_audit_log(
+        principal=principal,
+        action="official_document_attachment_upload",
+        resource_type="official_document_attachment",
+        resource_id=str(model.id),
+        detail={
+            "document_id": document_id,
+            "site": model.site,
+            "file_name": model.file_name,
+            "content_type": model.content_type,
+            "scan_status": model.malware_scan_status,
+            "scan_reason": scan_reason,
+        },
+    )
+    return model
+
+
+@router.get("/api/official-documents/attachments/{attachment_id}/download")
+def download_official_document_attachment(
+    attachment_id: int,
+    principal: dict[str, Any] = Depends(require_permission("official_docs:read")),
+) -> Response:
+    row = _load_official_document_attachment_or_404(attachment_id, principal)
+    file_bytes = _read_evidence_blob(row=row)
+    if file_bytes is None:
+        raise HTTPException(status_code=404, detail="Attachment blob not found")
+    file_name = _safe_download_filename(str(row.get("file_name") or "attachment.bin"))
+    return Response(
+        content=file_bytes,
+        media_type=str(row.get("content_type") or "application/octet-stream"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "X-Attachment-SHA256": str(row.get("sha256") or ""),
+        },
+    )
+
+
+@router.post("/api/official-documents/overdue/run", response_model=OfficialDocumentOverdueSyncRead)
+def run_official_document_overdue_sync(
+    site: str | None = Query(default=None),
+    dry_run: bool = Query(default=False),
+    limit: int = Query(default=50, ge=1, le=300),
+    principal: dict[str, Any] = Depends(require_permission("official_docs:write")),
+) -> OfficialDocumentOverdueSyncRead:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    result = _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=dry_run,
+        limit=limit,
+    )
+    _write_audit_log(
+        principal=principal,
+        action="official_document_overdue_sync",
+        resource_type="official_document",
+        resource_id=site or "ALL",
+        detail={
+            "site": site,
+            "dry_run": dry_run,
+            "candidate_count": result.candidate_count,
+            "work_order_created_count": result.work_order_created_count,
+        },
+    )
+    return result
+
+
 @router.get("/api/reports/official-documents/monthly", response_model=OfficialDocumentClosureReportRead)
 def get_official_document_monthly_report(
     month: str | None = Query(default=None, description="YYYY-MM"),
@@ -587,6 +1203,13 @@ def get_official_document_monthly_report(
 ) -> OfficialDocumentClosureReportRead:
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=False,
+        limit=50,
+    )
     return _build_official_document_report(period_type="monthly", month=month, site=site, allowed_sites=allowed_sites)
 
 
@@ -636,6 +1259,13 @@ def get_official_document_annual_report(
 ) -> OfficialDocumentClosureReportRead:
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=False,
+        limit=50,
+    )
     return _build_official_document_report(period_type="annual", year=year, site=site, allowed_sites=allowed_sites)
 
 
@@ -675,4 +1305,60 @@ def print_official_document_annual_report(
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
     report = _build_official_document_report(period_type="annual", year=year, site=site, allowed_sites=allowed_sites)
     return _build_official_document_report_print_html(report)
+
+
+@router.get("/api/reports/monthly/integrated", response_model=IntegratedMonthlyFacilityReportRead)
+def get_integrated_monthly_report(
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> IntegratedMonthlyFacilityReportRead:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    _run_official_document_overdue_sync(
+        principal=principal,
+        site=site,
+        allowed_sites=allowed_sites,
+        dry_run=False,
+        limit=50,
+    )
+    return _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
+
+
+@router.get("/api/reports/monthly/integrated/csv")
+def get_integrated_monthly_report_csv(
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:export")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
+    csv_text = _build_integrated_monthly_report_csv(report)
+    site_label = (report.site or "all").replace(" ", "_")
+    file_name = f"integrated-monthly-report-{report.month}-{site_label}.csv"
+    _write_audit_log(
+        principal=principal,
+        action="integrated_monthly_report_export_csv",
+        resource_type="report",
+        resource_id=f"integrated:{report.month}:{report.site or 'ALL'}",
+        detail={"month": report.month, "site": report.site},
+    )
+    return Response(
+        content=csv_text,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename=\"{file_name}\"'},
+    )
+
+
+@router.get("/reports/monthly/integrated/print", response_class=HTMLResponse)
+def print_integrated_monthly_report(
+    month: str | None = Query(default=None, description="YYYY-MM"),
+    site: str | None = None,
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> str:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = _build_integrated_monthly_report(month=month, site=site, allowed_sites=allowed_sites)
+    return _build_integrated_monthly_report_print_html(report)
 

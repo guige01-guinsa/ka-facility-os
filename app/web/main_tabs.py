@@ -1020,6 +1020,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <input id="officialDocId" placeholder="공문 ID (수정/종결 시 입력)" />
               <input id="officialDocSite" placeholder="site (예: HQ)" />
               <input id="officialDocOrganization" placeholder="기관명 (예: 한전, 수도사업소, 소방서)" />
+              <input id="officialDocOrganizationCode" placeholder="기관코드(선택, 예: KEPCO)" />
+              <input id="officialDocRegistryNumber" placeholder="접수대장번호(자동생성)" disabled />
+            </div>
+            <div class="ops-form-grid">
               <input id="officialDocNumber" placeholder="공문번호 (선택)" />
               <input id="officialDocTitle" placeholder="공문 제목" />
             </div>
@@ -1064,6 +1068,18 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="officialDocEditMeta" class="meta">입력 대기</div>
           </div>
           <div class="box">
+            <h3>공문 원본 PDF / 사진 첨부</h3>
+            <div class="filter-row">
+              <input id="officialAttachmentDocId" placeholder="공문 ID" />
+              <input id="officialAttachmentNote" placeholder="첨부 메모(선택)" />
+              <input id="officialAttachmentFile" type="file" accept=".pdf,image/png,image/jpeg" />
+              <button id="runOfficialAttachmentUploadBtn" class="btn run" type="button">첨부 업로드</button>
+              <button id="runOfficialAttachmentListBtn" class="btn" type="button">첨부 목록 조회</button>
+            </div>
+            <div id="officialAttachmentMeta" class="meta">조회 전</div>
+            <div id="officialAttachmentTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
             <h3>공문 목록 조회</h3>
             <div class="filter-row">
               <input id="officialDocsSite" placeholder="site (예: HQ)" />
@@ -1083,6 +1099,20 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="officialDocsTable" class="empty">데이터 없음</div>
           </div>
           <div class="box">
+            <h3>기한초과 자동 작업지시 / SLA 알림</h3>
+            <div class="filter-row">
+              <input id="officialOverdueSite" placeholder="site (예: HQ)" />
+              <input id="officialOverdueLimit" value="50" placeholder="limit" />
+              <select id="officialOverdueDryRun">
+                <option value="false">실행</option>
+                <option value="true">dry-run</option>
+              </select>
+              <button id="runOfficialOverdueSyncBtn" class="btn run" type="button">기한초과 자동화 실행</button>
+            </div>
+            <div id="officialOverdueMeta" class="meta">실행 전</div>
+            <div id="officialOverdueSummary" class="cards"></div>
+          </div>
+          <div class="box">
             <h3>종결보고서 출력</h3>
             <div class="filter-row">
               <input id="officialReportSite" placeholder="site (예: HQ)" />
@@ -1090,16 +1120,21 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <input id="officialReportYear" placeholder="year YYYY" />
               <button id="runOfficialDocMonthlyReportBtn" class="btn run" type="button">월 보고서 조회</button>
               <button id="runOfficialDocAnnualReportBtn" class="btn" type="button">연차 보고서 조회</button>
+              <button id="runOfficialIntegratedMonthlyReportBtn" class="btn" type="button">통합 월간보고서 조회</button>
             </div>
             <div class="mini-links">
               <a id="officialReportMonthlyPrintLink" href="/reports/official-documents/monthly/print" target="_blank" rel="noopener">월 보고서 인쇄</a>
               <a id="officialReportMonthlyCsvLink" href="/api/reports/official-documents/monthly/csv" target="_blank" rel="noopener">월 CSV</a>
               <a id="officialReportAnnualPrintLink" href="/reports/official-documents/annual/print" target="_blank" rel="noopener">연차 보고서 인쇄</a>
               <a id="officialReportAnnualCsvLink" href="/api/reports/official-documents/annual/csv" target="_blank" rel="noopener">연차 CSV</a>
+              <a id="officialReportIntegratedPrintLink" href="/reports/monthly/integrated/print" target="_blank" rel="noopener">통합 월간 인쇄</a>
+              <a id="officialReportIntegratedCsvLink" href="/api/reports/monthly/integrated/csv" target="_blank" rel="noopener">통합 월간 CSV</a>
             </div>
             <div id="officialReportMeta" class="meta">조회 전</div>
             <div id="officialReportSummary" class="cards"></div>
             <div id="officialReportEntries" class="empty">데이터 없음</div>
+            <div id="officialIntegratedReportSummary" class="cards"></div>
+            <pre id="officialIntegratedReportRaw" class="mono">{{}}</pre>
           </div>
         </div>
 
@@ -1120,6 +1155,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <a id="reportPrintLink" href="/reports/monthly/print" target="_blank" rel="noopener">HTML 인쇄</a>
               <a id="reportCsvLink" href="/api/reports/monthly/csv" target="_blank" rel="noopener">CSV</a>
               <a id="reportPdfLink" href="/api/reports/monthly/pdf" target="_blank" rel="noopener">PDF</a>
+              <a id="reportIntegratedPrintLink" href="/reports/monthly/integrated/print" target="_blank" rel="noopener">통합 월간 인쇄</a>
+              <a id="reportIntegratedCsvLink" href="/api/reports/monthly/integrated/csv" target="_blank" rel="noopener">통합 월간 CSV</a>
             </div>
             <pre id="reportsRaw" class="mono">{{}}</pre>
           </div>
@@ -1945,17 +1982,25 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runOfficialDocLoadBtn: "공문 1건 조회: 공문 ID로 상세 내용을 불러와 수정/종결 폼에 채웁니다.",
         runOfficialDocUpdateBtn: "공문 수정: 접수요약, 기한, 상태, 연동 대상을 갱신합니다.",
         runOfficialDocCloseBtn: "공문 종결: 종결보고서 제목과 결과를 저장하고 상태를 closed로 변경합니다.",
+        runOfficialAttachmentUploadBtn: "첨부 업로드: 공문 원본 PDF 또는 현장 사진을 공문 ID에 연결해 저장합니다.",
+        runOfficialAttachmentListBtn: "첨부 목록 조회: 선택한 공문 ID의 PDF/사진 첨부 목록을 가져옵니다.",
         runOfficialDocsBtn: "공문 목록 조회: 기관, 상태, site 기준으로 공문 목록을 조회합니다.",
+        runOfficialOverdueSyncBtn: "기한초과 자동화 실행: 기한 지난 공문을 찾아 작업지시를 자동 생성하고 SLA 알림을 연동합니다.",
         runOfficialDocMonthlyReportBtn: "월 보고서 조회: 공문 종결/잔여 현황을 월 단위로 집계합니다.",
         runOfficialDocAnnualReportBtn: "연차 보고서 조회: 공문 종결/잔여 현황을 연 단위로 집계합니다.",
+        runOfficialIntegratedMonthlyReportBtn: "통합 월간보고서 조회: 관리비·법정점검·공문 종결 현황을 한 번에 집계합니다.",
         officialReportMonthlyPrintLink: "월 보고서 인쇄: 월 종결보고서를 인쇄용 HTML로 엽니다.",
         officialReportMonthlyCsvLink: "월 CSV: 월 종결보고서를 CSV 파일로 내려받습니다.",
         officialReportAnnualPrintLink: "연차 보고서 인쇄: 연차 종결보고서를 인쇄용 HTML로 엽니다.",
         officialReportAnnualCsvLink: "연차 CSV: 연차 종결보고서를 CSV 파일로 내려받습니다.",
+        officialReportIntegratedPrintLink: "통합 월간 인쇄: 관리비·법정점검·공문 종결을 묶은 인쇄용 보고서를 엽니다.",
+        officialReportIntegratedCsvLink: "통합 월간 CSV: 관리비·법정점검·공문 종결 집계를 CSV 파일로 내려받습니다.",
         runReportsBtn: "리포트 조회: 월간 집계 결과와 출력 링크를 조회합니다.",
         reportPrintLink: "HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.",
         reportCsvLink: "CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.",
         reportPdfLink: "PDF 다운로드: 현재 월간리포트를 PDF 파일로 내려받습니다.",
+        reportIntegratedPrintLink: "통합 월간 인쇄: 기존 월간리포트와 공문/관리비 통합본을 인쇄 화면으로 엽니다.",
+        reportIntegratedCsvLink: "통합 월간 CSV: 기존 월간리포트와 공문/관리비 통합본을 CSV로 내려받습니다.",
         runIamMeBtn: "내 권한 조회: 현재 로그인한 사용자 정보와 권한 범위를 확인합니다.",
         runIamLogoutBtn: "로그아웃: 현재 토큰을 서버 기준으로 종료합니다.",
         runIamTokenPolicyBtn: "토큰 정책 조회: 만료, 회전, idle 제한 정책을 확인합니다.",
@@ -5529,6 +5574,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById("officialDocId").value = doc.id || "";
         document.getElementById("officialDocSite").value = doc.site || "";
         document.getElementById("officialDocOrganization").value = doc.organization || "";
+        document.getElementById("officialDocOrganizationCode").value = doc.organization_code || "";
+        document.getElementById("officialDocRegistryNumber").value = doc.registry_number || "";
         document.getElementById("officialDocNumber").value = doc.document_number || "";
         document.getElementById("officialDocTitle").value = doc.title || "";
         document.getElementById("officialDocType").value = doc.document_type || "general";
@@ -5543,6 +5590,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById("officialDocCloseTitle").value = doc.closed_report_title || "";
         document.getElementById("officialDocClosureSummary").value = doc.closure_summary || "";
         document.getElementById("officialDocClosureResult").value = doc.closure_result || "";
+        document.getElementById("officialAttachmentDocId").value = doc.id || "";
       }}
 
       function updateOfficialReportLinks() {{
@@ -5558,6 +5606,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById("officialReportMonthlyCsvLink").setAttribute("href", "/api/reports/official-documents/monthly/csv" + (monthlyQuery ? "?" + monthlyQuery : ""));
         document.getElementById("officialReportAnnualPrintLink").setAttribute("href", "/reports/official-documents/annual/print" + (annualQuery ? "?" + annualQuery : ""));
         document.getElementById("officialReportAnnualCsvLink").setAttribute("href", "/api/reports/official-documents/annual/csv" + (annualQuery ? "?" + annualQuery : ""));
+        document.getElementById("officialReportIntegratedPrintLink").setAttribute("href", "/reports/monthly/integrated/print" + (monthlyQuery ? "?" + monthlyQuery : ""));
+        document.getElementById("officialReportIntegratedCsvLink").setAttribute("href", "/api/reports/monthly/integrated/csv" + (monthlyQuery ? "?" + monthlyQuery : ""));
       }}
 
       function renderOfficialReport(report) {{
@@ -5579,6 +5629,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         entries.innerHTML = renderTable(report.entries || [], [
           {{ key: "id", label: "ID" }},
           {{ key: "organization", label: "기관" }},
+          {{ key: "registry_number", label: "접수대장" }},
           {{ key: "document_number", label: "공문번호" }},
           {{ key: "title", label: "제목" }},
           {{ key: "status", label: "상태" }},
@@ -5586,8 +5637,61 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           {{ key: "linked_inspection_id", label: "점검" }},
           {{ key: "linked_work_order_id", label: "작업지시" }},
           {{ key: "closed_report_title", label: "종결제목" }},
+          {{ key: "attachment_count", label: "첨부" }},
           {{ key: "closed_at", label: "종결일시" }},
         ]);
+      }}
+
+      function renderOfficialAttachmentTable(rows) {{
+        if (!Array.isArray(rows) || rows.length === 0) {{
+          return renderEmpty("첨부 데이터 없음");
+        }}
+        return '<div class="table-wrap"><table><thead><tr>'
+          + '<th>ID</th><th>파일명</th><th>유형</th><th>크기</th><th>업로드</th><th>메모</th><th>다운로드</th>'
+          + '</tr></thead><tbody>'
+          + rows.map((row) => (
+            '<tr>'
+            + '<td>' + escapeHtml(row.id ?? "") + '</td>'
+            + '<td>' + escapeHtml(row.file_name ?? "") + '</td>'
+            + '<td>' + escapeHtml(row.content_type ?? "") + '</td>'
+            + '<td>' + escapeHtml(row.file_size ?? "") + '</td>'
+            + '<td>' + escapeHtml(row.uploaded_at ?? "") + '</td>'
+            + '<td>' + escapeHtml(row.note ?? "") + '</td>'
+            + '<td><a href="/api/official-documents/attachments/' + encodeURIComponent(String(row.id || "")) + '/download" target="_blank" rel="noopener">다운로드</a></td>'
+            + '</tr>'
+          )).join("")
+          + '</tbody></table></div>';
+      }}
+
+      function renderOfficialOverdueSummary(data) {{
+        const summary = document.getElementById("officialOverdueSummary");
+        const items = [
+          ["Checked At", data.checked_at || ""],
+          ["Candidates", data.candidate_count || 0],
+          ["Created Work Orders", data.work_order_created_count || 0],
+          ["Existing Linked", data.linked_existing_work_order_count || 0],
+          ["Alert Escalated", (data.alert_run && data.alert_run.escalated_count) || 0],
+        ];
+        summary.innerHTML = items.map((item) => (
+          '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + '</div></div>'
+        )).join("");
+      }}
+
+      function renderIntegratedMonthlyReport(report) {{
+        const summary = document.getElementById("officialIntegratedReportSummary");
+        const raw = document.getElementById("officialIntegratedReportRaw");
+        const cards = [
+          ["Month", report.month || ""],
+          ["Site", report.site || "ALL"],
+          ["Inspections", (report.inspections && report.inspections.total) || 0],
+          ["Work Orders", (report.work_orders && report.work_orders.total) || 0],
+          ["Official Docs Closed", (report.official_documents && report.official_documents.closed_in_period) || 0],
+          ["Billing Total", (report.billing && report.billing.total_amount) || 0],
+        ];
+        summary.innerHTML = cards.map((item) => (
+          '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + '</div></div>'
+        )).join("");
+        raw.textContent = JSON.stringify(report, null, 2);
       }}
 
       async function runOfficialDocuments() {{
@@ -5608,6 +5712,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             {{ key: "id", label: "ID" }},
             {{ key: "site", label: "site" }},
             {{ key: "organization", label: "기관" }},
+            {{ key: "registry_number", label: "접수대장" }},
             {{ key: "document_number", label: "공문번호" }},
             {{ key: "title", label: "제목" }},
             {{ key: "status", label: "상태" }},
@@ -5615,6 +5720,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             {{ key: "due_at", label: "기한" }},
             {{ key: "linked_inspection_id", label: "점검" }},
             {{ key: "linked_work_order_id", label: "작업지시" }},
+            {{ key: "attachment_count", label: "첨부" }},
           ]);
         }} catch (err) {{
           meta.textContent = "조회 실패: " + err.message;
@@ -5628,6 +5734,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           const payload = {{
             site: (document.getElementById("officialDocSite").value || "").trim(),
             organization: (document.getElementById("officialDocOrganization").value || "").trim(),
+            organization_code: (document.getElementById("officialDocOrganizationCode").value || "").trim() || null,
+            registry_number: (document.getElementById("officialDocRegistryNumber").value || "").trim() || null,
             document_number: (document.getElementById("officialDocNumber").value || "").trim() || null,
             title: (document.getElementById("officialDocTitle").value || "").trim(),
             document_type: (document.getElementById("officialDocType").value || "").trim() || "general",
@@ -5680,6 +5788,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           }}
           const payload = {{
             organization: (document.getElementById("officialDocOrganization").value || "").trim(),
+            organization_code: (document.getElementById("officialDocOrganizationCode").value || "").trim() || null,
+            registry_number: (document.getElementById("officialDocRegistryNumber").value || "").trim() || null,
             document_number: (document.getElementById("officialDocNumber").value || "").trim() || null,
             title: (document.getElementById("officialDocTitle").value || "").trim(),
             document_type: (document.getElementById("officialDocType").value || "").trim() || "general",
@@ -5734,6 +5844,72 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }}
       }}
 
+      async function runOfficialAttachmentList() {{
+        const meta = document.getElementById("officialAttachmentMeta");
+        const table = document.getElementById("officialAttachmentTable");
+        try {{
+          const idValue = Number(document.getElementById("officialAttachmentDocId").value || "");
+          if (!Number.isFinite(idValue) || idValue <= 0) {{
+            throw new Error("공문 ID가 필요합니다.");
+          }}
+          meta.textContent = "첨부 목록 조회 중...";
+          const rows = await fetchJson("/api/official-documents/" + encodeURIComponent(String(Math.trunc(idValue))) + "/attachments", true);
+          meta.textContent = "첨부 " + String(rows.length) + "건";
+          table.innerHTML = renderOfficialAttachmentTable(rows);
+        }} catch (err) {{
+          meta.textContent = "첨부 목록 조회 실패: " + err.message;
+          table.innerHTML = renderEmpty("첨부 목록 조회 실패");
+        }}
+      }}
+
+      async function runOfficialAttachmentUpload() {{
+        const meta = document.getElementById("officialAttachmentMeta");
+        try {{
+          const idValue = Number(document.getElementById("officialAttachmentDocId").value || "");
+          if (!Number.isFinite(idValue) || idValue <= 0) {{
+            throw new Error("공문 ID가 필요합니다.");
+          }}
+          const fileInput = document.getElementById("officialAttachmentFile");
+          if (!fileInput.files || !fileInput.files.length) {{
+            throw new Error("첨부 파일을 선택하세요.");
+          }}
+          const formData = new FormData();
+          formData.append("file", fileInput.files[0]);
+          formData.append("note", (document.getElementById("officialAttachmentNote").value || "").trim());
+          meta.textContent = "첨부 업로드 중...";
+          await fetchJson("/api/official-documents/" + encodeURIComponent(String(Math.trunc(idValue))) + "/attachments", true, {{
+            method: "POST",
+            body: formData,
+          }});
+          meta.textContent = "첨부 업로드 성공";
+          fileInput.value = "";
+          await Promise.all([runOfficialAttachmentList(), runOfficialDocuments()]);
+        }} catch (err) {{
+          meta.textContent = "첨부 업로드 실패: " + err.message;
+        }}
+      }}
+
+      async function runOfficialOverdueSync() {{
+        const meta = document.getElementById("officialOverdueMeta");
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialOverdueSite" }},
+            {{ key: "limit", id: "officialOverdueLimit" }},
+            {{ key: "dry_run", id: "officialOverdueDryRun" }},
+          ]);
+          meta.textContent = "기한초과 자동화 실행 중...";
+          const result = await fetchJson("/api/official-documents/overdue/run" + (query ? "?" + query : ""), true, {{
+            method: "POST",
+          }});
+          meta.textContent = "자동화 성공: 후보 " + String(result.candidate_count || 0) + "건";
+          renderOfficialOverdueSummary(result);
+          await runOfficialDocuments();
+        }} catch (err) {{
+          meta.textContent = "자동화 실패: " + err.message;
+          document.getElementById("officialOverdueSummary").innerHTML = "";
+        }}
+      }}
+
       async function runOfficialDocumentMonthlyReport() {{
         const meta = document.getElementById("officialReportMeta");
         updateOfficialReportLinks();
@@ -5770,6 +5946,24 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }}
       }}
 
+      async function runOfficialIntegratedMonthlyReport() {{
+        const meta = document.getElementById("officialReportMeta");
+        updateOfficialReportLinks();
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "officialReportSite" }},
+            {{ key: "month", id: "officialReportMonth" }},
+          ]);
+          const report = await fetchJson("/api/reports/monthly/integrated" + (query ? "?" + query : ""), true);
+          meta.textContent = "통합 월간보고서 성공: " + String(report.month || "");
+          renderIntegratedMonthlyReport(report);
+        }} catch (err) {{
+          meta.textContent = "통합 월간보고서 실패: " + err.message;
+          document.getElementById("officialIntegratedReportSummary").innerHTML = "";
+          document.getElementById("officialIntegratedReportRaw").textContent = err.message;
+        }}
+      }}
+
       function updateReportLinks() {{
         const query = buildQuery([
           {{ key: "month", id: "rpMonth" }},
@@ -5779,6 +5973,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         document.getElementById("reportPrintLink").setAttribute("href", "/reports/monthly/print" + suffix);
         document.getElementById("reportCsvLink").setAttribute("href", "/api/reports/monthly/csv" + suffix);
         document.getElementById("reportPdfLink").setAttribute("href", "/api/reports/monthly/pdf" + suffix);
+        document.getElementById("reportIntegratedPrintLink").setAttribute("href", "/reports/monthly/integrated/print" + suffix);
+        document.getElementById("reportIntegratedCsvLink").setAttribute("href", "/api/reports/monthly/integrated/csv" + suffix);
       }}
 
       async function runReports() {{
@@ -9900,9 +10096,13 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       document.getElementById("runOfficialDocLoadBtn").addEventListener("click", runOfficialDocumentLoad);
       document.getElementById("runOfficialDocUpdateBtn").addEventListener("click", runOfficialDocumentUpdate);
       document.getElementById("runOfficialDocCloseBtn").addEventListener("click", runOfficialDocumentClose);
+      document.getElementById("runOfficialAttachmentUploadBtn").addEventListener("click", runOfficialAttachmentUpload);
+      document.getElementById("runOfficialAttachmentListBtn").addEventListener("click", runOfficialAttachmentList);
       document.getElementById("runOfficialDocsBtn").addEventListener("click", runOfficialDocuments);
+      document.getElementById("runOfficialOverdueSyncBtn").addEventListener("click", runOfficialOverdueSync);
       document.getElementById("runOfficialDocMonthlyReportBtn").addEventListener("click", runOfficialDocumentMonthlyReport);
       document.getElementById("runOfficialDocAnnualReportBtn").addEventListener("click", runOfficialDocumentAnnualReport);
+      document.getElementById("runOfficialIntegratedMonthlyReportBtn").addEventListener("click", runOfficialIntegratedMonthlyReport);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("runTutorialGlossaryBtn").addEventListener("click", () => runTutorialGlossary(true));
@@ -10029,6 +10229,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         "billingStatementsSite",
         "officialDocSite",
         "officialDocsSite",
+        "officialOverdueSite",
         "officialReportSite",
       ].forEach((id) => {{
         const node = document.getElementById(id);
