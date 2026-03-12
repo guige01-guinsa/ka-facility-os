@@ -52,7 +52,7 @@ function Invoke-HtmlGet {
   param(
     [Parameter(Mandatory = $true)][string]$Uri
   )
-  return Invoke-WebRequest -Method Get -Uri $Uri -Headers @{ "Accept" = "text/html" } -TimeoutSec $TimeoutSec
+  return Invoke-WebRequest -Method Get -Uri $Uri -Headers @{ "Accept" = "text/html" } -TimeoutSec $TimeoutSec -UseBasicParsing
 }
 
 function Record-SmokeRun {
@@ -104,7 +104,7 @@ try {
 
   $mainShell = Invoke-HtmlGet -Uri "$BaseUrl/?tab=iam"
   $mainShellText = "$($mainShell.Content)"
-  foreach ($marker in @("ID/PW 로그인", "권한관리", "점검 이력 조회")) {
+  foreach ($marker in @("openLoginModalBtn", "panelIam", "panelInspection")) {
     if (-not $mainShellText.Contains($marker)) {
       throw "UI core path check failed: missing marker '$marker'"
     }
