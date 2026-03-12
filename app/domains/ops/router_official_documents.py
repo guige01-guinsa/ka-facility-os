@@ -19,6 +19,7 @@ from app import main as main_module
 from app.database import (
     get_conn,
     inspections,
+    job_runs,
     official_document_attachments,
     official_documents,
     utility_billing_statements,
@@ -42,7 +43,9 @@ _allowed_sites_for_principal = main_module._allowed_sites_for_principal
 _append_work_order_event = main_module._append_work_order_event
 _as_optional_datetime = main_module._as_optional_datetime
 _is_allowed_evidence_content_type = main_module._is_allowed_evidence_content_type
+_latest_job_run_for_name = main_module._latest_job_run_for_name
 _normalize_evidence_storage_backend = main_module._normalize_evidence_storage_backend
+_parse_job_detail_json = main_module._parse_job_detail_json
 _read_evidence_blob = main_module._read_evidence_blob
 _require_site_access = main_module._require_site_access
 _row_to_work_order_model = main_module._row_to_work_order_model
@@ -1227,8 +1230,62 @@ def _build_official_document_registry_csv(rows: list[dict[str, Any]]) -> str:
     return buffer.getvalue()
 
 
+def _build_official_document_attachment_cover_pdf(
+    *,
+    site: str | None,
+    organization: str | None,
+    status: str | None,
+    month: str | None,
+    year: int | None,
+    document_count: int,
+    attachment_count: int,
+) -> bytes:
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+    except ImportError as exc:
+        raise HTTPException(status_code=500, detail="PDF generator dependency not installed") from exc
+
+    period_label = month or (str(year) if year is not None else "all")
+    lines = [
+        "Official Document Attachment Bundle",
+        "",
+        f"Site: {site or 'ALL'}",
+        f"Organization: {organization or 'ALL'}",
+        f"Status: {status or 'ALL'}",
+        f"Period: {period_label}",
+        f"Document Count: {document_count}",
+        f"Attachment Count: {attachment_count}",
+        f"Generated At: {datetime.now(timezone.utc).isoformat()}",
+        "",
+        "Folder Layout",
+        "site / organization / YYYY-MM / registry_number / attachment_file",
+    ]
+
+    buf = io.BytesIO()
+    pdf = canvas.Canvas(buf, pagesize=A4)
+    _, height = A4
+    margin_left = 36
+    y = height - 40
+    pdf.setFont("Helvetica", 11)
+    for line in lines:
+        if y < 40:
+            pdf.showPage()
+            pdf.setFont("Helvetica", 11)
+            y = height - 40
+        pdf.drawString(margin_left, y, line[:180])
+        y -= 16
+    pdf.save()
+    return buf.getvalue()
+
+
 def _build_official_document_attachments_zip(
     *,
+    site: str | None,
+    organization: str | None,
+    status: str | None,
+    month: str | None,
+    year: int | None,
     document_rows: list[dict[str, Any]],
     attachment_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
@@ -1257,14 +1314,26 @@ def _build_official_document_attachments_zip(
     archived_count = 0
     missing_blob_count = 0
     with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        cover_pdf = _build_official_document_attachment_cover_pdf(
+            site=site,
+            organization=organization,
+            status=status,
+            month=month,
+            year=year,
+            document_count=len(document_rows),
+            attachment_count=len(attachment_rows),
+        )
+        archive.writestr("00_cover_sheet.pdf", cover_pdf)
         for row in attachment_rows:
             document_row = document_map.get(int(row["document_id"]))
             if document_row is None:
                 continue
+            month_folder = _to_utc(document_row["received_at"]).strftime("%Y-%m")
             folder_name = "/".join(
                 [
                     _zip_safe_segment(str(document_row.get("site") or "site"), default="site"),
                     _zip_safe_segment(str(document_row.get("organization") or "organization"), default="organization"),
+                    _zip_safe_segment(month_folder, default="month"),
                     _zip_safe_segment(str(document_row.get("registry_number") or document_row["id"]), default="registry"),
                 ]
             )
@@ -1302,6 +1371,71 @@ def _build_official_document_attachments_zip(
         "attachment_count": archived_count,
         "missing_blob_count": missing_blob_count,
         "document_count": len(document_rows),
+    }
+
+
+def _latest_overdue_job_run(site: str | None = None) -> dict[str, Any] | None:
+    model = _latest_job_run_for_name(_OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME)
+    if model is None:
+        return None
+    detail = model.detail if isinstance(model.detail, dict) else {}
+    run_site = detail.get("site")
+    if site is not None and run_site not in {site, None, ""}:
+        with get_conn() as conn:
+            rows = conn.execute(
+                select(job_runs)
+                .where(job_runs.c.job_name == _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME)
+                .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
+                .limit(50)
+            ).mappings().all()
+        for row in rows:
+            parsed_detail = _parse_job_detail_json(row.get("detail_json"))
+            candidate_site = parsed_detail.get("site")
+            if candidate_site in {site, None, ""}:
+                return {
+                    "run": main_module._row_to_job_run_model(dict(row)).model_dump(mode="json"),
+                    "detail": parsed_detail,
+                }
+        return None
+    return {
+        "run": model.model_dump(mode="json"),
+        "detail": detail,
+    }
+
+
+def _build_overdue_automation_status_snapshot(*, site: str | None = None) -> dict[str, Any]:
+    latest = _latest_overdue_job_run(site)
+    latest_run = latest.get("run") if latest else None
+    latest_detail = latest.get("detail") if latest else {}
+    latest_status = str((latest_run or {}).get("status") or "idle")
+    if latest_run is None:
+        overall_status = "idle"
+    elif latest_status in {"success"}:
+        overall_status = "ok"
+    elif latest_status in {"warning"}:
+        overall_status = "warning"
+    else:
+        overall_status = "critical"
+    return {
+        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "job_name": _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME,
+        "site": site,
+        "overall_status": overall_status,
+        "automation_enabled": bool(main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED),
+        "scheduler_mode": (
+            "background" if main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED else "disabled"
+        ),
+        "cron_entrypoint": "python -m app.jobs.official_document_overdue",
+        "interval_minutes": int(main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INTERVAL_MINUTES),
+        "limit": int(main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_LIMIT),
+        "site_scope": main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_SITE,
+        "initial_delay_sec": int(main_module.OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_INITIAL_DELAY_SEC),
+        "latest_run_status": latest_status,
+        "latest_finished_at": (latest_run or {}).get("finished_at"),
+        "latest_candidate_count": int(latest_detail.get("candidate_count") or 0),
+        "latest_work_order_created_count": int(latest_detail.get("work_order_created_count") or 0),
+        "latest_linked_existing_count": int(latest_detail.get("linked_existing_work_order_count") or 0),
+        "latest_run": latest_run,
     }
 
 
@@ -1670,6 +1804,11 @@ def download_official_document_attachments_zip(
     )
     attachment_rows = _load_attachment_rows_for_documents([int(row["id"]) for row in document_rows])
     bundle = _build_official_document_attachments_zip(
+        site=site,
+        organization=organization,
+        status=status,
+        month=month,
+        year=year,
         document_rows=document_rows,
         attachment_rows=attachment_rows,
     )
@@ -1780,6 +1919,52 @@ def run_official_document_overdue_sync(
         },
     )
     return result
+
+
+@router.get("/api/official-documents/overdue/status")
+def get_official_document_overdue_status(
+    site: str | None = Query(default=None),
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    snapshot = _build_overdue_automation_status_snapshot(site=site)
+    _write_audit_log(
+        principal=principal,
+        action="official_document_overdue_status_view",
+        resource_type="official_document",
+        resource_id=site or "ALL",
+        detail={
+            "site": site,
+            "overall_status": snapshot.get("overall_status"),
+            "scheduler_mode": snapshot.get("scheduler_mode"),
+            "latest_run_status": snapshot.get("latest_run_status"),
+        },
+    )
+    return snapshot
+
+
+@router.get("/api/official-documents/overdue/latest")
+def get_official_document_overdue_latest_run(
+    site: str | None = Query(default=None),
+    principal: dict[str, Any] = Depends(require_permission("reports:read")),
+) -> dict[str, Any]:
+    _require_site_access(principal, site)
+    latest = _latest_overdue_job_run(site)
+    if latest is None:
+        return {
+            "job_name": _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME,
+            "site": site,
+            "exists": False,
+            "latest_run": None,
+            "detail": {},
+        }
+    return {
+        "job_name": _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME,
+        "site": site,
+        "exists": True,
+        "latest_run": latest["run"],
+        "detail": latest["detail"],
+    }
 
 
 @router.get("/api/reports/official-documents/monthly", response_model=OfficialDocumentClosureReportRead)

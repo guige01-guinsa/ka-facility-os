@@ -710,6 +710,16 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           <div id="overviewMeta" class="meta">요약 데이터를 불러오세요.</div>
           <div id="overviewCards" class="cards"></div>
           <div class="box">
+            <h3>공문 기한초과 자동화</h3>
+            <div id="overviewOfficialAutomationCards" class="cards"></div>
+            <div id="overviewOfficialAutomationMeta" class="meta">조회 전</div>
+            <div id="overviewOfficialAutomationLatest" class="empty">데이터 없음</div>
+            <div class="mini-links">
+              <a id="overviewOfficialOverdueStatusLink" href="/api/official-documents/overdue/status" target="_blank" rel="noopener">Overdue Status API</a>
+              <a id="overviewOfficialOverdueLatestLink" href="/api/official-documents/overdue/latest" target="_blank" rel="noopener">Overdue Latest API</a>
+            </div>
+          </div>
+          <div class="box">
             <h3>긴급 작업 상위 목록</h3>
             <div id="overviewTopWorkOrders" class="empty">데이터 없음</div>
           </div>
@@ -1990,6 +2000,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runOverviewGuardRecoverDryBtn: "배치복구 점검: Alert Guard(알림 보호) 복구를 점검 모드로 미리 실행합니다.",
         runOverviewGuardRecoverRunBtn: "배치복구 실행: 격리 또는 경고 상태 채널 복구를 실제 실행합니다.",
         runOverviewGuardRecoverLatestBtn: "최근 결과: 가장 최근 알림 채널 복구 결과를 조회합니다.",
+        overviewOfficialOverdueStatusLink: "Overdue Status API(공문 자동화 상태): 스케줄러 활성 여부와 최근 실행 상태를 조회합니다.",
+        overviewOfficialOverdueLatestLink: "Overdue Latest API(공문 최근 실행): 마지막 공문 기한초과 자동화 실행 상세를 조회합니다.",
         runWorkordersBtn: "작업지시 조회: 조건에 맞는 작업지시 목록을 조회합니다.",
         inChecklistAllNormalBtn: "전체 정상: 현재 체크리스트 모든 항목을 정상으로 일괄 설정합니다.",
         inChecklistAllNaBtn: "전체 N/A: 현재 체크리스트 모든 항목을 N/A로 일괄 설정합니다.",
@@ -3887,6 +3899,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         ]);
         const path = "/api/ops/dashboard/summary" + (query ? "?" + query : "");
         const siteValue = (document.getElementById("ovSite").value || "").trim();
+        const siteSuffix = siteValue ? ("?site=" + encodeURIComponent(siteValue)) : "";
         const handoverParams = new URLSearchParams();
         if (siteValue) {{
           handoverParams.set("site", siteValue);
@@ -3898,6 +3911,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         const meta = document.getElementById("overviewMeta");
         const cards = document.getElementById("overviewCards");
         const topTable = document.getElementById("overviewTopWorkOrders");
+        const officialAutomationCards = document.getElementById("overviewOfficialAutomationCards");
+        const officialAutomationMeta = document.getElementById("overviewOfficialAutomationMeta");
+        const officialAutomationLatest = document.getElementById("overviewOfficialAutomationLatest");
         const alertKpiSummary = document.getElementById("overviewAlertKpiSummary");
         const alertKpiChannels = document.getElementById("overviewAlertKpiChannels");
         const alertMttrSummary = document.getElementById("overviewAlertMttrSummary");
@@ -3908,9 +3924,13 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         const alertGuardRecoverTable = document.getElementById("overviewGuardRecoverTable");
         try {{
           meta.textContent = "조회 중... " + path;
-          const [data, handover, kpi, mttr, guard, guardRecoverLatest, retentionPolicy, retentionLatest] = await Promise.all([
+          document.getElementById("overviewOfficialOverdueStatusLink").setAttribute("href", "/api/official-documents/overdue/status" + siteSuffix);
+          document.getElementById("overviewOfficialOverdueLatestLink").setAttribute("href", "/api/official-documents/overdue/latest" + siteSuffix);
+          const [data, handover, officialOverdueStatus, officialOverdueLatest, kpi, mttr, guard, guardRecoverLatest, retentionPolicy, retentionLatest] = await Promise.all([
             fetchJson(path, true),
             fetchJson(handoverPath, true).catch(() => null),
+            fetchJson("/api/official-documents/overdue/status" + siteSuffix, true).catch(() => null),
+            fetchJson("/api/official-documents/overdue/latest" + siteSuffix, true).catch(() => null),
             fetchJson("/api/ops/alerts/kpi/channels", true).catch(() => null),
             fetchJson("/api/ops/alerts/kpi/mttr", true).catch(() => null),
             fetchJson("/api/ops/alerts/channels/guard", true).catch(() => null),
@@ -3932,6 +3952,56 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           cards.innerHTML = stats.map((s) => (
             '<div class="card"><div class="k">' + escapeHtml(s[0]) + '</div><div class="v">' + escapeHtml(s[1] || 0) + "</div></div>"
           )).join("");
+
+          if (officialOverdueStatus) {{
+            const automationCards = [
+              ["Mode", officialOverdueStatus.scheduler_mode || "-"],
+              ["Enabled", officialOverdueStatus.automation_enabled ? "YES" : "NO"],
+              ["Interval(min)", officialOverdueStatus.interval_minutes || 0],
+              ["Latest Status", officialOverdueStatus.latest_run_status || "idle"],
+              ["Candidates", officialOverdueStatus.latest_candidate_count || 0],
+              ["Created", officialOverdueStatus.latest_work_order_created_count || 0],
+              ["Existing Linked", officialOverdueStatus.latest_linked_existing_count || 0],
+            ];
+            officialAutomationCards.innerHTML = automationCards.map((item) => (
+              '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + '</div></div>'
+            )).join("");
+            officialAutomationMeta.textContent =
+              "공문 자동화 상태="
+              + String(officialOverdueStatus.overall_status || "idle")
+              + " | site_scope=" + String(officialOverdueStatus.site_scope || "ALL")
+              + " | latest_finished_at=" + String(officialOverdueStatus.latest_finished_at || "-");
+          }} else {{
+            officialAutomationCards.innerHTML = "";
+            officialAutomationMeta.textContent = "공문 자동화 상태 조회 실패 또는 데이터 없음";
+          }}
+
+          if (officialOverdueLatest && officialOverdueLatest.exists && officialOverdueLatest.latest_run) {{
+            const latestRun = officialOverdueLatest.latest_run || {{}};
+            const latestDetail = officialOverdueLatest.detail || {{}};
+            officialAutomationLatest.innerHTML = renderTable(
+              [{{
+                job_name: latestRun.job_name || "",
+                trigger: latestRun.trigger || "",
+                status: latestRun.status || "",
+                finished_at: latestRun.finished_at || "",
+                candidate_count: latestDetail.candidate_count || 0,
+                work_order_created_count: latestDetail.work_order_created_count || 0,
+                linked_existing_work_order_count: latestDetail.linked_existing_work_order_count || 0,
+              }}],
+              [
+                {{ key: "job_name", label: "Job" }},
+                {{ key: "trigger", label: "Trigger" }},
+                {{ key: "status", label: "Status" }},
+                {{ key: "finished_at", label: "Finished At" }},
+                {{ key: "candidate_count", label: "Candidates" }},
+                {{ key: "work_order_created_count", label: "Created" }},
+                {{ key: "linked_existing_work_order_count", label: "Existing Linked" }},
+              ]
+            );
+          }} else {{
+            officialAutomationLatest.innerHTML = renderEmpty("공문 자동화 실행 이력이 없습니다.");
+          }}
 
           if (handover && Array.isArray(handover.top_work_orders)) {{
             topTable.innerHTML = renderTable(
@@ -4082,6 +4152,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           cards.innerHTML = "";
+          officialAutomationCards.innerHTML = "";
+          officialAutomationMeta.textContent = "실패: " + err.message;
+          officialAutomationLatest.innerHTML = renderEmpty(err.message);
           topTable.innerHTML = renderEmpty(err.message);
           alertKpiSummary.innerHTML = "";
           alertKpiChannels.innerHTML = renderEmpty(err.message);

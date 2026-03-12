@@ -109,7 +109,10 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     with zipfile.ZipFile(io.BytesIO(attachment_zip.content)) as archive:
         names = archive.namelist()
         assert "manifest.csv" in names
+        assert "00_cover_sheet.pdf" in names
+        assert archive.read("00_cover_sheet.pdf").startswith(b"%PDF")
         assert any(name.endswith("kepco-origin.pdf") for name in names)
+        assert any("/한전/" in name and f"/{month_label}/" in name for name in names)
         manifest_text = archive.read("manifest.csv").decode("utf-8")
         assert "registry_number" in manifest_text
         assert "kepco-origin.pdf" in manifest_text
@@ -214,6 +217,25 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     overdue_loaded = app_client.get(f"/api/official-documents/{overdue_document_id}", headers=headers)
     assert overdue_loaded.status_code == 200
     assert overdue_loaded.json()["linked_work_order_id"] is not None
+
+    overdue_status = app_client.get(
+        "/api/official-documents/overdue/status?site=HQ",
+        headers=headers,
+    )
+    assert overdue_status.status_code == 200
+    overdue_status_body = overdue_status.json()
+    assert overdue_status_body["job_name"] == "official_document_overdue_sync"
+    assert overdue_status_body["scheduler_mode"] in {"background", "disabled"}
+    assert overdue_status_body["latest_run_status"] in {"idle", "success", "warning", "failed"}
+
+    overdue_latest = app_client.get(
+        "/api/official-documents/overdue/latest?site=HQ",
+        headers=headers,
+    )
+    assert overdue_latest.status_code == 200
+    overdue_latest_body = overdue_latest.json()
+    assert overdue_latest_body["job_name"] == "official_document_overdue_sync"
+    assert overdue_latest_body["exists"] in {True, False}
 
     for payload in [
         {
@@ -358,6 +380,8 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert service_body["official_document_attachment_zip_api"] == "/api/official-documents/attachments/zip"
     assert service_body["official_document_registry_csv_api"] == "/api/official-documents/registry/csv"
     assert service_body["official_document_overdue_run_api"] == "/api/official-documents/overdue/run"
+    assert service_body["official_document_overdue_status_api"] == "/api/official-documents/overdue/status"
+    assert service_body["official_document_overdue_latest_api"] == "/api/official-documents/overdue/latest"
     assert service_body["official_document_overdue_cron_job"] == "python -m app.jobs.official_document_overdue"
     assert service_body["official_document_monthly_report_api"] == "/api/reports/official-documents/monthly"
     assert service_body["official_document_annual_report_print_html"] == "/reports/official-documents/annual/print"
@@ -379,6 +403,12 @@ def test_official_document_flow_and_reports(app_client: TestClient) -> None:
     assert "officialRegistryCsvLink" in html_page.text
     assert "runOfficialIntegratedAnnualReportBtn" in html_page.text
     assert "officialReportIntegratedAnnualPdfLink" in html_page.text
+
+    overview_page = app_client.get("/?tab=overview", headers={"Accept": "text/html"})
+    assert overview_page.status_code == 200
+    assert "overviewOfficialAutomationCards" in overview_page.text
+    assert "overviewOfficialOverdueStatusLink" in overview_page.text
+    assert "overviewOfficialOverdueLatestLink" in overview_page.text
 
 
 def test_official_document_report_counts_open_overdue_items(app_client: TestClient) -> None:

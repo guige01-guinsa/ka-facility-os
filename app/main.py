@@ -14426,6 +14426,8 @@ def _service_info_payload() -> dict[str, str]:
         "official_document_attachment_zip_api": "/api/official-documents/attachments/zip",
         "official_document_registry_csv_api": "/api/official-documents/registry/csv",
         "official_document_overdue_run_api": "/api/official-documents/overdue/run",
+        "official_document_overdue_status_api": "/api/official-documents/overdue/status",
+        "official_document_overdue_latest_api": "/api/official-documents/overdue/latest",
         "official_document_overdue_cron_job": "python -m app.jobs.official_document_overdue",
         "official_document_overdue_scheduler_mode": (
             "background" if OFFICIAL_DOCUMENT_OVERDUE_AUTOMATION_ENABLED else "disabled"
