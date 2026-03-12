@@ -74,7 +74,7 @@ def build_shared_tracker_execution_box_html(phase_code: str, phase_label: str) -
 _build_shared_tracker_execution_box_html = build_shared_tracker_execution_box_html
 
 def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: str) -> str:
-    allowed_tabs = {"overview", "workorders", "inspections", "reports", "iam", "adoption", "tutorial"}
+    allowed_tabs = {"overview", "workorders", "inspections", "billing", "reports", "iam", "adoption", "tutorial"}
     selected_tab = initial_tab if initial_tab in allowed_tabs else "overview"
     w02_tracker_box_html = _build_shared_tracker_execution_box_html("w02", "W02")
     w03_tracker_box_html = _build_shared_tracker_execution_box_html("w03", "W03")
@@ -641,6 +641,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         <button class="tab-btn" type="button" role="tab" data-tab="overview" data-tip="Overview(운영요약): SLA·알림·작업현황 핵심지표를 한눈에 봅니다." title="Overview(운영요약): SLA·알림·작업현황 핵심지표를 한눈에 봅니다.">운영요약</button>
         <button class="tab-btn" type="button" role="tab" data-tab="workorders" data-tip="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다." title="Work Orders(작업지시): 작업 생성·진행·완료 상태를 관리합니다.">작업지시</button>
         <button class="tab-btn" type="button" role="tab" data-tab="inspections" data-tip="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다." title="Inspections(점검): 전기·소방 점검 입력과 이력을 관리합니다.">점검</button>
+        <button class="tab-btn" type="button" role="tab" data-tab="billing" data-tip="Billing(요금부과): 전기·수도 검침, 공용요금 면적배부, 월 부과를 관리합니다." title="Billing(요금부과): 전기·수도 검침, 공용요금 면적배부, 월 부과를 관리합니다.">요금부과</button>
         <button class="tab-btn" type="button" role="tab" data-tab="reports" data-tip="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다." title="Reports(월간리포트): 월간 집계와 출력(PDF/CSV)을 실행합니다.">월간리포트</button>
         <button class="tab-btn" type="button" role="tab" data-tab="iam" data-tip="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다." title="IAM(권한관리): 로그인·사용자·토큰·감사로그를 관리합니다.">권한관리</button>
         <button class="tab-btn" type="button" role="tab" data-tab="adoption" data-tip="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다." title="Adoption(정착계획): 주차별 실행표와 교육자료를 확인합니다.">사용자 정착 계획</button>
@@ -882,6 +883,131 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="inspectionImportValidationSummary" class="cards"></div>
             <div id="inspectionImportValidationTable" class="empty">데이터 없음</div>
             <div id="inspectionImportValidationSuggestions" class="empty">데이터 없음</div>
+          </div>
+        </div>
+
+        <div id="panelBilling" class="tab-panel" role="tabpanel">
+          <p class="tab-caption">아파트 전기/수도 세대요금과 공용요금을 함께 관리합니다. 공용전기·공용수도는 월별 금액을 입력하고 면적비로 세대에 배부합니다.</p>
+          <div class="box">
+            <h3>세대 마스터 등록</h3>
+            <div class="ops-form-grid">
+              <input id="billingUnitSite" placeholder="site (예: HQ)" />
+              <input id="billingUnitBuilding" placeholder="동 (예: 101동)" />
+              <input id="billingUnitNumber" placeholder="호 (예: 1001호)" />
+              <input id="billingUnitOccupant" placeholder="세대명/입주자명(선택)" />
+              <input id="billingUnitArea" placeholder="전용면적 sqm (예: 84.95)" />
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runBillingCreateUnitBtn" class="btn run" type="button">세대 등록</button>
+              <button id="runBillingUnitsBtn" class="btn" type="button">세대 조회</button>
+            </div>
+            <div id="billingUnitsMeta" class="meta">조회 전</div>
+            <div id="billingUnitsTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>요율 정책 등록</h3>
+            <div class="ops-form-grid">
+              <input id="billingPolicySite" placeholder="site (예: HQ)" />
+              <select id="billingPolicyType">
+                <option value="electricity">전기</option>
+                <option value="water">수도</option>
+              </select>
+              <input id="billingPolicyMonth" placeholder="적용월 YYYY-MM" />
+              <input id="billingPolicyBasicFee" placeholder="기본요금" />
+              <input id="billingPolicyUnitRate" placeholder="사용량 단가" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="billingPolicySewageRate" placeholder="하수도 단가(수도용)" />
+              <input id="billingPolicyServiceFee" placeholder="부가요금/관리수수료" />
+              <input id="billingPolicyVatRate" placeholder="부가세율 (예: 0.1)" />
+              <input id="billingPolicyNotes" class="span-2" placeholder="비고(선택)" />
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="billingPolicyTiersJson" class="span-5" placeholder='누진단계 JSON(선택): [{{"up_to":200,"rate":120.5}},{{"up_to":400,"rate":214.6}},{{"up_to":null,"rate":307.3}}]'></textarea>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runBillingCreatePolicyBtn" class="btn run" type="button">요율 저장</button>
+              <button id="runBillingPoliciesBtn" class="btn" type="button">요율 조회</button>
+            </div>
+            <div id="billingPoliciesMeta" class="meta">조회 전</div>
+            <div id="billingPoliciesTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>공용요금 입력 (면적비 배부)</h3>
+            <div class="ops-form-grid">
+              <input id="billingCommonSite" placeholder="site (예: HQ)" />
+              <input id="billingCommonMonth" placeholder="부과월 YYYY-MM" />
+              <select id="billingCommonType">
+                <option value="electricity">공용전기</option>
+                <option value="water">공용수도</option>
+              </select>
+              <input id="billingCommonCategory" placeholder="항목 (예: 산업용, 가로등, 승강기, 공용수도)" />
+              <input id="billingCommonAmount" placeholder="금액" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="billingCommonNotes" class="span-5" placeholder="비고(선택): 검침서/고지서 기준 메모" />
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runBillingCreateCommonBtn" class="btn run" type="button">공용요금 저장</button>
+              <button id="runBillingCommonBtn" class="btn" type="button">공용요금 조회</button>
+            </div>
+            <div id="billingCommonMeta" class="meta">조회 전</div>
+            <div id="billingCommonTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>검침 입력</h3>
+            <div class="ops-form-grid">
+              <input id="billingReadingSite" placeholder="site (예: HQ)" />
+              <input id="billingReadingBuilding" placeholder="동 (예: 101동)" />
+              <input id="billingReadingUnitNumber" placeholder="호 (예: 1001호)" />
+              <select id="billingReadingType">
+                <option value="electricity">전기</option>
+                <option value="water">수도</option>
+              </select>
+              <input id="billingReadingMonth" placeholder="검침월 YYYY-MM" />
+            </div>
+            <div class="ops-form-grid">
+              <input id="billingReadingPrevious" placeholder="전월 검침값" />
+              <input id="billingReadingCurrent" placeholder="당월 검침값" />
+              <input id="billingReadingReader" placeholder="검침자" />
+              <input id="billingReadingNotes" class="span-2" placeholder="검침 메모(선택)" />
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runBillingCreateReadingBtn" class="btn run" type="button">검침 저장</button>
+              <button id="runBillingReadingsBtn" class="btn" type="button">검침 조회</button>
+            </div>
+            <div id="billingReadingsMeta" class="meta">조회 전</div>
+            <div id="billingReadingsTable" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>월 요금 부과 생성</h3>
+            <div class="filter-row">
+              <input id="billingRunSite" placeholder="site (예: HQ)" />
+              <input id="billingRunMonth" placeholder="부과월 YYYY-MM" />
+              <select id="billingRunType">
+                <option value="electricity">전기</option>
+                <option value="water">수도</option>
+              </select>
+              <label class="ops-inline-label">
+                <input id="billingReplaceExisting" type="checkbox" checked />
+                기존 부과내역 덮어쓰기
+              </label>
+              <button id="runBillingGenerateBtn" class="btn run" type="button">월 부과 생성</button>
+            </div>
+            <div class="filter-row">
+              <input id="billingStatementsSite" placeholder="site (예: HQ)" />
+              <input id="billingStatementsMonth" placeholder="부과월 YYYY-MM" />
+              <select id="billingStatementsType">
+                <option value="">전체 유틸리티</option>
+                <option value="electricity">전기</option>
+                <option value="water">수도</option>
+              </select>
+              <input id="billingStatementsBuilding" placeholder="동(선택)" />
+              <button id="runBillingStatementsBtn" class="btn" type="button">부과내역 조회</button>
+            </div>
+            <div id="billingRunMeta" class="meta">생성 전</div>
+            <div id="billingRunSummary" class="cards"></div>
+            <div id="billingStatementsTable" class="empty">데이터 없음</div>
           </div>
         </div>
 
@@ -1643,6 +1769,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         overview: document.getElementById("panelOverview"),
         workorders: document.getElementById("panelWorkorders"),
         inspections: document.getElementById("panelInspections"),
+        billing: document.getElementById("panelBilling"),
         reports: document.getElementById("panelReports"),
         iam: document.getElementById("panelIam"),
         adoption: document.getElementById("panelAdoption"),
@@ -1711,6 +1838,16 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         runInspectionEvidenceBtn: "증빙 목록 조회: 선택한 inspection_id의 사진·증빙 파일 목록을 가져옵니다.",
         runInspectionImportValidationBtn: "검증 리포트 조회: 엑셀 Import 검증 결과를 최신 상태로 조회합니다.",
         inspectionImportValidationCsvLink: "CSV 다운로드: 엑셀 Import 검증 리포트를 CSV 파일로 내려받습니다.",
+        runBillingCreateUnitBtn: "세대 등록: 동·호·전용면적 기준으로 요금부과 대상을 등록합니다.",
+        runBillingUnitsBtn: "세대 조회: 등록된 세대 마스터를 site 기준으로 조회합니다.",
+        runBillingCreatePolicyBtn: "요율 저장: 전기 또는 수도 단가/기본요금 정책을 적용월 기준으로 등록합니다.",
+        runBillingPoliciesBtn: "요율 조회: 등록된 요율 정책을 유틸리티별로 조회합니다.",
+        runBillingCreateCommonBtn: "공용요금 저장: 공용전기·공용수도 금액을 입력하고 면적비 배부 대상에 포함합니다.",
+        runBillingCommonBtn: "공용요금 조회: 월별 공용 전기/수도 금액 입력 내역을 조회합니다.",
+        runBillingCreateReadingBtn: "검침 저장: 세대별 전월/당월 검침값을 저장해 사용량을 확정합니다.",
+        runBillingReadingsBtn: "검침 조회: 월별 검침 이력을 조회합니다.",
+        runBillingGenerateBtn: "월 부과 생성: 세대요금과 공용요금을 합쳐 면적비 기준 월 부과를 생성합니다.",
+        runBillingStatementsBtn: "부과내역 조회: 생성된 전기/수도 부과 명세를 조회합니다.",
         runReportsBtn: "리포트 조회: 월간 집계 결과와 출력 링크를 조회합니다.",
         reportPrintLink: "HTML 인쇄: 현재 월간리포트를 인쇄 화면으로 엽니다.",
         reportCsvLink: "CSV 다운로드: 현재 월간리포트를 CSV 파일로 내려받습니다.",
@@ -2671,6 +2808,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           const inspectorNode = document.getElementById("inCreateInspector");
           if (inspectorNode && !(inspectorNode.value || "").trim()) {{
             inspectorNode.value = String(authProfile && authProfile.username ? authProfile.username : "");
+          }}
+          const billingReaderNode = document.getElementById("billingReadingReader");
+          if (billingReaderNode && !(billingReaderNode.value || "").trim()) {{
+            billingReaderNode.value = String(authProfile && authProfile.username ? authProfile.username : "");
           }}
           updateAuthStateFromToken();
           return authProfile;
@@ -4958,6 +5099,325 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }} catch (err) {{
           meta.textContent = "실패: " + err.message;
           table.innerHTML = renderEmpty(err.message);
+        }}
+      }}
+
+      function currentMonthLabel() {{
+        const now = new Date();
+        return String(now.getFullYear()) + "-" + String(now.getMonth() + 1).padStart(2, "0");
+      }}
+
+      function parseOptionalNumber(value, fallback) {{
+        const raw = String(value || "").trim();
+        if (!raw) return fallback;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) {{
+          throw new Error("숫자 형식이 올바르지 않습니다: " + raw);
+        }}
+        return parsed;
+      }}
+
+      function renderBillingSummaryCards(summary) {{
+        if (!summary || typeof summary !== "object") {{
+          return "";
+        }}
+        return [
+          ["부과 세대수", summary.statement_count ?? 0],
+          ["총 사용량", summary.total_usage ?? 0],
+          ["공용요금 합계", summary.common_charge_total ?? 0],
+          ["총 부과금액", summary.total_amount ?? 0],
+        ].map((item) => (
+          '<div class="card status-info"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + "</div></div>"
+        )).join("");
+      }}
+
+      async function runBillingUnits() {{
+        const meta = document.getElementById("billingUnitsMeta");
+        const table = document.getElementById("billingUnitsTable");
+        meta.textContent = "세대 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "billingUnitSite" }},
+            {{ key: "building", id: "billingUnitBuilding" }},
+          ]);
+          const rows = await fetchJson("/api/billing/units" + (query ? "?" + query : ""), true);
+          meta.textContent = "세대 " + String(rows.length) + "건";
+          table.innerHTML = renderTable(rows, [
+            {{ key: "site", label: "site" }},
+            {{ key: "building", label: "동" }},
+            {{ key: "unit_number", label: "호" }},
+            {{ key: "occupant_name", label: "세대명" }},
+            {{ key: "area_sqm", label: "전용면적" }},
+            {{ key: "is_active", label: "활성" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("세대 조회 실패");
+          meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingCreateUnit() {{
+        const meta = document.getElementById("billingUnitsMeta");
+        meta.textContent = "세대 등록 중...";
+        try {{
+          const payload = {{
+            site: (document.getElementById("billingUnitSite").value || "").trim(),
+            building: (document.getElementById("billingUnitBuilding").value || "").trim(),
+            unit_number: (document.getElementById("billingUnitNumber").value || "").trim(),
+            occupant_name: (document.getElementById("billingUnitOccupant").value || "").trim() || null,
+            area_sqm: parseOptionalNumber(document.getElementById("billingUnitArea").value, null),
+            is_active: true,
+          }};
+          const created = await fetchJson("/api/billing/units", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "세대 등록 완료: " + String(created.building || "") + " " + String(created.unit_number || "");
+          await runBillingUnits();
+        }} catch (err) {{
+          meta.textContent = "등록 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingPolicies() {{
+        const meta = document.getElementById("billingPoliciesMeta");
+        const table = document.getElementById("billingPoliciesTable");
+        meta.textContent = "요율 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "billingPolicySite" }},
+            {{ key: "utility_type", id: "billingPolicyType" }},
+          ]);
+          const rows = await fetchJson("/api/billing/rate-policies" + (query ? "?" + query : ""), true);
+          meta.textContent = "요율 정책 " + String(rows.length) + "건";
+          table.innerHTML = renderTable(rows, [
+            {{ key: "site", label: "site" }},
+            {{ key: "utility_type", label: "유틸리티" }},
+            {{ key: "effective_month", label: "적용월" }},
+            {{ key: "basic_fee", label: "기본요금" }},
+            {{ key: "unit_rate", label: "사용량 단가" }},
+            {{ key: "sewage_rate_per_unit", label: "하수도 단가" }},
+            {{ key: "vat_rate", label: "부가세율" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("요율 조회 실패");
+          meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingCreatePolicy() {{
+        const meta = document.getElementById("billingPoliciesMeta");
+        meta.textContent = "요율 저장 중...";
+        try {{
+          const tiersText = (document.getElementById("billingPolicyTiersJson").value || "").trim();
+          let tiers = [];
+          if (tiersText) {{
+            tiers = JSON.parse(tiersText);
+            if (!Array.isArray(tiers)) {{
+              throw new Error("누진단계 JSON은 배열이어야 합니다.");
+            }}
+          }}
+          const payload = {{
+            site: (document.getElementById("billingPolicySite").value || "").trim(),
+            utility_type: (document.getElementById("billingPolicyType").value || "").trim(),
+            effective_month: (document.getElementById("billingPolicyMonth").value || "").trim(),
+            basic_fee: parseOptionalNumber(document.getElementById("billingPolicyBasicFee").value, 0),
+            unit_rate: parseOptionalNumber(document.getElementById("billingPolicyUnitRate").value, 0),
+            sewage_rate_per_unit: parseOptionalNumber(document.getElementById("billingPolicySewageRate").value, 0),
+            service_fee: parseOptionalNumber(document.getElementById("billingPolicyServiceFee").value, 0),
+            vat_rate: parseOptionalNumber(document.getElementById("billingPolicyVatRate").value, 0.1),
+            tiers,
+            notes: (document.getElementById("billingPolicyNotes").value || "").trim(),
+          }};
+          const created = await fetchJson("/api/billing/rate-policies", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "요율 저장 완료: " + String(created.utility_type || "") + " / " + String(created.effective_month || "");
+          await runBillingPolicies();
+        }} catch (err) {{
+          meta.textContent = "저장 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingCommonCharges() {{
+        const meta = document.getElementById("billingCommonMeta");
+        const table = document.getElementById("billingCommonTable");
+        meta.textContent = "공용요금 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "billingCommonSite" }},
+            {{ key: "billing_month", id: "billingCommonMonth" }},
+            {{ key: "utility_type", id: "billingCommonType" }},
+          ]);
+          const rows = await fetchJson("/api/billing/common-charges" + (query ? "?" + query : ""), true);
+          const total = rows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+          meta.textContent = "공용요금 " + String(rows.length) + "건 | 합계 " + String(total.toFixed(2));
+          table.innerHTML = renderTable(rows, [
+            {{ key: "site", label: "site" }},
+            {{ key: "billing_month", label: "부과월" }},
+            {{ key: "utility_type", label: "유틸리티" }},
+            {{ key: "charge_category", label: "항목" }},
+            {{ key: "amount", label: "금액" }},
+            {{ key: "notes", label: "비고" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("공용요금 조회 실패");
+          meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingCreateCommonCharge() {{
+        const meta = document.getElementById("billingCommonMeta");
+        meta.textContent = "공용요금 저장 중...";
+        try {{
+          const payload = {{
+            site: (document.getElementById("billingCommonSite").value || "").trim(),
+            billing_month: (document.getElementById("billingCommonMonth").value || "").trim(),
+            utility_type: (document.getElementById("billingCommonType").value || "").trim(),
+            charge_category: (document.getElementById("billingCommonCategory").value || "").trim(),
+            amount: parseOptionalNumber(document.getElementById("billingCommonAmount").value, 0),
+            notes: (document.getElementById("billingCommonNotes").value || "").trim(),
+          }};
+          const created = await fetchJson("/api/billing/common-charges", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "공용요금 저장 완료: " + String(created.charge_category || "") + " / " + String(created.amount || 0);
+          await runBillingCommonCharges();
+        }} catch (err) {{
+          meta.textContent = "저장 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingReadings() {{
+        const meta = document.getElementById("billingReadingsMeta");
+        const table = document.getElementById("billingReadingsTable");
+        meta.textContent = "검침 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "billingReadingSite" }},
+            {{ key: "building", id: "billingReadingBuilding" }},
+            {{ key: "utility_type", id: "billingReadingType" }},
+            {{ key: "reading_month", id: "billingReadingMonth" }},
+          ]);
+          const rows = await fetchJson("/api/billing/meter-readings" + (query ? "?" + query : ""), true);
+          meta.textContent = "검침 " + String(rows.length) + "건";
+          table.innerHTML = renderTable(rows, [
+            {{ key: "site", label: "site" }},
+            {{ key: "building", label: "동" }},
+            {{ key: "unit_number", label: "호" }},
+            {{ key: "utility_type", label: "유틸리티" }},
+            {{ key: "reading_month", label: "검침월" }},
+            {{ key: "usage", label: "사용량" }},
+            {{ key: "reader_name", label: "검침자" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("검침 조회 실패");
+          meta.textContent = "조회 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingCreateReading() {{
+        const meta = document.getElementById("billingReadingsMeta");
+        meta.textContent = "검침 저장 중...";
+        try {{
+          const payload = {{
+            site: (document.getElementById("billingReadingSite").value || "").trim(),
+            building: (document.getElementById("billingReadingBuilding").value || "").trim(),
+            unit_number: (document.getElementById("billingReadingUnitNumber").value || "").trim(),
+            utility_type: (document.getElementById("billingReadingType").value || "").trim(),
+            reading_month: (document.getElementById("billingReadingMonth").value || "").trim(),
+            previous_reading: parseOptionalNumber(document.getElementById("billingReadingPrevious").value, 0),
+            current_reading: parseOptionalNumber(document.getElementById("billingReadingCurrent").value, 0),
+            reader_name: (document.getElementById("billingReadingReader").value || "").trim(),
+            notes: (document.getElementById("billingReadingNotes").value || "").trim(),
+          }};
+          const created = await fetchJson("/api/billing/meter-readings", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent = "검침 저장 완료: " + String(created.building || "") + " " + String(created.unit_number || "") + " / 사용량 " + String(created.usage || 0);
+          await runBillingReadings();
+        }} catch (err) {{
+          meta.textContent = "저장 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingGenerate() {{
+        const meta = document.getElementById("billingRunMeta");
+        const summaryNode = document.getElementById("billingRunSummary");
+        const table = document.getElementById("billingStatementsTable");
+        meta.textContent = "월 부과 생성 중...";
+        summaryNode.innerHTML = "";
+        try {{
+          const payload = {{
+            site: (document.getElementById("billingRunSite").value || "").trim(),
+            billing_month: (document.getElementById("billingRunMonth").value || "").trim(),
+            utility_type: (document.getElementById("billingRunType").value || "").trim(),
+            replace_existing: Boolean(document.getElementById("billingReplaceExisting").checked),
+          }};
+          const result = await fetchJson("/api/billing/runs/generate", true, {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify(payload),
+          }});
+          meta.textContent =
+            "월 부과 생성 완료 | run_id="
+            + String(result.run && result.run.id ? result.run.id : "-")
+            + " | 세대 "
+            + String(result.summary && result.summary.statement_count ? result.summary.statement_count : 0)
+            + "건";
+          summaryNode.innerHTML = renderBillingSummaryCards(result.summary || {{}});
+          table.innerHTML = renderTable(result.statements || [], [
+            {{ key: "building", label: "동" }},
+            {{ key: "unit_number", label: "호" }},
+            {{ key: "utility_type", label: "유틸리티" }},
+            {{ key: "usage", label: "사용량" }},
+            {{ key: "basic_fee", label: "기본요금" }},
+            {{ key: "usage_fee", label: "사용요금" }},
+            {{ key: "common_fee", label: "공용요금 배부" }},
+            {{ key: "sewage_fee", label: "하수도" }},
+            {{ key: "vat_amount", label: "부가세" }},
+            {{ key: "total_amount", label: "합계" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("월 부과 생성 실패");
+          meta.textContent = "생성 실패: " + err.message;
+        }}
+      }}
+
+      async function runBillingStatements() {{
+        const meta = document.getElementById("billingRunMeta");
+        const table = document.getElementById("billingStatementsTable");
+        meta.textContent = "부과내역 조회 중...";
+        try {{
+          const query = buildQuery([
+            {{ key: "site", id: "billingStatementsSite" }},
+            {{ key: "billing_month", id: "billingStatementsMonth" }},
+            {{ key: "utility_type", id: "billingStatementsType" }},
+            {{ key: "building", id: "billingStatementsBuilding" }},
+          ]);
+          const rows = await fetchJson("/api/billing/statements" + (query ? "?" + query : ""), true);
+          meta.textContent = "부과내역 " + String(rows.length) + "건";
+          table.innerHTML = renderTable(rows, [
+            {{ key: "site", label: "site" }},
+            {{ key: "building", label: "동" }},
+            {{ key: "unit_number", label: "호" }},
+            {{ key: "utility_type", label: "유틸리티" }},
+            {{ key: "billing_month", label: "부과월" }},
+            {{ key: "usage", label: "사용량" }},
+            {{ key: "usage_fee", label: "사용요금" }},
+            {{ key: "common_fee", label: "공용요금 배부" }},
+            {{ key: "total_amount", label: "합계" }},
+          ]);
+        }} catch (err) {{
+          table.innerHTML = renderEmpty("부과내역 조회 실패");
+          meta.textContent = "조회 실패: " + err.message;
         }}
       }}
 
@@ -9077,6 +9537,16 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       }});
       document.getElementById("inCreateOpsCode").addEventListener("change", applySelectedOpsCodeToForm);
       document.getElementById("inCreateQrId").addEventListener("change", () => applySelectedQrAssetToForm({{ overwriteFields: true }}));
+      document.getElementById("runBillingCreateUnitBtn").addEventListener("click", runBillingCreateUnit);
+      document.getElementById("runBillingUnitsBtn").addEventListener("click", runBillingUnits);
+      document.getElementById("runBillingCreatePolicyBtn").addEventListener("click", runBillingCreatePolicy);
+      document.getElementById("runBillingPoliciesBtn").addEventListener("click", runBillingPolicies);
+      document.getElementById("runBillingCreateCommonBtn").addEventListener("click", runBillingCreateCommonCharge);
+      document.getElementById("runBillingCommonBtn").addEventListener("click", runBillingCommonCharges);
+      document.getElementById("runBillingCreateReadingBtn").addEventListener("click", runBillingCreateReading);
+      document.getElementById("runBillingReadingsBtn").addEventListener("click", runBillingReadings);
+      document.getElementById("runBillingGenerateBtn").addEventListener("click", runBillingGenerate);
+      document.getElementById("runBillingStatementsBtn").addEventListener("click", runBillingStatements);
       document.getElementById("runReportsBtn").addEventListener("click", runReports);
       document.getElementById("runAdoptionBtn").addEventListener("click", runAdoption);
       document.getElementById("runTutorialGlossaryBtn").addEventListener("click", () => runTutorialGlossary(true));
@@ -9188,6 +9658,34 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       }}
       if (!document.getElementById("inCreateSite").value) {{
         document.getElementById("inCreateSite").value = "HQ";
+      }}
+      [
+        "billingUnitSite",
+        "billingPolicySite",
+        "billingCommonSite",
+        "billingReadingSite",
+        "billingRunSite",
+        "billingStatementsSite",
+      ].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node && !node.value) {{
+          node.value = "HQ";
+        }}
+      }});
+      [
+        "billingPolicyMonth",
+        "billingCommonMonth",
+        "billingReadingMonth",
+        "billingRunMonth",
+        "billingStatementsMonth",
+      ].forEach((id) => {{
+        const node = document.getElementById(id);
+        if (node && !node.value) {{
+          node.value = currentMonthLabel();
+        }}
+      }});
+      if (!document.getElementById("billingReadingReader").value && authProfile && authProfile.username) {{
+        document.getElementById("billingReadingReader").value = String(authProfile.username);
       }}
       if (!document.getElementById("inCreateLocation").value) {{
         document.getElementById("inCreateLocation").value = "B1 수변전실";

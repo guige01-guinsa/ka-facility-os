@@ -1776,3 +1776,160 @@ class DashboardTrendsRead(BaseModel):
     site: Optional[str] = None
     window_days: int
     points: list[DashboardTrendPoint]
+
+
+UtilityType = Literal["electricity", "water"]
+
+
+class UtilityBillingUnitCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    building: str = Field(min_length=1, max_length=120)
+    unit_number: str = Field(min_length=1, max_length=40)
+    occupant_name: Optional[str] = Field(default=None, max_length=120)
+    area_sqm: Optional[float] = Field(default=None, ge=0)
+    is_active: bool = True
+
+
+class UtilityBillingUnitRead(BaseModel):
+    id: int
+    site: str
+    building: str
+    unit_number: str
+    occupant_name: Optional[str] = None
+    area_sqm: Optional[float] = None
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class UtilityRateTier(BaseModel):
+    up_to: Optional[float] = Field(default=None, gt=0)
+    rate: float = Field(ge=0)
+
+
+class UtilityRatePolicyCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    utility_type: UtilityType
+    effective_month: str = Field(min_length=7, max_length=7)
+    basic_fee: float = Field(default=0, ge=0)
+    unit_rate: float = Field(default=0, ge=0)
+    sewage_rate_per_unit: float = Field(default=0, ge=0)
+    service_fee: float = Field(default=0, ge=0)
+    vat_rate: float = Field(default=0.1, ge=0, le=1)
+    tiers: list[UtilityRateTier] = Field(default_factory=list)
+    notes: str = ""
+
+
+class UtilityRatePolicyRead(BaseModel):
+    id: int
+    site: str
+    utility_type: UtilityType
+    effective_month: str
+    basic_fee: float
+    unit_rate: float
+    sewage_rate_per_unit: float
+    service_fee: float
+    vat_rate: float
+    tiers: list[UtilityRateTier] = Field(default_factory=list)
+    notes: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class UtilityMeterReadingCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    building: str = Field(min_length=1, max_length=120)
+    unit_number: str = Field(min_length=1, max_length=40)
+    utility_type: UtilityType
+    reading_month: str = Field(min_length=7, max_length=7)
+    previous_reading: float = Field(ge=0)
+    current_reading: float = Field(ge=0)
+    reader_name: str = Field(min_length=1, max_length=80)
+    reading_at: Optional[datetime] = None
+    notes: str = ""
+
+
+class UtilityMeterReadingRead(BaseModel):
+    id: int
+    site: str
+    building: str
+    unit_number: str
+    utility_type: UtilityType
+    reading_month: str
+    previous_reading: float
+    current_reading: float
+    usage: float
+    reader_name: str
+    reading_at: datetime
+    notes: str
+    created_at: datetime
+
+
+class UtilityCommonChargeCreate(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    billing_month: str = Field(min_length=7, max_length=7)
+    utility_type: UtilityType
+    charge_category: str = Field(min_length=1, max_length=40)
+    amount: float = Field(ge=0)
+    notes: str = ""
+
+
+class UtilityCommonChargeRead(BaseModel):
+    id: int
+    site: str
+    billing_month: str
+    utility_type: UtilityType
+    charge_category: str
+    amount: float
+    notes: str
+    created_at: datetime
+
+
+class UtilityBillingRunGenerateRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    billing_month: str = Field(min_length=7, max_length=7)
+    utility_type: UtilityType
+    replace_existing: bool = True
+
+
+class UtilityBillingRunRead(BaseModel):
+    id: int
+    site: str
+    billing_month: str
+    utility_type: UtilityType
+    policy_id: int
+    statement_count: int
+    total_usage: float
+    total_amount: float
+    created_by: str
+    created_at: datetime
+
+
+class UtilityBillingStatementRead(BaseModel):
+    id: int
+    run_id: int
+    site: str
+    building: str
+    unit_number: str
+    utility_type: UtilityType
+    billing_month: str
+    policy_id: int
+    reading_id: int
+    previous_reading: float
+    current_reading: float
+    usage: float
+    basic_fee: float
+    usage_fee: float
+    common_fee: float
+    sewage_fee: float
+    service_fee: float
+    vat_amount: float
+    total_amount: float
+    breakdown: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+
+
+class UtilityBillingRunResult(BaseModel):
+    run: UtilityBillingRunRead
+    statements: list[UtilityBillingStatementRead]
+    summary: dict[str, Any] = Field(default_factory=dict)

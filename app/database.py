@@ -984,6 +984,110 @@ ops_governance_remediation_tracker_runs = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
 
+utility_billing_units = Table(
+    "utility_billing_units",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("building", String(120), nullable=False),
+    Column("unit_number", String(40), nullable=False),
+    Column("occupant_name", String(120), nullable=True),
+    Column("area_sqm", Float, nullable=True),
+    Column("is_active", Boolean, nullable=False, default=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+utility_rate_policies = Table(
+    "utility_rate_policies",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("utility_type", String(20), nullable=False),
+    Column("effective_month", String(7), nullable=False),
+    Column("basic_fee", Float, nullable=False, default=0.0),
+    Column("unit_rate", Float, nullable=False, default=0.0),
+    Column("sewage_rate_per_unit", Float, nullable=False, default=0.0),
+    Column("service_fee", Float, nullable=False, default=0.0),
+    Column("vat_rate", Float, nullable=False, default=0.1),
+    Column("tiers_json", Text, nullable=False, default="[]"),
+    Column("notes", Text, nullable=False, default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
+utility_meter_readings = Table(
+    "utility_meter_readings",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("building", String(120), nullable=False),
+    Column("unit_number", String(40), nullable=False),
+    Column("utility_type", String(20), nullable=False),
+    Column("reading_month", String(7), nullable=False),
+    Column("previous_reading", Float, nullable=False, default=0.0),
+    Column("current_reading", Float, nullable=False, default=0.0),
+    Column("usage", Float, nullable=False, default=0.0),
+    Column("reader_name", String(80), nullable=False, default="system"),
+    Column("reading_at", DateTime(timezone=True), nullable=False),
+    Column("notes", Text, nullable=False, default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+utility_common_charges = Table(
+    "utility_common_charges",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("billing_month", String(7), nullable=False),
+    Column("utility_type", String(20), nullable=False),
+    Column("charge_category", String(40), nullable=False),
+    Column("amount", Float, nullable=False, default=0.0),
+    Column("notes", Text, nullable=False, default=""),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+utility_billing_runs = Table(
+    "utility_billing_runs",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("site", String(120), nullable=False),
+    Column("billing_month", String(7), nullable=False),
+    Column("utility_type", String(20), nullable=False),
+    Column("policy_id", Integer, nullable=False),
+    Column("statement_count", Integer, nullable=False, default=0),
+    Column("total_usage", Float, nullable=False, default=0.0),
+    Column("total_amount", Float, nullable=False, default=0.0),
+    Column("created_by", String(80), nullable=False, default="system"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
+utility_billing_statements = Table(
+    "utility_billing_statements",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("run_id", Integer, nullable=False),
+    Column("site", String(120), nullable=False),
+    Column("building", String(120), nullable=False),
+    Column("unit_number", String(40), nullable=False),
+    Column("utility_type", String(20), nullable=False),
+    Column("billing_month", String(7), nullable=False),
+    Column("policy_id", Integer, nullable=False),
+    Column("reading_id", Integer, nullable=False),
+    Column("previous_reading", Float, nullable=False, default=0.0),
+    Column("current_reading", Float, nullable=False, default=0.0),
+    Column("usage", Float, nullable=False, default=0.0),
+    Column("basic_fee", Float, nullable=False, default=0.0),
+    Column("usage_fee", Float, nullable=False, default=0.0),
+    Column("common_fee", Float, nullable=False, default=0.0),
+    Column("sewage_fee", Float, nullable=False, default=0.0),
+    Column("service_fee", Float, nullable=False, default=0.0),
+    Column("vat_amount", Float, nullable=False, default=0.0),
+    Column("total_amount", Float, nullable=False, default=0.0),
+    Column("breakdown_json", Text, nullable=False, default="{}"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+)
+
 
 def _ensure_sqlite_parent_dir() -> None:
     if not IS_SQLITE:

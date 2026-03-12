@@ -523,6 +523,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "work_orders:escalate",
         "reports:read",
         "reports:export",
+        "billing:read",
+        "billing:write",
         "workflow_locks:read",
         "workflow_locks:review",
         "workflow_locks:approve",
@@ -560,6 +562,8 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "inspections:write",
         "work_orders:read",
         "work_orders:write",
+        "billing:read",
+        "billing:write",
         "workflow_locks:read",
         "workflow_locks:write",
         "adoption_w02:read",
@@ -596,6 +600,7 @@ ROLE_PERMISSION_MAP: dict[str, set[str]] = {
         "work_orders:read",
         "reports:read",
         "reports:export",
+        "billing:read",
         "workflow_locks:read",
         "adoption_w02:read",
         "adoption_w03:read",
@@ -3612,6 +3617,20 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
             {"label": "Create Work-Order", "href": "/api/work-orders"},
             {"label": "Work-Order Timeline", "href": "/api/work-orders/{id}/events"},
             {"label": "Escalation Batch Run", "href": "/api/work-orders/escalations/run"},
+        ],
+    },
+    {
+        "id": "utility-billing",
+        "name": "Utility Billing",
+        "name_ko": "전기/수도 요금부과",
+        "description": "세대 등록, 검침 입력, 공용요금 면적배부, 월 부과 생성까지 전기/수도 요금 업무를 운영합니다.",
+        "kpi_hint": "Monthly billing close rate",
+        "links": [
+            {"label": "Billing Units", "href": "/api/billing/units"},
+            {"label": "Rate Policies", "href": "/api/billing/rate-policies"},
+            {"label": "Meter Readings", "href": "/api/billing/meter-readings"},
+            {"label": "Common Charges", "href": "/api/billing/common-charges"},
+            {"label": "Billing Statements", "href": "/api/billing/statements"},
         ],
     },
     {
@@ -14343,6 +14362,12 @@ def _service_info_payload() -> dict[str, str]:
         "facility_console_html": "/web/console",
         "facility_console_guide_html": "/web/console/guide",
         "iam_guide_html": "/web/iam-guide",
+        "billing_units_api": "/api/billing/units",
+        "billing_rate_policies_api": "/api/billing/rate-policies",
+        "billing_meter_readings_api": "/api/billing/meter-readings",
+        "billing_common_charges_api": "/api/billing/common-charges",
+        "billing_generate_run_api": "/api/billing/runs/generate",
+        "billing_statements_api": "/api/billing/statements",
         "alert_deliveries_api": "/api/ops/alerts/deliveries",
         "alert_internal_webhook_api": "/api/ops/alerts/webhook/internal",
         "alert_channel_kpi_api": "/api/ops/alerts/kpi/channels",
@@ -18455,6 +18480,7 @@ from app.domains.iam.router_auth import router as iam_auth_router
 from app.domains.iam.router_admin import router as iam_admin_router
 from app.domains.adoption.router_ops import build_router as build_adoption_ops_router
 from app.domains.adoption.router_tracker import build_router as build_adoption_tracker_router
+from app.domains.ops.router_billing import router as ops_billing_router
 from app.domains.ops.router_core import router as ops_core_router
 from app.domains.ops.router_governance import router as ops_governance_router
 from app.domains.ops.router_alerts import admin_router as ops_sla_admin_router, router as ops_alerts_router
@@ -18551,6 +18577,7 @@ public_router = build_public_router(
 )
 
 app.include_router(iam_auth_router)
+app.include_router(ops_billing_router)
 app.include_router(ops_core_router)
 app.include_router(ops_governance_router)
 app.include_router(ops_alerts_router)
