@@ -232,8 +232,64 @@ function Invoke-A1LiteSmoke {
   $beforeWorkOrderTotal = Get-NumericProperty -Object $beforeIntegrated.work_orders -PropertyName "total"
   $beforeCompletedTotal = Get-NumericProperty -Object $beforeIntegrated.work_orders.status_counts -PropertyName "completed"
 
-  $metaJson = '{"task_type":"\uc804\uae30\uc810\uac80","equipment":"Transformer","equipment_location":"B1 electrical room","qr_id":"QR-002","checklist_set_id":"electrical_60","checklist_data_version":"smoke-script","summary":{"total":3,"normal":0,"abnormal":3,"na":0},"abnormal_action":"Retorque terminal and re-check heat rise"}'
-  $checklistJson = '[{"group":"Transformer","item":"\ubcc0\uc555\uae30 \uc678\uad00 \uc810\uac80","result":"abnormal","action":""},{"group":"Transformer","item":"\ubcc0\uc555\uae30 \uc628\ub3c4 \uc0c1\uc2b9 \uc5ec\ubd80 \ud655\uc778","result":"abnormal","action":""},{"group":"Transformer","item":"\ubcc0\uc555\uae30 \uc774\uc0c1 \uc18c\uc74c \ud655\uc778","result":"abnormal","action":""}]'
+  $catalog = Invoke-JsonGet -Uri "$BaseUrl/api/ops/inspections/checklists/catalog" -Headers $Headers
+  $catalogSet = @($catalog.checklist_sets | Where-Object { "$($_.set_id)" -eq "electrical_60" } | Select-Object -First 1)[0]
+  if ($null -eq $catalogSet) {
+    $catalogSet = @($catalog.checklist_sets | Select-Object -First 1)[0]
+  }
+  if ($null -eq $catalogSet) {
+    throw "No checklist set is available for A1-lite smoke."
+  }
+  $catalogItems = @($catalogSet.items)
+  if ($catalogItems.Count -lt 1) {
+    throw "Checklist set '$($catalogSet.set_id)' has no registered items."
+  }
+  $selectedItems = @($catalogItems | Select-Object -First ([Math]::Min(3, $catalogItems.Count)))
+  $qrAsset = @($catalog.qr_assets | Where-Object { "$($_.checklist_set_id)" -eq "$($catalogSet.set_id)" } | Select-Object -First 1)[0]
+  $equipmentName = if ($null -ne $qrAsset -and -not [string]::IsNullOrWhiteSpace("$($qrAsset.equipment)")) {
+    "$($qrAsset.equipment)"
+  } else {
+    "설비"
+  }
+  $equipmentLocation = if ($null -ne $qrAsset -and -not [string]::IsNullOrWhiteSpace("$($qrAsset.location)")) {
+    "$($qrAsset.location)"
+  } else {
+    $location
+  }
+  $location = $equipmentLocation
+  $taskType = if (-not [string]::IsNullOrWhiteSpace("$($catalogSet.task_type)")) {
+    "$($catalogSet.task_type)"
+  } else {
+    "전기점검"
+  }
+  $meta = [ordered]@{
+    task_type = $taskType
+    equipment = $equipmentName
+    equipment_location = $equipmentLocation
+    checklist_set_id = "$($catalogSet.set_id)"
+    checklist_data_version = if (-not [string]::IsNullOrWhiteSpace("$($catalog.version)")) { "$($catalog.version)" } else { "live-catalog" }
+    summary = @{
+      total = $selectedItems.Count
+      normal = 0
+      abnormal = $selectedItems.Count
+      na = 0
+    }
+    abnormal_action = "Retorque terminal and re-check heat rise"
+  }
+  if ($null -ne $qrAsset -and -not [string]::IsNullOrWhiteSpace("$($qrAsset.qr_id)")) {
+    $meta["qr_id"] = "$($qrAsset.qr_id)"
+  }
+  $checklistRows = @()
+  foreach ($entry in $selectedItems) {
+    $checklistRows += @{
+      group = $equipmentName
+      item = "$($entry.item)"
+      result = "abnormal"
+      action = ""
+    }
+  }
+  $metaJson = $meta | ConvertTo-Json -Compress -Depth 10
+  $checklistJson = $checklistRows | ConvertTo-Json -Compress -Depth 10
   $inspectionNotes = "[OPS_CHECKLIST_V1]`nmeta=$metaJson`nchecklist=$checklistJson"
 
   $inspection = Invoke-JsonPost -Uri "$BaseUrl/api/inspections" -Headers $Headers -Body @{
