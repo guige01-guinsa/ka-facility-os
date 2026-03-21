@@ -1,0 +1,2 @@
+"""Resident complaint management domain."""
+

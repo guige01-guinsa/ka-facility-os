@@ -460,6 +460,9 @@ Internal sink:
 - `API_LATENCY_TARGETS` (comma list of `METHOD /path`; default health/meta/inspections/work-orders/dashboard-summary)
 - `DEPLOY_SMOKE_RECENT_HOURS` (default `48`; runbook recent smoke window)
 - `DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE` (default `true`)
+- `DEPLOY_SMOKE_ARCHIVE_ENABLED` (default `true`)
+- `DEPLOY_SMOKE_ARCHIVE_PATH` (default `data/deploy-smoke-archives`)
+- `DEPLOY_SMOKE_ARCHIVE_RETENTION_DAYS` (default `30`)
 - `DEPLOY_CHECKLIST_VERSION` (default `2026.03.v1`)
 - `GOVERNANCE_GATE_ALLOW_WARNING` (default `true`)
 - `GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL` (default `high`; `low|medium|high|critical`)
@@ -496,6 +499,20 @@ Job monitoring:
 - `GET /api/ops/dashboard/trends?days=30`
 - `GET /api/ops/performance/api-latency`
 - `GET /api/ops/integrity/evidence-archive?sample_per_table=20&max_issues=50`
+- `GET /api/ops/inspections/checklists/catalog`
+- `GET /api/ops/inspections/checklists/equipment-assets`
+- `GET /api/ops/inspections/checklists/sets`
+- `GET /api/ops/inspections/checklists/revisions`
+- `GET /api/ops/inspections/checklists/revisions/{id}`
+- `GET /api/ops/inspections/checklists/qr-assets`
+- `GET /api/ops/inspections/checklists/qr-assets/revisions`
+- `POST|PATCH|DELETE /api/ops/inspections/checklists/equipment-assets`
+- `POST|PATCH|DELETE /api/ops/inspections/checklists/sets` (`owner` live-edit path)
+- `POST /api/ops/inspections/checklists/revisions`
+- `POST /api/ops/inspections/checklists/revisions/{id}/submit`
+- `POST /api/ops/inspections/checklists/revisions/{id}/approve`
+- `POST /api/ops/inspections/checklists/revisions/{id}/reject`
+- `POST|PATCH|DELETE /api/ops/inspections/checklists/qr-assets`
 - `GET /api/ops/deploy/checklist`
 - `POST /api/ops/deploy/smoke/record`
 - `GET /api/ops/runbook/checks`
@@ -667,6 +684,7 @@ Integrity/Archive:
 - `POST /api/admin/audit-chain/rebaseline` repairs hash chain from target month (or full history)
 - `GET /api/admin/audit-archive/monthly` returns signed monthly archive payload
   - includes `dr_rehearsal_attachment` (latest in-month DR result + latest baseline snapshot)
+  - includes `ops_qr_asset_revisions_attachment` (monthly QR catalog revision summary + recent before/after samples)
 
 Example:
 
@@ -676,8 +694,10 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
 
 ## CI and ops scripts
 
-- CI workflow: `.github/workflows/ci.yml` (`pytest -q`)
-- Smoke marker test run: `pytest -q -m smoke`
+- CI workflow: `.github/workflows/ci.yml` (`pytest -q -m smoke`, `pytest -q -m acceptance`, `pytest -q`)
+- Full local regression: `.\scripts\run_pytest.ps1 -q`
+- Acceptance marker run: `.\scripts\run_pytest.ps1 -q -m acceptance`
+- Smoke marker test run: `.\scripts\run_pytest.ps1 -q -m smoke`
 - Deploy + smoke script:
 
 ```powershell
@@ -685,6 +705,8 @@ curl -H "X-Admin-Token: <owner-token>" "http://127.0.0.1:8001/api/admin/audit-lo
   -ServiceId "<render-service-id>" `
   -BaseUrl "https://ops.ka-part.com" `
   -ExpectRateLimitBackend "redis" `
+  -RunA1Lite $true `
+  -RunA2Lite $false `
   -RunRunbookGate $true `
   -ChecklistVersion "2026.03.v1" `
   -RollbackOnFailure
@@ -708,11 +730,26 @@ Direct smoke helper supports backend expectation, optional strict audit-chain ga
   -ExpectRateLimitBackend "redis" `
   -DeployId "<render-deploy-id>" `
   -ChecklistVersion "2026.03.v1" `
+  -RunA1Lite $true `
+  -RunA2Lite $false `
   -RunRunbookGate $true `
   -RecordSmokeRun $true
 ```
 
 - `post_deploy_smoke.ps1`도 `-AdminToken` 없이 실행 가능하며, 같은 우선순위(`ADMIN_TOKEN` env -> Render env `ADMIN_TOKEN`)로 관리자 토큰을 복구합니다.
+- `RunA1Lite` 기본값은 `true`이며, privileged smoke에서 `inspection -> work_order -> integrated monthly report` 경로를 실제 API로 검증합니다.
+- `RunA2Lite` 기본값은 `false`이며, 필요할 때 `official_document -> attachment -> overdue sync -> monthly report` 경로를 추가로 검증합니다.
+- `POST /api/ops/deploy/smoke/record`는 `DEPLOY_SMOKE_ARCHIVE_PATH/YYYY/MM` 아래에 privileged smoke JSON artifact를 자동 보관합니다.
+- OPS master governance:
+  - equipment / QR / checklist set masters now persist `lifecycle_state=active|retired|replaced`
+  - new inspections reject retired/replaced master rows
+  - checklist set live edits remain owner-only, and normal changes can go through draft -> pending -> approved/rejected revision flow
+  - list/catalog APIs accept `q`, `lifecycle_state`, `include_inactive` filters for search and retired/replaced review
+  - checklist revisions expose diff summaries and require release notes with `Summary`, `Impact`, `Rollback` sections before submit/approve
+  - QR asset CRUD and placeholder bulk-update now persist revision rows in `ops_qr_asset_revisions`, and `GET /api/ops/inspections/checklists/qr-assets/revisions` exposes before/after audit detail
+  - OPS split first cut moved checklist runtime, OPS core schemas, and OPS tables into `app/domains/ops/checklist_runtime.py`, `app/domains/ops/schemas.py`, and `app/domains/ops/tables.py`; `checklist_runtime.py` no longer imports `app.main`
+  - integrated monthly/annual reports accept optional `equipment_id` and `qr_asset_id`; OPS/document sections narrow to that asset scope, and billing reports `scope_applicable=false` when asset scope is requested
+  - `app/domains/ops/inspection_service.py`, `app/domains/ops/workflow_service.py`, `app/domains/iam/service.py`, `app/domains/iam/security.py`, and `app/domains/ops/record_service.py` no longer import `app.main` directly; IAM shared constants/helpers now live in `app/domains/iam/core.py`
 
 - Local/CI release gate helper:
 

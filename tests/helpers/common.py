@@ -3,10 +3,6 @@ from pathlib import Path
 
 
 def _seed_ops_special_checklists_json(target_path: Path) -> None:
-    source_path = Path(__file__).resolve().parents[2] / "data" / "apartment_facility_special_checklists.json"
-    if source_path.exists():
-        target_path.write_text(source_path.read_text(encoding="utf-8"), encoding="utf-8")
-        return
     payload = {
         "source_file": "tests-fixture",
         "version": "tests-fixture",
@@ -66,6 +62,31 @@ def _seed_ops_special_checklists_json(target_path: Path) -> None:
 
 def _owner_headers() -> dict[str, str]:
     return {"X-Admin-Token": "test-owner-token"}
+
+
+def _build_ops_checklist_notes() -> str:
+    meta = {
+        "task_type": "전기점검",
+        "equipment": "변압기 1호기",
+        "equipment_location": "B1 수변전실",
+        "qr_id": "QR-002",
+        "checklist_set_id": "electrical_60",
+        "checklist_data_version": "tests-fixture",
+        "summary": {"total": 3, "normal": 0, "abnormal": 3, "na": 0},
+        "abnormal_action": "단자 체결 상태 및 발열 재점검",
+    }
+    checklist = [
+        {"group": "변압기", "item": "변압기 외관 점검", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 온도 상승 여부 확인", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 이상 소음 확인", "result": "abnormal", "action": ""},
+    ]
+    return "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
 
 
 def _assert_adoption_policy_response_shape(

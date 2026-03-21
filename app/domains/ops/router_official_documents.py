@@ -22,6 +22,8 @@ from app.database import (
     job_runs,
     official_document_attachments,
     official_documents,
+    ops_equipment_assets,
+    ops_qr_assets,
     utility_billing_statements,
     work_orders,
 )
@@ -45,6 +47,7 @@ _as_optional_datetime = main_module._as_optional_datetime
 _is_allowed_evidence_content_type = main_module._is_allowed_evidence_content_type
 _latest_job_run_for_name = main_module._latest_job_run_for_name
 _normalize_evidence_storage_backend = main_module._normalize_evidence_storage_backend
+_ops_snapshot_values_from_inspection_row = main_module._ops_snapshot_values_from_inspection_row
 _parse_job_detail_json = main_module._parse_job_detail_json
 _read_evidence_blob = main_module._read_evidence_blob
 _require_site_access = main_module._require_site_access
@@ -62,6 +65,18 @@ _DOC_STATUSES = {"received", "in_progress", "closed", "canceled"}
 _DOC_PRIORITIES = {"low", "medium", "high", "critical"}
 _ATTACHMENT_CONTENT_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 _OFFICIAL_DOCUMENT_OVERDUE_JOB_NAME = "official_document_overdue_sync"
+
+
+def _normalize_integrated_asset_scope_id(value: int | None, *, field_name: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be a positive integer") from exc
+    if normalized <= 0:
+        raise HTTPException(status_code=422, detail=f"{field_name} must be a positive integer")
+    return normalized
 
 
 def _normalize_doc_status(value: Any) -> str:
@@ -208,6 +223,84 @@ def _period_bounds(*, period_type: str, month: str | None = None, year: int | No
     return start, end, str(target_year)
 
 
+def _resolve_integrated_asset_scope(
+    *,
+    equipment_id: int | None,
+    qr_asset_id: int | None,
+) -> dict[str, Any]:
+    normalized_equipment_id = _normalize_integrated_asset_scope_id(equipment_id, field_name="equipment_id")
+    normalized_qr_asset_id = _normalize_integrated_asset_scope_id(qr_asset_id, field_name="qr_asset_id")
+    if normalized_equipment_id is None and normalized_qr_asset_id is None:
+        return {
+            "asset_scope_active": False,
+            "equipment_id": None,
+            "qr_asset_id": None,
+            "billing_scope_applicable": True,
+        }
+
+    with get_conn() as conn:
+        if normalized_qr_asset_id is not None:
+            qr_row = conn.execute(
+                select(ops_qr_assets).where(ops_qr_assets.c.id == normalized_qr_asset_id).limit(1)
+            ).mappings().first()
+            if qr_row is None:
+                raise HTTPException(status_code=422, detail="qr_asset_id is unknown")
+            linked_equipment_id = int(qr_row["equipment_id"]) if qr_row.get("equipment_id") is not None else None
+            if normalized_equipment_id is None:
+                normalized_equipment_id = linked_equipment_id
+            elif linked_equipment_id is not None and linked_equipment_id != normalized_equipment_id:
+                raise HTTPException(status_code=422, detail="equipment_id does not match qr_asset_id")
+
+        if normalized_equipment_id is not None:
+            equipment_row = conn.execute(
+                select(ops_equipment_assets.c.id).where(ops_equipment_assets.c.id == normalized_equipment_id).limit(1)
+            ).first()
+            if equipment_row is None:
+                raise HTTPException(status_code=422, detail="equipment_id is unknown")
+
+    return {
+        "asset_scope_active": True,
+        "equipment_id": normalized_equipment_id,
+        "qr_asset_id": normalized_qr_asset_id,
+        "billing_scope_applicable": False,
+    }
+
+
+def _load_integrated_asset_scope_linked_ids(
+    *,
+    site: str | None,
+    allowed_sites: list[str] | None,
+    equipment_id: int | None,
+    qr_asset_id: int | None,
+) -> tuple[set[int], set[int]]:
+    asset_scope_active = equipment_id is not None or qr_asset_id is not None
+    if not asset_scope_active:
+        return set(), set()
+
+    inspection_stmt = select(inspections.c.id)
+    work_order_stmt = select(work_orders.c.id)
+    if site is not None:
+        inspection_stmt = inspection_stmt.where(inspections.c.site == site)
+        work_order_stmt = work_order_stmt.where(work_orders.c.site == site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return set(), set()
+        inspection_stmt = inspection_stmt.where(inspections.c.site.in_(allowed_sites))
+        work_order_stmt = work_order_stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    if equipment_id is not None:
+        inspection_stmt = inspection_stmt.where(inspections.c.equipment_id == equipment_id)
+        work_order_stmt = work_order_stmt.where(work_orders.c.equipment_id == equipment_id)
+    if qr_asset_id is not None:
+        inspection_stmt = inspection_stmt.where(inspections.c.qr_asset_id == qr_asset_id)
+        work_order_stmt = work_order_stmt.where(work_orders.c.qr_asset_id == qr_asset_id)
+
+    with get_conn() as conn:
+        inspection_ids = {int(row[0]) for row in conn.execute(inspection_stmt).all()}
+        work_order_ids = {int(row[0]) for row in conn.execute(work_order_stmt).all()}
+    return inspection_ids, work_order_ids
+
+
 def _build_official_document_automation_principal(*, site: str | None = None) -> dict[str, Any]:
     scope = [site] if site else [main_module.SITE_SCOPE_ALL]
     return {
@@ -345,6 +438,21 @@ def _create_overdue_work_order_for_document(
     actor_username = str(principal.get("username") or "unknown")
     due_at = _to_utc(row["due_at"]) if row.get("due_at") else now - timedelta(minutes=1)
     work_order_priority = "critical" if str(row.get("priority") or "medium") == "critical" else "high"
+    inspection_snapshot = {
+        "equipment_id": None,
+        "qr_asset_id": None,
+        "equipment_snapshot": None,
+        "equipment_location_snapshot": None,
+        "qr_id": None,
+        "checklist_set_id": None,
+        "checklist_version": None,
+    }
+    if row.get("linked_inspection_id") is not None:
+        inspection_row = conn.execute(
+            select(inspections).where(inspections.c.id == int(row["linked_inspection_id"])).limit(1)
+        ).mappings().first()
+        if inspection_row is not None and str(inspection_row.get("site") or "") == str(row.get("site") or ""):
+            inspection_snapshot = _ops_snapshot_values_from_inspection_row(dict(inspection_row))
     title = f"[공문기한초과] {str(row.get('title') or '').strip()[:160]}"
     description_lines = [
         f"기관: {str(row.get('organization') or '').strip()}",
@@ -365,6 +473,12 @@ def _create_overdue_work_order_for_document(
             assignee=None,
             reporter=actor_username,
             inspection_id=row.get("linked_inspection_id"),
+            equipment_id=inspection_snapshot["equipment_id"],
+            qr_asset_id=inspection_snapshot["qr_asset_id"],
+            equipment_snapshot=inspection_snapshot["equipment_snapshot"],
+            equipment_location_snapshot=inspection_snapshot["equipment_location_snapshot"],
+            qr_id=inspection_snapshot["qr_id"],
+            checklist_set_id=inspection_snapshot["checklist_set_id"],
             due_at=due_at,
             acknowledged_at=None,
             completed_at=None,
@@ -388,6 +502,11 @@ def _create_overdue_work_order_for_document(
             "official_document_id": int(row["id"]),
             "registry_number": row.get("registry_number"),
             "organization": row.get("organization"),
+            "equipment_id": inspection_snapshot["equipment_id"],
+            "qr_asset_id": inspection_snapshot["qr_asset_id"],
+            "equipment_snapshot": inspection_snapshot["equipment_snapshot"],
+            "qr_id": inspection_snapshot["qr_id"],
+            "checklist_set_id": inspection_snapshot["checklist_set_id"],
         },
     )
     conn.execute(
@@ -545,6 +664,8 @@ def _build_official_document_report(
     month: str | None = None,
     year: int | None = None,
     allowed_sites: list[str] | None = None,
+    linked_inspection_ids: set[int] | None = None,
+    linked_work_order_ids: set[int] | None = None,
 ) -> OfficialDocumentClosureReportRead:
     start, end, period_label = _period_bounds(period_type=period_type, month=month, year=year)
     stmt = select(official_documents).where(official_documents.c.received_at < end)
@@ -570,12 +691,20 @@ def _build_official_document_report(
     overdue_open_documents = 0
     linked_inspection_documents = 0
     linked_work_order_documents = 0
+    linked_asset_filter_applied = linked_inspection_ids is not None or linked_work_order_ids is not None
 
     for row in rows:
         status = _normalize_doc_status(row.get("status"))
         received_at = _to_utc(row["received_at"])
         due_at = _to_utc(row["due_at"]) if row.get("due_at") else None
         closed_at = _to_utc(row["closed_at"]) if row.get("closed_at") else None
+        linked_inspection_id = int(row["linked_inspection_id"]) if row.get("linked_inspection_id") is not None else None
+        linked_work_order_id = int(row["linked_work_order_id"]) if row.get("linked_work_order_id") is not None else None
+        if linked_asset_filter_applied:
+            matches_inspection = linked_inspection_id is not None and linked_inspection_id in (linked_inspection_ids or set())
+            matches_work_order = linked_work_order_id is not None and linked_work_order_id in (linked_work_order_ids or set())
+            if not (matches_inspection or matches_work_order):
+                continue
         received_in_period = start <= received_at < end
         closed_in_period_flag = closed_at is not None and start <= closed_at < end
         open_as_of_period_end = status != "closed" and received_at < end
@@ -592,9 +721,9 @@ def _build_official_document_report(
             open_documents += 1
         if is_overdue:
             overdue_open_documents += 1
-        if row.get("linked_inspection_id") is not None:
+        if linked_inspection_id is not None:
             linked_inspection_documents += 1
-        if row.get("linked_work_order_id") is not None:
+        if linked_work_order_id is not None:
             linked_work_order_documents += 1
 
         entries.append(
@@ -611,8 +740,8 @@ def _build_official_document_report(
                 priority=_normalize_doc_priority(row.get("priority")),
                 received_at=received_at,
                 due_at=due_at,
-                linked_inspection_id=int(row["linked_inspection_id"]) if row.get("linked_inspection_id") is not None else None,
-                linked_work_order_id=int(row["linked_work_order_id"]) if row.get("linked_work_order_id") is not None else None,
+                linked_inspection_id=linked_inspection_id,
+                linked_work_order_id=linked_work_order_id,
                 closed_report_title=str(row["closed_report_title"]) if row.get("closed_report_title") else None,
                 closure_summary=str(row.get("closure_summary") or ""),
                 closure_result=str(row.get("closure_result") or ""),
@@ -793,6 +922,8 @@ def _build_period_ops_summary(
     period_label: str,
     site: str | None,
     allowed_sites: list[str] | None,
+    equipment_id: int | None = None,
+    qr_asset_id: int | None = None,
 ) -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     inspections_stmt = (
@@ -805,6 +936,12 @@ def _build_period_ops_summary(
         .where(work_orders.c.created_at >= start)
         .where(work_orders.c.created_at < end)
     )
+    if equipment_id is not None:
+        inspections_stmt = inspections_stmt.where(inspections.c.equipment_id == equipment_id)
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.equipment_id == equipment_id)
+    if qr_asset_id is not None:
+        inspections_stmt = inspections_stmt.where(inspections.c.qr_asset_id == qr_asset_id)
+        work_orders_stmt = work_orders_stmt.where(work_orders.c.qr_asset_id == qr_asset_id)
     if site is not None:
         inspections_stmt = inspections_stmt.where(inspections.c.site == site)
         work_orders_stmt = work_orders_stmt.where(work_orders.c.site == site)
@@ -897,7 +1034,17 @@ def _build_integrated_billing_summary(
     end: datetime,
     site: str | None,
     allowed_sites: list[str] | None,
+    asset_scope_active: bool = False,
 ) -> dict[str, Any]:
+    if asset_scope_active:
+        return {
+            "statement_count": 0,
+            "utility_totals": {},
+            "total_amount": 0.0,
+            "common_fee_total": 0.0,
+            "scope_applicable": False,
+            "excluded_reason": "utility billing is unit-scoped and not linked to equipment_id/qr_asset_id",
+        }
     start_label = start.strftime("%Y-%m")
     end_label = end.strftime("%Y-%m")
     stmt = (
@@ -928,6 +1075,8 @@ def _build_integrated_billing_summary(
         "utility_totals": {},
         "total_amount": 0.0,
         "common_fee_total": 0.0,
+        "scope_applicable": True,
+        "excluded_reason": "",
     }
     with get_conn() as conn:
         rows = conn.execute(stmt.group_by(utility_billing_statements.c.utility_type)).all()
@@ -957,14 +1106,25 @@ def _build_integrated_report(
     month: str | None = None,
     year: int | None = None,
     allowed_sites: list[str] | None,
+    equipment_id: int | None = None,
+    qr_asset_id: int | None = None,
 ) -> IntegratedMonthlyFacilityReportRead:
     start, end, period_label = _period_bounds(period_type=period_type, month=month, year=year)
+    asset_scope = _resolve_integrated_asset_scope(equipment_id=equipment_id, qr_asset_id=qr_asset_id)
     ops_summary = _build_period_ops_summary(
         start=start,
         end=end,
         period_label=period_label,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=asset_scope["equipment_id"],
+        qr_asset_id=asset_scope["qr_asset_id"],
+    )
+    linked_inspection_ids, linked_work_order_ids = _load_integrated_asset_scope_linked_ids(
+        site=site,
+        allowed_sites=allowed_sites,
+        equipment_id=asset_scope["equipment_id"],
+        qr_asset_id=asset_scope["qr_asset_id"],
     )
     official_report = _build_official_document_report(
         period_type=period_type,
@@ -972,12 +1132,15 @@ def _build_integrated_report(
         year=year,
         site=site,
         allowed_sites=allowed_sites,
+        linked_inspection_ids=linked_inspection_ids if asset_scope["asset_scope_active"] else None,
+        linked_work_order_ids=linked_work_order_ids if asset_scope["asset_scope_active"] else None,
     )
     billing_summary = _build_integrated_billing_summary(
         start=start,
         end=end,
         site=site,
         allowed_sites=allowed_sites,
+        asset_scope_active=bool(asset_scope["asset_scope_active"]),
     )
     return IntegratedMonthlyFacilityReportRead(
         generated_at=ops_summary["generated_at"],
@@ -986,6 +1149,7 @@ def _build_integrated_report(
         month=period_label if period_type == "monthly" else None,
         year=int(period_label) if period_type == "annual" else None,
         site=site,
+        scope=asset_scope,
         merged_sections=["ops_inspections", "ops_work_orders", "official_documents", "utility_billing"],
         inspections=ops_summary["inspections"],
         work_orders=ops_summary["work_orders"],
@@ -996,6 +1160,9 @@ def _build_integrated_report(
             "overdue_open_documents": official_report.overdue_open_documents,
             "organization_counts": official_report.organization_counts,
             "status_counts": official_report.status_counts,
+            "linked_asset_filter_applied": bool(asset_scope["asset_scope_active"]),
+            "matching_linked_inspection_count": len(linked_inspection_ids) if asset_scope["asset_scope_active"] else 0,
+            "matching_linked_work_order_count": len(linked_work_order_ids) if asset_scope["asset_scope_active"] else 0,
         },
         billing=billing_summary,
     )
@@ -1009,6 +1176,9 @@ def _build_integrated_report_csv(report: IntegratedMonthlyFacilityReportRead) ->
     writer.writerow(["month", report.month or ""])
     writer.writerow(["year", report.year or ""])
     writer.writerow(["site", report.site or "ALL"])
+    writer.writerow(["asset_scope_active", report.scope.get("asset_scope_active", False)])
+    writer.writerow(["equipment_id", report.scope.get("equipment_id") or ""])
+    writer.writerow(["qr_asset_id", report.scope.get("qr_asset_id") or ""])
     writer.writerow(["generated_at", report.generated_at.isoformat()])
     writer.writerow(["merged_sections", ",".join(report.merged_sections)])
     writer.writerow([])
@@ -1057,6 +1227,9 @@ def _build_integrated_report_print_html(report: IntegratedMonthlyFacilityReportR
     <tr><td>Period Type</td><td>{html.escape(report.period_type)}</td></tr>
     <tr><td>Period</td><td>{html.escape(report.period_label)}</td></tr>
     <tr><td>Site</td><td>{html.escape(report.site or 'ALL')}</td></tr>
+    <tr><td>Asset Scope Active</td><td>{html.escape(str(bool(report.scope.get('asset_scope_active', False))))}</td></tr>
+    <tr><td>Equipment ID</td><td>{html.escape(str(report.scope.get('equipment_id') or '-'))}</td></tr>
+    <tr><td>QR Asset ID</td><td>{html.escape(str(report.scope.get('qr_asset_id') or '-'))}</td></tr>
     <tr><td>Generated At</td><td>{html.escape(report.generated_at.isoformat())}</td></tr>
     <tr><td>Merged Sections</td><td>{html.escape(', '.join(report.merged_sections))}</td></tr>
   </table>
@@ -1099,6 +1272,9 @@ def _build_integrated_report_pdf(report: IntegratedMonthlyFacilityReportRead) ->
         f"Period Type: {report.period_type}",
         f"Period Label: {report.period_label}",
         f"Site: {report.site or 'ALL'}",
+        f"Asset Scope Active: {bool(report.scope.get('asset_scope_active', False))}",
+        f"Equipment ID: {report.scope.get('equipment_id') or '-'}",
+        f"QR Asset ID: {report.scope.get('qr_asset_id') or '-'}",
         f"Generated At: {report.generated_at.isoformat()}",
         f"Merged Sections: {', '.join(report.merged_sections)}",
         "",
@@ -2083,6 +2259,8 @@ def print_official_document_annual_report(
 def get_integrated_monthly_report(
     month: str | None = Query(default=None, description="YYYY-MM"),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> IntegratedMonthlyFacilityReportRead:
     _require_site_access(principal, site)
@@ -2099,6 +2277,8 @@ def get_integrated_monthly_report(
         month=month,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
 
 
@@ -2106,6 +2286,8 @@ def get_integrated_monthly_report(
 def get_integrated_monthly_report_csv(
     month: str | None = Query(default=None, description="YYYY-MM"),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -2115,6 +2297,8 @@ def get_integrated_monthly_report_csv(
         month=month,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     csv_text = _build_integrated_report_csv(report)
     site_label = (report.site or "all").replace(" ", "_")
@@ -2124,7 +2308,12 @@ def get_integrated_monthly_report_csv(
         action="integrated_monthly_report_export_csv",
         resource_type="report",
         resource_id=f"integrated:monthly:{report.period_label}:{report.site or 'ALL'}",
-        detail={"month": report.month, "site": report.site},
+        detail={
+            "month": report.month,
+            "site": report.site,
+            "equipment_id": report.scope.get("equipment_id"),
+            "qr_asset_id": report.scope.get("qr_asset_id"),
+        },
     )
     return Response(
         content=csv_text,
@@ -2137,6 +2326,8 @@ def get_integrated_monthly_report_csv(
 def get_integrated_monthly_report_pdf(
     month: str | None = Query(default=None, description="YYYY-MM"),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -2146,6 +2337,8 @@ def get_integrated_monthly_report_pdf(
         month=month,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     pdf_bytes = _build_integrated_report_pdf(report)
     site_label = (report.site or "all").replace(" ", "_")
@@ -2155,7 +2348,12 @@ def get_integrated_monthly_report_pdf(
         action="integrated_monthly_report_export_pdf",
         resource_type="report",
         resource_id=f"integrated:monthly:{report.period_label}:{report.site or 'ALL'}",
-        detail={"month": report.month, "site": report.site},
+        detail={
+            "month": report.month,
+            "site": report.site,
+            "equipment_id": report.scope.get("equipment_id"),
+            "qr_asset_id": report.scope.get("qr_asset_id"),
+        },
     )
     return Response(
         content=pdf_bytes,
@@ -2168,6 +2366,8 @@ def get_integrated_monthly_report_pdf(
 def print_integrated_monthly_report(
     month: str | None = Query(default=None, description="YYYY-MM"),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> str:
     _require_site_access(principal, site)
@@ -2177,6 +2377,8 @@ def print_integrated_monthly_report(
         month=month,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     return _build_integrated_report_print_html(report)
 
@@ -2185,6 +2387,8 @@ def print_integrated_monthly_report(
 def get_integrated_annual_report(
     year: int | None = Query(default=None, ge=2000, le=2100),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> IntegratedMonthlyFacilityReportRead:
     _require_site_access(principal, site)
@@ -2201,6 +2405,8 @@ def get_integrated_annual_report(
         year=year,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
 
 
@@ -2208,6 +2414,8 @@ def get_integrated_annual_report(
 def get_integrated_annual_report_csv(
     year: int | None = Query(default=None, ge=2000, le=2100),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -2217,6 +2425,8 @@ def get_integrated_annual_report_csv(
         year=year,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     csv_text = _build_integrated_report_csv(report)
     site_label = (report.site or "all").replace(" ", "_")
@@ -2226,7 +2436,12 @@ def get_integrated_annual_report_csv(
         action="integrated_annual_report_export_csv",
         resource_type="report",
         resource_id=f"integrated:annual:{report.period_label}:{report.site or 'ALL'}",
-        detail={"year": report.year, "site": report.site},
+        detail={
+            "year": report.year,
+            "site": report.site,
+            "equipment_id": report.scope.get("equipment_id"),
+            "qr_asset_id": report.scope.get("qr_asset_id"),
+        },
     )
     return Response(
         content=csv_text,
@@ -2239,6 +2454,8 @@ def get_integrated_annual_report_csv(
 def get_integrated_annual_report_pdf(
     year: int | None = Query(default=None, ge=2000, le=2100),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:export")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -2248,6 +2465,8 @@ def get_integrated_annual_report_pdf(
         year=year,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     pdf_bytes = _build_integrated_report_pdf(report)
     site_label = (report.site or "all").replace(" ", "_")
@@ -2257,7 +2476,12 @@ def get_integrated_annual_report_pdf(
         action="integrated_annual_report_export_pdf",
         resource_type="report",
         resource_id=f"integrated:annual:{report.period_label}:{report.site or 'ALL'}",
-        detail={"year": report.year, "site": report.site},
+        detail={
+            "year": report.year,
+            "site": report.site,
+            "equipment_id": report.scope.get("equipment_id"),
+            "qr_asset_id": report.scope.get("qr_asset_id"),
+        },
     )
     return Response(
         content=pdf_bytes,
@@ -2270,6 +2494,8 @@ def get_integrated_annual_report_pdf(
 def print_integrated_annual_report(
     year: int | None = Query(default=None, ge=2000, le=2100),
     site: str | None = None,
+    equipment_id: int | None = Query(default=None, ge=1),
+    qr_asset_id: int | None = Query(default=None, ge=1),
     principal: dict[str, Any] = Depends(require_permission("reports:read")),
 ) -> str:
     _require_site_access(principal, site)
@@ -2279,6 +2505,8 @@ def print_integrated_annual_report(
         year=year,
         site=site,
         allowed_sites=allowed_sites,
+        equipment_id=equipment_id,
+        qr_asset_id=qr_asset_id,
     )
     return _build_integrated_report_print_html(report)
 

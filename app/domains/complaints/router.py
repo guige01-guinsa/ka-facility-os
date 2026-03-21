@@ -1,0 +1,232 @@
+"""Complaint routes."""
+
+from __future__ import annotations
+
+import re
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
+from fastapi.responses import HTMLResponse
+
+from app.domains.complaints import service
+from app.domains.complaints.schemas import (
+    ComplaintAttachmentRead,
+    ComplaintCaseCreate,
+    ComplaintCaseRead,
+    ComplaintCaseUpdate,
+    ComplaintCostItemCreate,
+    ComplaintCostItemRead,
+    ComplaintDetailRead,
+    ComplaintEventCreate,
+    ComplaintEventRead,
+    ComplaintHouseholdHistoryRead,
+    ComplaintMessageRead,
+    ComplaintMessageSend,
+)
+from app.domains.iam.core import _principal_site_scope
+from app.domains.iam.security import _require_site_access, require_permission
+from app.web.complaints import build_complaints_mobile_html
+
+
+router = APIRouter(tags=["complaints"])
+
+
+def _allowed_sites_for_principal(principal: dict[str, Any]) -> list[str] | None:
+    scope = _principal_site_scope(principal)
+    if "*" in scope:
+        return None
+    return scope
+
+
+def _safe_download_filename(value: str) -> str:
+    normalized = re.sub(r"[^0-9A-Za-z._-]+", "_", str(value or "").strip())
+    normalized = normalized.strip("._-")
+    return normalized or "complaint-attachment.bin"
+
+
+@router.get("/web/complaints", response_model=None)
+def complaints_mobile_page() -> HTMLResponse:
+    return HTMLResponse(build_complaints_mobile_html())
+
+
+@router.get("/api/complaints/households/history", response_model=ComplaintHouseholdHistoryRead)
+def get_household_history(
+    site: str,
+    building: str,
+    unit_number: str,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> ComplaintHouseholdHistoryRead:
+    _require_site_access(principal, site)
+    return service.get_household_history(
+        site=site,
+        building=building,
+        unit_number=unit_number,
+        allowed_sites=_allowed_sites_for_principal(principal),
+    )
+
+
+@router.get("/api/complaints", response_model=list[ComplaintCaseRead])
+def list_complaints(
+    site: Annotated[str | None, Query()] = None,
+    building: Annotated[str | None, Query()] = None,
+    unit_number: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    complaint_type: Annotated[str | None, Query()] = None,
+    assignee: Annotated[str | None, Query()] = None,
+    recurrence_flag: Annotated[bool | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> list[ComplaintCaseRead]:
+    _require_site_access(principal, site)
+    return service.list_cases(
+        site=site,
+        building=building,
+        unit_number=unit_number,
+        status=status,
+        complaint_type=complaint_type,
+        assignee=assignee,
+        recurrence_flag=recurrence_flag,
+        allowed_sites=_allowed_sites_for_principal(principal) if site is None else None,
+    )
+
+
+@router.post("/api/complaints", response_model=ComplaintCaseRead, status_code=201)
+def create_complaint(
+    payload: ComplaintCaseCreate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintCaseRead:
+    _require_site_access(principal, payload.site)
+    return service.create_case(payload=payload, principal=principal)
+
+
+@router.get("/api/complaints/{complaint_id}", response_model=ComplaintDetailRead)
+def get_complaint_detail(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> ComplaintDetailRead:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return detail
+
+
+@router.patch("/api/complaints/{complaint_id}", response_model=ComplaintCaseRead)
+def update_complaint(
+    complaint_id: int,
+    payload: ComplaintCaseUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintCaseRead:
+    existing = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, existing.case.site)
+    return service.update_case(complaint_id=complaint_id, payload=payload, principal=principal)
+
+
+@router.get("/api/complaints/{complaint_id}/events", response_model=list[ComplaintEventRead])
+def list_complaint_events(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> list[ComplaintEventRead]:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return detail.events
+
+
+@router.post("/api/complaints/{complaint_id}/events", response_model=ComplaintEventRead, status_code=201)
+def add_complaint_event(
+    complaint_id: int,
+    payload: ComplaintEventCreate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintEventRead:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.add_event(complaint_id=complaint_id, payload=payload, principal=principal)
+
+
+@router.get("/api/complaints/{complaint_id}/attachments", response_model=list[ComplaintAttachmentRead])
+def list_complaint_attachments(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> list[ComplaintAttachmentRead]:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return detail.attachments
+
+
+@router.post("/api/complaints/{complaint_id}/attachments", response_model=ComplaintAttachmentRead, status_code=201)
+async def upload_complaint_attachment(
+    complaint_id: int,
+    attachment_kind: str = Form(default="intake"),
+    note: str = Form(default=""),
+    file: UploadFile = File(...),
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintAttachmentRead:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    file_bytes = await file.read()
+    return service.add_attachment(
+        complaint_id=complaint_id,
+        attachment_kind=attachment_kind,
+        note=note,
+        file_name=file.filename or "upload.bin",
+        content_type=file.content_type or "application/octet-stream",
+        file_bytes=file_bytes,
+        principal=principal,
+    )
+
+
+@router.get("/api/complaints/attachments/{attachment_id}/download", response_model=None)
+def download_complaint_attachment(
+    attachment_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> Response:
+    payload = service.get_attachment_download_payload(attachment_id=attachment_id)
+    row = payload["row"]
+    _require_site_access(principal, row["site"])
+    return Response(
+        content=payload["file_bytes"],
+        media_type=str(row.get("content_type") or "application/octet-stream"),
+        headers={
+            "Content-Disposition": f'attachment; filename="{_safe_download_filename(str(row["file_name"]))}"',
+            "X-Complaint-Sha256": str(row.get("sha256") or ""),
+        },
+    )
+
+
+@router.get("/api/complaints/{complaint_id}/messages", response_model=list[ComplaintMessageRead])
+def list_complaint_messages(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> list[ComplaintMessageRead]:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return detail.messages
+
+
+@router.post("/api/complaints/{complaint_id}/messages", response_model=ComplaintMessageRead, status_code=201)
+def send_complaint_message(
+    complaint_id: int,
+    payload: ComplaintMessageSend,
+    principal: dict[str, Any] = Depends(require_permission("complaints:message")),
+) -> ComplaintMessageRead:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.send_case_message(complaint_id=complaint_id, payload=payload, principal=principal)
+
+
+@router.get("/api/complaints/{complaint_id}/cost-items", response_model=list[ComplaintCostItemRead])
+def list_complaint_cost_items(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> list[ComplaintCostItemRead]:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return detail.cost_items
+
+
+@router.post("/api/complaints/{complaint_id}/cost-items", response_model=ComplaintCostItemRead, status_code=201)
+def add_complaint_cost_item(
+    complaint_id: int,
+    payload: ComplaintCostItemCreate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:costs")),
+) -> ComplaintCostItemRead:
+    detail = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.add_cost_item(complaint_id=complaint_id, payload=payload, principal=principal)

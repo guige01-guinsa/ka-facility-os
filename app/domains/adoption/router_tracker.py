@@ -1,13 +1,237 @@
 """Adoption tracker routes extracted from app.main."""
 
-from fastapi import APIRouter
+import hashlib
+from datetime import datetime, timezone
+from os import getenv
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from sqlalchemy import insert, select, update
+
+from app.database import (
+    DATABASE_URL,
+    adoption_w02_evidence_files,
+    adoption_w02_site_runs,
+    adoption_w02_tracker_items,
+    adoption_w03_evidence_files,
+    adoption_w03_site_runs,
+    adoption_w03_tracker_items,
+    adoption_w04_evidence_files,
+    adoption_w04_site_runs,
+    adoption_w04_tracker_items,
+    adoption_w07_evidence_files,
+    adoption_w07_site_runs,
+    adoption_w07_tracker_items,
+    adoption_w09_evidence_files,
+    adoption_w09_site_runs,
+    adoption_w09_tracker_items,
+    adoption_w10_evidence_files,
+    adoption_w10_site_runs,
+    adoption_w10_tracker_items,
+    adoption_w11_evidence_files,
+    adoption_w11_site_runs,
+    adoption_w11_tracker_items,
+    adoption_w12_evidence_files,
+    adoption_w12_site_runs,
+    adoption_w12_tracker_items,
+    adoption_w13_evidence_files,
+    adoption_w13_site_runs,
+    adoption_w13_tracker_items,
+    adoption_w14_evidence_files,
+    adoption_w14_site_runs,
+    adoption_w14_tracker_items,
+    adoption_w15_evidence_files,
+    adoption_w15_site_runs,
+    adoption_w15_tracker_items,
+    get_conn,
+)
+from app.domains.adoption import tracker_service as adoption_tracker_service_module
+from app.domains.adoption.content import *  # noqa: F403
+from app.domains.iam.core import _principal_site_scope
+from app.domains.iam.security import _has_permission, _require_site_access, require_permission
+from app.domains.iam.service import _write_audit_log
+from app.domains.ops.inspection_service import (
+    EVIDENCE_SCAN_BLOCK_SUSPICIOUS,
+    _as_optional_datetime,
+    _is_allowed_evidence_content_type,
+    _normalize_evidence_storage_backend,
+    _read_evidence_blob,
+    _safe_download_filename,
+    _scan_evidence_bytes,
+    _write_evidence_blob,
+)
+from app.domains.ops.record_service import _to_json_text
+from app.schemas import (
+    AuthMeRead,
+    W02EvidenceRead,
+    W02TrackerBootstrapRequest,
+    W02TrackerBootstrapResponse,
+    W02TrackerCompletionRead,
+    W02TrackerCompletionRequest,
+    W02TrackerItemRead,
+    W02TrackerItemUpdate,
+    W02TrackerOverviewRead,
+    W02TrackerReadinessRead,
+    W03EvidenceRead,
+    W03TrackerBootstrapRequest,
+    W03TrackerBootstrapResponse,
+    W03TrackerCompletionRead,
+    W03TrackerCompletionRequest,
+    W03TrackerItemRead,
+    W03TrackerItemUpdate,
+    W03TrackerOverviewRead,
+    W03TrackerReadinessRead,
+    W04EvidenceRead,
+    W04TrackerBootstrapRequest,
+    W04TrackerBootstrapResponse,
+    W04TrackerCompletionRead,
+    W04TrackerCompletionRequest,
+    W04TrackerItemRead,
+    W04TrackerItemUpdate,
+    W04TrackerOverviewRead,
+    W04TrackerReadinessRead,
+    W07EvidenceRead,
+    W07TrackerBootstrapRequest,
+    W07TrackerBootstrapResponse,
+    W07TrackerCompletionRead,
+    W07TrackerCompletionRequest,
+    W07TrackerItemRead,
+    W07TrackerItemUpdate,
+    W07TrackerOverviewRead,
+    W07TrackerReadinessRead,
+    W09EvidenceRead,
+    W09TrackerBootstrapRequest,
+    W09TrackerBootstrapResponse,
+    W09TrackerCompletionRead,
+    W09TrackerCompletionRequest,
+    W09TrackerItemRead,
+    W09TrackerItemUpdate,
+    W09TrackerOverviewRead,
+    W09TrackerReadinessRead,
+    W10EvidenceRead,
+    W10TrackerBootstrapRequest,
+    W10TrackerBootstrapResponse,
+    W10TrackerCompletionRead,
+    W10TrackerCompletionRequest,
+    W10TrackerItemRead,
+    W10TrackerItemUpdate,
+    W10TrackerOverviewRead,
+    W10TrackerReadinessRead,
+    W11EvidenceRead,
+    W11TrackerBootstrapRequest,
+    W11TrackerBootstrapResponse,
+    W11TrackerCompletionRead,
+    W11TrackerCompletionRequest,
+    W11TrackerItemRead,
+    W11TrackerItemUpdate,
+    W11TrackerOverviewRead,
+    W11TrackerReadinessRead,
+    W12EvidenceRead,
+    W12TrackerBootstrapRequest,
+    W12TrackerBootstrapResponse,
+    W12TrackerCompletionRead,
+    W12TrackerCompletionRequest,
+    W12TrackerItemRead,
+    W12TrackerItemUpdate,
+    W12TrackerOverviewRead,
+    W12TrackerReadinessRead,
+    W13EvidenceRead,
+    W13TrackerBootstrapRequest,
+    W13TrackerBootstrapResponse,
+    W13TrackerCompletionRead,
+    W13TrackerCompletionRequest,
+    W13TrackerItemRead,
+    W13TrackerItemUpdate,
+    W13TrackerOverviewRead,
+    W13TrackerReadinessRead,
+    W14EvidenceRead,
+    W14TrackerBootstrapRequest,
+    W14TrackerBootstrapResponse,
+    W14TrackerCompletionRead,
+    W14TrackerCompletionRequest,
+    W14TrackerItemRead,
+    W14TrackerItemUpdate,
+    W14TrackerOverviewRead,
+    W14TrackerReadinessRead,
+    W15EvidenceRead,
+    W15TrackerBootstrapRequest,
+    W15TrackerBootstrapResponse,
+    W15TrackerCompletionRead,
+    W15TrackerCompletionRequest,
+    W15TrackerItemRead,
+    W15TrackerItemUpdate,
+    W15TrackerOverviewRead,
+    W15TrackerReadinessRead,
+)
+
+
+def _allowed_sites_for_principal(principal: dict[str, Any]) -> list[str] | None:
+    scope = _principal_site_scope(principal)
+    if "*" in scope:
+        return None
+    return scope
+
+
+_TRACKER_SERVICE_PREFIXES = (
+    "_adoption_w",
+    "_compute_w",
+    "_load_w",
+    "_reset_w",
+    "_row_to_w",
+)
+
+
+def _bind_tracker_service_symbols() -> None:
+    for key, value in adoption_tracker_service_module.__dict__.items():
+        if key.startswith(_TRACKER_SERVICE_PREFIXES):
+            globals()[key] = value
+
+
+_REQUIRED_NAMESPACE_NAMES = {
+    "Annotated",
+    "Any",
+    "AuthMeRead",
+    "Depends",
+    "File",
+    "Form",
+    "HTTPException",
+    "Query",
+    "Response",
+    "UploadFile",
+    "_build_w07_completion_package_zip",
+    "datetime",
+    "get_conn",
+    "insert",
+    "timezone",
+    "update",
+}
+_REQUIRED_NAMESPACE_PREFIXES = (
+    "W02_",
+    "W03_",
+    "W04_",
+    "W07_",
+    "W09_",
+    "W10_",
+    "W11_",
+    "W12_",
+    "W13_",
+    "W14_",
+    "W15_",
+)
+
+
+def _bind_namespace(namespace: dict[str, object]) -> None:
+    for key, value in namespace.items():
+        if key in _REQUIRED_NAMESPACE_NAMES or key.startswith(_REQUIRED_NAMESPACE_PREFIXES):
+            globals()[key] = value
 
 
 def build_router(namespace: dict[str, object]) -> APIRouter:
     """Compatibility extraction layer until adoption services are fully split."""
-    exported = {key: value for key, value in namespace.items() if key != "router"}
-    globals().update(exported)
+    _bind_tracker_service_symbols()
+    _bind_namespace(namespace)
     router = APIRouter(prefix="/api/adoption", tags=["adoption"])
+    app = namespace.get("app") or router
 
     @router.post("/w02/tracker/bootstrap", response_model=W02TrackerBootstrapResponse)
     def bootstrap_w02_tracker_items(

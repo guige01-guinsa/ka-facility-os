@@ -2,10 +2,148 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Annotated, Any
 
-APIRouter = main_module.APIRouter
-globals().update({key: value for key, value in main_module.__dict__.items() if key not in {"router", "ops_router", "admin_router"}})
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from sqlalchemy import delete, func, insert, select, update
+
+from app.database import get_conn
+from app.domains.iam.core import (
+    ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+    ADMIN_TOKEN_MAX_IDLE_DAYS,
+    ADMIN_TOKEN_MAX_TTL_DAYS,
+    ADMIN_TOKEN_REQUIRE_EXPIRY,
+    ADMIN_TOKEN_ROTATE_AFTER_DAYS,
+    ADMIN_TOKEN_ROTATE_WARNING_DAYS,
+    ENV_NAME,
+    _month_window,
+    _principal_site_scope,
+)
+from app.domains.iam.security import _has_explicit_permission, _require_site_access, require_permission
+from app.schemas import DashboardSummaryRead, JobRunRead
+
+from app.runtime_bridge import export_main_symbols_with_prefixes
+
+
+def _allowed_sites_for_principal(principal: dict[str, Any]) -> list[str] | None:
+    scope = _principal_site_scope(principal)
+    if "*" in scope:
+        return None
+    return scope
+
+_REQUIRED_MAIN_NAMES = (
+    "build_dashboard_summary",
+    "build_monthly_audit_archive",
+    "run_dr_rehearsal_job",
+    "run_ops_daily_check_job",
+    "run_ops_governance_gate_job",
+    "run_ops_governance_remediation_auto_assign_job",
+    "run_ops_governance_remediation_autopilot_job",
+    "run_ops_governance_remediation_escalation_job",
+    "run_ops_governance_remediation_kpi_job",
+    "run_ops_quality_report_job",
+    "_apply_ops_qr_asset_bulk_update_request",
+    "_as_datetime",
+    "_as_optional_datetime",
+    "_audit_signing_snapshot",
+    "_build_admin_security_dashboard_snapshot",
+    "_build_alert_channel_guard_snapshot",
+    "_build_alert_noise_policy_snapshot",
+    "_build_api_latency_snapshot",
+    "_build_deploy_checklist_payload",
+    "_build_evidence_archive_integrity_batch",
+    "_build_ops_checklist_response_meta",
+    "_build_ops_checklists_import_validation_csv",
+    "_build_ops_checklists_import_validation_report",
+    "_build_ops_daily_check_archive_csv",
+    "_build_ops_daily_check_archive_rows",
+    "_build_ops_daily_check_summary_csv",
+    "_build_ops_daily_check_summary_from_job_run",
+    "_build_ops_governance_gate_snapshot",
+    "_build_ops_governance_remediation_csv",
+    "_build_ops_governance_remediation_plan",
+    "_build_ops_qr_placeholder_report",
+    "_build_ops_quality_report_csv",
+    "_build_ops_quality_report_payload",
+    "_build_ops_quality_weekly_streak_snapshot",
+    "_build_policy_response_payload",
+    "_build_w22_remediation_sla_snapshot",
+    "_build_w23_remediation_workload_snapshot",
+    "_build_w24_remediation_kpi_snapshot",
+    "_build_w27_remediation_autopilot_guard_state",
+    "_build_w28_remediation_autopilot_history",
+    "_build_w28_remediation_autopilot_summary",
+    "_build_w29_remediation_autopilot_history_csv",
+    "_build_w29_remediation_autopilot_summary_csv",
+    "_build_w30_remediation_autopilot_anomalies",
+    "_build_w30_remediation_autopilot_anomalies_csv",
+    "_compute_w21_remediation_overview",
+    "_compute_w21_remediation_readiness",
+    "_configured_alert_targets",
+    "_ensure_mttr_slo_policy",
+    "_ensure_w26_remediation_autopilot_policy",
+    "_evaluate_w26_remediation_autopilot",
+    "_export_ops_special_checklists_payload_from_masters",
+    "_get_startup_preflight_snapshot",
+    "_has_explicit_permission",
+    "_latest_dr_rehearsal_payload",
+    "_latest_ops_governance_gate_payload",
+    "_latest_ops_governance_remediation_auto_assign_payload",
+    "_latest_ops_governance_remediation_autopilot_payload",
+    "_latest_ops_governance_remediation_escalation_payload",
+    "_latest_ops_governance_remediation_kpi_payload",
+    "_load_ops_special_checklists_payload",
+    "_load_w21_remediation_items",
+    "_month_window_bounds",
+    "_normalize_evidence_storage_backend",
+    "_normalize_mttr_slo_policy",
+    "_normalize_ops_daily_check_alert_level",
+    "_normalize_ops_equipment_key",
+    "_normalize_ops_master_lifecycle_state",
+    "_normalize_w21_tracker_status",
+    "_normalize_w26_remediation_autopilot_policy",
+    "_parse_job_detail_json",
+    "_qr_asset_placeholder_flags",
+    "_rate_limit_backend_snapshot",
+    "_record_ops_qr_asset_revisions",
+    "_reset_w21_completion_if_closed",
+    "_row_to_job_run_model",
+    "_row_to_w21_completion_model",
+    "_row_to_w21_remediation_item_model",
+    "_safe_download_filename",
+    "_sync_w21_remediation_tracker",
+    "_to_json_text",
+    "_upsert_w26_remediation_autopilot_policy",
+    "_write_audit_log",
+    "_write_job_run",
+)
+_REQUIRED_MAIN_PREFIXES = (
+    "ALERT_",
+    "DEPLOY_",
+    "DR_",
+    "EVIDENCE_",
+    "GOVERNANCE_",
+    "OPS_",
+    "PREFLIGHT_",
+    "RUNBOOK_",
+    "W07_",
+    "W21",
+    "admin_",
+    "alert_",
+    "inspections",
+    "job_runs",
+    "ops_",
+    "work_orders",
+)
+export_main_symbols_with_prefixes(
+    globals(),
+    names=_REQUIRED_MAIN_NAMES,
+    prefixes=_REQUIRED_MAIN_PREFIXES,
+)
 router = APIRouter(prefix="/api/ops", tags=["ops"])
 ops_router = router
 
@@ -124,6 +262,77 @@ def _get_deploy_smoke_check(checks: list[dict[str, str]], check_id: str) -> dict
         if str(item.get("id") or "") == check_id:
             return item
     return None
+
+
+def _prune_deploy_smoke_archive_files(*, archive_dir: Path, now: datetime) -> int:
+    cutoff = now - timedelta(days=max(1, DEPLOY_SMOKE_ARCHIVE_RETENTION_DAYS))
+    deleted_count = 0
+    for path in archive_dir.rglob("deploy-smoke-*.json"):
+        try:
+            modified_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)
+        except OSError:
+            continue
+        if modified_at >= cutoff:
+            continue
+        try:
+            path.unlink()
+            deleted_count += 1
+        except OSError:
+            continue
+    return deleted_count
+
+
+def _archive_deploy_smoke_artifact(
+    *,
+    payload: dict[str, Any],
+    detail: dict[str, Any],
+    principal: dict[str, Any],
+    status: str,
+    finished_at: datetime,
+) -> dict[str, Any]:
+    archive = {
+        "enabled": DEPLOY_SMOKE_ARCHIVE_ENABLED,
+        "path": DEPLOY_SMOKE_ARCHIVE_PATH,
+        "retention_days": max(1, DEPLOY_SMOKE_ARCHIVE_RETENTION_DAYS),
+        "json_file": None,
+        "sha256": None,
+        "size_bytes": 0,
+        "pruned_files": 0,
+        "error": None,
+    }
+    if not DEPLOY_SMOKE_ARCHIVE_ENABLED:
+        return archive
+
+    safe_deploy_id = _safe_download_filename(
+        str(payload.get("deploy_id") or "deploy-smoke"),
+        fallback="deploy-smoke",
+        max_length=80,
+    )
+    stamp = finished_at.strftime("%Y%m%dT%H%M%SZ")
+    try:
+        archive_dir = Path(DEPLOY_SMOKE_ARCHIVE_PATH) / finished_at.strftime("%Y") / finished_at.strftime("%m")
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        artifact_payload = {
+            "captured_at": datetime.now(timezone.utc).isoformat(),
+            "job_name": "deploy_smoke",
+            "status": status,
+            "principal": {
+                "username": str(principal.get("username") or "unknown"),
+                "role": str(principal.get("role") or "unknown"),
+            },
+            "payload": payload,
+            "detail": detail,
+        }
+        json_text = json.dumps(artifact_payload, ensure_ascii=False, indent=2, default=str)
+        json_file = archive_dir / f"deploy-smoke-{stamp}-{safe_deploy_id}.json"
+        json_file.write_text(json_text + "\n", encoding="utf-8")
+        archive["json_file"] = str(json_file)
+        archive["sha256"] = hashlib.sha256(json_text.encode("utf-8")).hexdigest()
+        archive["size_bytes"] = json_file.stat().st_size
+        archive["pruned_files"] = _prune_deploy_smoke_archive_files(archive_dir=Path(DEPLOY_SMOKE_ARCHIVE_PATH), now=finished_at)
+    except Exception as exc:  # pragma: no cover - filesystem dependent
+        archive["error"] = str(exc)
+    return archive
 
 
 @router.post("/deploy/smoke/record")
@@ -263,6 +472,31 @@ def post_ops_deploy_smoke_record(
         "notes": str(payload.get("notes") or ""),
         "checks": checks,
     }
+    artifact_archive = _archive_deploy_smoke_artifact(
+        payload=payload,
+        detail=detail,
+        principal=principal,
+        status=status,
+        finished_at=finished_at,
+    )
+    artifact_check_status = "ok"
+    artifact_check_message = "Deploy smoke artifact archived."
+    if not bool(artifact_archive.get("enabled")):
+        artifact_check_status = "skipped"
+        artifact_check_message = "Deploy smoke artifact archive is disabled."
+    elif artifact_archive.get("error"):
+        artifact_check_status = "warning"
+        artifact_check_message = "Deploy smoke artifact archive failed."
+        if status == "success":
+            status = "warning"
+    checks.append(
+        {
+            "id": "artifact_archive",
+            "status": artifact_check_status,
+            "message": artifact_check_message,
+        }
+    )
+    detail["artifact_archive"] = artifact_archive
     run_id = _write_job_run(
         job_name="deploy_smoke",
         trigger="api",
@@ -286,6 +520,7 @@ def post_ops_deploy_smoke_record(
             "runbook_gate_passed": runbook_gate_passed,
             "check_count": len(checks),
             "checklist_version": detail["checklist_version"],
+            "artifact_archive": detail.get("artifact_archive"),
         },
     )
     return {
@@ -1843,12 +2078,1798 @@ def get_ops_inspection_checklists_qr_asset_placeholders(
     return report
 
 
+def _ops_master_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _ops_master_item_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        lines = [line.strip() for line in value.splitlines()]
+        return [
+            {"seq": idx, "item": text}
+            for idx, text in enumerate(lines, start=1)
+            if text
+        ]
+    rows: list[dict[str, Any]] = []
+    if isinstance(value, list):
+        for idx, row in enumerate(value, start=1):
+            if isinstance(row, str):
+                text = row.strip()
+                if text:
+                    rows.append({"seq": idx, "item": text})
+                continue
+            if not isinstance(row, dict):
+                continue
+            text = _ops_master_text(row.get("item"))
+            if not text:
+                continue
+            try:
+                seq = int(row.get("seq"))
+            except (TypeError, ValueError):
+                seq = idx
+            rows.append({"seq": max(1, seq), "item": text})
+    return rows
+
+
+def _ops_count_rows(conn: Any, table: Any, where_clause: Any) -> int:
+    return int(
+        conn.execute(
+            select(func.count()).select_from(table).where(where_clause)
+        ).scalar_one()
+    )
+
+
+def _ops_equipment_reference_counts(conn: Any, equipment_id: int) -> dict[str, int]:
+    return {
+        "qr_asset_count": _ops_count_rows(conn, ops_qr_assets, ops_qr_assets.c.equipment_id == equipment_id),
+        "inspection_count": _ops_count_rows(conn, inspections, inspections.c.equipment_id == equipment_id),
+        "work_order_count": _ops_count_rows(conn, work_orders, work_orders.c.equipment_id == equipment_id),
+    }
+
+
+def _ops_qr_asset_reference_counts(conn: Any, qr_asset_id: int) -> dict[str, int]:
+    return {
+        "inspection_count": _ops_count_rows(conn, inspections, inspections.c.qr_asset_id == qr_asset_id),
+        "work_order_count": _ops_count_rows(conn, work_orders, work_orders.c.qr_asset_id == qr_asset_id),
+    }
+
+
+def _ops_checklist_set_reference_counts(conn: Any, set_id: str) -> dict[str, int]:
+    return {
+        "qr_asset_count": _ops_count_rows(conn, ops_qr_assets, ops_qr_assets.c.checklist_set_id == set_id),
+        "inspection_count": _ops_count_rows(conn, inspections, inspections.c.checklist_set_id == set_id),
+        "work_order_count": _ops_count_rows(conn, work_orders, work_orders.c.checklist_set_id == set_id),
+    }
+
+
+def _ops_get_catalog_rows() -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    payload = _load_ops_special_checklists_payload()
+    checklist_sets = payload.get("checklist_sets") if isinstance(payload.get("checklist_sets"), list) else []
+    equipment_assets = payload.get("equipment_assets") if isinstance(payload.get("equipment_assets"), list) else []
+    qr_assets = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    return checklist_sets, equipment_assets, qr_assets, payload
+
+
+def _ops_revision_actor_username(principal: dict[str, Any]) -> str:
+    return str(principal.get("username") or "unknown").strip() or "unknown"
+
+
+def _require_ops_master_owner(principal: dict[str, Any], *, action: str) -> None:
+    role = str(principal.get("role") or "").strip().lower()
+    if bool(principal.get("is_legacy", False)) or role == "owner" or _has_explicit_permission(principal, "workflow_locks:admin"):
+        return
+    raise HTTPException(status_code=403, detail=f"{action} requires owner role")
+
+
+def _require_ops_checklist_revision_action(
+    principal: dict[str, Any],
+    *,
+    action: str,
+    status: str | None = None,
+    created_by: str | None = None,
+) -> None:
+    role = str(principal.get("role") or "").strip().lower()
+    is_admin = bool(principal.get("is_legacy", False)) or _has_explicit_permission(principal, "workflow_locks:admin")
+    allowed = False
+
+    if action == "read":
+        allowed = role in {"operator", "manager", "owner", "auditor"} or is_admin
+    elif action in {"create", "submit"}:
+        allowed = role in {"operator", "manager", "owner"} or is_admin
+    elif action in {"approve", "reject"}:
+        allowed = role in {"manager", "owner"} or is_admin
+
+    if not allowed:
+        raise HTTPException(status_code=403, detail=f"Checklist revision action denied: {action}")
+
+    if status is None:
+        return
+    if action == "submit" and status not in {OPS_CHECKLIST_REVISION_STATUS_DRAFT, OPS_CHECKLIST_REVISION_STATUS_REJECTED}:
+        raise HTTPException(status_code=409, detail="submit requires draft or rejected status")
+    if action in {"approve", "reject"} and status != OPS_CHECKLIST_REVISION_STATUS_PENDING:
+        raise HTTPException(status_code=409, detail=f"{action} requires pending status")
+    if action == "approve" and created_by is not None and created_by == _ops_revision_actor_username(principal):
+        raise HTTPException(status_code=409, detail="Checklist revision cannot be self-approved")
+
+
+def _ops_checklist_revision_item_rows(value: Any) -> list[dict[str, Any]]:
+    rows = _ops_master_item_rows(value)
+    texts = [str(row.get("item") or "").strip() for row in rows if str(row.get("item") or "").strip()]
+    if not rows:
+        raise HTTPException(status_code=422, detail="items must be a non-empty array or newline text")
+    if len(texts) != len(set(texts)):
+        raise HTTPException(status_code=422, detail="items must be unique within the checklist set")
+    return rows
+
+
+def _ops_checklist_revision_items_json(items: list[dict[str, Any]]) -> str:
+    return _to_json_text(
+        {
+            "items": [
+                {
+                    "seq": int(row.get("seq") or idx),
+                    "item": str(row.get("item") or "").strip(),
+                }
+                for idx, row in enumerate(items, start=1)
+                if str(row.get("item") or "").strip()
+            ]
+        }
+    )
+
+
+def _ops_parse_checklist_revision_items(raw_value: Any) -> list[dict[str, Any]]:
+    if isinstance(raw_value, str):
+        try:
+            loaded = json.loads(raw_value)
+        except json.JSONDecodeError:
+            loaded = {}
+    elif isinstance(raw_value, dict):
+        loaded = raw_value
+    else:
+        loaded = {}
+    return _ops_master_item_rows(loaded.get("items"))
+
+
+def _ops_row_to_checklist_revision_model(
+    row: dict[str, Any],
+    *,
+    live_set_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    items = _ops_parse_checklist_revision_items(row.get("items_json"))
+    note = str(row.get("note") or "")
+    release_note = _ops_release_note_snapshot(note)
+    diff = _ops_build_checklist_revision_diff(row, live_set_by_id=live_set_by_id)
+    return {
+        "id": int(row["id"]),
+        "set_id": _ops_master_text(row.get("set_id")),
+        "base_version_no": int(row.get("base_version_no") or 0) or None,
+        "proposed_version_no": max(1, int(row.get("proposed_version_no") or 1)),
+        "label": _ops_master_text(row.get("label")),
+        "task_type": _ops_master_text(row.get("task_type")) or "점검",
+        "lifecycle_state": _normalize_ops_master_lifecycle_state(row.get("lifecycle_state")),
+        "items": items,
+        "item_count": len(items),
+        "note": note,
+        "status": str(row.get("status") or OPS_CHECKLIST_REVISION_STATUS_DRAFT),
+        "created_by": str(row.get("created_by") or "system"),
+        "submitted_by": str(row.get("submitted_by") or "").strip() or None,
+        "decided_by": str(row.get("decided_by") or "").strip() or None,
+        "decision_note": str(row.get("decision_note") or ""),
+        "release_note_valid": bool(release_note["valid"]),
+        "release_note_missing_sections": list(release_note["missing_sections"]),
+        "release_note_sections": dict(release_note["sections"]),
+        "release_note_length": int(release_note["length"]),
+        "live_version_no": diff.get("live_version_no"),
+        "diff": diff,
+        "created_at": (
+            _as_datetime(row.get("created_at")).isoformat()
+            if row.get("created_at") is not None
+            else None
+        ),
+        "updated_at": (
+            _as_datetime(row.get("updated_at")).isoformat()
+            if row.get("updated_at") is not None
+            else None
+        ),
+        "submitted_at": (
+            _as_datetime(row.get("submitted_at")).isoformat()
+            if row.get("submitted_at") is not None
+            else None
+        ),
+        "decided_at": (
+            _as_datetime(row.get("decided_at")).isoformat()
+            if row.get("decided_at") is not None
+            else None
+        ),
+        "applied_at": (
+            _as_datetime(row.get("applied_at")).isoformat()
+            if row.get("applied_at") is not None
+            else None
+        ),
+    }
+
+
+def _ops_validate_live_checklist_set_transition(
+    conn: Any,
+    *,
+    set_id: str,
+    items: list[dict[str, Any]],
+) -> None:
+    item_texts = [str(row.get("item") or "").strip() for row in items if str(row.get("item") or "").strip()]
+    blocked_qr_rows = conn.execute(
+        select(ops_qr_assets.c.qr_id, ops_qr_assets.c.default_item)
+        .where(ops_qr_assets.c.checklist_set_id == set_id)
+        .where(ops_qr_assets.c.default_item.is_not(None))
+    ).mappings().all()
+    invalid_defaults = [
+        str(row.get("default_item") or "").strip()
+        for row in blocked_qr_rows
+        if str(row.get("default_item") or "").strip()
+        and str(row.get("default_item") or "").strip() not in item_texts
+    ]
+    if invalid_defaults:
+        raise HTTPException(
+            status_code=409,
+            detail="qr assets still reference default_item values not present in the new checklist set",
+        )
+
+
+def _ops_master_row_matches_query(row: dict[str, Any], query_text: str, fields: tuple[str, ...]) -> bool:
+    normalized_query = _ops_master_text(query_text).lower()
+    if not normalized_query:
+        return True
+    haystack = " ".join(
+        _ops_master_text(row.get(field)).lower()
+        for field in fields
+    )
+    return normalized_query in haystack
+
+
+def _ops_master_row_matches_lifecycle(
+    row: dict[str, Any],
+    *,
+    lifecycle_state: str,
+    include_inactive: bool,
+) -> bool:
+    row_state = _normalize_ops_master_lifecycle_state(row.get("lifecycle_state"))
+    normalized_filter = _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else ""
+    if normalized_filter:
+        return row_state == normalized_filter
+    if include_inactive:
+        return True
+    return row_state == OPS_MASTER_LIFECYCLE_ACTIVE
+
+
+def _ops_filter_master_rows(
+    rows: list[dict[str, Any]],
+    *,
+    query_text: str,
+    lifecycle_state: str,
+    include_inactive: bool,
+    fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict)
+        and _ops_master_row_matches_lifecycle(
+            row,
+            lifecycle_state=lifecycle_state,
+            include_inactive=include_inactive,
+        )
+        and _ops_master_row_matches_query(row, query_text, fields)
+    ]
+
+
+def _ops_release_note_rules() -> dict[str, Any]:
+    return {
+        "required_sections": ["Summary", "Impact", "Rollback"],
+        "template": [
+            "Summary: what changed",
+            "Impact: operator/user effect",
+            "Rollback: how to revert safely",
+        ],
+        "min_length": 24,
+    }
+
+
+def _ops_parse_release_note_sections(note: str) -> dict[str, str]:
+    sections = {"summary": "", "impact": "", "rollback": ""}
+    current_key: str | None = None
+    for raw_line in str(note or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        matched_key: str | None = None
+        for key in sections:
+            prefix = f"{key}:"
+            if lowered.startswith(prefix):
+                matched_key = key
+                sections[key] = line[len(prefix):].strip()
+                current_key = key
+                break
+        if matched_key is not None:
+            continue
+        if current_key is not None:
+            sections[current_key] = (sections[current_key] + " " + line).strip()
+    return sections
+
+
+def _ops_release_note_snapshot(note: str) -> dict[str, Any]:
+    sections = _ops_parse_release_note_sections(note)
+    missing_sections = [
+        key.capitalize()
+        for key, value in sections.items()
+        if not str(value or "").strip()
+    ]
+    valid = len(str(note or "").strip()) >= int(_ops_release_note_rules()["min_length"]) and not missing_sections
+    return {
+        "valid": valid,
+        "missing_sections": missing_sections,
+        "sections": sections,
+        "length": len(str(note or "").strip()),
+    }
+
+
+def _ops_require_release_note(note: str) -> dict[str, Any]:
+    snapshot = _ops_release_note_snapshot(note)
+    if snapshot["valid"]:
+        return snapshot
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "message": "release note must include Summary, Impact, and Rollback sections",
+            "missing_sections": snapshot["missing_sections"],
+            "min_length": _ops_release_note_rules()["min_length"],
+        },
+    )
+
+
+def _ops_build_live_checklist_set_map(checklist_sets: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        _ops_master_text(row.get("set_id")): row
+        for row in checklist_sets
+        if isinstance(row, dict) and _ops_master_text(row.get("set_id"))
+    }
+
+
+def _ops_build_checklist_revision_diff(
+    row: dict[str, Any],
+    *,
+    live_set_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    set_id = _ops_master_text(row.get("set_id"))
+    live_row = live_set_by_id.get(set_id) if isinstance(live_set_by_id, dict) else None
+    revision_items = _ops_parse_checklist_revision_items(row.get("items_json"))
+    revision_item_texts = [str(item.get("item") or "").strip() for item in revision_items if str(item.get("item") or "").strip()]
+    live_items_raw = live_row.get("items") if isinstance(live_row, dict) and isinstance(live_row.get("items"), list) else []
+    live_item_texts = [
+        str(item.get("item") or "").strip()
+        for item in live_items_raw
+        if isinstance(item, dict) and str(item.get("item") or "").strip()
+    ]
+    added_items = [text for text in revision_item_texts if text not in live_item_texts]
+    removed_items = [text for text in live_item_texts if text not in revision_item_texts]
+    unchanged_items = [text for text in revision_item_texts if text in live_item_texts]
+    label_changed = (
+        True
+        if live_row is None
+        else _ops_master_text(live_row.get("label")) != _ops_master_text(row.get("label"))
+    )
+    task_type_changed = (
+        True
+        if live_row is None
+        else (_ops_master_text(live_row.get("task_type")) or "점검") != (_ops_master_text(row.get("task_type")) or "점검")
+    )
+    lifecycle_changed = (
+        True
+        if live_row is None
+        else _normalize_ops_master_lifecycle_state(live_row.get("lifecycle_state")) != _normalize_ops_master_lifecycle_state(row.get("lifecycle_state"))
+    )
+    live_version_no = (
+        max(1, int(live_row.get("version_no") or 1))
+        if isinstance(live_row, dict)
+        else None
+    )
+    return {
+        "live_exists": isinstance(live_row, dict),
+        "live_version_no": live_version_no,
+        "proposed_version_no": max(1, int(row.get("proposed_version_no") or 1)),
+        "label_changed": label_changed,
+        "task_type_changed": task_type_changed,
+        "lifecycle_changed": lifecycle_changed,
+        "added_count": len(added_items),
+        "removed_count": len(removed_items),
+        "unchanged_count": len(unchanged_items),
+        "has_changes": bool(label_changed or task_type_changed or lifecycle_changed or added_items or removed_items),
+        "added_items": added_items[:20],
+        "removed_items": removed_items[:20],
+        "unchanged_items": unchanged_items[:20],
+    }
+
+
+def _ops_qr_revision_quality_flags(row: dict[str, Any] | None) -> list[str]:
+    if not isinstance(row, dict):
+        return []
+    flags = list(_qr_asset_placeholder_flags(row))
+    if str(row.get("default_item") or "").strip() and not str(row.get("checklist_set_id") or "").strip():
+        flags.append("unknown_default_item")
+    return sorted({str(flag or "").strip() for flag in flags if str(flag or "").strip()})
+
+
+def _ops_row_to_qr_asset_revision_model(row: dict[str, Any]) -> dict[str, Any]:
+    def _load_json(raw_value: Any, *, fallback: Any) -> Any:
+        if isinstance(raw_value, str):
+            try:
+                loaded = json.loads(raw_value)
+            except json.JSONDecodeError:
+                return fallback
+            return loaded if isinstance(loaded, type(fallback)) else fallback
+        return fallback
+
+    before_row = _load_json(row.get("before_json"), fallback={})
+    after_row = _load_json(row.get("after_json"), fallback={})
+    quality_flags = _load_json(row.get("quality_flags_json"), fallback=[])
+    return {
+        "id": int(row["id"]),
+        "qr_asset_id": int(row["qr_asset_id"]) if row.get("qr_asset_id") is not None else None,
+        "qr_id": _ops_master_text(row.get("qr_id")),
+        "change_source": _ops_master_text(row.get("change_source")) or "qr_asset_api",
+        "change_action": _ops_master_text(row.get("change_action")) or "updated",
+        "change_note": str(row.get("change_note") or ""),
+        "before": before_row if isinstance(before_row, dict) else {},
+        "after": after_row if isinstance(after_row, dict) else {},
+        "quality_flags": quality_flags if isinstance(quality_flags, list) else [],
+        "created_by": _ops_master_text(row.get("created_by")) or "system",
+        "created_at": (
+            _as_datetime(row.get("created_at")).isoformat()
+            if row.get("created_at") is not None
+            else None
+        ),
+    }
+
+
+@router.get("/inspections/checklists/equipment-assets")
+def list_ops_inspection_equipment_assets(
+    q: Annotated[str | None, Query()] = None,
+    lifecycle_state: Annotated[str | None, Query()] = None,
+    include_inactive: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    _, equipment_assets, _, payload = _ops_get_catalog_rows()
+    filtered_rows = _ops_filter_master_rows(
+        equipment_assets,
+        query_text=_ops_master_text(q),
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("equipment", "location", "source"),
+    )
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/equipment-assets"),
+        "summary": {
+            "equipment_asset_count": len(filtered_rows),
+            "total_equipment_asset_count": len(equipment_assets),
+            "filters": {
+                "q": _ops_master_text(q) or None,
+                "lifecycle_state": _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else None,
+                "include_inactive": include_inactive,
+            },
+        },
+        "rows": filtered_rows,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_equipment_assets_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="equipment_assets",
+        detail=response["summary"],
+    )
+    return response
+
+
+@router.post("/inspections/checklists/equipment-assets")
+def create_ops_inspection_equipment_asset(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    equipment_name = _ops_master_text(body.get("equipment"))
+    location_name = _ops_master_text(body.get("location"))
+    lifecycle_state = _normalize_ops_master_lifecycle_state(body.get("lifecycle_state"))
+    if not equipment_name:
+        raise HTTPException(status_code=422, detail="equipment is required")
+    equipment_key = _normalize_ops_equipment_key(equipment_name, location_name)
+    if not equipment_key:
+        raise HTTPException(status_code=422, detail="equipment is required")
+
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_equipment_assets.c.id)
+            .where(ops_equipment_assets.c.equipment_key == equipment_key)
+            .limit(1)
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="equipment asset already exists")
+        result = conn.execute(
+            insert(ops_equipment_assets).values(
+                equipment_key=equipment_key,
+                equipment_name=equipment_name,
+                location_name=location_name or None,
+                lifecycle_state=lifecycle_state,
+                source="equipment_asset_api",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        equipment_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
+        if equipment_id is None:
+            row = conn.execute(
+                select(ops_equipment_assets.c.id)
+                .where(ops_equipment_assets.c.equipment_key == equipment_key)
+                .limit(1)
+            ).first()
+            equipment_id = row[0] if row is not None else None
+        if equipment_id is None:
+            raise HTTPException(status_code=500, detail="failed to create equipment asset")
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="equipment_asset_api").as_posix()
+    _, equipment_assets, _, _ = _ops_get_catalog_rows()
+    created = next((row for row in equipment_assets if int(row.get("equipment_id") or 0) == int(equipment_id)), None)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_equipment_asset_create",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(equipment_id),
+        detail={
+            "equipment": equipment_name,
+            "location": location_name or None,
+            "lifecycle_state": lifecycle_state,
+            "saved_path": saved_path,
+        },
+    )
+    return {
+        "saved": True,
+        "saved_path": saved_path,
+        "row": created,
+    }
+
+
+@router.patch("/inspections/checklists/equipment-assets/{equipment_id}")
+def update_ops_inspection_equipment_asset(
+    equipment_id: int,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_equipment_assets)
+            .where(ops_equipment_assets.c.id == equipment_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="equipment asset not found")
+
+        equipment_name = _ops_master_text(body.get("equipment")) or _ops_master_text(current.get("equipment_name"))
+        location_name = _ops_master_text(body.get("location")) or _ops_master_text(current.get("location_name"))
+        lifecycle_state = _normalize_ops_master_lifecycle_state(
+            body.get("lifecycle_state"),
+            default=_normalize_ops_master_lifecycle_state(current.get("lifecycle_state")),
+        )
+        equipment_key = _normalize_ops_equipment_key(equipment_name, location_name)
+        if not equipment_key:
+            raise HTTPException(status_code=422, detail="equipment is required")
+
+        duplicate = conn.execute(
+            select(ops_equipment_assets.c.id)
+            .where(ops_equipment_assets.c.equipment_key == equipment_key)
+            .where(ops_equipment_assets.c.id != equipment_id)
+            .limit(1)
+        ).first()
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="equipment asset key already exists")
+
+        conn.execute(
+            update(ops_equipment_assets)
+            .where(ops_equipment_assets.c.id == equipment_id)
+            .values(
+                equipment_key=equipment_key,
+                equipment_name=equipment_name,
+                location_name=location_name or None,
+                lifecycle_state=lifecycle_state,
+                source="equipment_asset_api",
+                updated_at=now,
+            )
+        )
+        conn.execute(
+            update(ops_qr_assets)
+            .where(ops_qr_assets.c.equipment_id == equipment_id)
+            .values(
+                equipment_snapshot=equipment_name,
+                equipment_location_snapshot=location_name or None,
+                source="equipment_asset_api",
+                updated_at=now,
+            )
+        )
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="equipment_asset_api").as_posix()
+    _, equipment_assets, _, _ = _ops_get_catalog_rows()
+    updated_row = next((row for row in equipment_assets if int(row.get("equipment_id") or 0) == equipment_id), None)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_equipment_asset_update",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(equipment_id),
+        detail={"saved_path": saved_path, "lifecycle_state": lifecycle_state},
+    )
+    return {
+        "saved": True,
+        "saved_path": saved_path,
+        "row": updated_row,
+    }
+
+
+@router.delete("/inspections/checklists/equipment-assets/{equipment_id}")
+def delete_ops_inspection_equipment_asset(
+    equipment_id: int,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_equipment_assets)
+            .where(ops_equipment_assets.c.id == equipment_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="equipment asset not found")
+        refs = _ops_equipment_reference_counts(conn, equipment_id)
+        if any(int(value) > 0 for value in refs.values()):
+            raise HTTPException(status_code=409, detail={"message": "equipment asset is still referenced", "references": refs})
+        conn.execute(delete(ops_equipment_assets).where(ops_equipment_assets.c.id == equipment_id))
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="equipment_asset_api").as_posix()
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_equipment_asset_delete",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(equipment_id),
+        detail={"saved_path": saved_path},
+    )
+    return {"deleted": True, "equipment_id": equipment_id, "saved_path": saved_path}
+
+
+@router.get("/inspections/checklists/sets")
+def list_ops_inspection_checklist_sets(
+    q: Annotated[str | None, Query()] = None,
+    lifecycle_state: Annotated[str | None, Query()] = None,
+    include_inactive: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    checklist_sets, _, _, payload = _ops_get_catalog_rows()
+    filtered_rows = _ops_filter_master_rows(
+        checklist_sets,
+        query_text=_ops_master_text(q),
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("set_id", "label", "task_type", "source"),
+    )
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/sets"),
+        "summary": {
+            "checklist_set_count": len(filtered_rows),
+            "total_checklist_set_count": len(checklist_sets),
+            "checklist_item_count": sum(int(row.get("item_count") or len(row.get("items") or [])) for row in filtered_rows if isinstance(row, dict)),
+            "filters": {
+                "q": _ops_master_text(q) or None,
+                "lifecycle_state": _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else None,
+                "include_inactive": include_inactive,
+            },
+        },
+        "rows": filtered_rows,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_sets_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="sets",
+        detail=response["summary"],
+    )
+    return response
+
+
+@router.post("/inspections/checklists/sets")
+def create_ops_inspection_checklist_set(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    _require_ops_master_owner(principal, action="Direct checklist set create")
+    body = payload if isinstance(payload, dict) else {}
+    set_id = _ops_master_text(body.get("set_id"))
+    label = _ops_master_text(body.get("label"))
+    task_type = _ops_master_text(body.get("task_type")) or "점검"
+    lifecycle_state = _normalize_ops_master_lifecycle_state(body.get("lifecycle_state"))
+    items = _ops_checklist_revision_item_rows(body.get("items"))
+    try:
+        version_no = int(body.get("version_no") or 1)
+    except (TypeError, ValueError):
+        version_no = 1
+    version_no = max(1, version_no)
+    if not set_id:
+        raise HTTPException(status_code=422, detail="set_id is required")
+    if not label:
+        raise HTTPException(status_code=422, detail="label is required")
+
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_checklist_sets.c.id)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .limit(1)
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="checklist set already exists")
+        conn.execute(
+            insert(ops_checklist_sets).values(
+                set_id=set_id,
+                label=label,
+                task_type=task_type,
+                version_no=version_no,
+                lifecycle_state=lifecycle_state,
+                source="checklist_set_api",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        conn.execute(
+            insert(ops_checklist_set_items),
+            [
+                {
+                    "set_id": set_id,
+                    "seq": int(row.get("seq") or idx),
+                    "item_text": str(row.get("item") or "").strip(),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for idx, row in enumerate(items, start=1)
+            ],
+        )
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="checklist_set_api").as_posix()
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    created = next((row for row in checklist_sets if _ops_master_text(row.get("set_id")) == set_id), None)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_set_create",
+        resource_type="ops_inspection_checklists",
+        resource_id=set_id,
+        detail={
+            "saved_path": saved_path,
+            "item_count": len(items),
+            "version_no": version_no,
+            "lifecycle_state": lifecycle_state,
+        },
+    )
+    return {"saved": True, "saved_path": saved_path, "row": created}
+
+
+@router.patch("/inspections/checklists/sets/{set_id}")
+def update_ops_inspection_checklist_set(
+    set_id: str,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    _require_ops_master_owner(principal, action="Direct checklist set update")
+    body = payload if isinstance(payload, dict) else {}
+    label = _ops_master_text(body.get("label"))
+    task_type = _ops_master_text(body.get("task_type")) or "점검"
+    items = _ops_checklist_revision_item_rows(body.get("items"))
+    if not label:
+        raise HTTPException(status_code=422, detail="label is required")
+
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_checklist_sets)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .limit(1)
+        ).mappings().first()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="checklist set not found")
+        _ops_validate_live_checklist_set_transition(conn, set_id=set_id, items=items)
+
+        now = datetime.now(timezone.utc)
+        lifecycle_state = _normalize_ops_master_lifecycle_state(
+            body.get("lifecycle_state"),
+            default=_normalize_ops_master_lifecycle_state(existing.get("lifecycle_state")),
+        )
+        try:
+            requested_version_no = int(body.get("version_no") or 0)
+        except (TypeError, ValueError):
+            requested_version_no = 0
+        current_version_no = max(1, int(existing.get("version_no") or 1))
+        version_no = max(current_version_no + 1, requested_version_no) if requested_version_no > 0 else current_version_no + 1
+        conn.execute(
+            update(ops_checklist_sets)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .values(
+                label=label,
+                task_type=task_type,
+                version_no=version_no,
+                lifecycle_state=lifecycle_state,
+                source="checklist_set_api",
+                updated_at=now,
+            )
+        )
+        conn.execute(delete(ops_checklist_set_items).where(ops_checklist_set_items.c.set_id == set_id))
+        conn.execute(
+            insert(ops_checklist_set_items),
+            [
+                {
+                    "set_id": set_id,
+                    "seq": int(row.get("seq") or idx),
+                    "item_text": str(row.get("item") or "").strip(),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for idx, row in enumerate(items, start=1)
+            ],
+        )
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="checklist_set_api").as_posix()
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    updated_row = next((row for row in checklist_sets if _ops_master_text(row.get("set_id")) == set_id), None)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_set_update",
+        resource_type="ops_inspection_checklists",
+        resource_id=set_id,
+        detail={
+            "saved_path": saved_path,
+            "item_count": len(items),
+            "version_no": version_no,
+            "lifecycle_state": lifecycle_state,
+        },
+    )
+    return {"saved": True, "saved_path": saved_path, "row": updated_row}
+
+
+@router.delete("/inspections/checklists/sets/{set_id}")
+def delete_ops_inspection_checklist_set(
+    set_id: str,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    _require_ops_master_owner(principal, action="Direct checklist set delete")
+    set_id = _ops_master_text(set_id)
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_checklist_sets.c.id)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .limit(1)
+        ).first()
+        if existing is None:
+            raise HTTPException(status_code=404, detail="checklist set not found")
+        refs = _ops_checklist_set_reference_counts(conn, set_id)
+        if any(int(value) > 0 for value in refs.values()):
+            raise HTTPException(status_code=409, detail={"message": "checklist set is still referenced", "references": refs})
+        conn.execute(delete(ops_checklist_set_items).where(ops_checklist_set_items.c.set_id == set_id))
+        conn.execute(delete(ops_checklist_sets).where(ops_checklist_sets.c.set_id == set_id))
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="checklist_set_api").as_posix()
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_set_delete",
+        resource_type="ops_inspection_checklists",
+        resource_id=set_id,
+        detail={"saved_path": saved_path},
+    )
+    return {"deleted": True, "set_id": set_id, "saved_path": saved_path}
+
+
+@router.get("/inspections/checklists/revisions")
+def list_ops_inspection_checklist_revisions(
+    set_id: Annotated[str | None, Query()] = None,
+    status: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    lifecycle_state: Annotated[str | None, Query()] = None,
+    include_inactive: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    _require_ops_checklist_revision_action(principal, action="read")
+    normalized_set_id = _ops_master_text(set_id)
+    normalized_status = _ops_master_text(status).lower()
+    normalized_query = _ops_master_text(q)
+    checklist_sets, _, _, payload = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+
+    stmt = select(ops_checklist_set_revisions).order_by(
+        ops_checklist_set_revisions.c.created_at.desc(),
+        ops_checklist_set_revisions.c.id.desc(),
+    )
+    if normalized_set_id:
+        stmt = stmt.where(ops_checklist_set_revisions.c.set_id == normalized_set_id)
+    if normalized_status:
+        stmt = stmt.where(ops_checklist_set_revisions.c.status == normalized_status)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    filtered_rows = [
+        row
+        for row in rows
+        if _ops_master_row_matches_lifecycle(
+            row,
+            lifecycle_state=_ops_master_text(lifecycle_state),
+            include_inactive=include_inactive,
+        )
+        and _ops_master_row_matches_query(
+            row,
+            normalized_query,
+            (
+                "set_id",
+                "label",
+                "task_type",
+                "note",
+                "status",
+                "created_by",
+                "submitted_by",
+                "decided_by",
+                "decision_note",
+            ),
+        )
+    ]
+    paged_rows = filtered_rows[offset : offset + limit]
+    models = [
+        _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+        for row in paged_rows
+    ]
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/revisions"),
+        "release_note_rules": _ops_release_note_rules(),
+        "summary": {
+            "revision_count": len(models),
+            "total_revision_count": len(filtered_rows),
+            "pending_count": sum(1 for row in models if str(row.get("status") or "") == OPS_CHECKLIST_REVISION_STATUS_PENDING),
+            "invalid_release_note_count": sum(1 for row in models if not bool(row.get("release_note_valid"))),
+            "filters": {
+                "set_id": normalized_set_id or None,
+                "status": normalized_status or None,
+                "q": normalized_query or None,
+                "lifecycle_state": _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else None,
+                "include_inactive": include_inactive,
+                "limit": limit,
+                "offset": offset,
+            },
+        },
+        "rows": models,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revisions_view",
+        resource_type="ops_inspection_checklists",
+        resource_id=normalized_set_id or "revisions",
+        detail=response["summary"],
+    )
+    return response
+
+
+@router.get("/inspections/checklists/revisions/{revision_id}")
+def get_ops_inspection_checklist_revision(
+    revision_id: int,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    _require_ops_checklist_revision_action(principal, action="read")
+    checklist_sets, _, _, payload = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+
+    with get_conn() as conn:
+        row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="checklist revision not found")
+
+    model = _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/revisions/{revision_id}"),
+        "release_note_rules": _ops_release_note_rules(),
+        "row": model,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revision_view",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(revision_id),
+        detail={
+            "set_id": model.get("set_id"),
+            "status": model.get("status"),
+            "has_changes": bool((model.get("diff") or {}).get("has_changes")),
+        },
+    )
+    return response
+
+
+@router.post("/inspections/checklists/revisions")
+def create_ops_inspection_checklist_revision(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    _require_ops_checklist_revision_action(principal, action="create")
+    body = payload if isinstance(payload, dict) else {}
+    set_id = _ops_master_text(body.get("set_id"))
+    if not set_id:
+        raise HTTPException(status_code=422, detail="set_id is required")
+
+    now = datetime.now(timezone.utc)
+    actor_username = _ops_revision_actor_username(principal)
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_checklist_sets)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .limit(1)
+        ).mappings().first()
+        label = _ops_master_text(body.get("label")) or _ops_master_text(current.get("label") if current is not None else None)
+        task_type = _ops_master_text(body.get("task_type")) or _ops_master_text(current.get("task_type") if current is not None else None) or "점검"
+        items = _ops_checklist_revision_item_rows(body.get("items"))
+        lifecycle_state = _normalize_ops_master_lifecycle_state(
+            body.get("lifecycle_state"),
+            default=_normalize_ops_master_lifecycle_state(current.get("lifecycle_state") if current is not None else None),
+        )
+        if not label:
+            raise HTTPException(status_code=422, detail="label is required")
+        try:
+            proposed_version_no = int(body.get("proposed_version_no") or body.get("version_no") or 0)
+        except (TypeError, ValueError):
+            proposed_version_no = 0
+        base_version_no = max(1, int(current.get("version_no") or 1)) if current is not None else None
+        if proposed_version_no <= 0:
+            proposed_version_no = (base_version_no or 0) + 1 if base_version_no is not None else 1
+        result = conn.execute(
+            insert(ops_checklist_set_revisions).values(
+                set_id=set_id,
+                base_version_no=base_version_no,
+                proposed_version_no=max(1, proposed_version_no),
+                label=label,
+                task_type=task_type,
+                lifecycle_state=lifecycle_state,
+                items_json=_ops_checklist_revision_items_json(items),
+                note=str(body.get("note") or ""),
+                status=OPS_CHECKLIST_REVISION_STATUS_DRAFT,
+                created_by=actor_username,
+                submitted_by=None,
+                decided_by=None,
+                decision_note="",
+                created_at=now,
+                updated_at=now,
+                submitted_at=None,
+                decided_at=None,
+                applied_at=None,
+            )
+        )
+        revision_id = int(result.inserted_primary_key[0])
+        row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="failed to create checklist revision")
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+    model = _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revision_create",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(revision_id),
+        detail={
+            "set_id": set_id,
+            "proposed_version_no": model.get("proposed_version_no"),
+            "lifecycle_state": lifecycle_state,
+        },
+    )
+    return {"saved": True, "release_note_rules": _ops_release_note_rules(), "row": model}
+
+
+@router.post("/inspections/checklists/revisions/{revision_id}/submit")
+def submit_ops_inspection_checklist_revision(
+    revision_id: int,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    actor_username = _ops_revision_actor_username(principal)
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="checklist revision not found")
+        _require_ops_checklist_revision_action(
+            principal,
+            action="submit",
+            status=str(current.get("status") or OPS_CHECKLIST_REVISION_STATUS_DRAFT),
+        )
+        note = str(body.get("note") or current.get("note") or "")
+        _ops_require_release_note(note)
+        conn.execute(
+            update(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .values(
+                note=note,
+                status=OPS_CHECKLIST_REVISION_STATUS_PENDING,
+                submitted_by=actor_username,
+                submitted_at=now,
+                updated_at=now,
+            )
+        )
+        row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="failed to submit checklist revision")
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+    model = _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revision_submit",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(revision_id),
+        detail={"set_id": model.get("set_id"), "status": model.get("status")},
+    )
+    return {"saved": True, "release_note_rules": _ops_release_note_rules(), "row": model}
+
+
+@router.post("/inspections/checklists/revisions/{revision_id}/approve")
+def approve_ops_inspection_checklist_revision(
+    revision_id: int,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    actor_username = _ops_revision_actor_username(principal)
+    decision_note = str(body.get("note") or "")
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        revision_row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+        if revision_row is None:
+            raise HTTPException(status_code=404, detail="checklist revision not found")
+        _require_ops_checklist_revision_action(
+            principal,
+            action="approve",
+            status=str(revision_row.get("status") or OPS_CHECKLIST_REVISION_STATUS_DRAFT),
+            created_by=str(revision_row.get("created_by") or ""),
+        )
+        _ops_require_release_note(str(revision_row.get("note") or ""))
+
+        set_id = _ops_master_text(revision_row.get("set_id"))
+        items = _ops_parse_checklist_revision_items(revision_row.get("items_json"))
+        _ops_validate_live_checklist_set_transition(conn, set_id=set_id, items=items)
+        current = conn.execute(
+            select(ops_checklist_sets)
+            .where(ops_checklist_sets.c.set_id == set_id)
+            .limit(1)
+        ).mappings().first()
+        try:
+            proposed_version_no = int(revision_row.get("proposed_version_no") or 1)
+        except (TypeError, ValueError):
+            proposed_version_no = 1
+        if current is None:
+            applied_version_no = max(1, proposed_version_no)
+            conn.execute(
+                insert(ops_checklist_sets).values(
+                    set_id=set_id,
+                    label=_ops_master_text(revision_row.get("label")),
+                    task_type=_ops_master_text(revision_row.get("task_type")) or "점검",
+                    version_no=applied_version_no,
+                    lifecycle_state=_normalize_ops_master_lifecycle_state(revision_row.get("lifecycle_state")),
+                    source="checklist_revision_approval",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        else:
+            current_version_no = max(1, int(current.get("version_no") or 1))
+            applied_version_no = max(current_version_no + 1, proposed_version_no)
+            conn.execute(
+                update(ops_checklist_sets)
+                .where(ops_checklist_sets.c.set_id == set_id)
+                .values(
+                    label=_ops_master_text(revision_row.get("label")),
+                    task_type=_ops_master_text(revision_row.get("task_type")) or "점검",
+                    version_no=applied_version_no,
+                    lifecycle_state=_normalize_ops_master_lifecycle_state(revision_row.get("lifecycle_state")),
+                    source="checklist_revision_approval",
+                    updated_at=now,
+                )
+            )
+        conn.execute(delete(ops_checklist_set_items).where(ops_checklist_set_items.c.set_id == set_id))
+        conn.execute(
+            insert(ops_checklist_set_items),
+            [
+                {
+                    "set_id": set_id,
+                    "seq": int(row.get("seq") or idx),
+                    "item_text": str(row.get("item") or "").strip(),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+                for idx, row in enumerate(items, start=1)
+                if str(row.get("item") or "").strip()
+            ],
+        )
+        conn.execute(
+            update(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .values(
+                proposed_version_no=applied_version_no,
+                status=OPS_CHECKLIST_REVISION_STATUS_APPROVED,
+                decided_by=actor_username,
+                decision_note=decision_note,
+                decided_at=now,
+                applied_at=now,
+                updated_at=now,
+            )
+        )
+        row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="checklist_revision_approval").as_posix()
+    if row is None:
+        raise HTTPException(status_code=500, detail="failed to approve checklist revision")
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+    model = _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revision_approve",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(revision_id),
+        detail={
+            "set_id": model.get("set_id"),
+            "proposed_version_no": model.get("proposed_version_no"),
+            "saved_path": saved_path,
+        },
+    )
+    return {"saved": True, "saved_path": saved_path, "release_note_rules": _ops_release_note_rules(), "row": model}
+
+
+@router.post("/inspections/checklists/revisions/{revision_id}/reject")
+def reject_ops_inspection_checklist_revision(
+    revision_id: int,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    actor_username = _ops_revision_actor_username(principal)
+    decision_note = str(body.get("note") or "")
+    now = datetime.now(timezone.utc)
+
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="checklist revision not found")
+        _require_ops_checklist_revision_action(
+            principal,
+            action="reject",
+            status=str(current.get("status") or OPS_CHECKLIST_REVISION_STATUS_DRAFT),
+        )
+        conn.execute(
+            update(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .values(
+                status=OPS_CHECKLIST_REVISION_STATUS_REJECTED,
+                decided_by=actor_username,
+                decision_note=decision_note,
+                decided_at=now,
+                applied_at=None,
+                updated_at=now,
+            )
+        )
+        row = conn.execute(
+            select(ops_checklist_set_revisions)
+            .where(ops_checklist_set_revisions.c.id == revision_id)
+            .limit(1)
+        ).mappings().first()
+
+    if row is None:
+        raise HTTPException(status_code=500, detail="failed to reject checklist revision")
+    checklist_sets, _, _, _ = _ops_get_catalog_rows()
+    live_set_by_id = _ops_build_live_checklist_set_map(checklist_sets)
+    model = _ops_row_to_checklist_revision_model(row, live_set_by_id=live_set_by_id)
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklist_revision_reject",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(revision_id),
+        detail={"set_id": model.get("set_id"), "status": model.get("status")},
+    )
+    return {"saved": True, "release_note_rules": _ops_release_note_rules(), "row": model}
+
+
+@router.get("/inspections/checklists/qr-assets")
+def list_ops_inspection_qr_assets(
+    q: Annotated[str | None, Query()] = None,
+    lifecycle_state: Annotated[str | None, Query()] = None,
+    include_inactive: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    _, _, qr_assets, payload = _ops_get_catalog_rows()
+    filtered_rows = _ops_filter_master_rows(
+        qr_assets,
+        query_text=_ops_master_text(q),
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("qr_id", "equipment", "location", "checklist_set_id", "default_item"),
+    )
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/qr-assets"),
+        "summary": {
+            "qr_asset_count": len(filtered_rows),
+            "total_qr_asset_count": len(qr_assets),
+            "filters": {
+                "q": _ops_master_text(q) or None,
+                "lifecycle_state": _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else None,
+                "include_inactive": include_inactive,
+            },
+        },
+        "rows": filtered_rows,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_qr_assets_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="qr_assets",
+        detail=response["summary"],
+    )
+    return response
+
+
+@router.get("/inspections/checklists/qr-assets/revisions")
+def list_ops_inspection_qr_asset_revisions(
+    qr_id: Annotated[str | None, Query()] = None,
+    change_source: Annotated[str | None, Query()] = None,
+    change_action: Annotated[str | None, Query()] = None,
+    q: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    payload = _load_ops_special_checklists_payload()
+    normalized_qr_id = _ops_master_text(qr_id)
+    normalized_source = _ops_master_text(change_source)
+    normalized_action = _ops_master_text(change_action)
+    normalized_query = _ops_master_text(q)
+
+    stmt = select(ops_qr_asset_revisions).order_by(
+        ops_qr_asset_revisions.c.created_at.desc(),
+        ops_qr_asset_revisions.c.id.desc(),
+    )
+    if normalized_qr_id:
+        stmt = stmt.where(ops_qr_asset_revisions.c.qr_id == normalized_qr_id)
+    if normalized_source:
+        stmt = stmt.where(ops_qr_asset_revisions.c.change_source == normalized_source)
+    if normalized_action:
+        stmt = stmt.where(ops_qr_asset_revisions.c.change_action == normalized_action)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    filtered_rows = [
+        row
+        for row in rows
+        if _ops_master_row_matches_query(
+            row,
+            normalized_query,
+            ("qr_id", "change_source", "change_action", "change_note", "created_by"),
+        )
+    ]
+    paged_rows = filtered_rows[offset : offset + limit]
+    models = [_ops_row_to_qr_asset_revision_model(row) for row in paged_rows]
+    response = {
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/qr-assets/revisions"),
+        "summary": {
+            "revision_count": len(models),
+            "total_revision_count": len(filtered_rows),
+            "filters": {
+                "qr_id": normalized_qr_id or None,
+                "change_source": normalized_source or None,
+                "change_action": normalized_action or None,
+                "q": normalized_query or None,
+                "limit": limit,
+                "offset": offset,
+            },
+        },
+        "rows": models,
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_qr_asset_revisions_view",
+        resource_type="ops_inspection_checklists",
+        resource_id=normalized_qr_id or "qr_asset_revisions",
+        detail=response["summary"],
+    )
+    return response
+
+
+@router.post("/inspections/checklists/qr-assets")
+def create_ops_inspection_qr_asset(
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    qr_id = _ops_master_text(body.get("qr_id"))
+    checklist_set_id = _ops_master_text(body.get("checklist_set_id"))
+    default_item = _ops_master_text(body.get("default_item"))
+    equipment_id = int(body.get("equipment_id") or 0)
+    lifecycle_state = _normalize_ops_master_lifecycle_state(body.get("lifecycle_state"))
+    if not qr_id:
+        raise HTTPException(status_code=422, detail="qr_id is required")
+    if equipment_id <= 0:
+        raise HTTPException(status_code=422, detail="equipment_id is required")
+    if not checklist_set_id:
+        raise HTTPException(status_code=422, detail="checklist_set_id is required")
+
+    now = datetime.now(timezone.utc)
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(ops_qr_assets.c.id).where(ops_qr_assets.c.qr_id == qr_id).limit(1)
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="qr asset already exists")
+        equipment_row = conn.execute(
+            select(ops_equipment_assets)
+            .where(ops_equipment_assets.c.id == equipment_id)
+            .limit(1)
+        ).mappings().first()
+        if equipment_row is None:
+            raise HTTPException(status_code=422, detail="equipment_id is unknown")
+        if lifecycle_state == OPS_MASTER_LIFECYCLE_ACTIVE and _normalize_ops_master_lifecycle_state(equipment_row.get("lifecycle_state")) != OPS_MASTER_LIFECYCLE_ACTIVE:
+            raise HTTPException(status_code=422, detail="active qr asset requires active equipment_id")
+        checklist_row = conn.execute(
+            select(ops_checklist_sets.c.id, ops_checklist_sets.c.lifecycle_state)
+            .where(ops_checklist_sets.c.set_id == checklist_set_id)
+            .limit(1)
+        ).mappings().first()
+        if checklist_row is None:
+            raise HTTPException(status_code=422, detail="checklist_set_id is unknown")
+        if lifecycle_state == OPS_MASTER_LIFECYCLE_ACTIVE and _normalize_ops_master_lifecycle_state(checklist_row.get("lifecycle_state")) != OPS_MASTER_LIFECYCLE_ACTIVE:
+            raise HTTPException(status_code=422, detail="active qr asset requires active checklist_set_id")
+        if default_item:
+            checklist_item = conn.execute(
+                select(ops_checklist_set_items.c.id)
+                .where(ops_checklist_set_items.c.set_id == checklist_set_id)
+                .where(ops_checklist_set_items.c.item_text == default_item)
+                .limit(1)
+            ).first()
+            if checklist_item is None:
+                raise HTTPException(status_code=422, detail="default_item is not registered in checklist_set_id")
+        result = conn.execute(
+            insert(ops_qr_assets).values(
+                qr_id=qr_id,
+                equipment_id=equipment_id,
+                equipment_snapshot=_ops_master_text(equipment_row.get("equipment_name")),
+                equipment_location_snapshot=_ops_master_text(equipment_row.get("location_name")) or None,
+                default_item=default_item or None,
+                checklist_set_id=checklist_set_id,
+                lifecycle_state=lifecycle_state,
+                source="qr_asset_api",
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        qr_asset_id = result.inserted_primary_key[0] if result.inserted_primary_key else None
+        if qr_asset_id is None:
+            row = conn.execute(
+                select(ops_qr_assets.c.id).where(ops_qr_assets.c.qr_id == qr_id).limit(1)
+            ).first()
+            qr_asset_id = row[0] if row is not None else None
+        if qr_asset_id is None:
+            raise HTTPException(status_code=500, detail="failed to create qr asset")
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="qr_asset_api").as_posix()
+    _, _, qr_assets, _ = _ops_get_catalog_rows()
+    created = next((row for row in qr_assets if int(row.get("qr_asset_id") or 0) == int(qr_asset_id)), None)
+    _record_ops_qr_asset_revisions(
+        [
+            {
+                "qr_asset_id": qr_asset_id,
+                "qr_id": qr_id,
+                "change_source": "qr_asset_api",
+                "change_action": "created",
+                "change_note": "qr asset created via API",
+                "before": {},
+                "after": created or {},
+                "quality_flags": _ops_qr_revision_quality_flags(created),
+                "created_by": _ops_revision_actor_username(principal),
+                "created_at": now,
+            }
+        ]
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_qr_asset_create",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(qr_asset_id),
+        detail={"saved_path": saved_path, "qr_id": qr_id, "lifecycle_state": lifecycle_state},
+    )
+    return {"saved": True, "saved_path": saved_path, "row": created}
+
+
+@router.patch("/inspections/checklists/qr-assets/{qr_asset_id}")
+def update_ops_inspection_qr_asset(
+    qr_asset_id: int,
+    payload: dict[str, Any] | None = None,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    body = payload if isinstance(payload, dict) else {}
+    _, _, qr_assets_before, _ = _ops_get_catalog_rows()
+    before_snapshot = next((row for row in qr_assets_before if int(row.get("qr_asset_id") or 0) == qr_asset_id), None)
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_qr_assets)
+            .where(ops_qr_assets.c.id == qr_asset_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="qr asset not found")
+
+        qr_id = _ops_master_text(body.get("qr_id")) or _ops_master_text(current.get("qr_id"))
+        checklist_set_id = _ops_master_text(body.get("checklist_set_id")) or _ops_master_text(current.get("checklist_set_id"))
+        default_item = _ops_master_text(body.get("default_item"))
+        if not default_item:
+            default_item = _ops_master_text(current.get("default_item"))
+        lifecycle_state = _normalize_ops_master_lifecycle_state(
+            body.get("lifecycle_state"),
+            default=_normalize_ops_master_lifecycle_state(current.get("lifecycle_state")),
+        )
+        equipment_id_raw = body.get("equipment_id")
+        equipment_id = int(equipment_id_raw or current.get("equipment_id") or 0)
+        if not qr_id:
+            raise HTTPException(status_code=422, detail="qr_id is required")
+        if equipment_id <= 0:
+            raise HTTPException(status_code=422, detail="equipment_id is required")
+        if not checklist_set_id:
+            raise HTTPException(status_code=422, detail="checklist_set_id is required")
+
+        duplicate = conn.execute(
+            select(ops_qr_assets.c.id)
+            .where(ops_qr_assets.c.qr_id == qr_id)
+            .where(ops_qr_assets.c.id != qr_asset_id)
+            .limit(1)
+        ).first()
+        if duplicate is not None:
+            raise HTTPException(status_code=409, detail="qr_id already exists")
+        equipment_row = conn.execute(
+            select(ops_equipment_assets)
+            .where(ops_equipment_assets.c.id == equipment_id)
+            .limit(1)
+        ).mappings().first()
+        if equipment_row is None:
+            raise HTTPException(status_code=422, detail="equipment_id is unknown")
+        if lifecycle_state == OPS_MASTER_LIFECYCLE_ACTIVE and _normalize_ops_master_lifecycle_state(equipment_row.get("lifecycle_state")) != OPS_MASTER_LIFECYCLE_ACTIVE:
+            raise HTTPException(status_code=422, detail="active qr asset requires active equipment_id")
+        checklist_row = conn.execute(
+            select(ops_checklist_sets.c.id, ops_checklist_sets.c.lifecycle_state)
+            .where(ops_checklist_sets.c.set_id == checklist_set_id)
+            .limit(1)
+        ).mappings().first()
+        if checklist_row is None:
+            raise HTTPException(status_code=422, detail="checklist_set_id is unknown")
+        if lifecycle_state == OPS_MASTER_LIFECYCLE_ACTIVE and _normalize_ops_master_lifecycle_state(checklist_row.get("lifecycle_state")) != OPS_MASTER_LIFECYCLE_ACTIVE:
+            raise HTTPException(status_code=422, detail="active qr asset requires active checklist_set_id")
+        if default_item:
+            checklist_item = conn.execute(
+                select(ops_checklist_set_items.c.id)
+                .where(ops_checklist_set_items.c.set_id == checklist_set_id)
+                .where(ops_checklist_set_items.c.item_text == default_item)
+                .limit(1)
+            ).first()
+            if checklist_item is None:
+                raise HTTPException(status_code=422, detail="default_item is not registered in checklist_set_id")
+
+        conn.execute(
+            update(ops_qr_assets)
+            .where(ops_qr_assets.c.id == qr_asset_id)
+            .values(
+                qr_id=qr_id,
+                equipment_id=equipment_id,
+                equipment_snapshot=_ops_master_text(equipment_row.get("equipment_name")),
+                equipment_location_snapshot=_ops_master_text(equipment_row.get("location_name")) or None,
+                default_item=default_item or None,
+                checklist_set_id=checklist_set_id,
+                lifecycle_state=lifecycle_state,
+                source="qr_asset_api",
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="qr_asset_api").as_posix()
+    _, _, qr_assets, _ = _ops_get_catalog_rows()
+    updated_row = next((row for row in qr_assets if int(row.get("qr_asset_id") or 0) == qr_asset_id), None)
+    _record_ops_qr_asset_revisions(
+        [
+            {
+                "qr_asset_id": qr_asset_id,
+                "qr_id": _ops_master_text(updated_row.get("qr_id") if isinstance(updated_row, dict) else before_snapshot.get("qr_id") if isinstance(before_snapshot, dict) else ""),
+                "change_source": "qr_asset_api",
+                "change_action": "updated",
+                "change_note": "qr asset updated via API",
+                "before": before_snapshot or {},
+                "after": updated_row or {},
+                "quality_flags": _ops_qr_revision_quality_flags(updated_row or before_snapshot),
+                "created_by": _ops_revision_actor_username(principal),
+                "created_at": datetime.now(timezone.utc),
+            }
+        ]
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_qr_asset_update",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(qr_asset_id),
+        detail={"saved_path": saved_path, "lifecycle_state": lifecycle_state},
+    )
+    return {"saved": True, "saved_path": saved_path, "row": updated_row}
+
+
+@router.delete("/inspections/checklists/qr-assets/{qr_asset_id}")
+def delete_ops_inspection_qr_asset(
+    qr_asset_id: int,
+    principal: dict[str, Any] = Depends(require_permission("inspections:write")),
+) -> dict[str, Any]:
+    _, _, qr_assets_before, _ = _ops_get_catalog_rows()
+    before_snapshot = next((row for row in qr_assets_before if int(row.get("qr_asset_id") or 0) == qr_asset_id), None)
+    with get_conn() as conn:
+        current = conn.execute(
+            select(ops_qr_assets)
+            .where(ops_qr_assets.c.id == qr_asset_id)
+            .limit(1)
+        ).mappings().first()
+        if current is None:
+            raise HTTPException(status_code=404, detail="qr asset not found")
+        refs = _ops_qr_asset_reference_counts(conn, qr_asset_id)
+        if any(int(value) > 0 for value in refs.values()):
+            raise HTTPException(status_code=409, detail={"message": "qr asset is still referenced", "references": refs})
+        conn.execute(delete(ops_qr_assets).where(ops_qr_assets.c.id == qr_asset_id))
+
+    saved_path = _export_ops_special_checklists_payload_from_masters(source="qr_asset_api").as_posix()
+    _record_ops_qr_asset_revisions(
+        [
+            {
+                "qr_asset_id": qr_asset_id,
+                "qr_id": _ops_master_text(before_snapshot.get("qr_id") if isinstance(before_snapshot, dict) else current.get("qr_id")),
+                "change_source": "qr_asset_api",
+                "change_action": "deleted",
+                "change_note": "qr asset deleted via API",
+                "before": before_snapshot or {},
+                "after": {},
+                "quality_flags": _ops_qr_revision_quality_flags(before_snapshot),
+                "created_by": _ops_revision_actor_username(principal),
+                "created_at": datetime.now(timezone.utc),
+            }
+        ]
+    )
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_qr_asset_delete",
+        resource_type="ops_inspection_checklists",
+        resource_id=str(qr_asset_id),
+        detail={"saved_path": saved_path},
+    )
+    return {"deleted": True, "qr_asset_id": qr_asset_id, "saved_path": saved_path}
+
+
+@router.get("/inspections/checklists/catalog")
+def get_ops_inspection_checklists_catalog(
+    q: Annotated[str | None, Query()] = None,
+    lifecycle_state: Annotated[str | None, Query()] = None,
+    include_inactive: Annotated[bool, Query()] = True,
+    principal: dict[str, Any] = Depends(require_permission("inspections:read")),
+) -> dict[str, Any]:
+    payload = _load_ops_special_checklists_payload()
+    raw_checklist_sets = payload.get("checklist_sets") if isinstance(payload.get("checklist_sets"), list) else []
+    raw_equipment_assets = payload.get("equipment_assets") if isinstance(payload.get("equipment_assets"), list) else []
+    raw_qr_assets = payload.get("qr_assets") if isinstance(payload.get("qr_assets"), list) else []
+    normalized_query = _ops_master_text(q)
+    checklist_sets = _ops_filter_master_rows(
+        raw_checklist_sets,
+        query_text=normalized_query,
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("set_id", "label", "task_type", "source"),
+    )
+    equipment_assets = _ops_filter_master_rows(
+        raw_equipment_assets,
+        query_text=normalized_query,
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("equipment", "location", "source"),
+    )
+    qr_assets = _ops_filter_master_rows(
+        raw_qr_assets,
+        query_text=normalized_query,
+        lifecycle_state=_ops_master_text(lifecycle_state),
+        include_inactive=include_inactive,
+        fields=("qr_id", "equipment", "location", "checklist_set_id", "default_item"),
+    )
+    linked_qr_asset_count = sum(
+        1
+        for row in qr_assets
+        if isinstance(row, dict) and int(row.get("qr_asset_id") or 0) > 0
+    )
+    linked_equipment_ids = {
+        int(row.get("equipment_id") or 0)
+        for row in qr_assets
+        if isinstance(row, dict) and int(row.get("equipment_id") or 0) > 0
+    }
+    response = {
+        **payload,
+        "checklist_sets": checklist_sets,
+        "equipment_assets": equipment_assets,
+        "qr_assets": qr_assets,
+        **_build_ops_checklist_response_meta(payload, endpoint="/api/ops/inspections/checklists/catalog"),
+        "summary": {
+            "checklist_set_count": len(checklist_sets),
+            "total_checklist_set_count": len(raw_checklist_sets),
+            "equipment_asset_count": len(equipment_assets),
+            "total_equipment_asset_count": len(raw_equipment_assets),
+            "ops_code_count": len(payload.get("ops_codes") or []),
+            "qr_asset_count": len(qr_assets),
+            "total_qr_asset_count": len(raw_qr_assets),
+            "linked_qr_asset_count": linked_qr_asset_count,
+            "linked_equipment_count": len(linked_equipment_ids),
+            "filters": {
+                "q": normalized_query or None,
+                "lifecycle_state": _normalize_ops_master_lifecycle_state(lifecycle_state) if lifecycle_state else None,
+                "include_inactive": include_inactive,
+            },
+        },
+    }
+    _write_audit_log(
+        principal=principal,
+        action="ops_inspection_checklists_catalog_view",
+        resource_type="ops_inspection_checklists",
+        resource_id="catalog",
+        detail=response["summary"],
+    )
+    return response
+
+
 @router.post("/inspections/checklists/qr-assets/bulk-update")
 def post_ops_inspection_checklists_qr_asset_bulk_update(
     payload: dict[str, Any] | None = None,
     principal: dict[str, Any] = Depends(require_permission("inspections:write")),
 ) -> dict[str, Any]:
-    body = payload if isinstance(payload, dict) else {}
+    body = dict(payload) if isinstance(payload, dict) else {}
+    body["_actor_username"] = _ops_revision_actor_username(principal)
     result = _apply_ops_qr_asset_bulk_update_request(body)
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
     placeholder_after = int(summary.get("placeholder_row_count_after") or 0)

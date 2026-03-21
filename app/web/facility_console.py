@@ -325,6 +325,7 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       <p>서비스: __SERVICE_NAME__ | API 결과를 브라우저에서 표/카드로 즉시 확인하는 HTML 콘솔입니다. JSON API는 그대로 유지되며, 이 화면은 사람 중심 운영 뷰입니다.</p>
       <div class="hero-links">
         <a href="/" data-tip="공개 메인: 메인 운영 셸로 이동합니다." title="공개 메인: 메인 운영 셸로 이동합니다.">공개 메인</a>
+        <a href="/web/complaints" data-tip="세대 민원처리: 현장용 민원 큐와 처리 화면을 바로 엽니다." title="세대 민원처리: 현장용 민원 큐와 처리 화면을 바로 엽니다.">세대 민원처리</a>
         <a href="/docs" data-tip="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다." title="스웨거 문서: 전체 API를 Swagger UI에서 확인합니다.">스웨거 문서</a>
         <a href="/web/console/guide" data-tip="사용 설명서 열기: 운영 콘솔 1페이지 가이드를 새 창으로 엽니다." title="사용 설명서 열기: 운영 콘솔 1페이지 가이드를 새 창으로 엽니다.">사용 설명서 열기</a>
         <a href="/api/service-info" data-tip="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다." title="서비스 정보 API: 엔드포인트 맵과 주요 경로를 JSON으로 확인합니다.">서비스 정보 API</a>

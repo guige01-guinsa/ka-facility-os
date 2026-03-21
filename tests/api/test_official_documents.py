@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import zipfile
 from datetime import datetime, timedelta, timezone
 
@@ -10,6 +11,38 @@ from fastapi.testclient import TestClient
 
 def _owner_headers() -> dict[str, str]:
     return {"X-Admin-Token": "test-owner-token"}
+
+
+def _build_asset_scoped_ops_notes(
+    *,
+    equipment: str,
+    equipment_location: str,
+    qr_id: str,
+    checklist_set_id: str = "electrical_60",
+    checklist_version: str = "tests-fixture",
+) -> str:
+    meta = {
+        "task_type": "전기점검",
+        "equipment": equipment,
+        "equipment_location": equipment_location,
+        "qr_id": qr_id,
+        "checklist_set_id": checklist_set_id,
+        "checklist_data_version": checklist_version,
+        "summary": {"total": 3, "normal": 0, "abnormal": 3, "na": 0},
+        "abnormal_action": "자산 pivot 통합리포트 검증",
+    }
+    checklist = [
+        {"group": "설비", "item": "변압기 외관 점검", "result": "abnormal", "action": ""},
+        {"group": "설비", "item": "변압기 온도 상승 여부 확인", "result": "abnormal", "action": ""},
+        {"group": "설비", "item": "변압기 이상 소음 확인", "result": "abnormal", "action": ""},
+    ]
+    return "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
 
 
 @pytest.mark.smoke
@@ -443,6 +476,189 @@ def test_official_document_report_counts_open_overdue_items(app_client: TestClie
     assert body["open_documents"] >= 1
     assert body["overdue_open_documents"] >= 1
     assert body["organization_counts"]["수도사업소"] >= 1
+
+
+def test_integrated_report_asset_scope_filters_ops_and_linked_documents(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    month_label = now.strftime("%Y-%m")
+
+    baseline_inspection = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "location": "B1 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": now.isoformat(),
+            "notes": _build_asset_scoped_ops_notes(
+                equipment="변압기 1호기",
+                equipment_location="B1 수변전실",
+                qr_id="QR-002",
+            ),
+        },
+    )
+    assert baseline_inspection.status_code == 201
+    baseline_inspection_id = int(baseline_inspection.json()["id"])
+    baseline_qr_asset_id = int(baseline_inspection.json()["qr_asset_id"])
+
+    baseline_work_order = app_client.post(
+        "/api/work-orders",
+        headers=headers,
+        json={
+            "title": "기준 자산 작업지시",
+            "description": "기준 자산 후속 조치",
+            "site": "HQ",
+            "location": "B1 수변전실",
+            "priority": "high",
+            "inspection_id": baseline_inspection_id,
+        },
+    )
+    assert baseline_work_order.status_code == 201
+    baseline_work_order_id = int(baseline_work_order.json()["id"])
+
+    baseline_document = app_client.post(
+        "/api/official-documents",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "organization": "한전",
+            "title": "기준 자산 공문",
+            "document_type": "electricity",
+            "priority": "high",
+            "received_at": now.isoformat(),
+            "due_at": (now + timedelta(days=3)).isoformat(),
+            "required_action": "기준 자산 조치 확인",
+            "summary": "기준 자산 연계",
+            "linked_inspection_id": baseline_inspection_id,
+            "linked_work_order_id": baseline_work_order_id,
+        },
+    )
+    assert baseline_document.status_code == 201
+
+    created_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "변압기 9호기",
+            "location": "B9 수변전실",
+            "lifecycle_state": "active",
+        },
+    )
+    assert created_equipment.status_code == 200
+    scoped_equipment_id = int(created_equipment.json()["row"]["equipment_id"])
+
+    created_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-INTEGRATED-SCOPE-CI",
+            "equipment_id": scoped_equipment_id,
+            "checklist_set_id": "electrical_60",
+            "default_item": "변압기 외관 점검",
+            "lifecycle_state": "active",
+        },
+    )
+    assert created_qr.status_code == 200
+    scoped_qr_asset_id = int(created_qr.json()["row"]["qr_asset_id"])
+
+    scoped_inspection = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "location": "B9 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": now.isoformat(),
+            "equipment_id": scoped_equipment_id,
+            "qr_asset_id": scoped_qr_asset_id,
+            "notes": _build_asset_scoped_ops_notes(
+                equipment="변압기 9호기",
+                equipment_location="B9 수변전실",
+                qr_id="QR-INTEGRATED-SCOPE-CI",
+            ),
+        },
+    )
+    assert scoped_inspection.status_code == 201
+    scoped_inspection_id = int(scoped_inspection.json()["id"])
+
+    scoped_work_order = app_client.post(
+        "/api/work-orders",
+        headers=headers,
+        json={
+            "title": "자산 scope 작업지시",
+            "description": "asset scope 통합리포트 검증",
+            "site": "HQ",
+            "location": "B9 수변전실",
+            "priority": "high",
+            "inspection_id": scoped_inspection_id,
+        },
+    )
+    assert scoped_work_order.status_code == 201
+    scoped_work_order_id = int(scoped_work_order.json()["id"])
+
+    scoped_document = app_client.post(
+        "/api/official-documents",
+        headers=headers,
+        json={
+            "site": "HQ",
+            "organization": "소방서",
+            "title": "자산 scope 공문",
+            "document_type": "fire",
+            "priority": "critical",
+            "received_at": now.isoformat(),
+            "due_at": (now + timedelta(days=5)).isoformat(),
+            "required_action": "자산 scope 조치 확인",
+            "summary": "자산 scope 연계",
+            "linked_inspection_id": scoped_inspection_id,
+            "linked_work_order_id": scoped_work_order_id,
+        },
+    )
+    assert scoped_document.status_code == 201
+
+    unfiltered = app_client.get(
+        f"/api/reports/monthly/integrated?site=HQ&month={month_label}",
+        headers=headers,
+    )
+    assert unfiltered.status_code == 200
+    unfiltered_body = unfiltered.json()
+    assert unfiltered_body["inspections"]["total"] >= 2
+    assert unfiltered_body["work_orders"]["total"] >= 2
+    assert unfiltered_body["official_documents"]["total_documents"] >= 2
+
+    scoped = app_client.get(
+        f"/api/reports/monthly/integrated?site=HQ&month={month_label}&qr_asset_id={scoped_qr_asset_id}",
+        headers=headers,
+    )
+    assert scoped.status_code == 200
+    scoped_body = scoped.json()
+    assert scoped_body["scope"]["asset_scope_active"] is True
+    assert scoped_body["scope"]["qr_asset_id"] == scoped_qr_asset_id
+    assert scoped_body["scope"]["equipment_id"] == scoped_equipment_id
+    assert scoped_body["inspections"]["total"] == 1
+    assert scoped_body["work_orders"]["total"] == 1
+    assert scoped_body["official_documents"]["total_documents"] == 1
+    assert scoped_body["official_documents"]["linked_asset_filter_applied"] is True
+    assert scoped_body["official_documents"]["matching_linked_inspection_count"] >= 1
+    assert scoped_body["official_documents"]["matching_linked_work_order_count"] >= 1
+    assert scoped_body["billing"]["scope_applicable"] is False
+    assert "unit-scoped" in scoped_body["billing"]["excluded_reason"]
+
+    scoped_by_equipment = app_client.get(
+        f"/api/reports/monthly/integrated?site=HQ&month={month_label}&equipment_id={scoped_equipment_id}",
+        headers=headers,
+    )
+    assert scoped_by_equipment.status_code == 200
+    equipment_body = scoped_by_equipment.json()
+    assert equipment_body["scope"]["asset_scope_active"] is True
+    assert equipment_body["scope"]["equipment_id"] == scoped_equipment_id
+    assert equipment_body["inspections"]["total"] == 1
+    assert equipment_body["work_orders"]["total"] == 1
+    assert equipment_body["official_documents"]["total_documents"] == 1
+    assert equipment_body["scope"]["qr_asset_id"] is None
+    assert baseline_qr_asset_id != scoped_qr_asset_id
 
 
 def test_official_document_overdue_cron_job_records_job_run(app_client: TestClient) -> None:

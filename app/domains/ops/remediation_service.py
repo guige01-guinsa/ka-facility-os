@@ -2,19 +2,41 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import csv
+import io
+import json
+import math
+import statistics
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
-globals().update(
-    {
-        key: value
-        for key, value in main_module.__dict__.items()
-        if key not in {"bind", "main_module", "_LOCAL_SYMBOLS"}
-    }
+from sqlalchemy import insert, select, update
+
+from app.database import (
+    admin_users,
+    get_conn,
+    job_runs,
+    ops_governance_remediation_tracker_items,
+    ops_governance_remediation_tracker_runs,
+    sla_policies,
+)
+from app.domains.ops import config as ops_config
+from app.domains.ops.alert_service import _dispatch_alert_event
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime
+from app.domains.ops.record_service import _row_to_job_run_model, _to_json_text, _write_job_run
+from app.domains.ops.service import _build_ops_governance_gate_snapshot, _build_ops_governance_remediation_plan
+from app.schemas import (
+    JobRunRead,
+    SlaAlertChannelResult,
+    W21RemediationTrackerCompletionRead,
+    W21RemediationTrackerItemRead,
+    W21RemediationTrackerOverviewRead,
+    W21RemediationTrackerReadinessRead,
+    W21RemediationTrackerSyncResponse,
 )
 
 _LOCAL_SYMBOLS = {
     'bind',
-    'main_module',
     '_LOCAL_SYMBOLS',
     '_normalize_w21_tracker_status',
     '_resolve_w21_completion_status',
@@ -58,9 +80,40 @@ _LOCAL_SYMBOLS = {
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
+
+
+ops_runtime = ops_config.runtime
+
+W21_TRACKER_STATUS_PENDING = "pending"
+W21_TRACKER_STATUS_IN_PROGRESS = "in_progress"
+W21_TRACKER_STATUS_DONE = "done"
+W21_TRACKER_STATUS_BLOCKED = "blocked"
+W21_TRACKER_STATUS_SET = {
+    W21_TRACKER_STATUS_PENDING,
+    W21_TRACKER_STATUS_IN_PROGRESS,
+    W21_TRACKER_STATUS_DONE,
+    W21_TRACKER_STATUS_BLOCKED,
+}
+W21_COMPLETION_STATUS_ACTIVE = "active"
+W21_COMPLETION_STATUS_COMPLETED = "completed"
+W21_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS = "completed_with_exceptions"
+W21_COMPLETION_STATUS_SET = {
+    W21_COMPLETION_STATUS_ACTIVE,
+    W21_COMPLETION_STATUS_COMPLETED,
+    W21_COMPLETION_STATUS_COMPLETED_WITH_EXCEPTIONS,
+}
+W21_TRACKER_SCOPE_GLOBAL = "global"
+W23_OWNER_ROLE_TO_ADMIN_ROLES: dict[str, tuple[str, ...]] = {
+    "Platform Owner": ("owner", "manager"),
+    "Security Manager": ("owner", "manager"),
+    "Ops Lead": ("owner", "manager", "operator"),
+    "Ops PM": ("owner", "manager", "operator"),
+    "Release Manager": ("owner", "manager"),
+    "DR Owner": ("owner", "manager"),
+    "Operations Excellence Lead": ("owner", "manager", "operator"),
+    "Ops Manager": ("owner", "manager", "operator"),
+}
 
 
 def _normalize_w21_tracker_status(raw: Any) -> str:
@@ -560,12 +613,12 @@ def run_ops_governance_remediation_escalation_job(
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
     normalized_due_soon_hours = (
-        GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
+        ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS
         if include_due_soon_hours is None
         else max(0, min(int(include_due_soon_hours), 168))
     )
     effective_notify_enabled = (
-        GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
+        ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_NOTIFY_ENABLED
         if notify_enabled is None
         else bool(notify_enabled)
     )
@@ -593,15 +646,15 @@ def run_ops_governance_remediation_escalation_job(
     notify_channels: list[SlaAlertChannelResult] = []
 
     if (
-        GOVERNANCE_REMEDIATION_ESCALATION_ENABLED
+        ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_ENABLED
         and (not dry_run)
         and effective_notify_enabled
         and candidate_count > 0
     ):
         notify_attempted = True
         payload = {
-            "event": OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
-            "job_name": OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+            "event": ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
+            "job_name": ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
             "checked_at": started_at.isoformat(),
             "dry_run": bool(dry_run),
             "due_soon_hours": normalized_due_soon_hours,
@@ -621,11 +674,11 @@ def run_ops_governance_remediation_escalation_job(
             ],
         }
         notify_dispatched, notify_error, notify_channels = _dispatch_alert_event(
-            event_type=OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
+            event_type=ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE,
             payload=payload,
         )
 
-    if not GOVERNANCE_REMEDIATION_ESCALATION_ENABLED:
+    if not ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_ENABLED:
         status = "warning"
     elif candidate_count == 0:
         status = "success"
@@ -636,7 +689,7 @@ def run_ops_governance_remediation_escalation_job(
 
     finished_at = datetime.now(timezone.utc)
     detail = {
-        "enabled": GOVERNANCE_REMEDIATION_ESCALATION_ENABLED,
+        "enabled": ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_ENABLED,
         "due_soon_hours": normalized_due_soon_hours,
         "notify_enabled": effective_notify_enabled,
         "dry_run": bool(dry_run),
@@ -663,7 +716,7 @@ def run_ops_governance_remediation_escalation_job(
         ],
     }
     run_id = _write_job_run(
-        job_name=OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        job_name=ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -672,7 +725,7 @@ def run_ops_governance_remediation_escalation_job(
     )
     return {
         "run_id": run_id,
-        "job_name": OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        "job_name": ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -685,7 +738,7 @@ def _latest_ops_governance_remediation_escalation_payload() -> dict[str, Any] | 
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -816,7 +869,7 @@ def run_ops_governance_remediation_auto_assign_job(
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
     normalized_limit = (
-        GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
+        ops_runtime.GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS
         if limit is None
         else max(1, min(int(limit), 500))
     )
@@ -829,7 +882,7 @@ def run_ops_governance_remediation_auto_assign_job(
     updated_ids: list[int] = []
     assignment_rows: list[dict[str, Any]] = []
 
-    if GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED and (not dry_run):
+    if ops_runtime.GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED and (not dry_run):
         now = datetime.now(timezone.utc)
         with get_conn() as conn:
             for item in suggestions[:normalized_limit]:
@@ -890,14 +943,14 @@ def run_ops_governance_remediation_auto_assign_job(
                 no_candidate_count += 1
 
     status = "success"
-    if not GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED:
+    if not ops_runtime.GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED:
         status = "warning"
     elif no_candidate_count > 0 and assigned_count == 0:
         status = "warning"
 
     finished_at = datetime.now(timezone.utc)
     detail = {
-        "enabled": GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED,
+        "enabled": ops_runtime.GOVERNANCE_REMEDIATION_AUTO_ASSIGN_ENABLED,
         "dry_run": bool(dry_run),
         "limit": normalized_limit,
         "workload": workload,
@@ -909,7 +962,7 @@ def run_ops_governance_remediation_auto_assign_job(
         "assignments": assignment_rows,
     }
     run_id = _write_job_run(
-        job_name=OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        job_name=ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -918,7 +971,7 @@ def run_ops_governance_remediation_auto_assign_job(
     )
     return {
         "run_id": run_id,
-        "job_name": OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        "job_name": ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -931,7 +984,7 @@ def _latest_ops_governance_remediation_auto_assign_payload() -> dict[str, Any] |
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -958,9 +1011,9 @@ def _build_w24_remediation_backlog_history(
     normalized_window_days = max(1, min(int(window_days), 180))
     cutoff = now - timedelta(days=normalized_window_days)
     job_names = [
-        OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
-        OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
-        OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+        ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_JOB_NAME,
+        ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTO_ASSIGN_JOB_NAME,
+        ops_runtime.OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
     ]
     with get_conn() as conn:
         rows = conn.execute(
@@ -1026,8 +1079,8 @@ def _build_w24_remediation_backlog_history(
 
 def _build_w24_remediation_kpi_snapshot(
     *,
-    window_days: int = GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
-    due_soon_hours: int = GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
+    window_days: int = ops_runtime.GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS,
+    due_soon_hours: int = ops_runtime.GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     checked_at = now or datetime.now(timezone.utc)
@@ -1150,12 +1203,12 @@ def run_ops_governance_remediation_kpi_job(
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
     normalized_window_days = (
-        GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
+        ops_runtime.GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS
         if window_days is None
         else max(1, min(int(window_days), 180))
     )
     normalized_due_soon_hours = (
-        GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
+        ops_runtime.GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS
         if due_soon_hours is None
         else max(0, min(int(due_soon_hours), 168))
     )
@@ -1189,7 +1242,7 @@ def run_ops_governance_remediation_kpi_job(
         "recommendations": snapshot.get("recommendations", []),
     }
     run_id = _write_job_run(
-        job_name=OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+        job_name=ops_runtime.OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -1198,7 +1251,7 @@ def run_ops_governance_remediation_kpi_job(
     )
     return {
         "run_id": run_id,
-        "job_name": OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
+        "job_name": ops_runtime.OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -1211,7 +1264,7 @@ def _latest_ops_governance_remediation_kpi_payload() -> dict[str, Any] | None:
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_KPI_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -1232,16 +1285,16 @@ def _latest_ops_governance_remediation_kpi_payload() -> dict[str, Any] | None:
 
 def _default_w26_remediation_autopilot_policy() -> dict[str, Any]:
     return {
-        "enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED,
-        "notify_enabled": GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
-        "unassigned_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
-        "overdue_trigger": max(0, GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
-        "cooldown_minutes": max(0, min(GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES, 1440)),
+        "enabled": ops_runtime.GOVERNANCE_REMEDIATION_AUTOPILOT_ENABLED,
+        "notify_enabled": ops_runtime.GOVERNANCE_REMEDIATION_AUTOPILOT_NOTIFY_ENABLED,
+        "unassigned_trigger": max(0, ops_runtime.GOVERNANCE_REMEDIATION_AUTOPILOT_UNASSIGNED_TRIGGER),
+        "overdue_trigger": max(0, ops_runtime.GOVERNANCE_REMEDIATION_AUTOPILOT_OVERDUE_TRIGGER),
+        "cooldown_minutes": max(0, min(ops_runtime.GOVERNANCE_REMEDIATION_AUTOPILOT_COOLDOWN_MINUTES, 1440)),
         "skip_if_no_action": True,
-        "kpi_window_days": max(1, min(GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS, 180)),
-        "kpi_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS, 168)),
-        "escalation_due_soon_hours": max(0, min(GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS, 168)),
-        "auto_assign_max_items": max(1, min(GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS, 500)),
+        "kpi_window_days": max(1, min(ops_runtime.GOVERNANCE_REMEDIATION_KPI_WINDOW_DAYS, 180)),
+        "kpi_due_soon_hours": max(0, min(ops_runtime.GOVERNANCE_REMEDIATION_KPI_DUE_SOON_HOURS, 168)),
+        "escalation_due_soon_hours": max(0, min(ops_runtime.GOVERNANCE_REMEDIATION_ESCALATION_DUE_SOON_HOURS, 168)),
+        "auto_assign_max_items": max(1, min(ops_runtime.GOVERNANCE_REMEDIATION_AUTO_ASSIGN_MAX_ITEMS, 500)),
     }
 
 
@@ -1342,22 +1395,22 @@ def _ensure_w26_remediation_autopilot_policy() -> tuple[dict[str, Any], datetime
     with get_conn() as conn:
         row = conn.execute(
             select(sla_policies)
-            .where(sla_policies.c.policy_key == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY)
+            .where(sla_policies.c.policy_key == ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY)
             .limit(1)
         ).mappings().first()
         if row is None:
             policy = _default_w26_remediation_autopilot_policy()
             conn.execute(
                 insert(sla_policies).values(
-                    policy_key=OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY,
+                    policy_key=ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY,
                     policy_json=_to_json_text(policy),
                     updated_at=now,
                 )
             )
-            return policy, now, OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
+            return policy, now, ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
     policy = _parse_w26_remediation_autopilot_policy_json(row["policy_json"])
     updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
-    return policy, updated_at, OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
+    return policy, updated_at, ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_POLICY_KEY
 
 
 def _upsert_w26_remediation_autopilot_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
@@ -1442,7 +1495,7 @@ def _build_w27_remediation_autopilot_guard_state(
 ) -> dict[str, Any]:
     normalized_policy = _normalize_w26_remediation_autopilot_policy(policy)
     cooldown_minutes = int(normalized_policy.get("cooldown_minutes") or 0)
-    latest = _latest_job_run_for_name(OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+    latest = _latest_job_run_for_name(ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
     if bool(force):
         return {
             "checked_at": now.isoformat(),
@@ -1597,7 +1650,7 @@ def run_ops_governance_remediation_autopilot_job(
         "errors": errors,
     }
     run_id = _write_job_run(
-        job_name=OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
+        job_name=ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -1606,7 +1659,7 @@ def run_ops_governance_remediation_autopilot_job(
     )
     return {
         "run_id": run_id,
-        "job_name": OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
+        "job_name": ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -1619,7 +1672,7 @@ def _latest_ops_governance_remediation_autopilot_payload() -> dict[str, Any] | N
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -1643,7 +1696,7 @@ def _build_w28_remediation_autopilot_history(*, limit: int = 20) -> dict[str, An
     with get_conn() as conn:
         rows = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(normalized_limit)
         ).mappings().all()
@@ -1688,7 +1741,7 @@ def _build_w28_remediation_autopilot_summary(*, days: int = 7) -> dict[str, Any]
     with get_conn() as conn:
         rows = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_REMEDIATION_AUTOPILOT_JOB_NAME)
             .where(job_runs.c.finished_at >= cutoff)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(500)
@@ -2172,3 +2225,4 @@ def _build_w30_remediation_autopilot_anomalies_csv(payload: dict[str, Any]) -> s
             ]
         )
     return out.getvalue()
+

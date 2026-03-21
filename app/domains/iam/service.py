@@ -2,43 +2,35 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import hashlib
+import hmac
+import json
+from datetime import datetime, timedelta, timezone
+from threading import Lock
+from typing import Any
 
-Any = main_module.Any
-json = main_module.json
-hashlib = main_module.hashlib
-hmac = main_module.hmac
-datetime = main_module.datetime
-timedelta = main_module.timedelta
-timezone = main_module.timezone
-Lock = main_module.Lock
-AdminAuditLogRead = main_module.AdminAuditLogRead
-AdminTokenRead = main_module.AdminTokenRead
-AdminUserRead = main_module.AdminUserRead
-AuthMeRead = main_module.AuthMeRead
-admin_audit_logs = main_module.admin_audit_logs
-admin_tokens = main_module.admin_tokens
-job_runs = main_module.job_runs
-get_conn = main_module.get_conn
-insert = main_module.insert
-select = main_module.select
-update = main_module.update
-AUDIT_ARCHIVE_SIGNING_KEY = main_module.AUDIT_ARCHIVE_SIGNING_KEY
-ADMIN_TOKEN_MAX_ACTIVE_PER_USER = main_module.ADMIN_TOKEN_MAX_ACTIVE_PER_USER
-ADMIN_TOKEN_ROTATE_WARNING_DAYS = main_module.ADMIN_TOKEN_ROTATE_WARNING_DAYS
-DR_REHEARSAL_ENABLED = main_module.DR_REHEARSAL_ENABLED
-DR_REHEARSAL_JOB_NAME = main_module.DR_REHEARSAL_JOB_NAME
-_as_datetime = main_module._as_datetime
-_as_optional_datetime = main_module._as_optional_datetime
-_build_ops_checklists_import_validation_report = main_module._build_ops_checklists_import_validation_report
-_effective_permissions = main_module._effective_permissions
-_month_window = main_module._month_window
-_permission_text_to_list = main_module._permission_text_to_list
-_principal_site_scope = main_module._principal_site_scope
-_resolve_effective_site_scope = main_module._resolve_effective_site_scope
-_site_scope_text_to_list = main_module._site_scope_text_to_list
-_token_idle_due_at = main_module._token_idle_due_at
-_token_rotate_due_at = main_module._token_rotate_due_at
+from sqlalchemy import insert, select, update
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.database import admin_audit_logs, admin_tokens, get_conn, job_runs, ops_qr_asset_revisions
+from app.domains.iam.core import (
+    ADMIN_TOKEN_MAX_ACTIVE_PER_USER,
+    ADMIN_TOKEN_ROTATE_WARNING_DAYS,
+    AUDIT_ARCHIVE_SIGNING_KEY,
+    DR_REHEARSAL_ENABLED,
+    DR_REHEARSAL_JOB_NAME,
+    _effective_permissions,
+    _month_window,
+    _permission_text_to_list,
+    _principal_site_scope,
+    _resolve_effective_site_scope,
+    _site_scope_text_to_list,
+    _token_idle_due_at,
+    _token_rotate_due_at,
+)
+from app.domains.ops.checklist_runtime import _build_ops_checklists_import_validation_report
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime
+from app.schemas import AdminAuditLogRead, AdminTokenRead, AdminUserRead, AuthMeRead
 
 IAM_RESPONSE_SCHEMA_VERSION = "v1"
 IAM_AUTH_ME_SCHEMA = "auth_profile_response"
@@ -267,6 +259,111 @@ def _verify_audit_chain(rows: list[dict[str, Any]], *, initial_prev_hash: str = 
         "chain_ok": len(issues) == 0,
     }
 
+
+def _load_archive_json_value(raw: Any, *, fallback: Any) -> Any:
+    text = str(raw or "").strip()
+    if not text:
+        return fallback
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        return fallback
+    return value
+
+
+def _row_to_ops_qr_asset_revision_archive_item(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    created_at = _as_optional_datetime(row.get("created_at"))
+    before_payload = _load_archive_json_value(row.get("before_json"), fallback={})
+    after_payload = _load_archive_json_value(row.get("after_json"), fallback={})
+    quality_flags = _load_archive_json_value(row.get("quality_flags_json"), fallback=[])
+    return {
+        "id": int(row["id"]),
+        "qr_asset_id": int(row.get("qr_asset_id") or 0) or None,
+        "qr_id": str(row.get("qr_id") or ""),
+        "change_source": str(row.get("change_source") or ""),
+        "change_action": str(row.get("change_action") or ""),
+        "change_note": str(row.get("change_note") or ""),
+        "before": before_payload if isinstance(before_payload, dict) else {},
+        "after": after_payload if isinstance(after_payload, dict) else {},
+        "quality_flags": quality_flags if isinstance(quality_flags, list) else [],
+        "created_by": str(row.get("created_by") or ""),
+        "created_at": created_at.isoformat() if created_at is not None else None,
+    }
+
+
+def _build_ops_qr_asset_revisions_attachment(
+    *,
+    start: datetime,
+    end: datetime,
+    month: str,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        month_rows = conn.execute(
+            select(ops_qr_asset_revisions)
+            .where(ops_qr_asset_revisions.c.created_at >= start)
+            .where(ops_qr_asset_revisions.c.created_at < end)
+            .order_by(ops_qr_asset_revisions.c.created_at.desc(), ops_qr_asset_revisions.c.id.desc())
+        ).mappings().all()
+        latest_before_window_end_row = conn.execute(
+            select(ops_qr_asset_revisions)
+            .where(ops_qr_asset_revisions.c.created_at < end)
+            .order_by(ops_qr_asset_revisions.c.created_at.desc(), ops_qr_asset_revisions.c.id.desc())
+            .limit(1)
+        ).mappings().first()
+
+    action_counts: dict[str, int] = {}
+    source_counts: dict[str, int] = {}
+    qr_ids: set[str] = set()
+    quality_flag_total = 0
+    recent_rows: list[dict[str, Any]] = []
+    for idx, row in enumerate(month_rows):
+        qr_id = str(row.get("qr_id") or "").strip()
+        if qr_id:
+            qr_ids.add(qr_id)
+        action = str(row.get("change_action") or "unknown").strip() or "unknown"
+        action_counts[action] = action_counts.get(action, 0) + 1
+        source = str(row.get("change_source") or "unknown").strip() or "unknown"
+        source_counts[source] = source_counts.get(source, 0) + 1
+        quality_flags = _load_archive_json_value(row.get("quality_flags_json"), fallback=[])
+        if isinstance(quality_flags, list):
+            quality_flag_total += len(quality_flags)
+        if idx < 10:
+            archive_row = _row_to_ops_qr_asset_revision_archive_item(row)
+            if archive_row is not None:
+                recent_rows.append(archive_row)
+
+    latest_in_month = recent_rows[0] if recent_rows else None
+    latest_before_window_end = _row_to_ops_qr_asset_revision_archive_item(latest_before_window_end_row)
+    return _build_audit_archive_attachment(
+        attachment_key="ops_qr_asset_revisions",
+        schema="audit_archive_attachment_ops_qr_asset_revisions",
+        resource_type="ops_qr_asset",
+        payload={
+            "required": False,
+            "month": month,
+            "included": bool(month_rows),
+            "status": "ok" if month_rows else "info",
+            "message": (
+                "QR asset revision history attached for target month."
+                if month_rows
+                else "No QR asset revision history in target month."
+            ),
+            "summary": {
+                "revision_count": len(month_rows),
+                "qr_id_count": len(qr_ids),
+                "quality_flag_total": quality_flag_total,
+                "change_action_counts": action_counts,
+                "change_source_counts": source_counts,
+            },
+            "latest_in_month": latest_in_month,
+            "latest_before_window_end": latest_before_window_end,
+            "recent_rows": recent_rows,
+        },
+    )
+
+
 def build_monthly_audit_archive(
     *,
     month: str | None,
@@ -449,10 +546,16 @@ def build_monthly_audit_archive(
         "suggestions": import_suggestions[:5],
         },
     )
+    qr_revision_attachment = _build_ops_qr_asset_revisions_attachment(
+        start=start,
+        end=end,
+        month=normalized,
+    )
 
     attachments = {
         "dr_rehearsal": dr_attachment,
         "ops_checklists_import_validation": import_attachment,
+        "ops_qr_asset_revisions": qr_revision_attachment,
     }
 
     payload = {
@@ -478,6 +581,7 @@ def build_monthly_audit_archive(
         "chain": chain,
         "dr_rehearsal_attachment": dr_attachment,
         "ops_checklists_import_validation_attachment": import_attachment,
+        "ops_qr_asset_revisions_attachment": qr_revision_attachment,
         "entries": archive_rows if include_entries else [],
     }
     payload_text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True)

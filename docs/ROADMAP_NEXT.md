@@ -1,19 +1,22 @@
 # KA Facility OS Next Roadmap (2026 Q2-Q3)
 
-기준일: 2026-03-07 (구조 재점검 반영)
+기준일: 2026-03-15 (OPS remediation / adoption tracker bridge split 반영)
 
-## 2026-03-07 시스템 구조 점검 결과
+## 2026-03-15 시스템 구조 점검 결과
 
 - 코드 규모
-  - `app/main.py`: 17,011 lines (공개/웹 + adoption tracker + adoption KPI/policy + ops tutorial/reporting + governance/alerts/SLA policy 라우트 분리, ops security/checklist + ops quality/DR/governance + remediation/autopilot + inspection/evidence + workflow/work-order + adoption tracker + ops record/model + alert policy/dispatch/analytics helper/service 추출 반영, 직접 route decorator 제거 완료)
-  - `tests/api/*.py`: 7 files, 101 tests (`tests/conftest.py` + `tests/helpers/common.py`로 fixture/util 분리)
-  - `app/schemas.py`: 1,778 lines, `app/database.py`: 1,013 lines
+  - `app/main.py`: 16,454 lines (직접 route decorator는 제거됐고, OPS checklist/runtime + inspection/workflow + governance/alert/remediation helper의 역의존도와 adoption tracker helper bind도 줄였지만 여전히 공개/웹 + adoption + ops + billing + official documents 조립 허브 역할을 수행)
+  - `tests/api/*.py`: 15 files, 전체 회귀 130 tests (`billing`, `official_documents`, `acceptance_a1~a3`, `acceptance_role_matrix`, `smoke_a1_lite`, `smoke_a2_lite`, checklist catalog/master-id/CRUD/lifecycle/revision/search-filter/diff/qr-revision-history/integrated asset scope 검증 포함)
+  - `app/schemas.py`: 1,597 lines, `app/database.py`: 1,000 lines
+  - 신규 분리 모듈: `app/domains/ops/checklist_runtime.py` 1,933 lines, `app/domains/ops/tables.py` 236 lines, `app/domains/ops/schemas.py` 196 lines, `app/domains/iam/core.py`
 - 라우팅 상태
   - `ops/admin/adoption/public` 라우터 분리는 진행됨
   - `service-info`, `/`, `/web/*`, `/api/public/*` 공개 진입 경로는 `app.domains.public.router`로 이동
   - `W02~W15 adoption tracker`는 `app.domains.adoption.router_tracker`로 이동
   - `W04~W15 adoption KPI/policy`는 `app.domains.adoption.router_ops`로 이동
   - `ops governance/alert/SLA policy`는 `app.domains.ops.router_governance`, `router_alerts`로 이동
+  - `utility billing`은 `app.domains.ops.router_billing`으로 이동
+  - `official documents / integrated reports`는 `app.domains.ops.router_official_documents`로 이동
   - `tutorial simulator`, `dashboard trends`, `handover brief`는 `app.domains.ops.router_tutorial`, `router_reporting`으로 이동
   - `app/main.py`에는 직접 route decorator가 없고, 앱 부트스트랩/미들웨어/호환 helper만 남아 있음
 - 운영 자동화 상태
@@ -98,126 +101,313 @@
     - stale process env의 `RENDER_SERVICE_ID`가 예상 서비스와 다르면 user env `srv-d6g57jbuibrs739g5mvg`로 자동 fallback
     - 실제 검증: `TARGET_SERVICE_FALLBACK`, `DEPLOY_COMMIT_MATCH`, `PRE_DEPLOY_SMOKE_OK`, `SMOKE_OK`, `DEPLOY_AND_SMOKE_OK`
 
-## 재정의 로드맵 (실행 체크리스트)
+## 앞으로의 로드맵 재설계 (2026-03-15 기준)
 
-### R0. 즉시 안정화 (이번 주)
+기존 R0~R5는 대부분 완료되어, 이제 로드맵의 초점은 “기능 추가”보다 “현업 전환 가능한 운영 제품 완성”으로 바꿔야 한다.
 
-- [x] IAM 탭에 토큰 발급/회전/폐기 + 감사로그 조회 UI 반영
-- [x] 메뉴탭 호버 풍선안내 반영(영문 용어의 한글 설명 포함)
-- [x] 운영 배포 + post-deploy smoke 완료
-- [x] 콘솔 사용 가이드 1페이지 추가 (`/web/console`, `/web/console/guide`, `docs/CONSOLE_QUICKSTART.md`, 2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`)
-- [x] IAM 탭 사용자 매뉴얼(권한/토큰/감사로그 순서) 작성 (`docs/IAM_TAB_USER_MANUAL.md`, 2026-03-07, docs-only)
+### 재설계 원칙
+
+- 기능 축은 아래 5개로 고정한다.
+  - 전기직무고시 법정 점검 관리
+  - 소방 법정 점검 관리
+  - OPS 입력 관리
+  - QR 설비관리
+  - 시설관리 데이터 축적
+- 앞으로의 작업은 아래 3가지 완료 조건을 동시에 만족해야 한다.
+  - 코드/테스트 완료
+  - 운영 배포 및 smoke 완료
+  - 실제 사용자 흐름 기준 검증 완료
+- 신규 주차형 기능(W16+)을 계속 늘리기보다, 지금 있는 기능을 현장 운영 수준으로 마감하는 쪽을 우선한다.
+- 기존 완료 이력은 하단 레퍼런스로 유지하고, 상단은 앞으로 90일 실행 계획만 다룬다.
+
+## 2026-03-14 단계 1 완료 상태
+
+- [x] 로컬 검증환경 복구
+  - `.venv`에 테스트 런타임 의존성(`pytest`, `httpx`, `alembic` 등) 정합화 완료
+  - `pytest.ini`에 `testpaths`, `norecursedirs`를 추가해 임시 디렉터리 재수집을 차단
+  - `scripts/run_pytest.ps1` 추가로 `.venv` + 안전한 Temp 기반 `pytest` 실행 경로 표준화
+- [x] 로컬 검증 결과 고정
+  - smoke: `9 passed, 121 deselected`
+  - acceptance: `6 passed, 124 deselected`
+  - full regression: `130 passed`
+- [x] 단계 2 착수 조건 충족
+  - acceptance 시나리오를 문서 기준이 아니라 실행 기준으로 고정할 수 있는 상태 확보
+
+## 2026-03-14 단계 2 진행 상태
+
+- [x] A1 owner acceptance 고정
+  - 문서: `docs/ACCEPTANCE_A1_LEGAL_INSPECTION_FLOW.md`
+  - 테스트: `tests/api/test_acceptance_a1.py`
+- [x] A2 owner acceptance 고정
+  - 문서: `docs/ACCEPTANCE_A2_OFFICIAL_DOCUMENT_FLOW.md`
+  - 테스트: `tests/api/test_acceptance_a2.py`
+- [x] A3 owner acceptance 고정
+  - 문서: `docs/ACCEPTANCE_A3_BILLING_FLOW.md`
+  - 테스트: `tests/api/test_acceptance_a3.py`
+- [x] A1~A3 role matrix 고정
+  - 문서: `docs/ACCEPTANCE_ROLE_MATRIX.md`
+  - 테스트: `tests/api/test_acceptance_role_matrix.py`
+- [x] 운영 smoke 승격 후보 선정
+  - 문서: `docs/ACCEPTANCE_SMOKE_PROMOTION.md`
+  - 결정:
+    - `A1-lite` -> privileged post-deploy smoke 1순위
+    - `A2-lite` -> privileged smoke 확장 2순위
+    - `A3-lite` -> nightly/non-blocking smoke 후보
+- [x] `A1-lite` 실제 smoke/CI 편입
+  - 스크립트: `scripts/post_deploy_smoke.ps1`, `scripts/deploy_and_verify.ps1`
+  - 테스트: `tests/api/test_smoke_a1_lite.py`
+  - CI: `.github/workflows/ci.yml`에 `pytest -q -m smoke` 단계 반영
+- [x] `A2-lite` opt-in smoke 확장 구현
+  - 스크립트: `scripts/post_deploy_smoke.ps1`, `scripts/deploy_and_verify.ps1` (`RunA2Lite`)
+  - 테스트: `tests/api/test_smoke_a2_lite.py`
+- [x] inspection/work-order key snapshot 1차 반영
+  - migration: `migrations/versions/20260314_0030_ops_key_snapshots.py`
+  - 적용 범위: `equipment_snapshot`, `equipment_location_snapshot`, `qr_id`, `checklist_set_id`, `checklist_version`
+- [x] relational equipment/QR master 1차 반영
+  - migration: `migrations/versions/20260314_0031_ops_asset_masters.py`
+  - 적용 범위: `ops_equipment_assets`, `ops_qr_assets`, `inspections.equipment_id/qr_asset_id`, `work_orders.equipment_id/qr_asset_id`
+- [x] inspection UI/API를 `master id + snapshot` 제출 방식으로 전환
+  - API: `/api/ops/inspections/checklists/catalog`, `POST /api/inspections`
+  - UI: `app/web/main_tabs.py`가 `equipment_id`, `qr_asset_id`를 note/meta와 payload에 함께 제출
+- [x] 운영 evidence template 초안 작성
+  - 문서: `docs/ACCEPTANCE_EVIDENCE_TEMPLATE.md`
+- [x] 기준키 연결표 작성
+  - 문서: `docs/ACCEPTANCE_KEY_LINKAGE_TABLE.md`
+- [x] 설비/QR/checklist_set_id 코드 기준 gap 분석 작성
+  - 문서: `docs/OPS_KEY_NORMALIZATION_GAP_ANALYSIS.md`
+- [x] migration backfill 검증 추가
+  - 테스트: `tests/test_migration_ops_key_snapshots.py`, `tests/test_migration_ops_asset_masters.py`
+- [x] 운영 검증 artifact/evidence와 privileged smoke 결과 아카이브 자동화
+  - env/path: `DEPLOY_SMOKE_ARCHIVE_PATH`
+  - API: `/api/ops/deploy/smoke/record` detail에 `artifact_archive` 기록
+  - 테스트: `tests/api/test_ops_governance.py`
+- [x] checklist_set relational master 1차 반영
+  - migration: `migrations/versions/20260314_0032_ops_checklist_masters.py`
+  - 적용 범위: `ops_checklist_sets`, `ops_checklist_set_items`
+- [x] equipment/QR/checklist master CRUD 화면과 API 추가
+  - API: `/api/ops/inspections/checklists/equipment-assets`, `/api/ops/inspections/checklists/sets`, `/api/ops/inspections/checklists/qr-assets`
+  - UI: `app/web/main_tabs.py`의 `OPS 마스터 관리` 박스 + inspection 입력용 `설비마스터` selector
+- [x] checklist master CRUD/inspection linkage 검증 추가
+  - 테스트: `tests/api/test_ops_core.py`, `tests/test_migration_ops_checklist_masters.py`
+- [x] QR/equipment/checklist master lifecycle state 1차 반영
+  - migration: `migrations/versions/20260314_0033_ops_master_lifecycle_and_checklist_revisions.py`
+  - 적용 범위: `ops_equipment_assets.lifecycle_state`, `ops_qr_assets.lifecycle_state`, `ops_checklist_sets.lifecycle_state`
+- [x] checklist set version/approval workflow 1차 반영
+  - table/API: `ops_checklist_set_revisions`, `/api/ops/inspections/checklists/revisions`, `/submit`, `/approve`, `/reject`
+  - UI: `app/web/main_tabs.py`의 `OPS 마스터 관리`에 revision draft/submit/approve/reject 추가
+- [x] QR/equipment/checklist master 검색/필터 정책 확정
+  - API: `/api/ops/inspections/checklists/catalog`, `/equipment-assets`, `/sets`, `/qr-assets`에 `q`, `lifecycle_state`, `include_inactive` 반영
+  - UI: `app/web/main_tabs.py`의 `OPS 마스터 관리`에 search + lifecycle/revision status filter 반영
+- [x] checklist revision diff/release 정책 확정
+  - API: `/api/ops/inspections/checklists/revisions/{id}` detail + diff/release note validation
+  - 규칙: submit/approve 전 `Summary`, `Impact`, `Rollback` release note 섹션 필수
+  - UI: revision diff 패널 + release note template placeholder 추가
+- [x] QR placeholder 정리 이후 변경 이력(audit + revision) 저장
+  - migration/table: `migrations/versions/20260314_0034_ops_qr_asset_revisions.py`, `ops_qr_asset_revisions`
+  - API: `GET /api/ops/inspections/checklists/qr-assets/revisions`
+  - 적용 범위: QR CRUD + placeholder bulk-update가 before/after + actor + source를 revision row로 저장
+  - 증빙 export: 월간 감사 아카이브가 `ops_qr_asset_revisions_attachment`를 함께 내보냄
+- [x] `app/main.py` / `app/schemas.py` / `app/database.py` 2차 분해 1차 착수
+  - 분리 모듈: `app/domains/ops/checklist_runtime.py`, `app/domains/ops/schemas.py`, `app/domains/ops/tables.py`
+  - 적용 방식: `app/main.py`는 checklist runtime wrapper 위임, `app/schemas.py`와 `app/database.py`는 OPS core re-export 구조로 축소
+  - 추가 정리: `checklist_runtime.py`는 더 이상 `app.main`을 import하지 않음
+- [x] 통합 리포트 asset scope pivot 반영
+  - API: 월간/연간 integrated report, csv/pdf/print가 `equipment_id`, `qr_asset_id` query를 수용
+  - 동작: inspection/work-order/official-document 섹션은 자산 scope로 좁혀지고, billing은 `scope_applicable=false`로 명시적 제외
+  - 테스트: `tests/api/test_official_documents.py`
+- [x] `inspection_service` / `workflow_service` / `iam.service` standalone import 정리
+  - 추가 모듈: `app/domains/iam/core.py`
+  - 적용 방식: 세 서비스가 더 이상 `app.main`을 직접 import하지 않고, `app/main.py`도 inspection/workflow service에 `bind(globals())`를 호출하지 않음
+  - 회귀 검증: `tests/api/test_auth_iam.py`, `tests/api/test_ops_core.py`, `tests/api/test_official_documents.py`, `tests/api/test_adoption.py`
+- [x] `iam.security` / `record_service` standalone import 정리
+  - 적용 범위: `app/domains/iam/security.py`, `app/domains/ops/record_service.py`
+  - 추가 정리: `app/main.py`가 더 이상 `record_service.bind(globals())`를 호출하지 않음
+  - 회귀 검증: `tests/api/test_auth_iam.py`, `tests/api/test_ops_governance.py`, `tests/api/test_alerts.py`
+- [x] `ops.service` / `alert_service` standalone import 정리
+  - 적용 범위: `app/domains/ops/service.py`, `app/domains/ops/alert_service.py`
+  - 추가 모듈: `app/domains/ops/config.py`
+  - 적용 방식: 두 서비스가 더 이상 `app.main`을 직접 import하거나 `bind(globals())`에 의존하지 않고, `config.runtime` proxy로 현재 `app.main` 설정 override를 읽음
+  - 회귀 검증: `tests/api/test_alerts.py`, `tests/api/test_ops_governance.py`, `tests/api/test_platform.py`
+- [x] `ops.remediation_service` / `adoption.tracker_service` direct main import 정리
+  - 적용 범위: `app/domains/ops/remediation_service.py`, `app/domains/adoption/tracker_service.py`
+  - 추가 모듈: `app/runtime_bridge.py`
+  - 적용 방식: `remediation_service`는 standalone import + `ops.config.runtime`로 정리했고, `tracker_service`는 `app.main` 직접 import 대신 runtime bridge로 adoption payload/status/content 심볼을 읽음
+  - 추가 정리: `app/main.py`가 더 이상 `remediation_service.bind(globals())`, `tracker_service.bind(globals())`를 호출하지 않음
+  - 회귀 검증: `tests/api/test_ops_governance.py`, `tests/api/test_adoption.py`
+- [x] lifecycle/revision 회귀 검증 추가
+  - 테스트: `tests/api/test_ops_core.py`, `tests/test_migration_ops_master_lifecycle_and_revisions.py`, `tests/test_migration_ops_qr_asset_revisions.py`
+- [x] 실행 기준 재검증
+  - `.\scripts\run_pytest.ps1 -q -m smoke` -> `9 passed, 121 deselected`
+  - `.\scripts\run_pytest.ps1 -q -m acceptance` -> `6 passed, 124 deselected`
+  - `.\scripts\run_pytest.ps1 -q` -> `130 passed`
+- [x] CI smoke + acceptance 실행 추가
+  - `.github/workflows/ci.yml`에 `pytest -q -m smoke`, `pytest -q -m acceptance`, `pytest -q` 단계 반영
+
+## 현재 판정
+
+### 이미 운영 가능한 축
+
+- [x] 전기/소방 법정점검 입력과 점검 이력 조회
+- [x] 작업지시 생성, SLA 정책, 에스컬레이션, 타임라인
+- [x] IAM 권한관리, 토큰 운영, 감사로그 조회
+- [x] QR placeholder 탐지와 bulk update API
+- [x] 공문 접수/첨부/기한초과 sync/월간-연간 리포트
+- [x] 전기/수도 검침, 공용요금 배부, 청구 생성
+- [x] 튜토리얼, 온보딩, 콘솔 가이드, IAM 가이드
+- [x] 배포 smoke, runbook, governance gate, privileged smoke 자동 복구
+- [x] 로컬 smoke/full regression 실행 경로 복구
+
+### 아직 약한 축
+
+- [ ] `A2-lite`를 default privileged smoke로 승격할지 운영 비용 기준 확정
+- [ ] `A3-lite`를 nightly/non-blocking smoke로 연결
+- [ ] 전기/소방 점검 결과의 출력물/보고서/증빙 패키지 표준화
+- [ ] 공문 처리와 법정점검/작업지시 간 기준키 연결 명확화
+- [ ] asset-scoped integrated report에서 billing 섹션을 어떤 규칙으로 연결할지 확정
+- [ ] `app.main` 역의존 제거와 remaining helper/service 분리까지 포함한 구조 2차 분해 마감 (`inspection_service`, `workflow_service`, `iam.service`, `iam.security`, `record_service`, `ops.service`, `alert_service`, `ops.remediation_service`까지는 정리 완료. `adoption.tracker_service`는 direct import/bind 제거 완료, 남은 직접 대상은 일부 router helper와 adoption content/payload 본체 이동`)
+
+## 90일 목표
+
+### G1. 현업 전환
+
+- 관리소 기준으로 아래 3개 acceptance 시나리오를 사람 손으로 실제 수행할 수 있게 만든다.
+  - A1. 법정점검 -> 이상조치 작업지시 -> SLA -> 감사로그 -> 월간 통합 리포트
+  - A2. 공문 접수 -> 첨부 저장 -> 기한초과 sync -> 작업지시 -> 공문 리포트
+  - A3. 검침 -> 공용요금 배부 -> 청구 생성 -> 청구 조회
+
+### G2. 데이터 기준선
+
+- 사이트, 설비, QR, 점검, 작업지시, 증빙이 서로 일관된 키와 버전으로 연결되게 만든다.
+
+### G3. 운영 신뢰성
+
+- `code -> test -> deploy -> smoke -> runbook -> gate` 흐름을 사람 개입 없이 재현 가능하게 만든다.
+
+### G4. 구조 안정화
+
+- `app/main.py`를 더 줄이고, 남은 대형 모듈을 도메인 단위로 분리해 이후 유지보수 비용을 낮춘다.
+
+## 새 실행 로드맵
+
+### F1. acceptance 시나리오 3개 고정 (우선순위 1, 다음 2주)
+
+- [x] A1. 법정점검 흐름 고정
+  - 전기/소방 점검 저장 -> 이상조치 작업지시 생성 -> SLA 확인 -> 감사로그 조회 -> 월간 통합 리포트까지 1개 흐름으로 묶는다.
+  - owner 기준 문서/pytest acceptance 고정 완료 (`docs/ACCEPTANCE_A1_LEGAL_INSPECTION_FLOW.md`, `tests/api/test_acceptance_a1.py`)
+- [x] A2. 공문 처리 흐름 고정
+  - 공문 접수 -> 첨부 업로드 -> overdue sync -> 연계 작업지시 -> 월간/연간 공문 리포트까지 1개 흐름으로 묶는다.
+  - owner 기준 문서/pytest acceptance 고정 완료 (`docs/ACCEPTANCE_A2_OFFICIAL_DOCUMENT_FLOW.md`, `tests/api/test_acceptance_a2.py`)
+- [x] A3. 검침/청구 흐름 고정
+  - 세대/요율/검침/공용요금 입력 -> billing run -> 청구서 조회까지 1개 흐름으로 묶는다.
+  - owner 기준 문서/pytest acceptance 고정 완료 (`docs/ACCEPTANCE_A3_BILLING_FLOW.md`, `tests/api/test_acceptance_a3.py`)
+- [x] 3개 시나리오 모두에 대해 owner/manager/operator/auditor 권한 매트릭스를 실제 API 기준으로 점검한다.
+- [x] 3개 시나리오 모두를 acceptance test 대상으로 확정한다.
 
 완료 기준:
-- 운영 콘솔에서 신규 사용자 10분 내 기본 흐름(로그인→점검→작업지시→리포트) 수행 가능
+- 3개 시나리오가 문서 없이 API/UI만으로 재현 가능
+- 각 시나리오별 입력 데이터, 기대 결과, 검증 포인트가 문서와 테스트로 남아 있음
+- 최소 1회 로컬 full regression + smoke 이후에도 시나리오 정의가 유지됨
 
-### R1. 모놀리스 분해 1차 (우선순위 1, 2주)
+### F2. 설비/QR 마스터 운영 완성 (우선순위 1, 2~4주)
 
-- [x] Day 1 기준선 확정: 분해 설계서 + 목표 패키지 트리 생성 (`docs/R1_MAIN_SPLIT_DESIGN.md`, `app/web/*`, `app/domains/*`) (2026-03-06)
-- [x] `app/main.py`에서 HTML 빌더를 `app/web/*.py`로 분리 (2026-03-06, `app/web/main_tabs.py`, `app/web/public_pages.py`, `app/web/facility_console.py`, `app/web/tutorial.py`)
-- [x] 인증/권한/토큰/감사 로직을 `app/domains/iam/*.py`로 1차 분리 (2026-03-06, `security.py`/`service.py` + `router_auth.py`/`router_admin.py` 추출, `app.main` 호환 래퍼 유지)
-- [x] 점검/작업지시/리포트 로직을 `app/domains/ops/*.py`로 1차 분리 (2026-03-06, `router_core.py`로 workflow-locks/inspections/work-orders/reports route 추출)
-- [x] 공개/웹 진입 라우트를 `app/domains/public/router.py`로 분리 (2026-03-07, `fd72f0f`, deploy `dep-d6ltbui4d50c73ch9500`, 전체 테스트 `101 passed`)
-- [x] adoption tracker 라우트를 `app/domains/adoption/router_tracker.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
-- [x] ops governance/alerts/SLA policy 라우트를 `app/domains/ops/router_governance.py`, `app/domains/ops/router_alerts.py`로 분리 (2026-03-07, `c71bf8f`, deploy `dep-d6luh8nkijhs73fna6r0`, 전체 테스트 `101 passed`)
-- [x] tutorial/handover/adoption KPI-policy 라우트를 `app/domains/ops/router_tutorial.py`, `app/domains/ops/router_reporting.py`, `app/domains/adoption/router_ops.py`로 분리 (2026-03-07, `53401df`, deploy `dep-d6lv3p4r85hc73ae73r0`, 전체 테스트 `101 passed`, `SMOKE_OK`)
-- [x] `app/main.py`는 라우터 결합 + 앱 부트스트랩 + middleware 역할로 축소
-- [x] helper/service 추출을 계속해 `app/main.py`를 20k lines 이하로 추가 축소 (현재 17,011 lines, 2026-03-07 `0d1507e`)
-
-완료 기준:
-- `app/main.py` 52k -> 20k lines 이하
-- 도메인별 파일에서 단위 테스트 가능한 함수 경계 확보
-
-### R2. 테스트 구조 분할 (우선순위 2, 1주)
-
-- [x] `tests/test_api.py`를 도메인별 파일로 분리
-  - `tests/api/test_auth_*.py`
-  - `tests/api/test_ops_*.py`
-  - `tests/api/test_adoption_*.py`
-- [x] 공통 fixture/util 모듈화 (`tests/conftest.py`, `tests/helpers/*.py`)
-- [x] 배포 스모크 핵심 시나리오를 별도 `smoke` 그룹으로 태깅 (2026-03-07, `pytest.ini`, `pytest -q -m smoke` `5 passed`)
+- [x] QR/설비/checklist master CRUD 화면과 관리자 API 세트 추가
+- [x] 설비코드, 설비위치, QR ID, 기본점검항목의 기준키를 명시적으로 정리
+- [x] QR/설비/checklist master lifecycle state 1차 추가
+- [x] checklist set 변경 승인/버전 관리 1차 추가
+- [x] QR/설비/checklist master 검색 정책 추가
+- [x] checklist revision diff/release 정책 확정
+- [x] QR placeholder 정리 이후의 변경 이력(audit + revision) 저장
+- [ ] QR 선택 시 점검 입력 화면 자동채움 로직을 “운영 규칙”으로 문서화
+- [ ] 신규 설비 등록부터 점검 연결까지의 seed/import 절차 정리
 
 완료 기준:
-- 테스트 실패 시 도메인 영향 범위를 파일 단위로 즉시 식별 가능
-- CI 실행 로그에서 병목 케이스 분리 가능
+- QR 자산을 수동 JSON 수정 없이 운영 UI/API만으로 관리 가능
+- 설비/QR 기준정보 변경이 감사 추적 가능
 
-### R3. 데이터/경계 정리 (우선순위 3, 1주)
+### F3. 법정점검 도메인 완성 (우선순위 1, 4~6주)
 
-- [x] OPS 체크리스트 버전 관리 키 표준화 (`checklist_version`, `source`, `applied_at`)
-- [x] 권한/토큰 정책 응답 메타 규약 전 API 통일 점검
-- [x] 감사로그 `action/resource/status` 카테고리 사전 정의 문서화 (`docs/AUDIT_LOG_CATEGORY_DICTIONARY.md`)
-- [x] 월간 감사 아카이브 첨부 항목 스키마 고정(v2)
-
-완료 기준:
-- “정책/감사/점검 데이터가 어떤 버전 규약인지” API 응답만으로 판별 가능
-
-### R4. 운영 신뢰성 강화 (우선순위 4, 1주)
-
-- [x] 운영 스모크에 “UI 핵심 경로” 1개 추가 (인증→IAM→점검목록) (2026-03-07, `/?tab=iam` + `scripts/post_deploy_smoke.ps1`)
-- [x] runbook critical 체크의 오탐/누락 월간 리뷰 루프 추가 (2026-03-07, `/api/ops/runbook/review/run|latest`, 운영 review run `840`)
-- [x] DR rehearsal 결과를 governance gate 가중치에 반영 (2026-03-07, `dr_weight`, `weighted_score_percent`)
-- [x] 배포 체크리스트 버전 자동 증분 규칙 정의 (2026-03-07, `current_utc_month + deploy_smoke signature sequence`)
-- [x] 비차단 운영 경고 오탐 제거 + 샘플 증빙 self-heal 반영 (2026-03-07, `7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, `SMOKE_OK`)
-- [x] W07 품질 알림 내부 webhook 채널 연결 (2026-03-07, `aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, `SMOKE_OK`, probe `success`)
-- [x] Slack/Teams 외부 채널 payload adapter 배포 (2026-03-07, `9b9679b`, deploy `dep-d6lnmsi4d50c73ceirt0`, `SMOKE_OK`)
+- [ ] 전기직무고시 체크리스트 버전 관리 체계 확정
+- [ ] 소방 법정점검 체크리스트 버전 관리 체계 확정
+- [ ] 점검 유형별 필수항목, 출력양식, 증빙요건을 정책화
+- [ ] 월간/분기별 법정점검 패키지(점검결과, 조치이력, 증빙목록) 생성 API 추가
+- [ ] 법정점검 누락/지연/미조치 항목을 한 눈에 보는 운영 대시보드 추가
 
 완료 기준:
-- `deploy -> smoke -> runbook -> gate` 전 과정이 같은 버전 기준으로 연결
-- 실트래픽이 없는 idle 구간 때문에 runbook이 warning으로 오염되지 않을 것
-- W07 품질 알림 채널이 실제 수신 가능 상태이며 runbook `overall_status=ok`를 유지할 것
+- 전기/소방 점검이 단순 입력이 아니라 “법정 기록 패키지”로 재구성 가능
+- 월간 감사 또는 대내 보고 자료로 바로 활용 가능
 
-### R5. 신규 사용자 온보딩 (우선순위 5, 1주)
+### F4. 시설관리 데이터 축적/리포트 (우선순위 2, 6~8주)
 
-- [x] 메뉴탭 툴팁 사전 확장(주요 버튼/액션 풍선안내 추가, 2026-03-07, `06c09ea`, deploy `dep-d6lppgkhg0os73atrv6g`)
-- [x] “처음 1일 운영 체크리스트” UI 제공 (튜토리얼 탭 연동, 2026-03-07)
-- [x] 용어집(영문/한글/업무 의미) API + 화면 제공 (2026-03-07)
-- [x] 역할별(owner/manager/operator/auditor) 시작 가이드 제공 (2026-03-07)
-- [x] 레거시 콘솔(`/web/console`)과 튜토리얼 단독 화면(`/web/tutorial-simulator`)에도 동일한 풍선안내 체계 확장 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`)
+- [ ] 사이트별 시설 데이터 snapshot 테이블 또는 export 규격 정의
+- [ ] 점검, 작업지시, SLA, 증빙, QR 자산을 묶는 월간 KPI 스냅샷 저장
+- [ ] 반복 이상 설비, 미조치 설비, 점검누락 설비, SLA 초과 설비 집계 추가
+- [ ] 운영 리포트 API를 “실시간 조회”와 “월간 고정본”으로 분리
+- [ ] 장기 추세 분석용 CSV/JSON export 규격 정리
 
 완료 기준:
-- 신규 사용자 질문 빈도 상위 10개 항목을 UI에서 자체 해결 가능
+- “데이터가 쌓인다”는 말을 화면과 export 결과로 확인 가능
+- 월간 운영회의 자료를 시스템에서 바로 뽑을 수 있음
 
-최근 반영:
-- [x] R5 온보딩 허브 1차 배포 완료 (2026-03-07, `d0dac02`, deploy `dep-d6lphnlactks73flpdb0`, split test run total `101 passed`)
-- [x] 레거시/튜토리얼 풍선안내 확장 배포 완료 (2026-03-07, `9469d60`, deploy `dep-d6lqtvftskes73djm2bg`, `pytest -q tests/api/test_adoption.py` `20 passed`, `SMOKE_OK`)
-- [x] 운영 콘솔 1페이지 시작 가이드 배포 완료 (2026-03-07, `8cc999a`, deploy `dep-d6lrcqlm5p6s73fhueh0`, live `/web/console/guide`, `SMOKE_OK`)
-- [x] IAM 탭 링크 버튼 + HTML 가이드 배포 완료 (2026-03-07, `9179d7c`, deploy `dep-d6lrth7tskes73dk2ebg`, live `/web/iam-guide`, `SMOKE_OK`)
-- [x] 가이드 링크 문구를 `사용 설명서 열기`로 통일하고 튜토리얼 HTML 가이드(`/web/tutorial-guide`) 배포 완료 (2026-03-07, `73bc978`, deploy `dep-d6lsqjua2pns73cq4ch0`, `pytest -q tests/api/test_adoption.py` `20 passed`, live `/web/tutorial-guide`, `SMOKE_OK`)
+### F5. 구조 2차 분해 (우선순위 2, 8~10주)
 
-## 2주 실행 순서 (바로 실행용)
+- [x] OPS core tables/schema/checklist runtime 1차 분리
+- [ ] `app/main.py`를 12k lines 이하로 축소
+- [ ] `app/schemas.py`를 도메인별 schema 모듈로 분리
+- [ ] `app/database.py`의 테이블/헬퍼를 관심사별로 분리
+- [ ] governance snapshot, adoption policy, remaining row-model helper를 별도 서비스로 분리
+- [ ] import dependency 방향을 점검해 `app.main -> domain` 단방향 조립 구조를 강화 (`inspection_service`, `workflow_service`, `iam.service`, `iam.security`, `record_service` 정리는 완료)
+
+완료 기준:
+- 신규 기능 추가 시 `app/main.py`를 직접 수정하지 않는 비율이 높아짐
+- 도메인 테스트와 코드 탐색 비용이 눈에 띄게 줄어듦
+
+### F6. 배포/검증 자동화 2차 (우선순위 2, 10~12주)
+
+- [ ] `deploy_and_verify.ps1` 결과를 JSON summary로 저장
+- [ ] smoke, full regression, privileged smoke의 실행 정책을 명문화
+- [ ] 환경변수 drift check와 service-id validation을 배포 전 강제
+- [ ] CI에서 smoke/acceptance/full 결과 artifact와 주요 split 회귀를 자동 실행
+- [ ] 운영 배포 후 핵심 API/HTML marker 검증 결과를 아카이브
+
+완료 기준:
+- 운영 배포 결과를 사람이 콘솔 로그로 읽지 않아도 JSON/문서로 추적 가능
+- “잘못된 서비스에 배포”와 “오래된 commit 배포”를 자동 차단
+
+## 바로 착수할 2주 실행 순서
 
 ### Week 1
 
-- [x] Day 1: `app/main.py` 분해 설계서 작성 + 파일 트리 확정 (`docs/R1_MAIN_SPLIT_DESIGN.md`)
-- [x] Day 2-3: 웹 렌더링/JS 블록 분리 1차 (`app.main` -> `app.web.*`, 전체 테스트 92 passed)
-- [x] Day 4: IAM 도메인 로직 분리 1차 (`app.domains.iam.security/service/router_*`, 전체 테스트 92 passed)
-- [x] Day 5: OPS core route 분리 + 회귀 테스트 (`app.domains.ops.router_core`, 전체 테스트 92 passed)
+- [x] Day 1: A1~A3 acceptance 중 운영 smoke 승격 후보 선정
+- [x] Day 2: 3개 시나리오 공통 기준키(site/equipment/qr/work_order/document/unit) 연결표 작성
+- [ ] Day 3: 공문/청구/통합리포트 기준키 gap 정리
+- [x] Day 4: 운영 검증 체크리스트 + evidence template 초안
+- [x] Day 5: 로컬 full/acceptance/smoke 재검증
 
 ### Week 2
 
-- [x] Day 1-2: 테스트 파일 분할 + fixture 정리 (`tests/api/test_*.py`, `tests/conftest.py`, `tests/helpers/common.py`, 전체 테스트 92 passed)
-- [x] Day 3: 데이터/정책 메타 정합성 점검 (`/api/auth/me`, `/api/admin/token-policy`, checklist/audit 응답 메타 1차 반영 + 감사로그 사전 + audit archive v2, 전체 테스트 92 passed)
-- [x] Day 4: 운영 신뢰성 체크(스모크/런북/게이트) 보강 (`dc1cad8`, deploy `dep-d6ll79vtskes73c2cf6g`, `SMOKE_OK`, runbook review run `840`)
-- [x] Day 4-5: 비차단 운영 경고 오탐 정리 + 샘플 증빙 복구 (`7b7835d`, deploy `dep-d6lmemkhg0os73aske20`, 전체 테스트 97 passed, live runbook warning은 `w07_quality_alert_channel`만 남음)
-- [x] Day 5: W07 품질 알림 내부 webhook 연결 + 운영 probe (`aec572a`, deploy `dep-d6ln7engi27c73dne7dg`, 전체 테스트 100 passed, live runbook `overall_status=ok`)
-- [x] Day 5+: Slack/Teams 외부 채널 adapter 지원 (`9b9679b`, deploy `dep-d6lnmsi4d50c73ceirt0`, 전체 테스트 101 passed, 운영은 내부 target 유지)
-- [x] Day 5: 신규 사용자 온보딩 UI 반영 + 운영 배포 (`d0dac02`, `06c09ea`, `9469d60`, deploy `dep-d6lphnlactks73flpdb0`/`dep-d6lppgkhg0os73atrv6g`/`dep-d6lqtvftskes73djm2bg`)
-- [x] Day 5+: `RENDER_SERVICE_ID` 운영 웹서비스 정정 + ops helper/service 추가 추출 (`7c17db2`, deploy `dep-d6m0ctk50q8c73abg7l0`, split test run total `101 passed`, `SMOKE_OK`)
-- [x] Day 5+: remediation/autopilot helper 추가 추출 (`4bfea9f`, deploy `dep-d6m0pkp4tr6s7386n830`, split test run total `101 passed`, `SMOKE_OK`)
-- [x] Day 5+: inspection/evidence helper 추가 추출 (`48019cd`, deploy `dep-d6m133bh46gs73bc4ke0`, split test run total `101 passed`, `SMOKE_OK`)
-- [x] Day 5+: workflow/work-order helper 추가 추출 + privileged smoke 자동 복구 (`d6d43dc`, deploy `dep-d6m23q7gi27c73ds4gk0`, split test run total `101 passed`, live `/api/auth/me role=owner`, `SMOKE_OK`)
-- [x] Day 5+: adoption tracker helper 추가 추출 + smoke marker 도입 (`bc434c6`, deploy `dep-d6m2ga450q8c73ac79bg`, `app/main.py` `19,123` lines, `pytest -q -m smoke` `5 passed`, split test run total `101 passed`, `SMOKE_OK`)
-- [x] Day 5+: ops record/model helper 추가 추출 + deploy 사전 smoke 강제 (`0e38087`, deploy `dep-d6m2o6h5pdvs738nsk80`, `app/main.py` `19,025` lines, `PRE_DEPLOY_SMOKE_OK`, `SMOKE_OK`, `DEPLOY_AND_SMOKE_OK`)
-- [x] Day 5+: alert policy/dispatch/analytics helper 추가 추출 + deploy commit 재시도/서비스 fallback (`0d1507e`, deploy `dep-d6m39ep5pdvs738o2qc0`, `app/main.py` `17,011` lines, `TARGET_SERVICE_FALLBACK`, `DEPLOY_COMMIT_MATCH`, split test run total `101 passed`, `SMOKE_OK`)
+- [x] Day 1: acceptance 결과를 smoke/runbook 후보와 연결
+- [ ] Day 2: CI acceptance 결과 artifact/summary 저장 방식 정리
+- [x] Day 3: OPS key master / smoke archive 반영 후 로컬 재검증
+- [ ] Day 4: 구조 2차 분해 우선 대상(router_official_documents, router_tracker, router_governance) 확정
+- [ ] Day 5: F1 완료 판정 및 F2/F3 우선순위 재조정
+
+## 이번 재설계에서 보류할 것
+
+- [ ] 신규 W16+ 주차형 기능 확장
+- [ ] 대규모 UI 재디자인
+- [ ] 외부 알림 채널 2개 이상 동시 연결
+- [ ] 비핵심 시각화 추가
 
 ## 운영 규칙
 
-- 모든 [x] 완료 항목은 아래 3가지를 함께 기록
+- 모든 완료 항목은 아래 3가지를 함께 기록
   - commit SHA
   - deploy ID
   - smoke 결과(`SMOKE_OK` 여부)
-- 목표 추가 시 “효과 지표”를 반드시 같이 명시
-  - 예: 처리시간 감소, 오류율 감소, 교육시간 단축
+- 목표 추가 시 아래 2가지를 같이 적는다.
+  - 사용자 시나리오 기준 효과
+  - 운영 지표 기준 효과
+- 완료된 계획은 상단에서 제거하지 말고, 하단 레퍼런스 이력으로 이동한다.
 
 ---
 

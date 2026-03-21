@@ -148,6 +148,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert service_info.json()["inspection_evidence_upload_api"] == "/api/inspections/{inspection_id}/evidence"
     assert service_info.json()["inspection_evidence_list_api"] == "/api/inspections/{inspection_id}/evidence"
     assert service_info.json()["inspection_evidence_download_api"] == "/api/inspections/evidence/{evidence_id}/download"
+    assert service_info.json()["ops_inspection_checklists_catalog_api"] == "/api/ops/inspections/checklists/catalog"
     assert (
         service_info.json()["ops_inspection_checklists_import_validation_api"]
         == "/api/ops/inspections/checklists/import-validation"
@@ -539,6 +540,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
     assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
     assert "사용 설명서 열기" in console_html.text
+    assert "세대 민원처리" in console_html.text
+    assert "/web/complaints" in console_html.text
 
     console_guide_html = app_client.get("/web/console/guide")
     assert console_guide_html.status_code == 200
@@ -590,6 +593,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "요약 모드 (핵심 5줄): OFF" in adoption_html.text
     assert "핵심 5줄 요약" in adoption_html.text
     assert "Post-MVP Execution Pack" in adoption_html.text
+    assert "세대 민원처리" in adoption_html.text
 
     modules = app_client.get("/api/public/modules")
     assert modules.status_code == 200
@@ -599,6 +603,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert modules_body["console_html"] == "/web/console"
     assert len(modules_body["modules"]) >= 7
     assert any(item.get("id") == "tutorial-simulator" for item in modules_body["modules"])
+    assert any(item.get("id") == "household-complaints" for item in modules_body["modules"])
 
     modules_html = app_client.get("/api/public/modules", headers={"Accept": "text/html"})
     assert modules_html.status_code == 200
@@ -606,6 +611,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "시설 웹 모듈" in modules_html.text
     assert "운영 콘솔" in modules_html.text
     assert "Tutorial Simulator" in modules_html.text
+    assert "세대 민원처리" in modules_html.text
 
     public_plan = app_client.get("/api/public/adoption-plan")
     assert public_plan.status_code == 200

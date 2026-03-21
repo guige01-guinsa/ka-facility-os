@@ -1,12 +1,74 @@
 """Adoption KPI and policy routes extracted from app.main."""
 
-from fastapi import APIRouter
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+
+from app.domains.adoption.ops_metrics import (
+    _build_w05_usage_consistency_snapshot,
+    _build_w06_operational_rhythm_snapshot,
+    _build_w08_report_discipline_snapshot,
+    _build_w09_kpi_operation_snapshot,
+    _build_w10_self_serve_snapshot,
+    _build_w11_scale_readiness_snapshot,
+    _build_w13_closure_handoff_snapshot,
+    _build_w14_stability_sprint_snapshot,
+    _build_w15_ops_efficiency_snapshot,
+    _ensure_w09_kpi_policy,
+    _ensure_w10_support_policy,
+    _ensure_w11_readiness_policy,
+    _ensure_w12_handoff_policy,
+    _ensure_w13_handoff_policy,
+    _ensure_w14_stability_policy,
+    _ensure_w15_efficiency_policy,
+    _upsert_w09_kpi_policy,
+    _upsert_w10_support_policy,
+    _upsert_w11_readiness_policy,
+    _upsert_w12_handoff_policy,
+    _upsert_w13_handoff_policy,
+    _upsert_w14_stability_policy,
+    _upsert_w15_efficiency_policy,
+)
+from app.domains.iam.core import _principal_site_scope
+from app.domains.iam.security import _has_permission, _require_site_access, require_permission
+from app.domains.iam.service import _write_audit_log
+from app.runtime_bridge import export_main_symbols_with_prefixes
 
 
-def build_router(namespace: dict[str, object]) -> APIRouter:
-    """Compatibility extraction layer until domain services are fully split."""
-    exported = {key: value for key, value in namespace.items() if key != "router"}
-    globals().update(exported)
+def _allowed_sites_for_principal(principal: dict[str, Any]) -> list[str] | None:
+    scope = _principal_site_scope(principal)
+    if "*" in scope:
+        return None
+    return scope
+
+
+_REQUIRED_MAIN_NAMES = (
+    "_build_policy_response_payload",
+    "_build_w04_blocker_snapshot",
+    "_build_w04_funnel_snapshot",
+    "_build_w07_automation_readiness_snapshot",
+    "_build_w07_sla_quality_snapshot",
+    "_build_w07_weekly_archive_csv",
+    "_build_w07_weekly_trends_payload",
+    "_normalize_site_name",
+    "_read_w07_weekly_job_runs",
+    "_require_global_site_scope",
+    "run_w07_sla_quality_weekly_job",
+)
+_REQUIRED_MAIN_PREFIXES = ("W07_",)
+export_main_symbols_with_prefixes(
+    globals(),
+    names=_REQUIRED_MAIN_NAMES,
+    prefixes=_REQUIRED_MAIN_PREFIXES,
+)
+
+
+def build_router(namespace: dict[str, object] | None = None) -> APIRouter:
+    """Compatibility extraction layer with explicit imports and a minimal bridge."""
     router = APIRouter(prefix="/api/ops", tags=["ops"])
 
     @router.get("/adoption/w05/consistency")

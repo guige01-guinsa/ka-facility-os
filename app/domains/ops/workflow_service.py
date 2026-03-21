@@ -2,32 +2,32 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import json
+from datetime import datetime, timezone
+from typing import Any
 
-globals().update(
-    {
-        key: value
-        for key, value in main_module.__dict__.items()
-        if key not in {"bind", "main_module", "_LOCAL_SYMBOLS"}
-    }
-)
+from fastapi import HTTPException
+from sqlalchemy import insert
 
-_LOCAL_SYMBOLS = {
-    "bind",
-    "main_module",
-    "_LOCAL_SYMBOLS",
-    "_row_to_work_order_model",
-    "_validate_work_order_transition",
-    "_append_work_order_event",
-    "_row_to_work_order_event_model",
-    "_row_to_workflow_lock_model",
+from app.database import work_order_events
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime, _is_overdue
+from app.domains.ops.schemas import WorkOrderEventRead, WorkOrderRead, WorkflowLockRead
+
+WORK_ORDER_TRANSITIONS: dict[str, set[str]] = {
+    "open": {"acked", "completed", "canceled"},
+    "acked": {"completed", "canceled"},
+    "completed": {"open"},
+    "canceled": {"open"},
 }
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
+
+
+def _to_json_text(value: dict[str, Any] | None) -> str:
+    data = value or {}
+    return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
@@ -44,6 +44,12 @@ def _row_to_work_order_model(row: dict[str, Any]) -> WorkOrderRead:
         assignee=row["assignee"],
         reporter=row["reporter"],
         inspection_id=row["inspection_id"],
+        equipment_id=int(row["equipment_id"]) if row.get("equipment_id") is not None else None,
+        qr_asset_id=int(row["qr_asset_id"]) if row.get("qr_asset_id") is not None else None,
+        equipment_snapshot=str(row.get("equipment_snapshot") or "").strip() or None,
+        equipment_location_snapshot=str(row.get("equipment_location_snapshot") or "").strip() or None,
+        qr_id=str(row.get("qr_id") or "").strip() or None,
+        checklist_set_id=str(row.get("checklist_set_id") or "").strip() or None,
         due_at=due_at,
         acknowledged_at=_as_optional_datetime(row["acknowledged_at"]),
         completed_at=_as_optional_datetime(row["completed_at"]),

@@ -2,12 +2,60 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import csv
+import hashlib
+import io
+import json
+import math
+from datetime import datetime, timedelta, timezone
+from os import getenv
+from pathlib import Path
+from typing import Any
+
+from fastapi import HTTPException
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.database import (
+    admin_audit_logs,
+    admin_tokens,
+    admin_users,
+    alert_deliveries,
+    api_latency_samples,
+    get_conn,
+    inspections,
+    job_runs,
+    work_order_events,
+    work_orders,
+)
+from app.domains.iam.core import (
+    ADMIN_TOKEN_ROTATE_AFTER_DAYS,
+    SITE_SCOPE_ALL,
+    _month_window,
+    _site_scope_text_to_list,
+)
+from app.domains.iam.service import _sign_payload, build_monthly_audit_archive
+from app.domains.ops import config as ops_config
+from app.domains.ops.config import (
+    _API_LATENCY_LAST_SEEN_AT,
+    _API_LATENCY_LOCK,
+    _API_LATENCY_SAMPLES,
+    _API_LATENCY_TARGET_KEYS,
+    _PREFLIGHT_LOCK,
+    _PREFLIGHT_SNAPSHOT,
+)
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime, _read_evidence_blob
+from app.domains.ops.record_service import _row_to_job_run_model, _to_json_text, _write_job_run
+
+try:
+    from redis import Redis
+except Exception:  # pragma: no cover - optional dependency
+    Redis = None
 
 _LOCAL_SYMBOLS = {
     "bind",
-    "main_module",
     "_LOCAL_SYMBOLS",
+    "_RATE_LIMIT_REDIS",
     "_rate_limit_backend_snapshot",
     "_audit_signing_snapshot",
     "_percentile_value",
@@ -53,13 +101,59 @@ _LOCAL_SYMBOLS = {
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
+
+
+_RATE_LIMIT_REDIS: Any = None
+ops_runtime = ops_config.runtime
+
+
+def _init_rate_limit_backend() -> None:
+    global _RATE_LIMIT_REDIS
+    _RATE_LIMIT_REDIS = None
+    if ops_runtime.API_RATE_LIMIT_STORE not in {"redis", "auto"}:
+        return
+    if not ops_runtime.API_RATE_LIMIT_REDIS_URL:
+        return
+    if Redis is None:
+        return
+    try:
+        client = Redis.from_url(
+            ops_runtime.API_RATE_LIMIT_REDIS_URL,
+            decode_responses=True,
+            socket_connect_timeout=1,
+            socket_timeout=1,
+        )
+        client.ping()
+        _RATE_LIMIT_REDIS = client
+    except Exception:
+        _RATE_LIMIT_REDIS = None
+
+
+def _parse_job_detail_json(raw: Any) -> dict[str, Any]:
+    try:
+        loaded = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError:
+        loaded = {}
+    if isinstance(loaded, dict):
+        return loaded
+    return {}
+
+
+def _build_ops_runbook_checks_snapshot(
+    *,
+    now: datetime | None = None,
+    horizon_minutes: int = 90,
+) -> dict[str, Any]:
+    from app.domains.ops.router_governance import _build_ops_runbook_checks_snapshot as _impl
+
+    return _impl(now=now, horizon_minutes=horizon_minutes)
 
 
 def _rate_limit_backend_snapshot() -> dict[str, Any]:
-    redis_url_configured = bool(API_RATE_LIMIT_REDIS_URL.strip())
+    if _RATE_LIMIT_REDIS is None:
+        _init_rate_limit_backend()
+    redis_url_configured = bool(ops_runtime.API_RATE_LIMIT_REDIS_URL.strip())
     redis_client_ready = _RATE_LIMIT_REDIS is not None
     redis_ping_ok = False
     redis_error: str | None = None
@@ -71,14 +165,14 @@ def _rate_limit_backend_snapshot() -> dict[str, Any]:
             redis_error = str(exc)
 
     active_backend = "redis" if redis_ping_ok else "memory"
-    if API_RATE_LIMIT_STORE == "redis":
+    if ops_runtime.API_RATE_LIMIT_STORE == "redis":
         status = "ok" if redis_ping_ok else "critical"
         message = (
             "Redis rate limit backend is active."
             if redis_ping_ok
             else "Redis is required but unavailable; rate limit fallback is active."
         )
-    elif API_RATE_LIMIT_STORE == "auto":
+    elif ops_runtime.API_RATE_LIMIT_STORE == "auto":
         status = "ok" if redis_ping_ok else "warning"
         if redis_ping_ok:
             message = "Auto mode currently uses Redis backend."
@@ -87,17 +181,17 @@ def _rate_limit_backend_snapshot() -> dict[str, Any]:
         else:
             message = "Auto mode is using memory backend (Redis URL not configured)."
     else:
-        status = "ok" if ENV_NAME != "production" else "warning"
+        status = "ok" if ops_runtime.ENV_NAME != "production" else "warning"
         message = (
             "Memory rate limit backend is configured."
-            if ENV_NAME != "production"
+            if ops_runtime.ENV_NAME != "production"
             else "Production is using memory rate limit backend."
         )
 
     return {
         "status": status,
         "message": message,
-        "configured_store": API_RATE_LIMIT_STORE,
+        "configured_store": ops_runtime.API_RATE_LIMIT_STORE,
         "active_backend": active_backend,
         "redis_url_configured": redis_url_configured,
         "redis_client_ready": redis_client_ready,
@@ -106,7 +200,7 @@ def _rate_limit_backend_snapshot() -> dict[str, Any]:
     }
 
 def _audit_signing_snapshot() -> dict[str, Any]:
-    enabled = bool(AUDIT_ARCHIVE_SIGNING_KEY.strip())
+    enabled = bool(ops_runtime.AUDIT_ARCHIVE_SIGNING_KEY.strip())
     if enabled:
         return {
             "status": "ok",
@@ -114,7 +208,7 @@ def _audit_signing_snapshot() -> dict[str, Any]:
             "enabled": True,
             "algorithm": "hmac-sha256",
         }
-    status = "warning" if ENV_NAME == "production" else "ok"
+    status = "warning" if ops_runtime.ENV_NAME == "production" else "ok"
     return {
         "status": status,
         "message": "Monthly audit archive signing key is not configured.",
@@ -143,7 +237,7 @@ def _load_persisted_api_latency_records(
     endpoint_key: str,
     limit: int,
 ) -> tuple[list[dict[str, Any]], str | None]:
-    if not API_LATENCY_PERSIST_ENABLED:
+    if not ops_runtime.API_LATENCY_PERSIST_ENABLED:
         return [], None
     try:
         with get_conn() as conn:
@@ -208,28 +302,28 @@ def _build_burn_rate_window_stats(
 
 def _build_api_latency_snapshot() -> dict[str, Any]:
     generated_at = datetime.now(timezone.utc)
-    warning_ms = max(1.0, float(API_LATENCY_P95_WARNING_MS))
-    critical_ms = max(warning_ms, float(API_LATENCY_P95_CRITICAL_MS))
-    min_samples = max(1, int(API_LATENCY_MIN_SAMPLES))
-    window_size = max(20, API_LATENCY_MONITOR_WINDOW)
-    burn_short_window_min = max(1, int(API_BURN_RATE_SHORT_WINDOW_MIN))
-    burn_long_window_min = max(burn_short_window_min, int(API_BURN_RATE_LONG_WINDOW_MIN))
-    burn_min_samples = max(1, int(API_BURN_RATE_MIN_SAMPLES))
-    burn_warning = max(0.1, float(API_BURN_RATE_WARNING))
-    burn_critical = max(burn_warning, float(API_BURN_RATE_CRITICAL))
-    stale_after_minutes = max(burn_long_window_min, int(API_LATENCY_STALE_AFTER_MIN))
+    warning_ms = max(1.0, float(ops_runtime.API_LATENCY_P95_WARNING_MS))
+    critical_ms = max(warning_ms, float(ops_runtime.API_LATENCY_P95_CRITICAL_MS))
+    min_samples = max(1, int(ops_runtime.API_LATENCY_MIN_SAMPLES))
+    window_size = max(20, ops_runtime.API_LATENCY_MONITOR_WINDOW)
+    burn_short_window_min = max(1, int(ops_runtime.API_BURN_RATE_SHORT_WINDOW_MIN))
+    burn_long_window_min = max(burn_short_window_min, int(ops_runtime.API_BURN_RATE_LONG_WINDOW_MIN))
+    burn_min_samples = max(1, int(ops_runtime.API_BURN_RATE_MIN_SAMPLES))
+    burn_warning = max(0.1, float(ops_runtime.API_BURN_RATE_WARNING))
+    burn_critical = max(burn_warning, float(ops_runtime.API_BURN_RATE_CRITICAL))
+    stale_after_minutes = max(burn_long_window_min, int(ops_runtime.API_LATENCY_STALE_AFTER_MIN))
     stale_cutoff = generated_at - timedelta(minutes=stale_after_minutes)
-    error_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_ERROR_SLO_PERCENT)))
-    latency_slo_percent = max(0.1, min(100.0, float(API_BURN_RATE_LATENCY_SLO_PERCENT)))
+    error_slo_percent = max(0.1, min(100.0, float(ops_runtime.API_BURN_RATE_ERROR_SLO_PERCENT)))
+    latency_slo_percent = max(0.1, min(100.0, float(ops_runtime.API_BURN_RATE_LATENCY_SLO_PERCENT)))
     error_budget_percent = max(0.01, round(100.0 - error_slo_percent, 4))
     latency_budget_percent = max(0.01, round(100.0 - latency_slo_percent, 4))
-    burn_sample_limit = max(window_size, int(API_BURN_RATE_SAMPLE_LIMIT))
+    burn_sample_limit = max(window_size, int(ops_runtime.API_BURN_RATE_SAMPLE_LIMIT))
     endpoints: list[dict[str, Any]] = []
 
     with _API_LATENCY_LOCK:
         memory_samples = {key: list(values) for key, values in _API_LATENCY_SAMPLES.items()}
         memory_last_seen = dict(_API_LATENCY_LAST_SEEN_AT)
-        for target in API_LATENCY_TARGETS:
+        for target in ops_runtime.API_LATENCY_TARGETS:
             key = target["key"]
             persisted_records, persisted_last_seen_at = _load_persisted_api_latency_records(
                 endpoint_key=key,
@@ -446,15 +540,15 @@ def _build_api_latency_snapshot() -> dict[str, Any]:
     return {
         "status": status,
         "message": message,
-        "enabled": API_LATENCY_MONITOR_ENABLED,
+        "enabled": ops_runtime.API_LATENCY_MONITOR_ENABLED,
         "warning_threshold_ms": round(warning_ms, 2),
         "critical_threshold_ms": round(critical_ms, 2),
         "stale_after_minutes": stale_after_minutes,
         "min_samples": min_samples,
         "window_size": window_size,
-        "persist_enabled": API_LATENCY_PERSIST_ENABLED,
-        "persist_retention_days": API_LATENCY_PERSIST_RETENTION_DAYS,
-        "target_count": len(API_LATENCY_TARGETS),
+        "persist_enabled": ops_runtime.API_LATENCY_PERSIST_ENABLED,
+        "persist_retention_days": ops_runtime.API_LATENCY_PERSIST_RETENTION_DAYS,
+        "target_count": len(ops_runtime.API_LATENCY_TARGETS),
         "critical_count": critical_count,
         "warning_count": warning_count,
         "insufficient_samples_count": insufficient_count,
@@ -483,8 +577,8 @@ def _build_evidence_archive_integrity_batch(
     sample_per_table: int | None = None,
     max_issues: int | None = None,
 ) -> dict[str, Any]:
-    per_table_limit = max(1, min(int(sample_per_table or EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE), 200))
-    issue_limit = max(1, min(int(max_issues or EVIDENCE_INTEGRITY_MAX_ISSUES), 500))
+    per_table_limit = max(1, min(int(sample_per_table or ops_runtime.EVIDENCE_INTEGRITY_SAMPLE_PER_TABLE), 200))
+    issue_limit = max(1, min(int(max_issues or ops_runtime.EVIDENCE_INTEGRITY_MAX_ISSUES), 500))
     checked_count = 0
     missing_blob_count = 0
     missing_hash_count = 0
@@ -494,7 +588,7 @@ def _build_evidence_archive_integrity_batch(
     table_summaries: list[dict[str, Any]] = []
 
     with get_conn() as conn:
-        for module, table in EVIDENCE_INTEGRITY_TABLES:
+        for module, table in ops_runtime.EVIDENCE_INTEGRITY_TABLES:
             rows = conn.execute(
                 select(table)
                 .order_by(table.c.uploaded_at.desc(), table.c.id.desc())
@@ -734,8 +828,8 @@ def _build_deploy_checklist_policy(
     rollback_guide_sha256: str | None,
 ) -> dict[str, Any]:
     return {
-        "deploy_smoke_recent_hours": max(1, DEPLOY_SMOKE_RECENT_HOURS),
-        "require_runbook_gate": DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
+        "deploy_smoke_recent_hours": max(1, ops_runtime.DEPLOY_SMOKE_RECENT_HOURS),
+        "require_runbook_gate": ops_runtime.DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE,
         "rollback_on_failure_recommended": True,
         "rollback_guide_required": True,
         "rollback_guide_path": str(rollback_guide_path).replace("\\", "/"),
@@ -745,7 +839,7 @@ def _build_deploy_checklist_policy(
         "ui_core_markers": ["ID/PW 로그인", "권한관리", "점검 이력 조회"],
         "version_rule": (
             "env_override"
-            if DEPLOY_CHECKLIST_VERSION_OVERRIDE
+            if ops_runtime.DEPLOY_CHECKLIST_VERSION_OVERRIDE
             else "current_utc_month + deploy_smoke signature sequence"
         ),
     }
@@ -765,8 +859,8 @@ def _parse_deploy_checklist_revision(version: str, *, prefix: str) -> int | None
     return int(raw_revision)
 
 def _derive_deploy_checklist_version(*, signature: str, generated_at: datetime) -> tuple[str, str]:
-    if DEPLOY_CHECKLIST_VERSION_OVERRIDE:
-        return DEPLOY_CHECKLIST_VERSION_OVERRIDE, "env_override"
+    if ops_runtime.DEPLOY_CHECKLIST_VERSION_OVERRIDE:
+        return ops_runtime.DEPLOY_CHECKLIST_VERSION_OVERRIDE, "env_override"
 
     prefix = generated_at.strftime("%Y.%m")
     month_label, month_start, month_end = _month_window_bounds(now=generated_at)
@@ -851,7 +945,7 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
     now = datetime.now(timezone.utc)
     checks: list[dict[str, Any]] = []
 
-    for env_name in sorted(PREFLIGHT_REQUIRED_ENV):
+    for env_name in sorted(ops_runtime.PREFLIGHT_REQUIRED_ENV):
         value = getenv(env_name)
         ok = value is not None and value.strip() != ""
         checks.append(
@@ -863,8 +957,8 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
             }
         )
 
-    redis_required = API_RATE_LIMIT_STORE == "redis"
-    redis_ok = (not redis_required) or bool(API_RATE_LIMIT_REDIS_URL)
+    redis_required = ops_runtime.API_RATE_LIMIT_STORE == "redis"
+    redis_ok = (not redis_required) or bool(ops_runtime.API_RATE_LIMIT_REDIS_URL)
     checks.append(
         {
             "id": "rate_limit_redis_config",
@@ -878,8 +972,8 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
         }
     )
 
-    signing_required = AUDIT_ARCHIVE_SIGNING_REQUIRED
-    signing_ok = bool(AUDIT_ARCHIVE_SIGNING_KEY)
+    signing_required = ops_runtime.AUDIT_ARCHIVE_SIGNING_REQUIRED
+    signing_ok = bool(ops_runtime.AUDIT_ARCHIVE_SIGNING_KEY)
     checks.append(
         {
             "id": "audit_archive_signing_key",
@@ -925,8 +1019,8 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
         }
     )
 
-    if OPS_DAILY_CHECK_ARCHIVE_ENABLED:
-        archive_ok, archive_message = _startup_path_writable(OPS_DAILY_CHECK_ARCHIVE_PATH)
+    if ops_runtime.OPS_DAILY_CHECK_ARCHIVE_ENABLED:
+        archive_ok, archive_message = _startup_path_writable(ops_runtime.OPS_DAILY_CHECK_ARCHIVE_PATH)
         checks.append(
             {
                 "id": "ops_daily_archive_path",
@@ -936,8 +1030,8 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
             }
         )
 
-    if OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
-        quality_ok, quality_message = _startup_path_writable(OPS_QUALITY_REPORT_ARCHIVE_PATH)
+    if ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
+        quality_ok, quality_message = _startup_path_writable(ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_PATH)
         checks.append(
             {
                 "id": "ops_quality_report_archive_path",
@@ -947,8 +1041,19 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
             }
         )
 
-    if DR_REHEARSAL_ENABLED:
-        dr_ok, dr_message = _startup_path_writable(DR_REHEARSAL_BACKUP_PATH)
+    if ops_runtime.DEPLOY_SMOKE_ARCHIVE_ENABLED:
+        deploy_smoke_ok, deploy_smoke_message = _startup_path_writable(ops_runtime.DEPLOY_SMOKE_ARCHIVE_PATH)
+        checks.append(
+            {
+                "id": "deploy_smoke_archive_path",
+                "severity": "error",
+                "status": "ok" if deploy_smoke_ok else "error",
+                "message": deploy_smoke_message,
+            }
+        )
+
+    if ops_runtime.DR_REHEARSAL_ENABLED:
+        dr_ok, dr_message = _startup_path_writable(ops_runtime.DR_REHEARSAL_BACKUP_PATH)
         checks.append(
             {
                 "id": "dr_rehearsal_backup_path",
@@ -963,8 +1068,8 @@ def _run_startup_preflight_snapshot() -> dict[str, Any]:
     overall_status = "critical" if error_count > 0 else ("warning" if warning_count > 0 else "ok")
     return {
         "generated_at": now.isoformat(),
-        "env": ENV_NAME,
-        "fail_on_error": PREFLIGHT_FAIL_ON_ERROR,
+        "env": ops_runtime.ENV_NAME,
+        "fail_on_error": ops_runtime.PREFLIGHT_FAIL_ON_ERROR,
         "overall_status": overall_status,
         "has_error": error_count > 0,
         "error_count": error_count,
@@ -992,9 +1097,9 @@ def _build_alert_noise_policy_snapshot() -> dict[str, Any]:
     return {
         "version": "v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "review_window_days": max(1, ALERT_NOISE_REVIEW_WINDOW_DAYS),
-        "false_positive_threshold_percent": round(max(0.0, ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT), 2),
-        "false_negative_threshold_percent": round(max(0.0, ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT), 2),
+        "review_window_days": max(1, ops_runtime.ALERT_NOISE_REVIEW_WINDOW_DAYS),
+        "false_positive_threshold_percent": round(max(0.0, ops_runtime.ALERT_NOISE_FALSE_POSITIVE_THRESHOLD_PERCENT), 2),
+        "false_negative_threshold_percent": round(max(0.0, ops_runtime.ALERT_NOISE_FALSE_NEGATIVE_THRESHOLD_PERCENT), 2),
         "policy_doc_path": "docs/W17_ALERT_NOISE_POLICY.md",
         "evaluation": {
             "false_positive_definition": "Dispatched alert without actionable incident confirmation.",
@@ -1464,7 +1569,7 @@ def _build_ops_quality_report_csv(payload: dict[str, Any]) -> str:
 
 
 def _prune_ops_quality_report_archive_files(*, archive_dir: Path, now: datetime) -> int:
-    cutoff = now - timedelta(days=max(1, OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS))
+    cutoff = now - timedelta(days=max(1, ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS))
     deleted_count = 0
     for pattern in ("ops-quality-report-*.json", "ops-quality-report-*.csv"):
         for file_path in archive_dir.glob(pattern):
@@ -1489,18 +1594,18 @@ def _publish_ops_quality_report_artifacts(
     finished_at: datetime,
 ) -> dict[str, Any]:
     archive = {
-        "enabled": OPS_QUALITY_REPORT_ARCHIVE_ENABLED,
-        "path": OPS_QUALITY_REPORT_ARCHIVE_PATH,
-        "retention_days": max(1, OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS),
+        "enabled": ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_ENABLED,
+        "path": ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_PATH,
+        "retention_days": max(1, ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_RETENTION_DAYS),
         "json_file": None,
         "csv_file": None,
         "pruned_files": 0,
         "error": None,
     }
-    if not OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
+    if not ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_ENABLED:
         return archive
     try:
-        archive_dir = Path(OPS_QUALITY_REPORT_ARCHIVE_PATH)
+        archive_dir = Path(ops_runtime.OPS_QUALITY_REPORT_ARCHIVE_PATH)
         archive_dir.mkdir(parents=True, exist_ok=True)
         stamp = finished_at.strftime("%Y%m%dT%H%M%SZ")
         base_name = f"ops-quality-report-{window}-{stamp}"
@@ -1518,12 +1623,12 @@ def _publish_ops_quality_report_artifacts(
 
 def _build_ops_quality_weekly_streak_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
     current_time = now or datetime.now(timezone.utc)
-    configured_target = max(1, OPS_QUALITY_WEEKLY_STREAK_TARGET)
+    configured_target = max(1, ops_runtime.OPS_QUALITY_WEEKLY_STREAK_TARGET)
     window_start = current_time - timedelta(days=max(70, configured_target * 14))
     with get_conn() as conn:
         rows = conn.execute(
             select(job_runs.c.finished_at, job_runs.c.status)
-            .where(job_runs.c.job_name == OPS_QUALITY_WEEKLY_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_QUALITY_WEEKLY_JOB_NAME)
             .where(job_runs.c.finished_at >= window_start)
             .order_by(job_runs.c.finished_at.asc(), job_runs.c.id.asc())
         ).mappings().all()
@@ -1592,11 +1697,11 @@ def run_ops_quality_report_job(
         end = now
         start = end - timedelta(days=7)
         label = f"week-{start.date().isoformat()}-{end.date().isoformat()}"
-        job_name = OPS_QUALITY_WEEKLY_JOB_NAME
+        job_name = ops_runtime.OPS_QUALITY_WEEKLY_JOB_NAME
     else:
         start, end, normalized_month = _month_window(month)
         label = normalized_month
-        job_name = OPS_QUALITY_MONTHLY_JOB_NAME
+        job_name = ops_runtime.OPS_QUALITY_MONTHLY_JOB_NAME
 
     payload = _build_ops_quality_report_payload(window=normalized_window, start=start, end=end, label=label)
     summary = payload.get("summary", {}) if isinstance(payload.get("summary"), dict) else {}
@@ -1643,7 +1748,7 @@ def run_dr_rehearsal_job(
     simulate_restore: bool = True,
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
-    backup_path = Path(DR_REHEARSAL_BACKUP_PATH)
+    backup_path = Path(ops_runtime.DR_REHEARSAL_BACKUP_PATH)
     counts: dict[str, int] = {}
     status = "success"
     notes: list[str] = []
@@ -1651,7 +1756,7 @@ def run_dr_rehearsal_job(
     restore_valid = False
     pruned_files = 0
 
-    if not DR_REHEARSAL_ENABLED:
+    if not ops_runtime.DR_REHEARSAL_ENABLED:
         status = "warning"
         notes.append("DR rehearsal is disabled by policy.")
     else:
@@ -1691,7 +1796,7 @@ def run_dr_rehearsal_job(
                     notes.append("Restore simulation validation failed.")
                 else:
                     notes.append("Restore simulation validation succeeded.")
-            cutoff = started_at - timedelta(days=max(1, DR_REHEARSAL_RETENTION_DAYS))
+            cutoff = started_at - timedelta(days=max(1, ops_runtime.DR_REHEARSAL_RETENTION_DAYS))
             for file_path in backup_path.glob("dr-rehearsal-*.json"):
                 try:
                     modified_at = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
@@ -1710,9 +1815,9 @@ def run_dr_rehearsal_job(
 
     finished_at = datetime.now(timezone.utc)
     detail = {
-        "enabled": DR_REHEARSAL_ENABLED,
-        "backup_path": DR_REHEARSAL_BACKUP_PATH,
-        "retention_days": max(1, DR_REHEARSAL_RETENTION_DAYS),
+        "enabled": ops_runtime.DR_REHEARSAL_ENABLED,
+        "backup_path": ops_runtime.DR_REHEARSAL_BACKUP_PATH,
+        "retention_days": max(1, ops_runtime.DR_REHEARSAL_RETENTION_DAYS),
         "counts": counts,
         "backup_file": backup_file,
         "restore_valid": restore_valid,
@@ -1721,7 +1826,7 @@ def run_dr_rehearsal_job(
         "notes": notes,
     }
     run_id = _write_job_run(
-        job_name=DR_REHEARSAL_JOB_NAME,
+        job_name=ops_runtime.DR_REHEARSAL_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -1730,7 +1835,7 @@ def run_dr_rehearsal_job(
     )
     return {
         "run_id": run_id,
-        "job_name": DR_REHEARSAL_JOB_NAME,
+        "job_name": ops_runtime.DR_REHEARSAL_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -1743,7 +1848,7 @@ def _latest_dr_rehearsal_payload() -> dict[str, Any] | None:
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == DR_REHEARSAL_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.DR_REHEARSAL_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -1776,11 +1881,11 @@ def _governance_risk_rank(value: str) -> int:
 
 def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[str, Any]:
     checked_at = now or datetime.now(timezone.utc)
-    max_risk_level = _normalize_governance_risk_level(GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL)
+    max_risk_level = _normalize_governance_risk_level(ops_runtime.GOVERNANCE_GATE_MAX_SECURITY_RISK_LEVEL)
     preflight = _get_startup_preflight_snapshot(refresh=False)
     runbook = _build_ops_runbook_checks_snapshot(now=checked_at)
     deploy_checklist = _build_deploy_checklist_payload()
-    security_dashboard = _build_admin_security_dashboard_snapshot(days=GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS)
+    security_dashboard = _build_admin_security_dashboard_snapshot(days=ops_runtime.GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS)
     weekly_streak = _build_ops_quality_weekly_streak_snapshot()
     dr_latest = _latest_dr_rehearsal_payload()
 
@@ -1807,19 +1912,19 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
     )
 
     required_rules = {
-        "preflight_no_error": GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR,
-        "runbook_no_critical": GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL,
-        "daily_check_recent": GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT,
-        "dr_restore_valid_recent": GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID,
-        "deploy_smoke_binding_recent": GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING,
-        "weekly_streak_target_met": GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK,
+        "preflight_no_error": ops_runtime.GOVERNANCE_GATE_REQUIRE_PREFLIGHT_NO_ERROR,
+        "runbook_no_critical": ops_runtime.GOVERNANCE_GATE_REQUIRE_RUNBOOK_NO_CRITICAL,
+        "daily_check_recent": ops_runtime.GOVERNANCE_GATE_REQUIRE_DAILY_CHECK_RECENT,
+        "dr_restore_valid_recent": ops_runtime.GOVERNANCE_GATE_REQUIRE_DR_RESTORE_VALID,
+        "deploy_smoke_binding_recent": ops_runtime.GOVERNANCE_GATE_REQUIRE_DEPLOY_SMOKE_BINDING,
+        "weekly_streak_target_met": ops_runtime.GOVERNANCE_GATE_REQUIRE_WEEKLY_STREAK,
         "security_risk_within_max": True,
     }
     rule_weights = {
         "preflight_no_error": 1.5,
         "runbook_no_critical": 2.0,
         "daily_check_recent": 1.0,
-        "dr_restore_valid_recent": max(1.0, GOVERNANCE_GATE_DR_WEIGHT),
+        "dr_restore_valid_recent": max(1.0, ops_runtime.GOVERNANCE_GATE_DR_WEIGHT),
         "deploy_smoke_binding_recent": 1.5,
         "weekly_streak_target_met": 0.75,
         "security_risk_within_max": 1.25,
@@ -1905,11 +2010,11 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
             "risk_level": security_risk_level,
             "risk_score": int((security_dashboard.get("risk") or {}).get("score") or 0),
             "max_risk_level": max_risk_level,
-            "window_days": int(security_dashboard.get("window_days") or GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
+            "window_days": int(security_dashboard.get("window_days") or ops_runtime.GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
         },
     )
 
-    daily_cutoff = checked_at - timedelta(hours=max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS))
+    daily_cutoff = checked_at - timedelta(hours=max(1, ops_runtime.GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS))
     daily_latest_finished = (
         daily_latest_model.finished_at
         if daily_latest_model is not None
@@ -1923,21 +2028,21 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
         message=(
             "Ops daily check has a recent run."
             if daily_recent_ok
-            else f"No ops daily check run in last {max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS)} hour(s)."
+            else f"No ops daily check run in last {max(1, ops_runtime.GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS)} hour(s)."
         ),
         detail={
-            "max_age_hours": max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
+            "max_age_hours": max(1, ops_runtime.GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
             "latest_run_at": daily_latest_finished.isoformat() if daily_latest_finished is not None else None,
             "latest_status": daily_latest_model.status if daily_latest_model is not None else None,
         },
     )
 
-    dr_cutoff = checked_at - timedelta(days=max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS))
+    dr_cutoff = checked_at - timedelta(days=max(1, ops_runtime.GOVERNANCE_GATE_DR_MAX_AGE_DAYS))
     dr_latest_finished = _as_optional_datetime(dr_latest.get("finished_at")) if isinstance(dr_latest, dict) else None
     dr_recent_ok = dr_latest_finished is not None and dr_latest_finished >= dr_cutoff
     dr_restore_valid = bool(dr_latest.get("restore_valid", False)) if isinstance(dr_latest, dict) else False
     dr_rule_ok = dr_recent_ok and dr_restore_valid
-    if not DR_REHEARSAL_ENABLED:
+    if not ops_runtime.DR_REHEARSAL_ENABLED:
         dr_rule_ok = not required_rules["dr_restore_valid_recent"]
     _append_rule(
         rule_id="dr_restore_valid_recent",
@@ -1948,20 +2053,20 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
             if dr_rule_ok
             else (
                 "DR rehearsal is disabled."
-                if not DR_REHEARSAL_ENABLED
+                if not ops_runtime.DR_REHEARSAL_ENABLED
                 else "Recent DR rehearsal with restore_valid=true is required."
             )
         ),
         detail={
-            "enabled": DR_REHEARSAL_ENABLED,
-            "max_age_days": max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
+            "enabled": ops_runtime.DR_REHEARSAL_ENABLED,
+            "max_age_days": max(1, ops_runtime.GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
             "latest_run_at": dr_latest_finished.isoformat() if dr_latest_finished is not None else None,
             "latest_status": dr_latest.get("status") if isinstance(dr_latest, dict) else None,
             "latest_restore_valid": dr_restore_valid,
         },
     )
 
-    deploy_cutoff = checked_at - timedelta(hours=max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS))
+    deploy_cutoff = checked_at - timedelta(hours=max(1, ops_runtime.GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS))
     deploy_latest_finished = deploy_latest_model.finished_at if deploy_latest_model is not None else None
     deploy_recent_ok = deploy_latest_finished is not None and deploy_latest_finished >= deploy_cutoff
     deploy_rollback_ready = bool(deploy_latest_detail.get("rollback_ready", False))
@@ -1985,7 +2090,7 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
         and deploy_sha_match
         and deploy_checklist_version_match
         and deploy_ui_main_shell_ok
-        and ((not DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE) or deploy_runbook_gate)
+        and ((not ops_runtime.DEPLOY_SMOKE_REQUIRE_RUNBOOK_GATE) or deploy_runbook_gate)
     )
     _append_rule(
         rule_id="deploy_smoke_binding_recent",
@@ -1997,7 +2102,7 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
             else "Recent deploy smoke rollback binding validation is required."
         ),
         detail={
-            "max_age_hours": max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
+            "max_age_hours": max(1, ops_runtime.GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
             "latest_run_at": deploy_latest_finished.isoformat() if deploy_latest_finished is not None else None,
             "latest_status": deploy_latest_model.status if deploy_latest_model is not None else None,
             "rollback_ready": deploy_rollback_ready,
@@ -2036,8 +2141,8 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
     decision = "go"
     if (
         failure_count > 0
-        or (not GOVERNANCE_GATE_ALLOW_WARNING and warning_count > 0)
-        or weighted_score_percent < max(0.0, min(100.0, GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT))
+        or (not ops_runtime.GOVERNANCE_GATE_ALLOW_WARNING and warning_count > 0)
+        or weighted_score_percent < max(0.0, min(100.0, ops_runtime.GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT))
     ):
         decision = "no_go"
     summary = {
@@ -2056,21 +2161,21 @@ def _build_ops_governance_gate_snapshot(*, now: datetime | None = None) -> dict[
         "summary": summary,
         "rules": rules,
         "policy": {
-            "allow_warning": GOVERNANCE_GATE_ALLOW_WARNING,
+            "allow_warning": ops_runtime.GOVERNANCE_GATE_ALLOW_WARNING,
             "max_security_risk_level": max_risk_level,
             "require_preflight_no_error": required_rules["preflight_no_error"],
             "require_runbook_no_critical": required_rules["runbook_no_critical"],
             "require_daily_check_recent": required_rules["daily_check_recent"],
-            "daily_check_max_age_hours": max(1, GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
+            "daily_check_max_age_hours": max(1, ops_runtime.GOVERNANCE_GATE_DAILY_CHECK_MAX_AGE_HOURS),
             "require_dr_restore_valid_recent": required_rules["dr_restore_valid_recent"],
-            "dr_max_age_days": max(1, GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
+            "dr_max_age_days": max(1, ops_runtime.GOVERNANCE_GATE_DR_MAX_AGE_DAYS),
             "require_deploy_smoke_binding_recent": required_rules["deploy_smoke_binding_recent"],
-            "deploy_smoke_max_age_hours": max(1, GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
+            "deploy_smoke_max_age_hours": max(1, ops_runtime.GOVERNANCE_GATE_DEPLOY_SMOKE_MAX_AGE_HOURS),
             "require_weekly_streak_target_met": required_rules["weekly_streak_target_met"],
-            "security_dashboard_days": max(7, GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
-            "dr_weight": round(max(1.0, GOVERNANCE_GATE_DR_WEIGHT), 2),
+            "security_dashboard_days": max(7, ops_runtime.GOVERNANCE_GATE_SECURITY_DASHBOARD_DAYS),
+            "dr_weight": round(max(1.0, ops_runtime.GOVERNANCE_GATE_DR_WEIGHT), 2),
             "min_weighted_score_percent": round(
-                max(0.0, min(100.0, GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT)),
+                max(0.0, min(100.0, ops_runtime.GOVERNANCE_GATE_MIN_WEIGHTED_SCORE_PERCENT)),
                 2,
             ),
         },
@@ -2098,7 +2203,7 @@ def run_ops_governance_gate_job(*, trigger: str = "manual") -> dict[str, Any]:
         "warning_count": warning_count,
     }
     run_id = _write_job_run(
-        job_name=OPS_GOVERNANCE_GATE_JOB_NAME,
+        job_name=ops_runtime.OPS_GOVERNANCE_GATE_JOB_NAME,
         trigger=trigger,
         status=status,
         started_at=started_at,
@@ -2107,7 +2212,7 @@ def run_ops_governance_gate_job(*, trigger: str = "manual") -> dict[str, Any]:
     )
     return {
         "run_id": run_id,
-        "job_name": OPS_GOVERNANCE_GATE_JOB_NAME,
+        "job_name": ops_runtime.OPS_GOVERNANCE_GATE_JOB_NAME,
         "trigger": trigger,
         "status": status,
         "started_at": started_at.isoformat(),
@@ -2120,7 +2225,7 @@ def _latest_ops_governance_gate_payload() -> dict[str, Any] | None:
     with get_conn() as conn:
         row = conn.execute(
             select(job_runs)
-            .where(job_runs.c.job_name == OPS_GOVERNANCE_GATE_JOB_NAME)
+            .where(job_runs.c.job_name == ops_runtime.OPS_GOVERNANCE_GATE_JOB_NAME)
             .order_by(job_runs.c.finished_at.desc(), job_runs.c.id.desc())
             .limit(1)
         ).mappings().first()
@@ -2186,7 +2291,7 @@ def _build_ops_governance_remediation_plan(
     configured_max = (
         max_items
         if max_items is not None
-        else OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS
+        else ops_runtime.OPS_GOVERNANCE_REMEDIATION_DEFAULT_MAX_ITEMS
     )
     normalized_max = max(1, min(int(configured_max), 200))
 
@@ -2288,4 +2393,5 @@ def _build_ops_governance_remediation_csv(plan: dict[str, Any]) -> str:
             ]
         )
     return out.getvalue()
+
 

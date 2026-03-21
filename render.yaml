@@ -165,6 +165,28 @@ services:
         value: basic
       - key: EVIDENCE_SCAN_BLOCK_SUSPICIOUS
         value: "false"
+      - key: COMPLAINT_MESSAGE_PROVIDER
+        sync: false
+      - key: COMPLAINT_MESSAGE_TIMEOUT_SEC
+        value: "10"
+      - key: COMPLAINT_MESSAGE_WEBHOOK_URL
+        sync: false
+      - key: COMPLAINT_MESSAGE_WEBHOOK_TOKEN
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_API_KEY
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_API_SECRET
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_SENDER
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_SITE_SENDERS
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_APP_ID
+        sync: false
+      - key: COMPLAINT_MESSAGE_SOLAPI_ALLOW_DUPLICATES
+        value: "false"
+      - key: COMPLAINT_MESSAGE_SOLAPI_SHOW_MESSAGE_LIST
+        value: "true"
       - key: W07_QUALITY_ALERT_ENABLED
         value: "true"
       - key: W07_QUALITY_ALERT_COOLDOWN_MINUTES

@@ -11,6 +11,8 @@ param(
   [int]$MaxWaitSeconds = 900,
   [switch]$RollbackOnFailure,
   [string]$ExpectRateLimitBackend = "",
+  [bool]$RunA1Lite = $true,
+  [bool]$RunA2Lite = $false,
   [bool]$RunRunbookGate = $true,
   [string]$ChecklistVersion = "",
   [switch]$SkipPreDeploySmokeTests,
@@ -256,6 +258,8 @@ for ($attempt = 1; $attempt -le [Math]::Max(1, $MaxDeployAttempts); $attempt++) 
   -ExpectRateLimitBackend $ExpectRateLimitBackend `
   -DeployId $targetDeploy.id `
   -ChecklistVersion $ChecklistVersion `
+  -RunA1Lite $RunA1Lite `
+  -RunA2Lite $RunA2Lite `
   -RunRunbookGate $RunRunbookGate `
   -RecordSmokeRun $true
 $smokeSucceeded = $?

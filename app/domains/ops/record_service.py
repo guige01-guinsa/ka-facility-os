@@ -2,34 +2,25 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import json
+from datetime import datetime, timezone
+from typing import Any
 
-globals().update(
-    {
-        key: value
-        for key, value in main_module.__dict__.items()
-        if key not in {"bind", "main_module", "_LOCAL_SYMBOLS"}
-    }
-)
+from sqlalchemy import insert
+from sqlalchemy.exc import SQLAlchemyError
 
-_LOCAL_SYMBOLS = {
-    "bind",
-    "main_module",
-    "_LOCAL_SYMBOLS",
-    "_write_job_run",
-    "_row_to_job_run_model",
-    "_write_alert_delivery",
-    "_row_to_alert_delivery_model",
-    "_row_to_sla_policy_proposal_model",
-    "_write_sla_policy_revision",
-    "_row_to_sla_policy_revision_model",
-}
+from app.database import alert_deliveries, get_conn, job_runs, sla_policy_revisions
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime
+from app.schemas import AlertDeliveryRead, JobRunRead, SlaPolicyProposalRead, SlaPolicyRevisionRead
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
+
+
+def _to_json_text(value: dict[str, Any] | None) -> str:
+    data = value or {}
+    return json.dumps(data, ensure_ascii=False, default=str)
 
 
 def _write_job_run(

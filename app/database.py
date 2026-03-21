@@ -11,6 +11,9 @@ from alembic.config import Config
 from sqlalchemy import Boolean, Column, DateTime, Float, Integer, LargeBinary, MetaData, String, Table, Text, create_engine
 from sqlalchemy.engine import Connection, make_url
 
+from app.domains.complaints.tables import register_complaint_tables
+from app.domains.ops.tables import register_ops_tables
+
 DEFAULT_SQLITE_URL = "sqlite:///data/facility.db"
 
 
@@ -45,87 +48,23 @@ engine = create_engine(
 )
 
 metadata = MetaData()
-inspections = Table(
-    "inspections",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("site", String(120), nullable=False),
-    Column("location", String(120), nullable=False),
-    Column("cycle", String(40), nullable=False),
-    Column("inspector", String(80), nullable=False),
-    Column("inspected_at", DateTime(timezone=True), nullable=False),
-    Column("transformer_kva", Float, nullable=True),
-    Column("voltage_r", Float, nullable=True),
-    Column("voltage_s", Float, nullable=True),
-    Column("voltage_t", Float, nullable=True),
-    Column("current_r", Float, nullable=True),
-    Column("current_s", Float, nullable=True),
-    Column("current_t", Float, nullable=True),
-    Column("winding_temp_c", Float, nullable=True),
-    Column("grounding_ohm", Float, nullable=True),
-    Column("insulation_mohm", Float, nullable=True),
-    Column("notes", Text, nullable=False, default=""),
-    Column("risk_level", String(20), nullable=False),
-    Column("risk_flags", Text, nullable=False, default=""),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-)
-
-inspection_evidence_files = Table(
-    "inspection_evidence_files",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("inspection_id", Integer, nullable=False),
-    Column("site", String(120), nullable=False),
-    Column("file_name", String(255), nullable=False),
-    Column("content_type", String(120), nullable=False, default="application/octet-stream"),
-    Column("file_size", Integer, nullable=False, default=0),
-    Column("file_bytes", LargeBinary, nullable=False),
-    Column("storage_backend", String(20), nullable=False, default="db"),
-    Column("storage_key", String(400), nullable=True),
-    Column("sha256", String(64), nullable=True),
-    Column("malware_scan_status", String(20), nullable=False, default="unknown"),
-    Column("malware_scan_engine", String(80), nullable=True),
-    Column("malware_scanned_at", DateTime(timezone=True), nullable=True),
-    Column("note", Text, nullable=False, default=""),
-    Column("uploaded_by", String(80), nullable=False, default="system"),
-    Column("uploaded_at", DateTime(timezone=True), nullable=False),
-)
-
-work_orders = Table(
-    "work_orders",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("title", String(200), nullable=False),
-    Column("description", Text, nullable=False, default=""),
-    Column("site", String(120), nullable=False),
-    Column("location", String(120), nullable=False),
-    Column("priority", String(20), nullable=False, default="medium"),
-    Column("status", String(20), nullable=False, default="open"),
-    Column("assignee", String(80), nullable=True),
-    Column("reporter", String(80), nullable=True),
-    Column("inspection_id", Integer, nullable=True),
-    Column("due_at", DateTime(timezone=True), nullable=True),
-    Column("acknowledged_at", DateTime(timezone=True), nullable=True),
-    Column("completed_at", DateTime(timezone=True), nullable=True),
-    Column("resolution_notes", Text, nullable=False, default=""),
-    Column("is_escalated", Boolean, nullable=False, default=False),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
-)
-
-work_order_events = Table(
-    "work_order_events",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("work_order_id", Integer, nullable=False),
-    Column("event_type", String(40), nullable=False),
-    Column("actor_username", String(80), nullable=False, default="system"),
-    Column("from_status", String(20), nullable=True),
-    Column("to_status", String(20), nullable=True),
-    Column("note", Text, nullable=False, default=""),
-    Column("detail_json", Text, nullable=False, default="{}"),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-)
+_ops_tables = register_ops_tables(metadata)
+_complaint_tables = register_complaint_tables(metadata)
+ops_checklist_sets = _ops_tables["ops_checklist_sets"]
+ops_checklist_set_items = _ops_tables["ops_checklist_set_items"]
+ops_checklist_set_revisions = _ops_tables["ops_checklist_set_revisions"]
+ops_equipment_assets = _ops_tables["ops_equipment_assets"]
+ops_qr_assets = _ops_tables["ops_qr_assets"]
+ops_qr_asset_revisions = _ops_tables["ops_qr_asset_revisions"]
+inspections = _ops_tables["inspections"]
+inspection_evidence_files = _ops_tables["inspection_evidence_files"]
+work_orders = _ops_tables["work_orders"]
+work_order_events = _ops_tables["work_order_events"]
+complaint_cases = _complaint_tables["complaint_cases"]
+complaint_events = _complaint_tables["complaint_events"]
+complaint_attachments = _complaint_tables["complaint_attachments"]
+complaint_messages = _complaint_tables["complaint_messages"]
+complaint_cost_items = _complaint_tables["complaint_cost_items"]
 
 admin_users = Table(
     "admin_users",
@@ -251,31 +190,7 @@ sla_policy_revisions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
 )
 
-workflow_locks = Table(
-    "workflow_locks",
-    metadata,
-    Column("id", Integer, primary_key=True, autoincrement=True),
-    Column("site", String(120), nullable=False),
-    Column("workflow_key", String(120), nullable=False),
-    Column("status", String(20), nullable=False, default="draft"),
-    Column("content_json", Text, nullable=False, default="{}"),
-    Column("requested_ticket", String(120), nullable=True),
-    Column("last_comment", Text, nullable=False, default=""),
-    Column("lock_reason", Text, nullable=True),
-    Column("unlock_reason", Text, nullable=True),
-    Column("created_by", String(80), nullable=False, default="system"),
-    Column("updated_by", String(80), nullable=False, default="system"),
-    Column("reviewed_by", String(80), nullable=True),
-    Column("approved_by", String(80), nullable=True),
-    Column("locked_by", String(80), nullable=True),
-    Column("unlocked_by", String(80), nullable=True),
-    Column("created_at", DateTime(timezone=True), nullable=False),
-    Column("updated_at", DateTime(timezone=True), nullable=False),
-    Column("reviewed_at", DateTime(timezone=True), nullable=True),
-    Column("approved_at", DateTime(timezone=True), nullable=True),
-    Column("locked_at", DateTime(timezone=True), nullable=True),
-    Column("unlocked_at", DateTime(timezone=True), nullable=True),
-)
+workflow_locks = _ops_tables["workflow_locks"]
 
 adoption_w02_tracker_items = Table(
     "adoption_w02_tracker_items",

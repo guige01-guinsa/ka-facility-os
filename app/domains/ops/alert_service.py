@@ -2,15 +2,25 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import csv
+import io
+import json
+import math
+import time
+import urllib.error as url_error
+import urllib.parse as url_parse
+import urllib.request as url_request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
 
-globals().update(
-    {
-        key: value
-        for key, value in main_module.__dict__.items()
-        if key not in {"bind", "main_module", "_LOCAL_SYMBOLS"}
-    }
-)
+from sqlalchemy import delete, insert, select, update
+
+from app.database import alert_deliveries, get_conn, job_runs, sla_policies
+from app.domains.ops import config as ops_config
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime
+from app.domains.ops.record_service import _to_json_text, _write_alert_delivery, _write_job_run
+from app.schemas import SlaAlertChannelResult
 
 _LOCAL_SYMBOLS = {
     "_normalize_mttr_slo_recover_state",
@@ -52,29 +62,30 @@ _LOCAL_SYMBOLS = {
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
+
+
+ops_runtime = ops_config.runtime
 
 def _normalize_mttr_slo_recover_state(value: str | None) -> str:
     normalized = (value or "").strip().lower()
-    if normalized in ALERT_MTTR_SLO_RECOVER_STATE_SET:
+    if normalized in ops_runtime.ALERT_MTTR_SLO_RECOVER_STATE_SET:
         return normalized
     return "quarantined"
 
 def _default_mttr_slo_policy() -> dict[str, Any]:
     return {
-        "enabled": ALERT_MTTR_SLO_ENABLED,
-        "window_days": max(1, ALERT_MTTR_SLO_WINDOW_DAYS),
-        "threshold_minutes": max(1, ALERT_MTTR_SLO_THRESHOLD_MINUTES),
-        "min_incidents": max(1, ALERT_MTTR_SLO_MIN_INCIDENTS),
-        "auto_recover_enabled": ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED,
-        "recover_state": _normalize_mttr_slo_recover_state(ALERT_MTTR_SLO_RECOVER_STATE),
-        "recover_max_targets": max(1, min(ALERT_MTTR_SLO_RECOVER_MAX_TARGETS, 500)),
-        "notify_enabled": ALERT_MTTR_SLO_NOTIFY_ENABLED,
-        "notify_event_type": ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE[:80],
-        "notify_cooldown_minutes": max(0, min(ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES, 10080)),
-        "top_channels": max(1, min(ALERT_MTTR_SLO_TOP_CHANNELS, 50)),
+        "enabled": ops_runtime.ALERT_MTTR_SLO_ENABLED,
+        "window_days": max(1, ops_runtime.ALERT_MTTR_SLO_WINDOW_DAYS),
+        "threshold_minutes": max(1, ops_runtime.ALERT_MTTR_SLO_THRESHOLD_MINUTES),
+        "min_incidents": max(1, ops_runtime.ALERT_MTTR_SLO_MIN_INCIDENTS),
+        "auto_recover_enabled": ops_runtime.ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED,
+        "recover_state": _normalize_mttr_slo_recover_state(ops_runtime.ALERT_MTTR_SLO_RECOVER_STATE),
+        "recover_max_targets": max(1, min(ops_runtime.ALERT_MTTR_SLO_RECOVER_MAX_TARGETS, 500)),
+        "notify_enabled": ops_runtime.ALERT_MTTR_SLO_NOTIFY_ENABLED,
+        "notify_event_type": ops_runtime.ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE[:80],
+        "notify_cooldown_minutes": max(0, min(ops_runtime.ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES, 10080)),
+        "top_channels": max(1, min(ops_runtime.ALERT_MTTR_SLO_TOP_CHANNELS, 50)),
     }
 
 def _legacy_mttr_slo_policy() -> dict[str, Any]:
@@ -148,18 +159,18 @@ def _ensure_mttr_slo_policy() -> tuple[dict[str, Any], datetime, str]:
     now = datetime.now(timezone.utc)
     with get_conn() as conn:
         row = conn.execute(
-            select(sla_policies).where(sla_policies.c.policy_key == ALERT_MTTR_SLO_POLICY_KEY).limit(1)
+            select(sla_policies).where(sla_policies.c.policy_key == ops_runtime.ALERT_MTTR_SLO_POLICY_KEY).limit(1)
         ).mappings().first()
         if row is None:
             policy = _default_mttr_slo_policy()
             conn.execute(
                 insert(sla_policies).values(
-                    policy_key=ALERT_MTTR_SLO_POLICY_KEY,
+                    policy_key=ops_runtime.ALERT_MTTR_SLO_POLICY_KEY,
                     policy_json=_to_json_text(policy),
                     updated_at=now,
                 )
             )
-            return policy, now, ALERT_MTTR_SLO_POLICY_KEY
+            return policy, now, ops_runtime.ALERT_MTTR_SLO_POLICY_KEY
 
     policy = _parse_mttr_slo_policy_json(row["policy_json"])
     default_policy = _default_mttr_slo_policy()
@@ -167,16 +178,16 @@ def _ensure_mttr_slo_policy() -> tuple[dict[str, Any], datetime, str]:
         with get_conn() as conn:
             conn.execute(
                 update(sla_policies)
-                .where(sla_policies.c.policy_key == ALERT_MTTR_SLO_POLICY_KEY)
+                .where(sla_policies.c.policy_key == ops_runtime.ALERT_MTTR_SLO_POLICY_KEY)
                 .values(
                     policy_json=_to_json_text(default_policy),
                     updated_at=now,
                 )
             )
-        return default_policy, now, ALERT_MTTR_SLO_POLICY_KEY
+        return default_policy, now, ops_runtime.ALERT_MTTR_SLO_POLICY_KEY
 
     updated_at = _as_datetime(row["updated_at"]) if row["updated_at"] is not None else now
-    return policy, updated_at, ALERT_MTTR_SLO_POLICY_KEY
+    return policy, updated_at, ops_runtime.ALERT_MTTR_SLO_POLICY_KEY
 
 def _upsert_mttr_slo_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
     current_policy, _, policy_key = _ensure_mttr_slo_policy()
@@ -254,13 +265,13 @@ def _parse_alert_target_spec(raw_value: str) -> dict[str, str] | None:
 
 def _configured_alert_target_configs() -> list[dict[str, str]]:
     target_specs: list[str] = []
-    merged_raw = ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
+    merged_raw = ops_runtime.ALERT_WEBHOOK_URLS.replace(";", ",").replace("\n", ",")
     for part in merged_raw.split(","):
         value = part.strip()
         if value:
             target_specs.append(value)
-    if ALERT_WEBHOOK_URL:
-        target_specs.append(ALERT_WEBHOOK_URL)
+    if ops_runtime.ALERT_WEBHOOK_URL:
+        target_specs.append(ops_runtime.ALERT_WEBHOOK_URL)
 
     configs: list[dict[str, str]] = []
     seen_urls: set[str] = set()
@@ -280,8 +291,8 @@ def _configured_alert_targets() -> list[str]:
 
 def _build_alert_webhook_request_headers() -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
-    if ALERT_WEBHOOK_SHARED_TOKEN:
-        headers[ALERT_WEBHOOK_TOKEN_HEADER] = ALERT_WEBHOOK_SHARED_TOKEN
+    if ops_runtime.ALERT_WEBHOOK_SHARED_TOKEN:
+        headers[ops_runtime.ALERT_WEBHOOK_TOKEN_HEADER] = ops_runtime.ALERT_WEBHOOK_SHARED_TOKEN
     return headers
 
 def _truncate_alert_text(value: Any, max_length: int = 240) -> str:
@@ -294,10 +305,10 @@ def _humanize_alert_event_type(event_type: str) -> str:
     normalized = event_type.strip().lower()
     titles = {
         "sla_escalation": "SLA escalation alert",
-        W07_DEGRADATION_ALERT_EVENT_TYPE: "W07 quality degradation alert",
+        ops_runtime.W07_DEGRADATION_ALERT_EVENT_TYPE: "W07 quality degradation alert",
         "ops_daily_check": "Ops daily check alert",
         "mttr_slo_breach": "Alert MTTR SLO breach",
-        OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE: "Governance remediation escalation",
+        ops_runtime.OPS_GOVERNANCE_REMEDIATION_ESCALATION_EVENT_TYPE: "Governance remediation escalation",
         "alert_channel_recovery_probe": "Alert channel recovery probe",
     }
     if normalized in titles:
@@ -578,8 +589,8 @@ def _compute_alert_channel_guard_state(
             continue
         break
 
-    threshold = max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD)
-    cooldown_minutes = max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES)
+    threshold = max(1, ops_runtime.ALERT_CHANNEL_GUARD_FAIL_THRESHOLD)
+    cooldown_minutes = max(1, ops_runtime.ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES)
     quarantined_until: datetime | None = None
     state = "healthy"
     if consecutive_failures >= threshold and last_failure_at is not None:
@@ -600,7 +611,7 @@ def _compute_alert_channel_guard_state(
 
     return {
         "target": target,
-        "state": state if ALERT_CHANNEL_GUARD_ENABLED else "disabled",
+        "state": state if ops_runtime.ALERT_CHANNEL_GUARD_ENABLED else "disabled",
         "state_computed": state,
         "consecutive_failures": consecutive_failures,
         "threshold": threshold,
@@ -671,7 +682,7 @@ def _build_alert_channel_guard_snapshot(
         status = "critical"
     elif warning_count > 0:
         status = "warning"
-    if not ALERT_CHANNEL_GUARD_ENABLED:
+    if not ops_runtime.ALERT_CHANNEL_GUARD_ENABLED:
         status = "warning" if warning_count > 0 else "ok"
 
     return {
@@ -679,9 +690,9 @@ def _build_alert_channel_guard_snapshot(
         "event_type": event_type,
         "lookback_days": normalized_lookback_days,
         "policy": {
-            "enabled": ALERT_CHANNEL_GUARD_ENABLED,
-            "failure_threshold": max(1, ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
-            "cooldown_minutes": max(1, ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
+            "enabled": ops_runtime.ALERT_CHANNEL_GUARD_ENABLED,
+            "failure_threshold": max(1, ops_runtime.ALERT_CHANNEL_GUARD_FAIL_THRESHOLD),
+            "cooldown_minutes": max(1, ops_runtime.ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES),
             "recovery_steps": [
                 "1) 원인 채널(네트워크/토큰/권한) 확인",
                 "2) /api/ops/alerts/channels/guard/recover로 probe 실행",
@@ -748,9 +759,9 @@ def run_alert_retention_job(
     trigger: str = "manual",
 ) -> dict[str, Any]:
     started_at = datetime.now(timezone.utc)
-    resolved_retention_days = max(1, int(retention_days if retention_days is not None else ALERT_RETENTION_DAYS))
-    resolved_max_delete = max(1, min(int(max_delete if max_delete is not None else ALERT_RETENTION_MAX_DELETE), 50000))
-    resolved_write_archive = ALERT_RETENTION_ARCHIVE_ENABLED if write_archive is None else bool(write_archive)
+    resolved_retention_days = max(1, int(retention_days if retention_days is not None else ops_runtime.ALERT_RETENTION_DAYS))
+    resolved_max_delete = max(1, min(int(max_delete if max_delete is not None else ops_runtime.ALERT_RETENTION_MAX_DELETE), 50000))
+    resolved_write_archive = ops_runtime.ALERT_RETENTION_ARCHIVE_ENABLED if write_archive is None else bool(write_archive)
     cutoff = started_at - timedelta(days=resolved_retention_days)
 
     archive_file: str | None = None
@@ -772,7 +783,7 @@ def run_alert_retention_job(
         can_delete = not dry_run
         if rows and not dry_run and resolved_write_archive:
             try:
-                archive_dir = Path(ALERT_RETENTION_ARCHIVE_PATH)
+                archive_dir = Path(ops_runtime.ALERT_RETENTION_ARCHIVE_PATH)
                 archive_dir.mkdir(parents=True, exist_ok=True)
                 stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
                 first_id = candidate_ids[0]
@@ -838,7 +849,7 @@ def run_alert_guard_recover_job(
     normalized_state_filter = (state_filter or "quarantined").strip().lower()
     if normalized_state_filter not in {"quarantined", "warning", "all"}:
         normalized_state_filter = "quarantined"
-    resolved_max_targets = max(1, min(int(max_targets if max_targets is not None else ALERT_GUARD_RECOVER_MAX_TARGETS), 500))
+    resolved_max_targets = max(1, min(int(max_targets if max_targets is not None else ops_runtime.ALERT_GUARD_RECOVER_MAX_TARGETS), 500))
 
     snapshot = _build_alert_channel_guard_snapshot(
         event_type=event_type,
@@ -898,8 +909,8 @@ def run_alert_guard_recover_job(
         ok, err = _post_json_with_retries(
             url=target,
             payload=probe_payload,
-            retries=ALERT_WEBHOOK_RETRIES,
-            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+            retries=ops_runtime.ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ops_runtime.ALERT_WEBHOOK_TIMEOUT_SEC,
         )
         probe_status = "success" if ok and err is None else ("warning" if ok else "failed")
         if probe_status == "success":
@@ -1032,7 +1043,7 @@ def run_alert_mttr_slo_check_job(
         recovered = run_alert_guard_recover_job(
             event_type=event_type,
             state_filter=str(policy.get("recover_state") or "quarantined"),
-            max_targets=int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+            max_targets=int(policy.get("recover_max_targets") or ops_runtime.ALERT_GUARD_RECOVER_MAX_TARGETS),
             dry_run=False,
             trigger="mttr_slo_auto",
         )
@@ -1080,7 +1091,7 @@ def run_alert_mttr_slo_check_job(
                         "min_incidents": min_incidents,
                         "auto_recover_enabled": bool(policy.get("auto_recover_enabled", True)),
                         "recover_state": str(policy.get("recover_state") or "quarantined"),
-                        "recover_max_targets": int(policy.get("recover_max_targets") or ALERT_GUARD_RECOVER_MAX_TARGETS),
+                        "recover_max_targets": int(policy.get("recover_max_targets") or ops_runtime.ALERT_GUARD_RECOVER_MAX_TARGETS),
                     },
                     "window": {
                         "days": window_days,
@@ -1220,7 +1231,7 @@ def _dispatch_alert_event(
         target = target_config["url"]
         target_kind = target_config["kind"]
         guard_state = _compute_alert_channel_guard_state(target, event_type=event_type)
-        if ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
+        if ops_runtime.ALERT_CHANNEL_GUARD_ENABLED and str(guard_state.get("state_computed")) == "quarantined":
             guard_error = (
                 "channel quarantined until "
                 + str(guard_state.get("quarantined_until") or "unknown")
@@ -1257,8 +1268,8 @@ def _dispatch_alert_event(
         ok, err = _post_json_with_retries(
             url=target,
             payload=rendered_payload,
-            retries=ALERT_WEBHOOK_RETRIES,
-            timeout_sec=ALERT_WEBHOOK_TIMEOUT_SEC,
+            retries=ops_runtime.ALERT_WEBHOOK_RETRIES,
+            timeout_sec=ops_runtime.ALERT_WEBHOOK_TIMEOUT_SEC,
         )
         delivery_status = "success" if ok and err is None else ("warning" if ok else "failed")
         _write_alert_delivery(
@@ -1603,4 +1614,5 @@ def _build_alert_channel_mttr_snapshot(
         "event_type": event_type,
         "windows": window_payloads,
     }
+
 

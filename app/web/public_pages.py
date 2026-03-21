@@ -1479,6 +1479,7 @@ def build_public_main_page_html(service_info: dict[str, str], plan: dict[str, An
       <div class="links">
         <a href="/api/public/modules">모듈 API</a>
         <a href="/web/console">운영 콘솔 HTML</a>
+        <a href="/web/complaints">세대 민원처리</a>
       </div>
       <div class="grid">
         {"".join(module_cards)}

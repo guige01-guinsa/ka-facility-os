@@ -8,7 +8,7 @@ from typing import Any
 
 
 def _load_ops_special_checklists_payload() -> dict[str, Any]:
-    from app.main import _load_ops_special_checklists_payload as payload_builder
+    from app.domains.ops.checklist_runtime import _load_ops_special_checklists_payload as payload_builder
 
     return payload_builder()
 
@@ -814,6 +814,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               <select id="inCreateQrId">
                 <option value="">QR설비: 선택(선택)</option>
               </select>
+              <select id="inCreateEquipmentMaster">
+                <option value="">설비마스터: 선택(선택)</option>
+              </select>
             </div>
             <div class="ops-form-grid">
               <input id="inCreateEquipment" placeholder="설비명 (예: 변압기 #1)" />
@@ -894,6 +897,106 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             <div id="inspectionImportValidationSummary" class="cards"></div>
             <div id="inspectionImportValidationTable" class="empty">데이터 없음</div>
             <div id="inspectionImportValidationSuggestions" class="empty">데이터 없음</div>
+          </div>
+          <div class="box">
+            <h3>OPS 마스터 관리</h3>
+            <div class="filter-row">
+              <input id="opsMasterCatalogReserved" value="GET /api/ops/inspections/checklists/catalog" disabled />
+              <input id="opsMasterEquipmentReserved" value="POST/PATCH/DELETE equipment-assets" disabled />
+              <input id="opsMasterChecklistReserved" value="POST/PATCH/DELETE sets" disabled />
+              <input id="opsMasterChecklistRevisionReserved" value="POST/GET revisions + submit/approve/reject" disabled />
+              <input id="opsMasterQrReserved" value="POST/PATCH/DELETE qr-assets" disabled />
+              <button id="runOpsMasterCatalogBtn" class="btn run" type="button">마스터 새로고침</button>
+            </div>
+            <div class="filter-row">
+              <input id="opsMasterSearch" placeholder="검색어 (설비/세트/QR/revision)" />
+              <select id="opsMasterLifecycleFilter">
+                <option value="all">표시상태: all</option>
+                <option value="active">표시상태: active</option>
+                <option value="retired">표시상태: retired</option>
+                <option value="replaced">표시상태: replaced</option>
+              </select>
+              <select id="opsMasterRevisionStatusFilter">
+                <option value="all">개정안상태: all</option>
+                <option value="draft">개정안상태: draft</option>
+                <option value="pending">개정안상태: pending</option>
+                <option value="approved">개정안상태: approved</option>
+                <option value="rejected">개정안상태: rejected</option>
+              </select>
+            </div>
+            <div class="ops-form-grid">
+              <input id="opsMasterEquipmentId" placeholder="equipment_id (수정/삭제 시 입력)" />
+              <input id="opsMasterEquipmentName" placeholder="설비명" />
+              <input id="opsMasterEquipmentLocation" placeholder="설비위치" />
+              <select id="opsMasterEquipmentLifecycle">
+                <option value="active">설비상태: active</option>
+                <option value="retired">설비상태: retired</option>
+                <option value="replaced">설비상태: replaced</option>
+              </select>
+              <button id="runOpsMasterEquipmentCreateBtn" class="btn run" type="button">설비 생성</button>
+              <button id="runOpsMasterEquipmentUpdateBtn" class="btn" type="button">설비 수정</button>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runOpsMasterEquipmentDeleteBtn" class="btn" type="button">설비 삭제</button>
+            </div>
+            <div class="ops-form-grid">
+              <input id="opsMasterChecklistSetId" placeholder="set_id" />
+              <input id="opsMasterChecklistLabel" placeholder="체크리스트 라벨" />
+              <input id="opsMasterChecklistTaskType" placeholder="task_type (예: 전기점검)" />
+              <input id="opsMasterChecklistVersion" placeholder="version_no / proposed_version_no" />
+              <select id="opsMasterChecklistLifecycle">
+                <option value="active">세트상태: active</option>
+                <option value="retired">세트상태: retired</option>
+                <option value="replaced">세트상태: replaced</option>
+              </select>
+              <button id="runOpsMasterChecklistCreateBtn" class="btn run" type="button">세트 생성</button>
+              <button id="runOpsMasterChecklistUpdateBtn" class="btn" type="button">세트 수정</button>
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="opsMasterChecklistItems" class="span-5" placeholder="체크리스트 항목을 줄바꿈으로 입력하세요"></textarea>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runOpsMasterChecklistDeleteBtn" class="btn" type="button">세트 삭제</button>
+            </div>
+            <div class="ops-form-grid">
+              <input id="opsMasterChecklistRevisionId" placeholder="revision_id (제출/승인/반려 시 입력)" />
+              <button id="runOpsMasterChecklistRevisionCreateBtn" class="btn run" type="button">개정안 작성</button>
+              <button id="runOpsMasterChecklistRevisionListBtn" class="btn" type="button">개정안 조회</button>
+              <button id="runOpsMasterChecklistRevisionDiffBtn" class="btn" type="button">개정안 비교</button>
+            </div>
+            <div class="ops-form-grid">
+              <textarea id="opsMasterChecklistRevisionNote" class="span-5" placeholder="Summary: what changed&#10;Impact: operator/user effect&#10;Rollback: how to revert safely"></textarea>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runOpsMasterChecklistRevisionSubmitBtn" class="btn" type="button">개정안 제출</button>
+              <button id="runOpsMasterChecklistRevisionApproveBtn" class="btn" type="button">개정안 승인</button>
+              <button id="runOpsMasterChecklistRevisionRejectBtn" class="btn" type="button">개정안 반려</button>
+            </div>
+            <div class="ops-form-grid">
+              <input id="opsMasterQrAssetId" placeholder="qr_asset_id (수정/삭제 시 입력)" />
+              <input id="opsMasterQrId" placeholder="qr_id" />
+              <input id="opsMasterQrEquipmentId" placeholder="equipment_id" />
+              <input id="opsMasterQrChecklistSetId" placeholder="checklist_set_id" />
+              <input id="opsMasterQrDefaultItem" placeholder="default_item" />
+              <select id="opsMasterQrLifecycle">
+                <option value="active">QR상태: active</option>
+                <option value="retired">QR상태: retired</option>
+                <option value="replaced">QR상태: replaced</option>
+              </select>
+            </div>
+            <div class="ops-checklist-actions">
+              <button id="runOpsMasterQrCreateBtn" class="btn run" type="button">QR 생성</button>
+              <button id="runOpsMasterQrUpdateBtn" class="btn" type="button">QR 수정</button>
+              <button id="runOpsMasterQrDeleteBtn" class="btn" type="button">QR 삭제</button>
+            </div>
+            <div id="opsMasterMeta" class="meta">조회 전</div>
+            <div id="opsMasterEquipmentTable" class="empty">설비 마스터 데이터 없음</div>
+            <div id="opsMasterChecklistTable" class="empty">체크리스트 마스터 데이터 없음</div>
+            <div id="opsMasterChecklistRevisionTable" class="empty">체크리스트 개정안 데이터 없음</div>
+            <div id="opsMasterChecklistRevisionDiffMeta" class="meta">개정안 비교 전</div>
+            <div id="opsMasterChecklistRevisionDiffSummary" class="empty">개정안 diff 데이터 없음</div>
+            <div id="opsMasterChecklistRevisionDiffTable" class="empty">개정안 diff 항목 없음</div>
+            <div id="opsMasterQrTable" class="empty">QR 마스터 데이터 없음</div>
           </div>
         </div>
 
@@ -2112,7 +2215,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         w11: "W11",
         w15: "W15",
       }};
-      const OPS_SPECIAL_CHECKLISTS = {ops_special_checklists_json};
+      let OPS_SPECIAL_CHECKLISTS = {ops_special_checklists_json};
+      let OPS_SPECIAL_CHECKLIST_REVISIONS = [];
       const OPS_RESULT_OPTIONS = [
         {{ value: "normal", label: "정상" }},
         {{ value: "abnormal", label: "이상" }},
@@ -4261,11 +4365,20 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         return value;
       }}
 
-      function getOpsChecklistSets() {{
+      function normalizeOpsLifecycleState(value) {{
+        const normalized = String(value || "active").trim().toLowerCase() || "active";
+        return ["active", "retired", "replaced"].includes(normalized) ? normalized : "active";
+      }}
+
+      function getAllOpsChecklistSets() {{
         const sets = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.checklist_sets)
           ? OPS_SPECIAL_CHECKLISTS.checklist_sets
           : [];
         return sets.filter((row) => row && row.set_id && row.label && Array.isArray(row.items) && row.items.length > 0);
+      }}
+
+      function getOpsChecklistSets() {{
+        return getAllOpsChecklistSets().filter((row) => normalizeOpsLifecycleState(row.lifecycle_state) === "active");
       }}
 
       function getSelectedOpsChecklistSetId() {{
@@ -4364,7 +4477,11 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }}
         const defaultSet = sets.find((item) => String(item.set_id || "") === "electrical_60") || sets[0];
         node.innerHTML = sets.map((item) => (
-          '<option value="' + escapeHtml(item.set_id) + '">체크리스트 세트: ' + escapeHtml(item.label) + "</option>"
+          '<option value="' + escapeHtml(item.set_id) + '">체크리스트 세트: '
+          + escapeHtml(item.label)
+          + " (v"
+          + escapeHtml(String(item.version_no || 1))
+          + ")</option>"
         )).join("");
         if (previous && sets.some((item) => String(item.set_id || "") === previous)) {{
           node.value = previous;
@@ -4512,14 +4629,36 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         node.innerHTML = options.join("");
       }}
 
+      function populateOpsEquipmentSelector() {{
+        const node = document.getElementById("inCreateEquipmentMaster");
+        if (!node) {{
+          return;
+        }}
+        const rows = getOpsEquipmentAssets();
+        const options = ['<option value="">설비마스터: 선택(선택)</option>'].concat(
+          rows
+            .filter((row) => row && row.equipment_id)
+            .map((row) => (
+              '<option value="' + escapeHtml(String(row.equipment_id || "")) + '">'
+              + escapeHtml(String(row.equipment_id || ""))
+              + " | "
+              + escapeHtml(String(row.equipment || "-"))
+              + " | "
+              + escapeHtml(String(row.location || "-"))
+              + " | "
+              + escapeHtml(String(row.lifecycle_state || "active"))
+              + "</option>"
+            ))
+        );
+        node.innerHTML = options.join("");
+      }}
+
       function populateOpsQrSelector() {{
         const node = document.getElementById("inCreateQrId");
         if (!node) {{
           return;
         }}
-        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.qr_assets)
-          ? OPS_SPECIAL_CHECKLISTS.qr_assets
-          : [];
+        const rows = getOpsQrAssets();
         const options = ['<option value="">QR설비: 선택(선택)</option>'].concat(
           rows
             .filter((row) => row && row.qr_id)
@@ -4530,6 +4669,8 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
               + escapeHtml(String(row.equipment || "-"))
               + " | "
               + escapeHtml(String(row.location || "-"))
+              + " | "
+              + escapeHtml(String(row.lifecycle_state || "active"))
               + "</option>"
             ))
         );
@@ -4548,16 +4689,40 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         return rows.find((row) => String((row && row.code) || "") === code) || null;
       }}
 
+      function getSelectedOpsEquipmentRecord() {{
+        const node = document.getElementById("inCreateEquipmentMaster");
+        const equipmentId = Number(node && node.value ? node.value : 0);
+        const rows = getOpsEquipmentAssets();
+        if (!Number.isInteger(equipmentId) || equipmentId <= 0) {{
+          return null;
+        }}
+        return rows.find((row) => Number(row && row.equipment_id) === equipmentId) || null;
+      }}
+
       function getSelectedQrAssetRecord() {{
         const node = document.getElementById("inCreateQrId");
         const qrId = String(node && node.value ? node.value : "").trim();
-        const rows = OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.qr_assets)
-          ? OPS_SPECIAL_CHECKLISTS.qr_assets
-          : [];
+        const rows = getOpsQrAssets();
         if (!qrId) {{
           return null;
         }}
         return rows.find((row) => String((row && row.qr_id) || "") === qrId) || null;
+      }}
+
+      function applySelectedOpsEquipmentToForm(options = {{}}) {{
+        const overwriteFields = Boolean(options.overwriteFields);
+        const equipmentRecord = getSelectedOpsEquipmentRecord();
+        if (!equipmentRecord) {{
+          return;
+        }}
+        const equipmentNode = document.getElementById("inCreateEquipment");
+        const locationNode = document.getElementById("inCreateLocation");
+        if (equipmentNode && equipmentRecord.equipment && (overwriteFields || !(equipmentNode.value || "").trim())) {{
+          equipmentNode.value = String(equipmentRecord.equipment || "").trim();
+        }}
+        if (locationNode && equipmentRecord.location && (overwriteFields || !(locationNode.value || "").trim())) {{
+          locationNode.value = String(equipmentRecord.location || "").trim();
+        }}
       }}
 
       function applyChecklistSetSelection(options = {{}}) {{
@@ -4648,6 +4813,744 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           equipmentGroupNode.value = targetGroup;
           syncOpsTemplateGroupFromEquipmentGroup();
           resetOpsElectricalChecklistRows({{ preserve: true }});
+        }}
+      }}
+
+      function getAllOpsEquipmentAssets() {{
+        return OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.equipment_assets)
+          ? OPS_SPECIAL_CHECKLISTS.equipment_assets
+          : [];
+      }}
+
+      function getOpsEquipmentAssets() {{
+        return getAllOpsEquipmentAssets().filter((row) => normalizeOpsLifecycleState(row && row.lifecycle_state) === "active");
+      }}
+
+      function getAllOpsQrAssets() {{
+        return OPS_SPECIAL_CHECKLISTS && Array.isArray(OPS_SPECIAL_CHECKLISTS.qr_assets)
+          ? OPS_SPECIAL_CHECKLISTS.qr_assets
+          : [];
+      }}
+
+      function getOpsQrAssets() {{
+        return getAllOpsQrAssets().filter((row) => normalizeOpsLifecycleState(row && row.lifecycle_state) === "active");
+      }}
+
+      function parseOpsMasterChecklistItemsInput() {{
+        const raw = String((document.getElementById("opsMasterChecklistItems") || {{ value: "" }}).value || "");
+        return raw
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line !== "");
+      }}
+
+      function getOpsMasterTableFilters() {{
+        const search = String((document.getElementById("opsMasterSearch") || {{ value: "" }}).value || "").trim().toLowerCase();
+        const lifecycleRaw = String((document.getElementById("opsMasterLifecycleFilter") || {{ value: "all" }}).value || "all").trim().toLowerCase() || "all";
+        const lifecycleState = ["active", "retired", "replaced"].includes(lifecycleRaw) ? lifecycleRaw : "all";
+        const revisionStatus = String((document.getElementById("opsMasterRevisionStatusFilter") || {{ value: "all" }}).value || "all").trim().toLowerCase() || "all";
+        return {{
+          search,
+          lifecycleState: lifecycleState || "all",
+          revisionStatus,
+        }};
+      }}
+
+      function rowMatchesOpsMasterSearch(row, fields, query) {{
+        if (!query) {{
+          return true;
+        }}
+        const haystack = (Array.isArray(fields) ? fields : [])
+          .map((field) => String(((row || {{}})[field]) || "").trim().toLowerCase())
+          .filter(Boolean)
+          .join(" ");
+        return haystack.includes(query);
+      }}
+
+      function rowMatchesOpsMasterLifecycle(row, lifecycleState) {{
+        if (!lifecycleState || lifecycleState === "all") {{
+          return true;
+        }}
+        return normalizeOpsLifecycleState((row || {{}}).lifecycle_state || "active") === lifecycleState;
+      }}
+
+      function rowMatchesOpsMasterRevisionStatus(row, revisionStatus) {{
+        if (!revisionStatus || revisionStatus === "all") {{
+          return true;
+        }}
+        return String(((row || {{}}).status) || "").trim().toLowerCase() === revisionStatus;
+      }}
+
+      function buildOpsRevisionDiffSummary(row) {{
+        const diff = row && row.diff && typeof row.diff === "object" ? row.diff : {{}};
+        const parts = [];
+        if (diff.label_changed) {{
+          parts.push("label");
+        }}
+        if (diff.task_type_changed) {{
+          parts.push("task_type");
+        }}
+        if (diff.lifecycle_changed) {{
+          parts.push("state");
+        }}
+        parts.push("+" + String(diff.added_count || 0));
+        parts.push("-" + String(diff.removed_count || 0));
+        return parts.join(" / ");
+      }}
+
+      function resetOpsMasterChecklistRevisionDiff() {{
+        const meta = document.getElementById("opsMasterChecklistRevisionDiffMeta");
+        const summary = document.getElementById("opsMasterChecklistRevisionDiffSummary");
+        const table = document.getElementById("opsMasterChecklistRevisionDiffTable");
+        if (meta) {{
+          meta.textContent = "개정안 비교 전";
+        }}
+        if (summary) {{
+          summary.innerHTML = renderEmpty("개정안 diff 데이터 없음");
+        }}
+        if (table) {{
+          table.innerHTML = renderEmpty("개정안 diff 항목 없음");
+        }}
+      }}
+
+      function renderOpsMasterChecklistRevisionDiff(data) {{
+        const meta = document.getElementById("opsMasterChecklistRevisionDiffMeta");
+        const summary = document.getElementById("opsMasterChecklistRevisionDiffSummary");
+        const table = document.getElementById("opsMasterChecklistRevisionDiffTable");
+        if (!meta || !summary || !table) {{
+          return;
+        }}
+        const row = data && data.row && typeof data.row === "object" ? data.row : null;
+        if (!row) {{
+          resetOpsMasterChecklistRevisionDiff();
+          return;
+        }}
+        const diff = row.diff && typeof row.diff === "object" ? row.diff : {{}};
+        const missingSections = Array.isArray(row.release_note_missing_sections) ? row.release_note_missing_sections : [];
+        const summaryItems = [
+          ["Revision ID", row.id || "-"],
+          ["Set ID", row.set_id || "-"],
+          ["Status", row.status || "-"],
+          ["Live Version", row.live_version_no || "-"],
+          ["Proposed Version", row.proposed_version_no || "-"],
+          ["Release Note", row.release_note_valid ? "valid" : ("invalid: " + (missingSections.join(", ") || "missing"))],
+          ["Added", diff.added_count || 0],
+          ["Removed", diff.removed_count || 0],
+          ["Has Changes", diff.has_changes ? "YES" : "NO"],
+        ];
+        summary.innerHTML = summaryItems.map((item) => (
+          '<div class="card"><div class="k">' + escapeHtml(item[0]) + '</div><div class="v">' + escapeHtml(item[1]) + "</div></div>"
+        )).join("");
+
+        const diffRows = [];
+        if (diff.label_changed) {{
+          diffRows.push({{ change_type: "meta", item: "label changed" }});
+        }}
+        if (diff.task_type_changed) {{
+          diffRows.push({{ change_type: "meta", item: "task_type changed" }});
+        }}
+        if (diff.lifecycle_changed) {{
+          diffRows.push({{ change_type: "meta", item: "lifecycle_state changed" }});
+        }}
+        (Array.isArray(diff.added_items) ? diff.added_items : []).forEach((item) => {{
+          diffRows.push({{ change_type: "added", item: item }});
+        }});
+        (Array.isArray(diff.removed_items) ? diff.removed_items : []).forEach((item) => {{
+          diffRows.push({{ change_type: "removed", item: item }});
+        }});
+        (Array.isArray(diff.unchanged_items) ? diff.unchanged_items : []).slice(0, 5).forEach((item) => {{
+          diffRows.push({{ change_type: "unchanged", item: item }});
+        }});
+        table.innerHTML = diffRows.length > 0
+          ? renderTable(
+              diffRows,
+              [
+                {{ key: "change_type", label: "Diff" }},
+                {{ key: "item", label: "Item / Detail" }},
+              ]
+            )
+          : renderEmpty("개정안 diff 항목 없음");
+        meta.textContent = "비교 완료: revision_id=" + String(row.id || "-");
+      }}
+
+      function renderOpsMasterTables() {{
+        const equipmentTable = document.getElementById("opsMasterEquipmentTable");
+        const checklistTable = document.getElementById("opsMasterChecklistTable");
+        const checklistRevisionTable = document.getElementById("opsMasterChecklistRevisionTable");
+        const qrTable = document.getElementById("opsMasterQrTable");
+        if (!equipmentTable || !checklistTable || !checklistRevisionTable || !qrTable) {{
+          return;
+        }}
+        const filters = getOpsMasterTableFilters();
+
+        const equipmentRows = getAllOpsEquipmentAssets().filter((row) => (
+          rowMatchesOpsMasterLifecycle(row, filters.lifecycleState)
+          && rowMatchesOpsMasterSearch(row, ["equipment_id", "equipment", "location", "source"], filters.search)
+        ));
+        equipmentTable.innerHTML = equipmentRows.length > 0
+          ? renderTable(
+              equipmentRows,
+              [
+                {{ key: "equipment_id", label: "Equipment ID" }},
+                {{ key: "equipment", label: "Equipment" }},
+                {{ key: "location", label: "Location" }},
+                {{ key: "lifecycle_state", label: "State" }},
+                {{ key: "source", label: "Source" }},
+                {{ key: "updated_at", label: "Updated At" }},
+              ]
+            )
+          : renderEmpty("설비 마스터 데이터가 없습니다.");
+
+        const checklistRows = getAllOpsChecklistSets().map((row) => {{
+          const items = Array.isArray(row.items) ? row.items : [];
+          return {{
+            checklist_master_id: row.checklist_master_id || "-",
+            set_id: row.set_id || "-",
+            label: row.label || "-",
+            task_type: row.task_type || "-",
+            version_no: row.version_no || 1,
+            lifecycle_state: row.lifecycle_state || "active",
+            item_count: row.item_count || items.length || 0,
+            items_preview: items.slice(0, 3).map((item) => String((item && item.item) || "").trim()).filter(Boolean).join(" / "),
+            source: row.source || "-",
+            updated_at: row.updated_at || "-",
+          }};
+        }}).filter((row) => (
+          rowMatchesOpsMasterLifecycle(row, filters.lifecycleState)
+          && rowMatchesOpsMasterSearch(row, ["checklist_master_id", "set_id", "label", "task_type", "items_preview", "source"], filters.search)
+        ));
+        checklistTable.innerHTML = checklistRows.length > 0
+          ? renderTable(
+              checklistRows,
+              [
+                {{ key: "checklist_master_id", label: "Master ID" }},
+                {{ key: "set_id", label: "Set ID" }},
+                {{ key: "label", label: "Label" }},
+                {{ key: "task_type", label: "Task Type" }},
+                {{ key: "version_no", label: "Version" }},
+                {{ key: "lifecycle_state", label: "State" }},
+                {{ key: "item_count", label: "Items" }},
+                {{ key: "items_preview", label: "Preview" }},
+                {{ key: "updated_at", label: "Updated At" }},
+              ]
+            )
+          : renderEmpty("체크리스트 마스터 데이터가 없습니다.");
+
+        const revisionRows = Array.isArray(OPS_SPECIAL_CHECKLIST_REVISIONS)
+          ? OPS_SPECIAL_CHECKLIST_REVISIONS.map((row) => {{
+              const items = Array.isArray(row && row.items) ? row.items : [];
+              const diff = row && row.diff && typeof row.diff === "object" ? row.diff : {{}};
+              return {{
+                id: row.id || "-",
+                set_id: row.set_id || "-",
+                label: row.label || "-",
+                task_type: row.task_type || "-",
+                proposed_version_no: row.proposed_version_no || 1,
+                status: row.status || "-",
+                lifecycle_state: row.lifecycle_state || "active",
+                release_note: row.release_note_valid ? "valid" : ("invalid: " + ((row.release_note_missing_sections || []).join(", "))),
+                diff_summary: buildOpsRevisionDiffSummary(row),
+                created_by: row.created_by || "-",
+                submitted_by: row.submitted_by || "-",
+                decided_by: row.decided_by || "-",
+                item_count: row.item_count || items.length || 0,
+                updated_at: row.updated_at || "-",
+              }};
+            }})
+            .filter((row) => (
+              rowMatchesOpsMasterLifecycle(row, filters.lifecycleState)
+              && rowMatchesOpsMasterRevisionStatus(row, filters.revisionStatus)
+              && rowMatchesOpsMasterSearch(row, ["id", "set_id", "label", "task_type", "status", "release_note", "created_by", "submitted_by", "decided_by", "diff_summary"], filters.search)
+            ))
+          : [];
+        checklistRevisionTable.innerHTML = revisionRows.length > 0
+          ? renderTable(
+              revisionRows,
+              [
+                {{ key: "id", label: "Revision ID" }},
+                {{ key: "set_id", label: "Set ID" }},
+                {{ key: "label", label: "Label" }},
+                {{ key: "proposed_version_no", label: "Proposed Version" }},
+                {{ key: "status", label: "Status" }},
+                {{ key: "lifecycle_state", label: "State" }},
+                {{ key: "release_note", label: "Release Note" }},
+                {{ key: "diff_summary", label: "Diff" }},
+                {{ key: "created_by", label: "Created By" }},
+                {{ key: "submitted_by", label: "Submitted By" }},
+                {{ key: "decided_by", label: "Decided By" }},
+                {{ key: "item_count", label: "Items" }},
+                {{ key: "updated_at", label: "Updated At" }},
+              ]
+            )
+          : renderEmpty("체크리스트 개정안 데이터가 없습니다.");
+
+        const qrRows = getAllOpsQrAssets().filter((row) => (
+          rowMatchesOpsMasterLifecycle(row, filters.lifecycleState)
+          && rowMatchesOpsMasterSearch(row, ["qr_asset_id", "qr_id", "equipment_id", "equipment", "location", "checklist_set_id", "default_item"], filters.search)
+        ));
+        qrTable.innerHTML = qrRows.length > 0
+          ? renderTable(
+              qrRows,
+              [
+                {{ key: "qr_asset_id", label: "QR Asset ID" }},
+                {{ key: "qr_id", label: "QR ID" }},
+                {{ key: "equipment_id", label: "Equipment ID" }},
+                {{ key: "equipment", label: "Equipment" }},
+                {{ key: "location", label: "Location" }},
+                {{ key: "checklist_set_id", label: "Checklist Set" }},
+                {{ key: "default_item", label: "Default Item" }},
+                {{ key: "lifecycle_state", label: "State" }},
+                {{ key: "updated_at", label: "Updated At" }},
+              ]
+            )
+          : renderEmpty("QR 마스터 데이터가 없습니다.");
+      }}
+
+      function applyOpsMasterCatalogData(payload) {{
+        if (!payload || typeof payload !== "object") {{
+          return;
+        }}
+        OPS_SPECIAL_CHECKLISTS = payload;
+        populateOpsChecklistSetSelector();
+        populateOpsCodeSelector();
+        populateOpsEquipmentSelector();
+        populateOpsQrSelector();
+        applyChecklistSetSelection({{ preserveChecklist: true, resetChecklist: false }});
+        applySelectedOpsEquipmentToForm({{ overwriteFields: false }});
+        applySelectedQrAssetToForm({{ overwriteFields: false }});
+        renderOpsMasterTables();
+      }}
+
+      async function fetchAndApplyOpsMasterChecklistRevisions() {{
+        const data = await fetchJson("/api/ops/inspections/checklists/revisions?limit=200", true);
+        OPS_SPECIAL_CHECKLIST_REVISIONS = Array.isArray(data && data.rows) ? data.rows : [];
+        renderOpsMasterTables();
+        return data;
+      }}
+
+      async function fetchAndApplyOpsMasterCatalog() {{
+        const data = await fetchJson("/api/ops/inspections/checklists/catalog", true);
+        applyOpsMasterCatalogData(data);
+        return data;
+      }}
+
+      async function runOpsMasterCatalogRefresh() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          meta.textContent = "조회 중... /api/ops/inspections/checklists/catalog";
+          const data = await fetchAndApplyOpsMasterCatalog();
+          await fetchAndApplyOpsMasterChecklistRevisions().catch(() => null);
+          const summary = data.summary || {{}};
+          meta.textContent =
+            "성공: checklist_set=" + String(summary.checklist_set_count || 0)
+            + " | equipment=" + String(summary.equipment_asset_count || 0)
+            + " | qr=" + String(summary.qr_asset_count || 0);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          renderOpsMasterTables();
+        }}
+      }}
+
+      function requirePositiveIntInput(id, label) {{
+        const raw = String((document.getElementById(id) || {{ value: "" }}).value || "").trim();
+        const value = Number(raw);
+        if (!Number.isInteger(value) || value <= 0) {{
+          throw new Error(label + " 값이 올바른 정수가 아닙니다.");
+        }}
+        return value;
+      }}
+
+      async function runOpsMasterEquipmentCreate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const equipment = String((document.getElementById("opsMasterEquipmentName") || {{ value: "" }}).value || "").trim();
+        const location = String((document.getElementById("opsMasterEquipmentLocation") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterEquipmentLifecycle") || {{ value: "active" }}).value || "active");
+        if (!equipment) {{
+          meta.textContent = "실패: 설비명을 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "설비 생성 중...";
+          const created = await fetchJson(
+            "/api/ops/inspections/checklists/equipment-assets",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ equipment, location, lifecycle_state: lifecycleState }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          document.getElementById("opsMasterEquipmentId").value = String((((created || {{}}).row || {{}}).equipment_id) || "");
+          meta.textContent = "성공: equipment_id=" + String((((created || {{}}).row || {{}}).equipment_id) || "-");
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterEquipmentUpdate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          const equipmentId = requirePositiveIntInput("opsMasterEquipmentId", "equipment_id");
+          const equipment = String((document.getElementById("opsMasterEquipmentName") || {{ value: "" }}).value || "").trim();
+          const location = String((document.getElementById("opsMasterEquipmentLocation") || {{ value: "" }}).value || "").trim();
+          const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterEquipmentLifecycle") || {{ value: "active" }}).value || "active");
+          if (!equipment) {{
+            meta.textContent = "실패: 설비명을 입력하세요.";
+            return;
+          }}
+          meta.textContent = "설비 수정 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/equipment-assets/" + encodeURIComponent(String(equipmentId)),
+            true,
+            {{
+              method: "PATCH",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ equipment, location, lifecycle_state: lifecycleState }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: equipment_id=" + String(equipmentId);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterEquipmentDelete() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          const equipmentId = requirePositiveIntInput("opsMasterEquipmentId", "equipment_id");
+          meta.textContent = "설비 삭제 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/equipment-assets/" + encodeURIComponent(String(equipmentId)),
+            true,
+            {{ method: "DELETE" }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: equipment_id=" + String(equipmentId) + " 삭제";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistCreate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const setId = String((document.getElementById("opsMasterChecklistSetId") || {{ value: "" }}).value || "").trim();
+        const label = String((document.getElementById("opsMasterChecklistLabel") || {{ value: "" }}).value || "").trim();
+        const taskType = String((document.getElementById("opsMasterChecklistTaskType") || {{ value: "" }}).value || "").trim();
+        const versionNoRaw = String((document.getElementById("opsMasterChecklistVersion") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterChecklistLifecycle") || {{ value: "active" }}).value || "active");
+        const items = parseOpsMasterChecklistItemsInput();
+        if (!setId || !label || !taskType || items.length === 0) {{
+          meta.textContent = "실패: set_id, label, task_type, items를 모두 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "체크리스트 세트 생성 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/sets",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                set_id: setId,
+                label: label,
+                task_type: taskType,
+                version_no: versionNoRaw || undefined,
+                lifecycle_state: lifecycleState,
+                items: items,
+              }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: set_id=" + setId;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistUpdate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const setId = String((document.getElementById("opsMasterChecklistSetId") || {{ value: "" }}).value || "").trim();
+        const label = String((document.getElementById("opsMasterChecklistLabel") || {{ value: "" }}).value || "").trim();
+        const taskType = String((document.getElementById("opsMasterChecklistTaskType") || {{ value: "" }}).value || "").trim();
+        const versionNoRaw = String((document.getElementById("opsMasterChecklistVersion") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterChecklistLifecycle") || {{ value: "active" }}).value || "active");
+        const items = parseOpsMasterChecklistItemsInput();
+        if (!setId || !label || !taskType || items.length === 0) {{
+          meta.textContent = "실패: set_id, label, task_type, items를 모두 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "체크리스트 세트 수정 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/sets/" + encodeURIComponent(setId),
+            true,
+            {{
+              method: "PATCH",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                label: label,
+                task_type: taskType,
+                version_no: versionNoRaw || undefined,
+                lifecycle_state: lifecycleState,
+                items: items,
+              }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: set_id=" + setId;
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistDelete() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const setId = String((document.getElementById("opsMasterChecklistSetId") || {{ value: "" }}).value || "").trim();
+        if (!setId) {{
+          meta.textContent = "실패: set_id를 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "체크리스트 세트 삭제 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/sets/" + encodeURIComponent(setId),
+            true,
+            {{ method: "DELETE" }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: set_id=" + setId + " 삭제";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionCreate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const setId = String((document.getElementById("opsMasterChecklistSetId") || {{ value: "" }}).value || "").trim();
+        const label = String((document.getElementById("opsMasterChecklistLabel") || {{ value: "" }}).value || "").trim();
+        const taskType = String((document.getElementById("opsMasterChecklistTaskType") || {{ value: "" }}).value || "").trim();
+        const proposedVersionNo = String((document.getElementById("opsMasterChecklistVersion") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterChecklistLifecycle") || {{ value: "active" }}).value || "active");
+        const note = String((document.getElementById("opsMasterChecklistRevisionNote") || {{ value: "" }}).value || "").trim();
+        const items = parseOpsMasterChecklistItemsInput();
+        if (!setId || !label || !taskType || items.length === 0) {{
+          meta.textContent = "실패: set_id, label, task_type, items를 모두 입력하세요.";
+          return;
+        }}
+        try {{
+          meta.textContent = "체크리스트 개정안 작성 중...";
+          const created = await fetchJson(
+            "/api/ops/inspections/checklists/revisions",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                set_id: setId,
+                label: label,
+                task_type: taskType,
+                proposed_version_no: proposedVersionNo || undefined,
+                lifecycle_state: lifecycleState,
+                note: note,
+                items: items,
+              }}),
+            }}
+          );
+          document.getElementById("opsMasterChecklistRevisionId").value = String((((created || {{}}).row || {{}}).id) || "");
+          await fetchAndApplyOpsMasterChecklistRevisions();
+          meta.textContent = "성공: revision_id=" + String((((created || {{}}).row || {{}}).id) || "-");
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionList() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          meta.textContent = "체크리스트 개정안 조회 중...";
+          const data = await fetchAndApplyOpsMasterChecklistRevisions();
+          const summary = data.summary || {{}};
+          meta.textContent =
+            "성공: revision=" + String(summary.revision_count || 0)
+            + " | pending=" + String(summary.pending_count || 0);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionDiff() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          const revisionId = requirePositiveIntInput("opsMasterChecklistRevisionId", "revision_id");
+          meta.textContent = "체크리스트 개정안 비교 중...";
+          const data = await fetchJson(
+            "/api/ops/inspections/checklists/revisions/" + encodeURIComponent(String(revisionId)),
+            true
+          );
+          renderOpsMasterChecklistRevisionDiff(data);
+          meta.textContent = "성공: revision_id=" + String(revisionId) + " 비교";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+          resetOpsMasterChecklistRevisionDiff();
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionSubmit() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const note = String((document.getElementById("opsMasterChecklistRevisionNote") || {{ value: "" }}).value || "").trim();
+        try {{
+          const revisionId = requirePositiveIntInput("opsMasterChecklistRevisionId", "revision_id");
+          meta.textContent = "체크리스트 개정안 제출 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/revisions/" + encodeURIComponent(String(revisionId)) + "/submit",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ note }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterChecklistRevisions();
+          meta.textContent = "성공: revision_id=" + String(revisionId) + " 제출";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionApprove() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const note = String((document.getElementById("opsMasterChecklistRevisionNote") || {{ value: "" }}).value || "").trim();
+        try {{
+          const revisionId = requirePositiveIntInput("opsMasterChecklistRevisionId", "revision_id");
+          meta.textContent = "체크리스트 개정안 승인 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/revisions/" + encodeURIComponent(String(revisionId)) + "/approve",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ note }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          await fetchAndApplyOpsMasterChecklistRevisions();
+          meta.textContent = "성공: revision_id=" + String(revisionId) + " 승인";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterChecklistRevisionReject() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const note = String((document.getElementById("opsMasterChecklistRevisionNote") || {{ value: "" }}).value || "").trim();
+        try {{
+          const revisionId = requirePositiveIntInput("opsMasterChecklistRevisionId", "revision_id");
+          meta.textContent = "체크리스트 개정안 반려 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/revisions/" + encodeURIComponent(String(revisionId)) + "/reject",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{ note }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterChecklistRevisions();
+          meta.textContent = "성공: revision_id=" + String(revisionId) + " 반려";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterQrCreate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const qrId = String((document.getElementById("opsMasterQrId") || {{ value: "" }}).value || "").trim();
+        const checklistSetId = String((document.getElementById("opsMasterQrChecklistSetId") || {{ value: "" }}).value || "").trim();
+        const defaultItem = String((document.getElementById("opsMasterQrDefaultItem") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterQrLifecycle") || {{ value: "active" }}).value || "active");
+        if (!qrId || !checklistSetId) {{
+          meta.textContent = "실패: qr_id와 checklist_set_id를 입력하세요.";
+          return;
+        }}
+        try {{
+          const equipmentId = requirePositiveIntInput("opsMasterQrEquipmentId", "equipment_id");
+          meta.textContent = "QR 자산 생성 중...";
+          const created = await fetchJson(
+            "/api/ops/inspections/checklists/qr-assets",
+            true,
+            {{
+              method: "POST",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                qr_id: qrId,
+                equipment_id: equipmentId,
+                checklist_set_id: checklistSetId,
+                default_item: defaultItem,
+                lifecycle_state: lifecycleState,
+              }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          document.getElementById("opsMasterQrAssetId").value = String((((created || {{}}).row || {{}}).qr_asset_id) || "");
+          meta.textContent = "성공: qr_asset_id=" + String((((created || {{}}).row || {{}}).qr_asset_id) || "-");
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterQrUpdate() {{
+        const meta = document.getElementById("opsMasterMeta");
+        const qrId = String((document.getElementById("opsMasterQrId") || {{ value: "" }}).value || "").trim();
+        const checklistSetId = String((document.getElementById("opsMasterQrChecklistSetId") || {{ value: "" }}).value || "").trim();
+        const defaultItem = String((document.getElementById("opsMasterQrDefaultItem") || {{ value: "" }}).value || "").trim();
+        const lifecycleState = normalizeOpsLifecycleState((document.getElementById("opsMasterQrLifecycle") || {{ value: "active" }}).value || "active");
+        if (!qrId || !checklistSetId) {{
+          meta.textContent = "실패: qr_id와 checklist_set_id를 입력하세요.";
+          return;
+        }}
+        try {{
+          const qrAssetId = requirePositiveIntInput("opsMasterQrAssetId", "qr_asset_id");
+          const equipmentId = requirePositiveIntInput("opsMasterQrEquipmentId", "equipment_id");
+          meta.textContent = "QR 자산 수정 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/qr-assets/" + encodeURIComponent(String(qrAssetId)),
+            true,
+            {{
+              method: "PATCH",
+              headers: {{ "Content-Type": "application/json" }},
+              body: JSON.stringify({{
+                qr_id: qrId,
+                equipment_id: equipmentId,
+                checklist_set_id: checklistSetId,
+                default_item: defaultItem,
+                lifecycle_state: lifecycleState,
+              }}),
+            }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: qr_asset_id=" + String(qrAssetId);
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
+        }}
+      }}
+
+      async function runOpsMasterQrDelete() {{
+        const meta = document.getElementById("opsMasterMeta");
+        try {{
+          const qrAssetId = requirePositiveIntInput("opsMasterQrAssetId", "qr_asset_id");
+          meta.textContent = "QR 자산 삭제 중...";
+          await fetchJson(
+            "/api/ops/inspections/checklists/qr-assets/" + encodeURIComponent(String(qrAssetId)),
+            true,
+            {{ method: "DELETE" }}
+          );
+          await fetchAndApplyOpsMasterCatalog();
+          meta.textContent = "성공: qr_asset_id=" + String(qrAssetId) + " 삭제";
+        }} catch (err) {{
+          meta.textContent = "실패: " + err.message;
         }}
       }}
 
@@ -4960,6 +5863,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         const checklistSetLabel = String((checklistSetObj && checklistSetObj.label) || "").trim();
         const checklistTaskType = String((checklistSetObj && checklistSetObj.task_type) || "").trim();
         const selectedOpsCode = getSelectedOpsCodeRecord();
+        const selectedEquipmentRecord = getSelectedOpsEquipmentRecord();
         const selectedQrAsset = getSelectedQrAssetRecord();
         const taskType = (document.getElementById("inCreateTaskType").value || "").trim() || checklistTaskType || "전기점검";
         const cycle = (document.getElementById("inCreateCycle").value || "").trim() || "daily";
@@ -4974,11 +5878,14 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           return;
         }}
         const qrEquipment = String((selectedQrAsset && selectedQrAsset.equipment) || "").trim();
+        const selectedEquipmentName = String((selectedEquipmentRecord && selectedEquipmentRecord.equipment) || "").trim();
         const defaultEquipment = taskType.includes("소방") ? "소방설비" : "전기설비";
-        const equipment = equipmentRaw || qrEquipment || (equipmentGroup === "all" ? defaultEquipment : equipmentGroup);
+        const equipment = equipmentRaw || qrEquipment || selectedEquipmentName || (equipmentGroup === "all" ? defaultEquipment : equipmentGroup);
         const equipmentCodeRaw = (document.getElementById("inCreateEquipmentCode").value || "").trim();
         const selectedOpsCodeValue = String((selectedOpsCode && selectedOpsCode.code) || "").trim();
         const selectedQrId = String((selectedQrAsset && selectedQrAsset.qr_id) || "").trim();
+        const selectedEquipmentId = Number((selectedEquipmentRecord && selectedEquipmentRecord.equipment_id) || (selectedQrAsset && selectedQrAsset.equipment_id) || 0);
+        const selectedQrAssetId = Number((selectedQrAsset && selectedQrAsset.qr_asset_id) || 0);
         const equipmentCode = equipmentCodeRaw || selectedOpsCodeValue || selectedQrId;
         const abnormalAction = (document.getElementById("inCreateAbnormalAction").value || "").trim();
         const memo = (document.getElementById("inCreateMemo").value || "").trim();
@@ -4988,7 +5895,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           .map((file) => String((file && file.name) || "").trim())
           .filter((name) => name !== "");
         const photoNote = (document.getElementById("inCreatePhotoNote").value || "").trim();
-        const checklistDataVersion = String((OPS_SPECIAL_CHECKLISTS && OPS_SPECIAL_CHECKLISTS.version) || "").trim();
+        const checklistDataVersion = String(((checklistSetObj && checklistSetObj.version_no) || (OPS_SPECIAL_CHECKLISTS && OPS_SPECIAL_CHECKLISTS.version) || "")).trim();
         const checklistSourceFile = String((OPS_SPECIAL_CHECKLISTS && OPS_SPECIAL_CHECKLISTS.source_file) || "").trim();
         const checklistRows = opsElectricalChecklistRows.map((row) => {{
           return {{
@@ -5014,6 +5921,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             task_type: taskType,
             equipment_group: equipmentGroup,
             equipment: equipment,
+            equipment_id: Number.isInteger(selectedEquipmentId) && selectedEquipmentId > 0 ? selectedEquipmentId : undefined,
             equipment_code: equipmentCode,
             equipment_location: location,
             template_group: templateGroup,
@@ -5026,6 +5934,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             ops_code_category: String((selectedOpsCode && selectedOpsCode.category) || "").trim(),
             ops_code_description: String((selectedOpsCode && selectedOpsCode.description) || "").trim(),
             qr_id: selectedQrId,
+            qr_asset_id: Number.isInteger(selectedQrAssetId) && selectedQrAssetId > 0 ? selectedQrAssetId : undefined,
             qr_equipment: qrEquipment,
             qr_location: String((selectedQrAsset && selectedQrAsset.location) || "").trim(),
             qr_default_item: String((selectedQrAsset && selectedQrAsset.default_item) || "").trim(),
@@ -5047,6 +5956,12 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           inspected_at: inspectedAt.toISOString(),
           notes: notes,
         }};
+        if (Number.isInteger(selectedEquipmentId) && selectedEquipmentId > 0) {{
+          payload.equipment_id = selectedEquipmentId;
+        }}
+        if (Number.isInteger(selectedQrAssetId) && selectedQrAssetId > 0) {{
+          payload.qr_asset_id = selectedQrAssetId;
+        }}
         try {{
           const windingTempC = parseOptionalNumberInput("inCreateWindingTemp", "권선온도");
           const groundingOhm = parseOptionalNumberInput("inCreateGroundingOhm", "접지저항");
@@ -10224,6 +11139,25 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       document.getElementById("runInspectionsBtn").addEventListener("click", runInspections);
       document.getElementById("runInspectionEvidenceBtn").addEventListener("click", runInspectionEvidenceList);
       document.getElementById("runInspectionImportValidationBtn").addEventListener("click", runInspectionImportValidation);
+      document.getElementById("runOpsMasterCatalogBtn").addEventListener("click", runOpsMasterCatalogRefresh);
+      document.getElementById("runOpsMasterEquipmentCreateBtn").addEventListener("click", runOpsMasterEquipmentCreate);
+      document.getElementById("runOpsMasterEquipmentUpdateBtn").addEventListener("click", runOpsMasterEquipmentUpdate);
+      document.getElementById("runOpsMasterEquipmentDeleteBtn").addEventListener("click", runOpsMasterEquipmentDelete);
+      document.getElementById("runOpsMasterChecklistCreateBtn").addEventListener("click", runOpsMasterChecklistCreate);
+      document.getElementById("runOpsMasterChecklistUpdateBtn").addEventListener("click", runOpsMasterChecklistUpdate);
+      document.getElementById("runOpsMasterChecklistDeleteBtn").addEventListener("click", runOpsMasterChecklistDelete);
+      document.getElementById("runOpsMasterChecklistRevisionCreateBtn").addEventListener("click", runOpsMasterChecklistRevisionCreate);
+      document.getElementById("runOpsMasterChecklistRevisionListBtn").addEventListener("click", runOpsMasterChecklistRevisionList);
+      document.getElementById("runOpsMasterChecklistRevisionDiffBtn").addEventListener("click", runOpsMasterChecklistRevisionDiff);
+      document.getElementById("runOpsMasterChecklistRevisionSubmitBtn").addEventListener("click", runOpsMasterChecklistRevisionSubmit);
+      document.getElementById("runOpsMasterChecklistRevisionApproveBtn").addEventListener("click", runOpsMasterChecklistRevisionApprove);
+      document.getElementById("runOpsMasterChecklistRevisionRejectBtn").addEventListener("click", runOpsMasterChecklistRevisionReject);
+      document.getElementById("runOpsMasterQrCreateBtn").addEventListener("click", runOpsMasterQrCreate);
+      document.getElementById("runOpsMasterQrUpdateBtn").addEventListener("click", runOpsMasterQrUpdate);
+      document.getElementById("runOpsMasterQrDeleteBtn").addEventListener("click", runOpsMasterQrDelete);
+      document.getElementById("opsMasterSearch").addEventListener("input", renderOpsMasterTables);
+      document.getElementById("opsMasterLifecycleFilter").addEventListener("change", renderOpsMasterTables);
+      document.getElementById("opsMasterRevisionStatusFilter").addEventListener("change", renderOpsMasterTables);
       document.getElementById("inCreateInspectionBtn").addEventListener("click", runCreateOpsInspection);
       document.getElementById("inChecklistAllNormalBtn").addEventListener("click", () => setOpsChecklistAllResult("normal"));
       document.getElementById("inChecklistAllNaBtn").addEventListener("click", () => setOpsChecklistAllResult("na"));
@@ -10242,6 +11176,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }}
       }});
       document.getElementById("inCreateOpsCode").addEventListener("change", applySelectedOpsCodeToForm);
+      document.getElementById("inCreateEquipmentMaster").addEventListener("change", () => applySelectedOpsEquipmentToForm({{ overwriteFields: true }}));
       document.getElementById("inCreateQrId").addEventListener("change", () => applySelectedQrAssetToForm({{ overwriteFields: true }}));
       document.getElementById("runBillingCreateUnitBtn").addEventListener("click", runBillingCreateUnit);
       document.getElementById("runBillingUnitsBtn").addEventListener("click", runBillingUnits);
@@ -10386,9 +11321,12 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       bindOpsElectricalChecklistHandlers();
       populateOpsChecklistSetSelector();
       populateOpsCodeSelector();
+      populateOpsEquipmentSelector();
       populateOpsQrSelector();
       applyChecklistSetSelection({{ preserveChecklist: false }});
+      applySelectedOpsEquipmentToForm();
       applySelectedQrAssetToForm();
+      renderOpsMasterTables();
       const inCreateInspectedAtNode = document.getElementById("inCreateInspectedAt");
       if (inCreateInspectedAtNode && !(inCreateInspectedAtNode.value || "").trim()) {{
         inCreateInspectedAtNode.value = currentLocalDatetimeInputValue();

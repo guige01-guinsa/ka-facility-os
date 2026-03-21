@@ -54,6 +54,25 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert dr_run.status_code == 200
     dr_run_body = dr_run.json()
 
+    qr_revision = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets/bulk-update",
+        headers=_owner_headers(),
+        json={
+            "dry_run": False,
+            "create_missing": True,
+            "updates": [
+                {
+                    "qr_id": "QR-AUDIT-ARCHIVE-CI",
+                    "equipment": "월간아카이브 변압기",
+                    "location": "B9 아카이브실",
+                    "default_item": "변압기 외관 점검",
+                }
+            ],
+        },
+    )
+    assert qr_revision.status_code == 200
+    assert qr_revision.json()["summary"]["revision_saved_count"] == 1
+
     archive = app_client.get(
         f"/api/admin/audit-archive/monthly?month={month}&include_entries=1",
         headers=_owner_headers(),
@@ -76,6 +95,7 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert archive_body["attachment_count"] == len(archive_body["attachments"])
     assert "dr_rehearsal" in archive_body["attachments"]
     assert "ops_checklists_import_validation" in archive_body["attachments"]
+    assert "ops_qr_asset_revisions" in archive_body["attachments"]
     assert "dr_rehearsal_attachment" in archive_body
     assert archive_body["dr_rehearsal_attachment"]["month"] == month
     assert archive_body["dr_rehearsal_attachment"]["included"] is True
@@ -97,6 +117,19 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert attachments_import["schema"] == "audit_archive_attachment_ops_checklists_import_validation"
     assert attachments_import["schema_version"] == "v2"
     assert attachments_import["checklist_version"] == import_attachment["checklist_version"]
+    assert "ops_qr_asset_revisions_attachment" in archive_body
+    qr_attachment = archive_body["ops_qr_asset_revisions_attachment"]
+    assert qr_attachment["month"] == month
+    assert qr_attachment["included"] is True
+    assert qr_attachment["status"] == "ok"
+    assert qr_attachment["summary"]["revision_count"] >= 1
+    assert qr_attachment["summary"]["qr_id_count"] >= 1
+    assert qr_attachment["latest_in_month"]["qr_id"] == "QR-AUDIT-ARCHIVE-CI"
+    assert qr_attachment["latest_in_month"]["change_source"] == "qr_bulk_update_api"
+    assert qr_attachment["recent_rows"][0]["qr_id"] == "QR-AUDIT-ARCHIVE-CI"
+    attachments_qr = archive_body["attachments"]["ops_qr_asset_revisions"]
+    assert attachments_qr["schema"] == "audit_archive_attachment_ops_qr_asset_revisions"
+    assert attachments_qr["schema_version"] == "v2"
 
     archive_csv = app_client.get(
         f"/api/admin/audit-archive/monthly/csv?month={month}",
@@ -120,6 +153,7 @@ def test_audit_integrity_and_monthly_archive(app_client: TestClient) -> None:
     assert "meta,format_version,v2" in archive_csv_v2.text
     assert "meta,attachment_schema_version,v2" in archive_csv_v2.text
     assert "attachment.dr_rehearsal,schema,audit_archive_attachment_dr_rehearsal" in archive_csv_v2.text
+    assert "attachment.ops_qr_asset_revisions,schema,audit_archive_attachment_ops_qr_asset_revisions" in archive_csv_v2.text
 
     with db_module.get_conn() as conn:
         first_row = conn.execute(
@@ -494,6 +528,14 @@ def test_ops_deploy_checklist_smoke_record_and_integrity_endpoints(app_client: T
     assert smoke_record_body["detail"]["checklist_version_match"] is True
     assert smoke_record_body["detail"]["ui_main_shell_checked"] is True
     assert smoke_record_body["detail"]["ui_main_shell_status"] == "ok"
+    archive = smoke_record_body["detail"]["artifact_archive"]
+    assert archive["enabled"] is True
+    assert archive["error"] is None
+    assert archive["json_file"]
+    assert Path(archive["json_file"]).exists()
+    assert len(archive["sha256"]) == 64
+    assert archive["size_bytes"] > 0
+    assert "\"deploy_id\": \"deploy-ci-001\"" in Path(archive["json_file"]).read_text(encoding="utf-8")
 
     runbook = app_client.get(
         "/api/ops/runbook/checks",
@@ -791,6 +833,7 @@ def test_startup_preflight_signing_key_warning_when_not_required(tmp_path, monke
     monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DEPLOY_SMOKE_ARCHIVE_PATH", (tmp_path / "deploy_smoke_archives").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
 
     import app.database as database_module
@@ -814,6 +857,7 @@ def test_startup_preflight_signing_key_error_when_required(tmp_path, monkeypatch
     monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DEPLOY_SMOKE_ARCHIVE_PATH", (tmp_path / "deploy_smoke_archives").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
 
     import app.database as database_module
@@ -837,6 +881,7 @@ def test_startup_preflight_failure_reports_blocking_check_id(tmp_path, monkeypat
     monkeypatch.delenv("AUDIT_ARCHIVE_SIGNING_KEY", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DEPLOY_SMOKE_ARCHIVE_PATH", (tmp_path / "deploy_smoke_archives").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
 
     import app.database as database_module

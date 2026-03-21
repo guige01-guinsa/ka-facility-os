@@ -3,6 +3,23 @@
 from __future__ import annotations
 
 from app import main as main_module
+from app.domains.ops.schemas import (
+    InspectionCreate,
+    InspectionEvidenceRead,
+    InspectionRead,
+    WorkOrderAck,
+    WorkOrderCancel,
+    WorkOrderCommentCreate,
+    WorkOrderComplete,
+    WorkOrderCreate,
+    WorkOrderEventRead,
+    WorkOrderRead,
+    WorkOrderReopen,
+    WorkflowLockCreate,
+    WorkflowLockDraftUpdate,
+    WorkflowLockRead,
+    WorkflowLockTransitionRequest,
+)
 
 APIRouter = main_module.APIRouter
 router = APIRouter(tags=["ops-core"])
@@ -17,9 +34,6 @@ Form = main_module.Form
 HTMLResponse = main_module.HTMLResponse
 HTTPException = main_module.HTTPException
 INSPECTION_EVIDENCE_MAX_BYTES = main_module.INSPECTION_EVIDENCE_MAX_BYTES
-InspectionCreate = main_module.InspectionCreate
-InspectionEvidenceRead = main_module.InspectionEvidenceRead
-InspectionRead = main_module.InspectionRead
 MonthlyReportRead = main_module.MonthlyReportRead
 Query = main_module.Query
 Response = main_module.Response
@@ -32,18 +46,6 @@ WORKFLOW_LOCK_STATUS_DRAFT = main_module.WORKFLOW_LOCK_STATUS_DRAFT
 WORKFLOW_LOCK_STATUS_LOCKED = main_module.WORKFLOW_LOCK_STATUS_LOCKED
 WORKFLOW_LOCK_STATUS_REVIEW = main_module.WORKFLOW_LOCK_STATUS_REVIEW
 WORKFLOW_LOCK_STATUS_SET = main_module.WORKFLOW_LOCK_STATUS_SET
-WorkOrderAck = main_module.WorkOrderAck
-WorkOrderCancel = main_module.WorkOrderCancel
-WorkOrderCommentCreate = main_module.WorkOrderCommentCreate
-WorkOrderComplete = main_module.WorkOrderComplete
-WorkOrderCreate = main_module.WorkOrderCreate
-WorkOrderEventRead = main_module.WorkOrderEventRead
-WorkOrderRead = main_module.WorkOrderRead
-WorkOrderReopen = main_module.WorkOrderReopen
-WorkflowLockCreate = main_module.WorkflowLockCreate
-WorkflowLockDraftUpdate = main_module.WorkflowLockDraftUpdate
-WorkflowLockRead = main_module.WorkflowLockRead
-WorkflowLockTransitionRequest = main_module.WorkflowLockTransitionRequest
 _allowed_sites_for_principal = main_module._allowed_sites_for_principal
 _append_work_order_event = main_module._append_work_order_event
 _as_optional_datetime = main_module._as_optional_datetime
@@ -51,12 +53,15 @@ _build_monthly_report_csv = main_module._build_monthly_report_csv
 _build_monthly_report_pdf = main_module._build_monthly_report_pdf
 _calculate_risk = main_module._calculate_risk
 _derive_inspection_work_order_sla_context = main_module._derive_inspection_work_order_sla_context
+_extract_ops_snapshot_values = main_module._extract_ops_snapshot_values
 _higher_priority = main_module._higher_priority
 _inspection_to_work_order_sla_rule_payload = main_module._inspection_to_work_order_sla_rule_payload
 _is_allowed_evidence_content_type = main_module._is_allowed_evidence_content_type
 _load_sla_policy = main_module._load_sla_policy
 _normalize_evidence_storage_backend = main_module._normalize_evidence_storage_backend
+_ops_snapshot_values_from_inspection_row = main_module._ops_snapshot_values_from_inspection_row
 _read_evidence_blob = main_module._read_evidence_blob
+_resolve_ops_master_asset_ids = main_module._resolve_ops_master_asset_ids
 _require_site_access = main_module._require_site_access
 _require_workflow_lock_action = main_module._require_workflow_lock_action
 _row_to_inspection_evidence_model = main_module._row_to_inspection_evidence_model
@@ -512,6 +517,12 @@ def create_inspection(
     _require_site_access(principal, payload.site)
     parsed_ops_notes = _validate_ops_inspection_payload(payload)
     risk_level, flags = _calculate_risk(payload, parsed_ops_notes=parsed_ops_notes)
+    ops_snapshot = _extract_ops_snapshot_values(parsed_ops_notes)
+    resolved_master_ids = _resolve_ops_master_asset_ids(
+        payload=payload,
+        parsed_ops_notes=parsed_ops_notes,
+        ops_snapshot=ops_snapshot,
+    )
     now = datetime.now(timezone.utc)
     inspected_at = _to_utc(payload.inspected_at)
 
@@ -523,6 +534,13 @@ def create_inspection(
                 cycle=payload.cycle,
                 inspector=payload.inspector,
                 inspected_at=inspected_at,
+                equipment_id=resolved_master_ids["equipment_id"],
+                qr_asset_id=resolved_master_ids["qr_asset_id"],
+                equipment_snapshot=ops_snapshot["equipment_snapshot"],
+                equipment_location_snapshot=ops_snapshot["equipment_location_snapshot"],
+                qr_id=ops_snapshot["qr_id"],
+                checklist_set_id=ops_snapshot["checklist_set_id"],
+                checklist_version=ops_snapshot["checklist_version"],
                 transformer_kva=payload.transformer_kva,
                 voltage_r=payload.voltage_r,
                 voltage_s=payload.voltage_s,
@@ -555,7 +573,16 @@ def create_inspection(
         action="inspection_create",
         resource_type="inspection",
         resource_id=str(model.id),
-        detail={"site": model.site, "location": model.location, "risk_level": model.risk_level},
+        detail={
+            "site": model.site,
+            "location": model.location,
+            "risk_level": model.risk_level,
+            "equipment_id": model.equipment_id,
+            "qr_asset_id": model.qr_asset_id,
+            "equipment_snapshot": model.equipment_snapshot,
+            "qr_id": model.qr_id,
+            "checklist_set_id": model.checklist_set_id,
+        },
     )
     return model
 
@@ -841,6 +868,15 @@ def create_work_order(
     priority_upgraded = False
     priority_upgrade_reasons: list[str] = []
     inspection_sla_context: dict[str, Any] | None = None
+    inspection_ops_snapshot: dict[str, str | int | None] = {
+        "equipment_id": None,
+        "qr_asset_id": None,
+        "equipment_snapshot": None,
+        "equipment_location_snapshot": None,
+        "qr_id": None,
+        "checklist_set_id": None,
+        "checklist_version": None,
+    }
 
     with get_conn() as conn:
         if payload.inspection_id is not None:
@@ -856,6 +892,7 @@ def create_work_order(
             if inspection_site != payload.site:
                 raise HTTPException(status_code=400, detail="inspection_id site must match work order site")
             inspection_sla_context = _derive_inspection_work_order_sla_context(inspection_row)
+            inspection_ops_snapshot = _ops_snapshot_values_from_inspection_row(inspection_row)
             floor_priority = str(inspection_sla_context.get("priority_floor") or "medium").strip().lower() or "medium"
             upgraded_priority = _higher_priority(effective_priority, floor_priority)
             if upgraded_priority != effective_priority:
@@ -886,6 +923,12 @@ def create_work_order(
                 assignee=payload.assignee,
                 reporter=payload.reporter,
                 inspection_id=payload.inspection_id,
+                equipment_id=inspection_ops_snapshot["equipment_id"],
+                qr_asset_id=inspection_ops_snapshot["qr_asset_id"],
+                equipment_snapshot=inspection_ops_snapshot["equipment_snapshot"],
+                equipment_location_snapshot=inspection_ops_snapshot["equipment_location_snapshot"],
+                qr_id=inspection_ops_snapshot["qr_id"],
+                checklist_set_id=inspection_ops_snapshot["checklist_set_id"],
                 due_at=due_at,
                 acknowledged_at=None,
                 completed_at=None,
@@ -913,6 +956,11 @@ def create_work_order(
                 "reporter": payload.reporter,
                 "inspection_id": payload.inspection_id,
                 "inspection_sla_context": inspection_sla_context,
+                "equipment_id": inspection_ops_snapshot["equipment_id"],
+                "qr_asset_id": inspection_ops_snapshot["qr_asset_id"],
+                "equipment_snapshot": inspection_ops_snapshot["equipment_snapshot"],
+                "qr_id": inspection_ops_snapshot["qr_id"],
+                "checklist_set_id": inspection_ops_snapshot["checklist_set_id"],
                 "auto_due_applied": auto_due_applied,
                 "due_hours_applied": due_hours_applied,
                 "policy_source": policy_source,
@@ -942,6 +990,11 @@ def create_work_order(
             "policy_source": policy_source,
             "inspection_id": payload.inspection_id,
             "inspection_sla_context": inspection_sla_context,
+            "equipment_id": model.equipment_id,
+            "qr_asset_id": model.qr_asset_id,
+            "equipment_snapshot": model.equipment_snapshot,
+            "qr_id": model.qr_id,
+            "checklist_set_id": model.checklist_set_id,
         },
     )
     return model

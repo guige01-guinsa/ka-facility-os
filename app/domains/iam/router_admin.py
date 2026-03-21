@@ -756,6 +756,44 @@ def _build_audit_archive_csv(
                 import_summary.get("warning_count", 0),
             ]
         )
+        qr_attachment = (
+            attachments.get("ops_qr_asset_revisions")
+            if isinstance(attachments.get("ops_qr_asset_revisions"), dict)
+            else archive.get("ops_qr_asset_revisions_attachment")
+            if isinstance(archive.get("ops_qr_asset_revisions_attachment"), dict)
+            else {}
+        )
+        qr_summary = qr_attachment.get("summary") if isinstance(qr_attachment.get("summary"), dict) else {}
+        writer.writerow(
+            [
+                "attachment.ops_qr_asset_revisions",
+                "schema",
+                qr_attachment.get("schema", ""),
+            ]
+        )
+        writer.writerow(
+            [
+                "attachment.ops_qr_asset_revisions",
+                "schema_version",
+                qr_attachment.get("schema_version", ""),
+            ]
+        )
+        writer.writerow(["attachment.ops_qr_asset_revisions", "status", qr_attachment.get("status", "")])
+        writer.writerow(["attachment.ops_qr_asset_revisions", "included", qr_attachment.get("included", False)])
+        writer.writerow(
+            [
+                "attachment.ops_qr_asset_revisions",
+                "revision_count",
+                qr_summary.get("revision_count", 0),
+            ]
+        )
+        writer.writerow(
+            [
+                "attachment.ops_qr_asset_revisions",
+                "qr_id_count",
+                qr_summary.get("qr_id_count", 0),
+            ]
+        )
         writer.writerow([])
 
     writer.writerow(

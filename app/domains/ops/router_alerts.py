@@ -3,12 +3,415 @@
 from __future__ import annotations
 
 from app import main as main_module
+from app.domains.ops import alert_service
+from app.domains.ops import record_service
 
 APIRouter = main_module.APIRouter
 globals().update({key: value for key, value in main_module.__dict__.items() if key not in {"router", "ops_router", "admin_router"}})
 router = APIRouter(prefix="/api/ops", tags=["ops"])
 ops_router = router
 admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+_ALERT_RUNTIME_SYNC_ATTRS = (
+    "ALERT_WEBHOOK_TIMEOUT_SEC",
+    "ALERT_WEBHOOK_RETRIES",
+    "ALERT_CHANNEL_GUARD_ENABLED",
+    "ALERT_CHANNEL_GUARD_FAIL_THRESHOLD",
+    "ALERT_CHANNEL_GUARD_COOLDOWN_MINUTES",
+    "ALERT_GUARD_RECOVER_MAX_TARGETS",
+    "ALERT_RETENTION_DAYS",
+    "ALERT_RETENTION_MAX_DELETE",
+    "ALERT_RETENTION_ARCHIVE_ENABLED",
+    "ALERT_RETENTION_ARCHIVE_PATH",
+    "ALERT_MTTR_SLO_ENABLED",
+    "ALERT_MTTR_SLO_WINDOW_DAYS",
+    "ALERT_MTTR_SLO_THRESHOLD_MINUTES",
+    "ALERT_MTTR_SLO_MIN_INCIDENTS",
+    "ALERT_MTTR_SLO_AUTO_RECOVER_ENABLED",
+    "ALERT_MTTR_SLO_RECOVER_STATE",
+    "ALERT_MTTR_SLO_RECOVER_MAX_TARGETS",
+    "ALERT_MTTR_SLO_NOTIFY_ENABLED",
+    "ALERT_MTTR_SLO_NOTIFY_EVENT_TYPE",
+    "ALERT_MTTR_SLO_NOTIFY_COOLDOWN_MINUTES",
+    "ALERT_MTTR_SLO_TOP_CHANNELS",
+)
+
+
+def _sync_alert_runtime_from_main() -> None:
+    for attr in _ALERT_RUNTIME_SYNC_ATTRS:
+        if hasattr(main_module, attr) and hasattr(alert_service.ops_runtime, attr):
+            setattr(alert_service.ops_runtime, attr, getattr(main_module, attr))
+
+
+def _build_alert_channel_kpi_snapshot(*, event_type: str | None = None, windows: list[int] | None = None) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._build_alert_channel_kpi_snapshot(event_type=event_type, windows=windows)
+
+
+def _build_alert_channel_mttr_snapshot(*, event_type: str | None = None, windows: list[int] | None = None) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._build_alert_channel_mttr_snapshot(event_type=event_type, windows=windows)
+
+
+def _ensure_mttr_slo_policy() -> tuple[dict[str, Any], datetime, str]:
+    _sync_alert_runtime_from_main()
+    return alert_service._ensure_mttr_slo_policy()
+
+
+def _upsert_mttr_slo_policy(payload: dict[str, Any]) -> tuple[dict[str, Any], datetime, str]:
+    _sync_alert_runtime_from_main()
+    return alert_service._upsert_mttr_slo_policy(payload)
+
+
+def _compute_alert_channel_guard_state(
+    target: str,
+    *,
+    now: datetime | None = None,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._compute_alert_channel_guard_state(
+        target,
+        now=now,
+        event_type=event_type,
+        lookback_days=lookback_days,
+    )
+
+
+def _build_alert_channel_guard_snapshot(
+    *,
+    event_type: str | None = None,
+    lookback_days: int = 30,
+    max_targets: int = 100,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._build_alert_channel_guard_snapshot(
+        event_type=event_type,
+        lookback_days=lookback_days,
+        max_targets=max_targets,
+        now=now,
+    )
+
+
+def _build_alert_delivery_record_payload(*, payload: dict[str, Any], target_kind: str) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._build_alert_delivery_record_payload(payload=payload, target_kind=target_kind)
+
+
+def _write_alert_delivery(
+    *,
+    event_type: str,
+    target: str,
+    status: str,
+    error: str | None,
+    payload: dict[str, Any],
+) -> int:
+    return record_service._write_alert_delivery(
+        event_type=event_type,
+        target=target,
+        status=status,
+        error=error,
+        payload=payload,
+    )
+
+
+def _detect_alert_target_kind(url: str) -> str:
+    _sync_alert_runtime_from_main()
+    return alert_service._detect_alert_target_kind(url)
+
+
+def _render_alert_payload_for_target(*, event_type: str, payload: dict[str, Any], target_kind: str) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service._render_alert_payload_for_target(
+        event_type=event_type,
+        payload=payload,
+        target_kind=target_kind,
+    )
+
+
+def run_alert_guard_recover_job(**kwargs: Any) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service.run_alert_guard_recover_job(**kwargs)
+
+
+def run_alert_retention_job(**kwargs: Any) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service.run_alert_retention_job(**kwargs)
+
+
+def run_alert_mttr_slo_check_job(**kwargs: Any) -> dict[str, Any]:
+    _sync_alert_runtime_from_main()
+    return alert_service.run_alert_mttr_slo_check_job(**kwargs)
+
+
+def simulate_sla_policy_change(
+    *,
+    policy: SlaPolicyUpdate,
+    site: str | None = None,
+    limit: int = 3000,
+    include_work_order_ids: bool = True,
+    sample_size: int = 200,
+    recompute_due_from_policy: bool = False,
+    allowed_sites: list[str] | None = None,
+) -> SlaWhatIfResponse:
+    now = datetime.now(timezone.utc)
+    normalized_site = main_module._normalize_site_name(site)
+    normalized_limit = max(1, min(limit, 20000))
+    normalized_sample_size = max(0, min(sample_size, 1000))
+    simulated_policy = main_module._normalize_sla_policy(policy.model_dump())
+
+    stmt = (
+        select(work_orders)
+        .where(work_orders.c.status.in_(["open", "acked"]))
+        .where(work_orders.c.is_escalated.is_(False))
+        .order_by(work_orders.c.due_at.asc(), work_orders.c.id.asc())
+        .limit(normalized_limit)
+    )
+    if normalized_site is not None:
+        stmt = stmt.where(work_orders.c.site == normalized_site)
+    elif allowed_sites is not None:
+        if not allowed_sites:
+            return SlaWhatIfResponse(
+                checked_at=now,
+                site=normalized_site,
+                limit=normalized_limit,
+                total_candidates=0,
+                baseline_escalate_count=0,
+                simulated_escalate_count=0,
+                delta_escalate_count=0,
+                baseline_by_site={},
+                simulated_by_site={},
+                newly_escalated_ids=[],
+                no_longer_escalated_ids=[],
+                notes=["No accessible sites in current principal scope."],
+            )
+        stmt = stmt.where(work_orders.c.site.in_(allowed_sites))
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    current_policy_cache: dict[str, dict[str, Any]] = {}
+
+    def _current_policy_for_site(site_name: str) -> dict[str, Any]:
+        key = site_name.strip()
+        if key in current_policy_cache:
+            return current_policy_cache[key]
+        loaded, _, _, _, _ = main_module._load_sla_policy(site=key if key else None)
+        current_policy_cache[key] = loaded
+        return loaded
+
+    baseline_count = 0
+    simulated_count = 0
+    baseline_by_site: dict[str, int] = {}
+    simulated_by_site: dict[str, int] = {}
+    newly_escalated_ids: list[int] = []
+    no_longer_escalated_ids: list[int] = []
+
+    for row in rows:
+        row_id = int(row["id"])
+        row_site = str(row["site"] or "")
+        row_priority = str(row["priority"] or "medium")
+
+        due_at_baseline = _as_optional_datetime(row["due_at"])
+        created_at = _as_optional_datetime(row["created_at"])
+        if due_at_baseline is None and not recompute_due_from_policy:
+            continue
+        if created_at is None:
+            continue
+
+        current_policy = _current_policy_for_site(row_site)
+        current_grace = int(current_policy["escalation_grace_minutes"])
+        baseline_cutoff = now - timedelta(minutes=current_grace)
+
+        simulated_applies = normalized_site is None or row_site == normalized_site
+        simulated_grace = (
+            int(simulated_policy["escalation_grace_minutes"])
+            if simulated_applies
+            else int(current_policy["escalation_grace_minutes"])
+        )
+        simulated_cutoff = now - timedelta(minutes=simulated_grace)
+
+        due_at_for_baseline = due_at_baseline
+        due_at_for_simulated = due_at_baseline
+        if recompute_due_from_policy and simulated_applies:
+            simulated_hours = int(
+                simulated_policy["default_due_hours"].get(
+                    row_priority,
+                    SLA_DEFAULT_DUE_HOURS.get(row_priority, SLA_DEFAULT_DUE_HOURS["medium"]),
+                )
+            )
+            due_at_for_simulated = created_at + timedelta(hours=simulated_hours)
+        if due_at_for_baseline is None:
+            baseline_hours = int(
+                current_policy["default_due_hours"].get(
+                    row_priority,
+                    SLA_DEFAULT_DUE_HOURS.get(row_priority, SLA_DEFAULT_DUE_HOURS["medium"]),
+                )
+            )
+            due_at_for_baseline = created_at + timedelta(hours=baseline_hours)
+        if due_at_for_simulated is None:
+            due_at_for_simulated = due_at_for_baseline
+
+        baseline_escalates = due_at_for_baseline < baseline_cutoff
+        simulated_escalates = due_at_for_simulated < simulated_cutoff
+
+        if baseline_escalates:
+            baseline_count += 1
+            baseline_by_site[row_site] = baseline_by_site.get(row_site, 0) + 1
+        if simulated_escalates:
+            simulated_count += 1
+            simulated_by_site[row_site] = simulated_by_site.get(row_site, 0) + 1
+
+        if include_work_order_ids and normalized_sample_size > 0:
+            if simulated_escalates and not baseline_escalates and len(newly_escalated_ids) < normalized_sample_size:
+                newly_escalated_ids.append(row_id)
+            if baseline_escalates and not simulated_escalates and len(no_longer_escalated_ids) < normalized_sample_size:
+                no_longer_escalated_ids.append(row_id)
+
+    return SlaWhatIfResponse(
+        checked_at=now,
+        site=normalized_site,
+        limit=normalized_limit,
+        total_candidates=len(rows),
+        baseline_escalate_count=baseline_count,
+        simulated_escalate_count=simulated_count,
+        delta_escalate_count=simulated_count - baseline_count,
+        baseline_by_site=baseline_by_site,
+        simulated_by_site=simulated_by_site,
+        newly_escalated_ids=newly_escalated_ids,
+        no_longer_escalated_ids=no_longer_escalated_ids,
+        notes=[
+            "Simulation is read-only and does not mutate work-order state.",
+            "Due-hours policy mainly affects future created work orders unless recompute_due_from_policy=true.",
+        ],
+    )
+
+
+def run_alert_retry_job(
+    *,
+    event_type: str | None = None,
+    only_status: list[str] | None = None,
+    limit: int = 200,
+    max_attempt_count: int = 10,
+    min_last_attempt_age_sec: int = 30,
+    trigger: str = "manual",
+) -> AlertRetryRunResponse:
+    started_at = datetime.now(timezone.utc)
+    now = started_at
+    statuses = [s.strip().lower() for s in (only_status or ["failed", "warning"]) if s.strip()]
+    if not statuses:
+        statuses = ["failed", "warning"]
+    statuses = sorted(set(statuses))
+    normalized_limit = max(1, min(limit, 5000))
+    normalized_max_attempt_count = max(1, min(max_attempt_count, 1000))
+    cooldown_cutoff = now - timedelta(seconds=max(0, min(min_last_attempt_age_sec, 86400)))
+
+    stmt = (
+        select(alert_deliveries)
+        .where(alert_deliveries.c.status.in_(statuses))
+        .where(alert_deliveries.c.attempt_count < normalized_max_attempt_count)
+        .where(alert_deliveries.c.last_attempt_at <= cooldown_cutoff)
+        .order_by(alert_deliveries.c.last_attempt_at.asc(), alert_deliveries.c.id.asc())
+        .limit(normalized_limit)
+    )
+    if event_type is not None:
+        stmt = stmt.where(alert_deliveries.c.event_type == event_type)
+
+    with get_conn() as conn:
+        rows = conn.execute(stmt).mappings().all()
+
+    processed_count = 0
+    success_count = 0
+    warning_count = 0
+    failed_count = 0
+    delivery_ids: list[int] = []
+
+    with get_conn() as conn:
+        for row in rows:
+            delivery_id = int(row["id"])
+            current_status = str(row["status"] or "failed")
+            current_attempt_count = int(row["attempt_count"])
+            claim_result = conn.execute(
+                update(alert_deliveries)
+                .where(alert_deliveries.c.id == delivery_id)
+                .where(alert_deliveries.c.status == current_status)
+                .where(alert_deliveries.c.attempt_count == current_attempt_count)
+                .values(
+                    attempt_count=current_attempt_count + 1,
+                    last_attempt_at=now,
+                    updated_at=now,
+                )
+            )
+            if not claim_result.rowcount or claim_result.rowcount <= 0:
+                continue
+
+            payload_raw = str(row["payload_json"] or "{}")
+            try:
+                payload = json.loads(payload_raw)
+            except json.JSONDecodeError:
+                payload = {}
+            if not isinstance(payload, dict):
+                payload = {}
+
+            ok, err = main_module._post_json_with_retries(
+                url=str(row["target"]),
+                payload=payload,
+                retries=1,
+                timeout_sec=float(getattr(main_module, "ALERT_WEBHOOK_TIMEOUT_SEC", 5.0)),
+            )
+            next_status = "success" if ok and err is None else ("warning" if ok else "failed")
+            conn.execute(
+                update(alert_deliveries)
+                .where(alert_deliveries.c.id == delivery_id)
+                .where(alert_deliveries.c.attempt_count == (current_attempt_count + 1))
+                .values(
+                    status=next_status,
+                    error=err,
+                    updated_at=now,
+                )
+            )
+
+            processed_count += 1
+            delivery_ids.append(delivery_id)
+            if next_status == "success":
+                success_count += 1
+            elif next_status == "warning":
+                warning_count += 1
+            else:
+                failed_count += 1
+
+    finished_at = datetime.now(timezone.utc)
+    _write_job_run(
+        job_name="alert_retry",
+        trigger=trigger,
+        status="warning" if failed_count > 0 else "success",
+        started_at=started_at,
+        finished_at=finished_at,
+        detail={
+            "event_type": event_type,
+            "statuses": statuses,
+            "limit": normalized_limit,
+            "max_attempt_count": normalized_max_attempt_count,
+            "min_last_attempt_age_sec": min_last_attempt_age_sec,
+            "processed_count": processed_count,
+            "success_count": success_count,
+            "warning_count": warning_count,
+            "failed_count": failed_count,
+            "delivery_ids": delivery_ids,
+        },
+    )
+    return AlertRetryRunResponse(
+        checked_at=finished_at,
+        event_type=event_type,
+        limit=normalized_limit,
+        processed_count=processed_count,
+        success_count=success_count,
+        warning_count=warning_count,
+        failed_count=failed_count,
+        delivery_ids=delivery_ids,
+    )
 
 @router.get("/alerts/deliveries", response_model=list[AlertDeliveryRead])
 def list_alert_deliveries(

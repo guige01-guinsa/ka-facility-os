@@ -44,14 +44,23 @@ def app_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ALERT_WEBHOOK_SHARED_TOKEN", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DEPLOY_SMOKE_ARCHIVE_PATH", (tmp_path / "deploy_smoke_archives").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
     monkeypatch.setenv("OPS_SPECIAL_CHECKLISTS_DATA_PATH", checklists_path.as_posix())
     monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
+    import app.domains.complaints.router as complaints_router_module
+    import app.domains.complaints.service as complaints_service_module
+    import app.domains.iam.core as iam_core_module
+    import app.domains.iam.security as iam_security_module
     import app.main as main_module
 
     importlib.reload(database_module)
+    importlib.reload(iam_core_module)
+    importlib.reload(iam_security_module)
+    importlib.reload(complaints_service_module)
+    importlib.reload(complaints_router_module)
     importlib.reload(main_module)
 
     with TestClient(main_module.app) as client:
@@ -92,14 +101,23 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ALERT_WEBHOOK_SHARED_TOKEN", raising=False)
     monkeypatch.setenv("OPS_DAILY_CHECK_ARCHIVE_PATH", (tmp_path / "ops_daily_check_archives").as_posix())
     monkeypatch.setenv("OPS_QUALITY_REPORT_ARCHIVE_PATH", (tmp_path / "ops_quality_reports").as_posix())
+    monkeypatch.setenv("DEPLOY_SMOKE_ARCHIVE_PATH", (tmp_path / "deploy_smoke_archives").as_posix())
     monkeypatch.setenv("DR_REHEARSAL_BACKUP_PATH", (tmp_path / "dr_rehearsal").as_posix())
     monkeypatch.setenv("OPS_SPECIAL_CHECKLISTS_DATA_PATH", checklists_path.as_posix())
     monkeypatch.setenv("PREFLIGHT_FAIL_ON_ERROR", "0")
 
     import app.database as database_module
+    import app.domains.complaints.router as complaints_router_module
+    import app.domains.complaints.service as complaints_service_module
+    import app.domains.iam.core as iam_core_module
+    import app.domains.iam.security as iam_security_module
     import app.main as main_module
 
     importlib.reload(database_module)
+    importlib.reload(iam_core_module)
+    importlib.reload(iam_security_module)
+    importlib.reload(complaints_service_module)
+    importlib.reload(complaints_router_module)
     importlib.reload(main_module)
 
     with TestClient(main_module.app) as client:

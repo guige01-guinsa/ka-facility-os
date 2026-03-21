@@ -2,49 +2,39 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import base64
+import hashlib
+import hmac
+import secrets
+from datetime import datetime, timedelta, timezone
+from typing import Annotated, Any, Callable
 
-Annotated = main_module.Annotated
-Any = main_module.Any
-Callable = main_module.Callable
-base64 = main_module.base64
-hashlib = main_module.hashlib
-hmac = main_module.hmac
-secrets = main_module.secrets
-datetime = main_module.datetime
-timedelta = main_module.timedelta
-timezone = main_module.timezone
-Depends = main_module.Depends
-Header = main_module.Header
-HTTPException = main_module.HTTPException
-func = main_module.func
-insert = main_module.insert
-select = main_module.select
-update = main_module.update
-SQLAlchemyError = main_module.SQLAlchemyError
-admin_tokens = main_module.admin_tokens
-admin_users = main_module.admin_users
-get_conn = main_module.get_conn
-ADMIN_PASSWORD_MIN_LENGTH = main_module.ADMIN_PASSWORD_MIN_LENGTH
-ADMIN_PASSWORD_MAX_LENGTH = main_module.ADMIN_PASSWORD_MAX_LENGTH
-ADMIN_PASSWORD_PBKDF2_ITERATIONS = main_module.ADMIN_PASSWORD_PBKDF2_ITERATIONS
-ADMIN_TOKEN = main_module.ADMIN_TOKEN
-ADMIN_TOKEN_MAX_IDLE_DAYS = main_module.ADMIN_TOKEN_MAX_IDLE_DAYS
-ADMIN_TOKEN_MAX_TTL_DAYS = main_module.ADMIN_TOKEN_MAX_TTL_DAYS
-ADMIN_TOKEN_REQUIRE_EXPIRY = main_module.ADMIN_TOKEN_REQUIRE_EXPIRY
-ADMIN_TOKEN_ROTATE_AFTER_DAYS = main_module.ADMIN_TOKEN_ROTATE_AFTER_DAYS
-ADMIN_TOKEN_ROTATE_WARNING_DAYS = main_module.ADMIN_TOKEN_ROTATE_WARNING_DAYS
-ALLOW_INSECURE_LOCAL_AUTH = main_module.ALLOW_INSECURE_LOCAL_AUTH
-ENV_NAME = main_module.ENV_NAME
-ROLE_PERMISSION_MAP = main_module.ROLE_PERMISSION_MAP
-SITE_SCOPE_ALL = main_module.SITE_SCOPE_ALL
-_as_datetime = main_module._as_datetime
-_as_optional_datetime = main_module._as_optional_datetime
-_has_site_access = main_module._has_site_access
-_permission_text_to_list = main_module._permission_text_to_list
-_principal_site_scope = main_module._principal_site_scope
-_resolve_effective_site_scope = main_module._resolve_effective_site_scope
-_site_scope_text_to_list = main_module._site_scope_text_to_list
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import func, insert, select, update
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.database import admin_tokens, admin_users, get_conn
+from app.domains.iam.core import (
+    ADMIN_PASSWORD_MAX_LENGTH,
+    ADMIN_PASSWORD_MIN_LENGTH,
+    ADMIN_PASSWORD_PBKDF2_ITERATIONS,
+    ADMIN_TOKEN,
+    ADMIN_TOKEN_MAX_IDLE_DAYS,
+    ADMIN_TOKEN_MAX_TTL_DAYS,
+    ADMIN_TOKEN_REQUIRE_EXPIRY,
+    ADMIN_TOKEN_ROTATE_AFTER_DAYS,
+    ADMIN_TOKEN_ROTATE_WARNING_DAYS,
+    ALLOW_INSECURE_LOCAL_AUTH,
+    ENV_NAME,
+    ROLE_PERMISSION_MAP,
+    SITE_SCOPE_ALL,
+    _has_site_access,
+    _permission_text_to_list,
+    _principal_site_scope,
+    _resolve_effective_site_scope,
+    _site_scope_text_to_list,
+)
+from app.domains.ops.inspection_service import _as_datetime, _as_optional_datetime
 
 
 def _require_site_access(principal: dict[str, Any], site: str | None) -> None:

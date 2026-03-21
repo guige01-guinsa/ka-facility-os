@@ -8,8 +8,67 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import update
 
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
+
+
+def _issue_role_headers(
+    app_client: TestClient,
+    *,
+    username: str,
+    role: str,
+    site_scope: list[str] | None = None,
+) -> dict[str, str]:
+    created = app_client.post(
+        "/api/admin/users",
+        headers=_owner_headers(),
+        json={
+            "username": username,
+            "display_name": username,
+            "role": role,
+            "permissions": [],
+            "site_scope": site_scope or ["*"],
+        },
+    )
+    assert created.status_code == 201
+    user_id = created.json()["id"]
+    issued = app_client.post(
+        f"/api/admin/users/{user_id}/tokens",
+        headers=_owner_headers(),
+        json={"label": f"{username}-token"},
+    )
+    assert issued.status_code == 201
+    return {"X-Admin-Token": issued.json()["token"]}
+
+
+def _build_ops_notes_for_master_validation(
+    *,
+    equipment: str,
+    location: str,
+    checklist_set_id: str,
+    qr_id: str | None = None,
+) -> str:
+    meta = {
+        "task_type": "전기점검",
+        "equipment": equipment,
+        "equipment_location": location,
+        "checklist_set_id": checklist_set_id,
+        "summary": {"total": 2, "normal": 2, "abnormal": 0, "na": 0},
+    }
+    if qr_id:
+        meta["qr_id"] = qr_id
+    checklist = [
+        {"group": "설비", "item": "외관 상태 확인", "result": "normal", "action": ""},
+        {"group": "설비", "item": "운전 상태 확인", "result": "normal", "action": ""},
+    ]
+    return "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
 
 
 @pytest.mark.smoke
@@ -179,6 +238,776 @@ def test_ops_inspection_qr_placeholder_snapshot_endpoint(app_client: TestClient)
         assert first["qr_id"]
         assert isinstance(first["flags"], list)
 
+
+def test_ops_inspection_checklists_catalog_exposes_master_ids(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    response = app_client.get(
+        "/api/ops/inspections/checklists/catalog",
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["meta"]["endpoint"] == "/api/ops/inspections/checklists/catalog"
+    assert body["summary"]["qr_asset_count"] >= 1
+    assert body["summary"]["linked_qr_asset_count"] >= 1
+    assert body["summary"]["linked_equipment_count"] >= 1
+    assert body["summary"]["equipment_asset_count"] >= 1
+    assert isinstance(body.get("equipment_assets"), list)
+    qr_row = next(row for row in body["qr_assets"] if row["qr_id"] == "QR-002")
+    assert int(qr_row["equipment_id"]) > 0
+    assert int(qr_row["qr_asset_id"]) > 0
+    assert qr_row["checklist_set_id"] == "electrical_60"
+
+
+def test_ops_master_crud_roundtrip(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    created_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "night_safety_ops",
+            "label": "야간안전점검",
+            "task_type": "안전점검",
+            "items": [
+                {"seq": 1, "item": "보안등 점등 상태 확인"},
+                {"seq": 2, "item": "비상벨 작동 상태 확인"},
+            ],
+        },
+    )
+    assert created_set.status_code == 200
+    assert created_set.json()["row"]["set_id"] == "night_safety_ops"
+
+    updated_set = app_client.patch(
+        "/api/ops/inspections/checklists/sets/night_safety_ops",
+        headers=headers,
+        json={
+            "label": "야간안전점검-개정",
+            "task_type": "안전점검",
+            "items": [
+                {"seq": 1, "item": "보안등 점등 상태 확인"},
+                {"seq": 2, "item": "비상벨 작동 상태 확인"},
+                {"seq": 3, "item": "주차장 유도등 상태 확인"},
+            ],
+        },
+    )
+    assert updated_set.status_code == 200
+    assert updated_set.json()["row"]["label"] == "야간안전점검-개정"
+    assert int(updated_set.json()["row"]["item_count"]) == 3
+
+    created_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "보안등 1호기",
+            "location": "지상 1층 주차장",
+        },
+    )
+    assert created_equipment.status_code == 200
+    equipment_row = created_equipment.json()["row"]
+    equipment_id = int(equipment_row["equipment_id"])
+
+    updated_equipment = app_client.patch(
+        f"/api/ops/inspections/checklists/equipment-assets/{equipment_id}",
+        headers=headers,
+        json={
+            "equipment": "보안등 A",
+            "location": "지상 1층 주차장",
+        },
+    )
+    assert updated_equipment.status_code == 200
+    assert updated_equipment.json()["row"]["equipment"] == "보안등 A"
+
+    created_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-777",
+            "equipment_id": equipment_id,
+            "checklist_set_id": "night_safety_ops",
+            "default_item": "보안등 점등 상태 확인",
+        },
+    )
+    assert created_qr.status_code == 200
+    qr_row = created_qr.json()["row"]
+    qr_asset_id = int(qr_row["qr_asset_id"])
+    assert qr_row["equipment"] == "보안등 A"
+
+    updated_qr = app_client.patch(
+        f"/api/ops/inspections/checklists/qr-assets/{qr_asset_id}",
+        headers=headers,
+        json={
+            "qr_id": "QR-778",
+            "equipment_id": equipment_id,
+            "checklist_set_id": "night_safety_ops",
+            "default_item": "비상벨 작동 상태 확인",
+        },
+    )
+    assert updated_qr.status_code == 200
+    assert updated_qr.json()["row"]["qr_id"] == "QR-778"
+    assert updated_qr.json()["row"]["default_item"] == "비상벨 작동 상태 확인"
+
+    catalog = app_client.get(
+        "/api/ops/inspections/checklists/catalog",
+        headers=headers,
+    )
+    assert catalog.status_code == 200
+    catalog_body = catalog.json()
+    assert any(row["set_id"] == "night_safety_ops" for row in catalog_body["checklist_sets"])
+    assert any(int(row["equipment_id"]) == equipment_id for row in catalog_body["equipment_assets"])
+    assert any(int(row["qr_asset_id"]) == qr_asset_id for row in catalog_body["qr_assets"])
+
+    deleted_qr = app_client.delete(
+        f"/api/ops/inspections/checklists/qr-assets/{qr_asset_id}",
+        headers=headers,
+    )
+    assert deleted_qr.status_code == 200
+
+    deleted_equipment = app_client.delete(
+        f"/api/ops/inspections/checklists/equipment-assets/{equipment_id}",
+        headers=headers,
+    )
+    assert deleted_equipment.status_code == 200
+
+    deleted_set = app_client.delete(
+        "/api/ops/inspections/checklists/sets/night_safety_ops",
+        headers=headers,
+    )
+    assert deleted_set.status_code == 200
+
+
+def test_ops_master_crud_supports_inspection_flow(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    created_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "generator_ops",
+            "label": "발전기점검",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "발전기 외관 상태 확인"},
+                {"seq": 2, "item": "연료 및 누유 상태 확인"},
+            ],
+        },
+    )
+    assert created_set.status_code == 200
+
+    created_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "비상발전기 1호기",
+            "location": "지상 1층 발전기실",
+        },
+    )
+    assert created_equipment.status_code == 200
+    equipment_id = int(created_equipment.json()["row"]["equipment_id"])
+
+    created_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-880",
+            "equipment_id": equipment_id,
+            "checklist_set_id": "generator_ops",
+            "default_item": "발전기 외관 상태 확인",
+        },
+    )
+    assert created_qr.status_code == 200
+    qr_asset_id = int(created_qr.json()["row"]["qr_asset_id"])
+
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    notes = "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta="
+            + json.dumps(
+                {
+                    "task_type": "기계점검",
+                    "equipment": "비상발전기 1호기",
+                    "equipment_location": "지상 1층 발전기실",
+                    "qr_id": "QR-880",
+                    "checklist_set_id": "generator_ops",
+                    "summary": {"total": 2, "normal": 2, "abnormal": 0, "na": 0},
+                },
+                ensure_ascii=False,
+            ),
+            "checklist="
+            + json.dumps(
+                [
+                    {"group": "발전기", "item": "발전기 외관 상태 확인", "result": "normal", "action": ""},
+                    {"group": "발전기", "item": "연료 및 누유 상태 확인", "result": "normal", "action": ""},
+                ],
+                ensure_ascii=False,
+            ),
+        ]
+    )
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Generator Site",
+            "location": "지상 1층 발전기실",
+            "cycle": "monthly",
+            "inspector": "owner_ci",
+            "inspected_at": inspected_at,
+            "equipment_id": equipment_id,
+            "qr_asset_id": qr_asset_id,
+            "notes": notes,
+        },
+    )
+    assert inspection.status_code == 201
+    inspection_body = inspection.json()
+    assert inspection_body["checklist_set_id"] == "generator_ops"
+    assert inspection_body["equipment_id"] == equipment_id
+    assert inspection_body["qr_asset_id"] == qr_asset_id
+
+    blocked_qr_delete = app_client.delete(
+        f"/api/ops/inspections/checklists/qr-assets/{qr_asset_id}",
+        headers=headers,
+    )
+    assert blocked_qr_delete.status_code == 409
+
+    blocked_set_delete = app_client.delete(
+        "/api/ops/inspections/checklists/sets/generator_ops",
+        headers=headers,
+    )
+    assert blocked_set_delete.status_code == 409
+
+
+def test_ops_master_lifecycle_states_are_exposed_and_enforced(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    created_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "lifecycle_ops",
+            "label": "라이프사이클 점검",
+            "task_type": "전기점검",
+            "lifecycle_state": "active",
+            "items": [
+                {"seq": 1, "item": "외관 상태 확인"},
+                {"seq": 2, "item": "운전 상태 확인"},
+            ],
+        },
+    )
+    assert created_set.status_code == 200
+    assert created_set.json()["row"]["lifecycle_state"] == "active"
+    assert created_set.json()["row"]["version_no"] == 1
+
+    created_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "라이프사이클 펌프",
+            "location": "지하 1층 기계실",
+            "lifecycle_state": "active",
+        },
+    )
+    assert created_equipment.status_code == 200
+    equipment_id = int(created_equipment.json()["row"]["equipment_id"])
+    assert created_equipment.json()["row"]["lifecycle_state"] == "active"
+
+    retired_equipment = app_client.patch(
+        f"/api/ops/inspections/checklists/equipment-assets/{equipment_id}",
+        headers=headers,
+        json={
+            "equipment": "라이프사이클 펌프",
+            "location": "지하 1층 기계실",
+            "lifecycle_state": "retired",
+        },
+    )
+    assert retired_equipment.status_code == 200
+    assert retired_equipment.json()["row"]["lifecycle_state"] == "retired"
+
+    inspection_retired_equipment = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Lifecycle Site",
+            "location": "지하 1층 기계실",
+            "cycle": "monthly",
+            "inspector": "owner_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+            "equipment_id": equipment_id,
+            "notes": _build_ops_notes_for_master_validation(
+                equipment="라이프사이클 펌프",
+                location="지하 1층 기계실",
+                checklist_set_id="lifecycle_ops",
+            ),
+        },
+    )
+    assert inspection_retired_equipment.status_code == 422
+    assert inspection_retired_equipment.json()["detail"] == "equipment_id is not active"
+
+    retired_set = app_client.patch(
+        "/api/ops/inspections/checklists/sets/lifecycle_ops",
+        headers=headers,
+        json={
+            "label": "라이프사이클 점검",
+            "task_type": "전기점검",
+            "lifecycle_state": "retired",
+            "items": [
+                {"seq": 1, "item": "외관 상태 확인"},
+                {"seq": 2, "item": "운전 상태 확인"},
+            ],
+        },
+    )
+    assert retired_set.status_code == 200
+    assert retired_set.json()["row"]["lifecycle_state"] == "retired"
+    assert retired_set.json()["row"]["version_no"] == 2
+
+    inspection_retired_set = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Lifecycle Site",
+            "location": "지하 1층 기계실",
+            "cycle": "monthly",
+            "inspector": "owner_ci",
+            "inspected_at": datetime.now(timezone.utc).isoformat(),
+            "notes": _build_ops_notes_for_master_validation(
+                equipment="체크리스트 전용 설비",
+                location="지하 1층 기계실",
+                checklist_set_id="lifecycle_ops",
+            ),
+        },
+    )
+    assert inspection_retired_set.status_code == 422
+    assert inspection_retired_set.json()["detail"] == "checklist_set_id is not active"
+
+    catalog = app_client.get("/api/ops/inspections/checklists/catalog", headers=headers)
+    assert catalog.status_code == 200
+    body = catalog.json()
+    lifecycle_row = next(row for row in body["checklist_sets"] if row["set_id"] == "lifecycle_ops")
+    assert lifecycle_row["lifecycle_state"] == "retired"
+    assert lifecycle_row["version_no"] == 2
+    lifecycle_equipment = next(row for row in body["equipment_assets"] if int(row["equipment_id"]) == equipment_id)
+    assert lifecycle_equipment["lifecycle_state"] == "retired"
+
+
+def test_ops_checklist_revision_approval_flow(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    manager_headers = _issue_role_headers(
+        app_client,
+        username="ops_revision_manager_ci",
+        role="manager",
+    )
+    approver_headers = _issue_role_headers(
+        app_client,
+        username="ops_revision_owner_ci",
+        role="owner",
+    )
+    release_note = "\n".join(
+        [
+            "Summary: submit pump checklist revision",
+            "Impact: approvers can review the revised maintenance item set",
+            "Rollback: keep the current live checklist if the revision is rejected",
+        ]
+    )
+
+    base_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "pump_revision_ops",
+            "label": "펌프점검",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+            ],
+        },
+    )
+    assert base_set.status_code == 200
+
+    direct_manager_update = app_client.patch(
+        "/api/ops/inspections/checklists/sets/pump_revision_ops",
+        headers=manager_headers,
+        json={
+            "label": "manager live update should fail",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+            ],
+        },
+    )
+    assert direct_manager_update.status_code == 403
+
+    created_revision = app_client.post(
+        "/api/ops/inspections/checklists/revisions",
+        headers=manager_headers,
+        json={
+            "set_id": "pump_revision_ops",
+            "label": "펌프점검-개정1",
+            "task_type": "기계점검",
+            "lifecycle_state": "active",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+                {"seq": 3, "item": "패킹 누수 상태 확인"},
+            ],
+            "note": "add leakage check",
+        },
+    )
+    assert created_revision.status_code == 200
+    revision = created_revision.json()["row"]
+    revision_id = int(revision["id"])
+    assert revision["status"] == "draft"
+    assert revision["proposed_version_no"] == 2
+
+    listed = app_client.get(
+        "/api/ops/inspections/checklists/revisions?set_id=pump_revision_ops",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert any(int(row["id"]) == revision_id for row in listed.json()["rows"])
+
+    submitted = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/submit",
+        headers=manager_headers,
+        json={"note": release_note},
+    )
+    assert submitted.status_code == 200
+    assert submitted.json()["row"]["status"] == "pending"
+
+    self_approve = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/approve",
+        headers=manager_headers,
+        json={"note": "self approve should fail"},
+    )
+    assert self_approve.status_code == 409
+
+    approved = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/approve",
+        headers=approver_headers,
+        json={"note": "approved by second approver"},
+    )
+    assert approved.status_code == 200
+    approved_row = approved.json()["row"]
+    assert approved_row["status"] == "approved"
+    assert approved_row["proposed_version_no"] == 2
+    assert approved.json()["saved_path"].endswith(".json")
+
+    catalog = app_client.get("/api/ops/inspections/checklists/catalog", headers=headers)
+    assert catalog.status_code == 200
+    catalog_row = next(row for row in catalog.json()["checklist_sets"] if row["set_id"] == "pump_revision_ops")
+    assert catalog_row["label"] == "펌프점검-개정1"
+    assert catalog_row["version_no"] == 2
+    assert int(catalog_row["item_count"]) == 3
+
+    approve_again = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/approve",
+        headers=approver_headers,
+        json={"note": "approve twice should fail"},
+    )
+    assert approve_again.status_code == 409
+
+    rejected_revision = app_client.post(
+        "/api/ops/inspections/checklists/revisions",
+        headers=manager_headers,
+        json={
+            "set_id": "pump_revision_ops",
+            "label": "펌프점검-개정2",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+                {"seq": 3, "item": "패킹 누수 상태 확인"},
+                {"seq": 4, "item": "흡입압력 상태 확인"},
+            ],
+            "note": "secondary proposal",
+        },
+    )
+    assert rejected_revision.status_code == 200
+    rejected_revision_id = int(rejected_revision.json()["row"]["id"])
+
+    rejected_submit = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{rejected_revision_id}/submit",
+        headers=manager_headers,
+        json={"note": release_note},
+    )
+    assert rejected_submit.status_code == 200
+
+    rejected = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{rejected_revision_id}/reject",
+        headers=approver_headers,
+        json={"note": "not this sprint"},
+    )
+    assert rejected.status_code == 200
+    assert rejected.json()["row"]["status"] == "rejected"
+
+
+def test_ops_master_search_and_lifecycle_filters(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    active_token = "filter-ci-active"
+    retired_token = "filter-ci-retired"
+
+    active_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": active_token,
+            "label": "Filter Active Checklist",
+            "task_type": "전기점검",
+            "lifecycle_state": "active",
+            "items": [
+                {"seq": 1, "item": "active item one"},
+                {"seq": 2, "item": "active item two"},
+            ],
+        },
+    )
+    assert active_set.status_code == 200
+
+    retired_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": retired_token,
+            "label": "Filter Retired Checklist",
+            "task_type": "전기점검",
+            "lifecycle_state": "retired",
+            "items": [
+                {"seq": 1, "item": "retired item one"},
+                {"seq": 2, "item": "retired item two"},
+            ],
+        },
+    )
+    assert retired_set.status_code == 200
+
+    active_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "filter-ci active pump",
+            "location": "B1 active room",
+            "lifecycle_state": "active",
+        },
+    )
+    assert active_equipment.status_code == 200
+    active_equipment_id = int(active_equipment.json()["row"]["equipment_id"])
+
+    retired_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "filter-ci retired pump",
+            "location": "B2 retired room",
+            "lifecycle_state": "retired",
+        },
+    )
+    assert retired_equipment.status_code == 200
+    retired_equipment_id = int(retired_equipment.json()["row"]["equipment_id"])
+
+    active_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-FILTER-CI-ACTIVE",
+            "equipment_id": active_equipment_id,
+            "checklist_set_id": active_token,
+            "default_item": "active item one",
+            "lifecycle_state": "active",
+        },
+    )
+    assert active_qr.status_code == 200
+
+    retired_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-FILTER-CI-RETIRED",
+            "equipment_id": retired_equipment_id,
+            "checklist_set_id": retired_token,
+            "default_item": "retired item one",
+            "lifecycle_state": "retired",
+        },
+    )
+    assert retired_qr.status_code == 200
+
+    active_only_sets = app_client.get(
+        "/api/ops/inspections/checklists/sets?q=filter-ci&include_inactive=false",
+        headers=headers,
+    )
+    assert active_only_sets.status_code == 200
+    active_only_set_ids = {str(row["set_id"]) for row in active_only_sets.json()["rows"]}
+    assert active_token in active_only_set_ids
+    assert retired_token not in active_only_set_ids
+    assert active_only_sets.json()["summary"]["filters"]["include_inactive"] is False
+
+    retired_equipment_rows = app_client.get(
+        "/api/ops/inspections/checklists/equipment-assets?q=filter-ci&lifecycle_state=retired",
+        headers=headers,
+    )
+    assert retired_equipment_rows.status_code == 200
+    equipment_rows = retired_equipment_rows.json()["rows"]
+    assert any(int(row["equipment_id"]) == retired_equipment_id for row in equipment_rows)
+    assert all(str(row["lifecycle_state"]) == "retired" for row in equipment_rows)
+
+    retired_qr_rows = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets?q=filter-ci&lifecycle_state=retired",
+        headers=headers,
+    )
+    assert retired_qr_rows.status_code == 200
+    qr_rows = retired_qr_rows.json()["rows"]
+    assert any(str(row["qr_id"]) == "QR-FILTER-CI-RETIRED" for row in qr_rows)
+    assert all(str(row["lifecycle_state"]) == "retired" for row in qr_rows)
+
+    retired_catalog = app_client.get(
+        "/api/ops/inspections/checklists/catalog?q=filter-ci&lifecycle_state=retired",
+        headers=headers,
+    )
+    assert retired_catalog.status_code == 200
+    catalog_body = retired_catalog.json()
+    assert catalog_body["summary"]["filters"]["q"] == "filter-ci"
+    assert catalog_body["summary"]["filters"]["lifecycle_state"] == "retired"
+    assert any(str(row["set_id"]) == retired_token for row in catalog_body["checklist_sets"])
+    assert any(int(row["equipment_id"]) == retired_equipment_id for row in catalog_body["equipment_assets"])
+    assert any(str(row["qr_id"]) == "QR-FILTER-CI-RETIRED" for row in catalog_body["qr_assets"])
+    assert all(str(row["lifecycle_state"]) == "retired" for row in catalog_body["checklist_sets"])
+    assert all(str(row["lifecycle_state"]) == "retired" for row in catalog_body["equipment_assets"])
+    assert all(str(row["lifecycle_state"]) == "retired" for row in catalog_body["qr_assets"])
+
+
+def test_ops_checklist_revision_release_note_rules_and_diff(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    manager_headers = _issue_role_headers(
+        app_client,
+        username="ops_revision_diff_manager_ci",
+        role="manager",
+    )
+    approver_headers = _issue_role_headers(
+        app_client,
+        username="ops_revision_diff_owner_ci",
+        role="owner",
+    )
+
+    base_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "pump_revision_diff_ci",
+            "label": "펌프점검 원본",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+            ],
+        },
+    )
+    assert base_set.status_code == 200
+
+    created_revision = app_client.post(
+        "/api/ops/inspections/checklists/revisions",
+        headers=manager_headers,
+        json={
+            "set_id": "pump_revision_diff_ci",
+            "label": "펌프점검 개정안",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+                {"seq": 3, "item": "패킹 누수 상태 확인"},
+            ],
+            "note": "draft note only",
+        },
+    )
+    assert created_revision.status_code == 200
+    revision_id = int(created_revision.json()["row"]["id"])
+    assert created_revision.json()["row"]["release_note_valid"] is False
+
+    detail_before_submit = app_client.get(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}",
+        headers=headers,
+    )
+    assert detail_before_submit.status_code == 200
+    detail_body = detail_before_submit.json()
+    assert detail_body["release_note_rules"]["required_sections"] == ["Summary", "Impact", "Rollback"]
+    assert detail_body["row"]["diff"]["added_count"] == 1
+    assert detail_body["row"]["diff"]["removed_count"] == 0
+    assert detail_body["row"]["diff"]["label_changed"] is True
+    assert detail_body["row"]["live_version_no"] == 1
+    assert "Summary" in detail_body["row"]["release_note_missing_sections"]
+
+    bad_submit = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/submit",
+        headers=manager_headers,
+        json={"note": "too short"},
+    )
+    assert bad_submit.status_code == 422
+    assert bad_submit.json()["detail"]["missing_sections"] == ["Summary", "Impact", "Rollback"]
+
+    valid_note = "\n".join(
+        [
+            "Summary: add leakage check to pump workflow",
+            "Impact: operators review one more maintenance item during inspection",
+            "Rollback: restore version 1 checklist if leakage validation is noisy",
+        ]
+    )
+    submitted = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{revision_id}/submit",
+        headers=manager_headers,
+        json={"note": valid_note},
+    )
+    assert submitted.status_code == 200
+    submitted_row = submitted.json()["row"]
+    assert submitted_row["status"] == "pending"
+    assert submitted_row["release_note_valid"] is True
+    assert submitted_row["release_note_sections"]["summary"].startswith("add leakage check")
+
+    listed = app_client.get(
+        "/api/ops/inspections/checklists/revisions?status=pending&q=leakage",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    assert any(int(row["id"]) == revision_id for row in listed.json()["rows"])
+
+    legacy_revision = app_client.post(
+        "/api/ops/inspections/checklists/revisions",
+        headers=manager_headers,
+        json={
+            "set_id": "pump_revision_diff_ci",
+            "label": "펌프점검 개정안-legacy",
+            "task_type": "기계점검",
+            "items": [
+                {"seq": 1, "item": "펌프 외관 상태 확인"},
+                {"seq": 2, "item": "펌프 진동 상태 확인"},
+                {"seq": 3, "item": "패킹 누수 상태 확인"},
+                {"seq": 4, "item": "흡입압력 상태 확인"},
+            ],
+            "note": "legacy invalid note",
+        },
+    )
+    assert legacy_revision.status_code == 200
+    legacy_revision_id = int(legacy_revision.json()["row"]["id"])
+
+    import app.database as db_module
+
+    with db_module.get_conn() as conn:
+        conn.execute(
+            update(db_module.ops_checklist_set_revisions)
+            .where(db_module.ops_checklist_set_revisions.c.id == legacy_revision_id)
+            .values(
+                status="pending",
+                submitted_by="legacy-submit",
+                submitted_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    legacy_approve = app_client.post(
+        f"/api/ops/inspections/checklists/revisions/{legacy_revision_id}/approve",
+        headers=approver_headers,
+        json={"note": "attempt approval"},
+    )
+    assert legacy_approve.status_code == 422
+    assert legacy_approve.json()["detail"]["missing_sections"] == ["Summary", "Impact", "Rollback"]
+
+
 def test_ops_inspection_qr_bulk_update_dry_run_does_not_persist(app_client: TestClient) -> None:
     headers = _owner_headers()
     seed_placeholder = app_client.post(
@@ -325,6 +1154,7 @@ def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) ->
     assert summary["created_count"] == 1
     assert summary["placeholder_row_count_before"] == before_summary["placeholder_row_count"]
     assert summary["placeholder_row_count_after"] == before_summary["placeholder_row_count"] - 1
+    assert summary["revision_saved_count"] == 2
 
     after = app_client.get(
         "/api/ops/inspections/checklists/qr-assets/placeholders",
@@ -338,6 +1168,99 @@ def test_ops_inspection_qr_bulk_update_apply_persists(app_client: TestClient) ->
     assert after_summary["placeholder_row_count"] == before_summary["placeholder_row_count"] - 1
     assert after_summary["qr_asset_count"] == before_summary["qr_asset_count"] + 1
     assert all(row["qr_id"] != target_qr_id for row in after_body["rows"])
+
+    revisions = app_client.get(
+        f"/api/ops/inspections/checklists/qr-assets/revisions?qr_id={target_qr_id}",
+        headers=headers,
+    )
+    assert revisions.status_code == 200
+    revision_rows = revisions.json()["rows"]
+    assert len(revision_rows) >= 1
+    latest_revision = revision_rows[0]
+    assert latest_revision["change_source"] == "qr_bulk_update_api"
+    assert latest_revision["change_action"] == "updated"
+    assert latest_revision["created_by"] == "legacy-admin"
+    assert latest_revision["before"]["equipment"] == "설비"
+    assert latest_revision["after"]["equipment"] == "변압기 1호기"
+    assert latest_revision["after"]["qr_id"] == target_qr_id
+
+
+def test_ops_qr_asset_crud_records_revision_history(app_client: TestClient) -> None:
+    headers = _owner_headers()
+
+    created_set = app_client.post(
+        "/api/ops/inspections/checklists/sets",
+        headers=headers,
+        json={
+            "set_id": "qr_revision_set_ci",
+            "label": "QR Revision Checklist",
+            "task_type": "전기점검",
+            "items": [
+                {"seq": 1, "item": "revision item one"},
+                {"seq": 2, "item": "revision item two"},
+            ],
+        },
+    )
+    assert created_set.status_code == 200
+
+    created_equipment = app_client.post(
+        "/api/ops/inspections/checklists/equipment-assets",
+        headers=headers,
+        json={
+            "equipment": "qr revision pump",
+            "location": "B1 revision room",
+            "lifecycle_state": "active",
+        },
+    )
+    assert created_equipment.status_code == 200
+    equipment_id = int(created_equipment.json()["row"]["equipment_id"])
+
+    created_qr = app_client.post(
+        "/api/ops/inspections/checklists/qr-assets",
+        headers=headers,
+        json={
+            "qr_id": "QR-REVISION-CI",
+            "equipment_id": equipment_id,
+            "checklist_set_id": "qr_revision_set_ci",
+            "default_item": "revision item one",
+            "lifecycle_state": "active",
+        },
+    )
+    assert created_qr.status_code == 200
+    qr_asset_id = int(created_qr.json()["row"]["qr_asset_id"])
+
+    updated_qr = app_client.patch(
+        f"/api/ops/inspections/checklists/qr-assets/{qr_asset_id}",
+        headers=headers,
+        json={
+            "qr_id": "QR-REVISION-CI",
+            "equipment_id": equipment_id,
+            "checklist_set_id": "qr_revision_set_ci",
+            "default_item": "revision item two",
+            "lifecycle_state": "active",
+        },
+    )
+    assert updated_qr.status_code == 200
+
+    deleted_qr = app_client.delete(
+        f"/api/ops/inspections/checklists/qr-assets/{qr_asset_id}",
+        headers=headers,
+    )
+    assert deleted_qr.status_code == 200
+
+    revisions = app_client.get(
+        "/api/ops/inspections/checklists/qr-assets/revisions?qr_id=QR-REVISION-CI",
+        headers=headers,
+    )
+    assert revisions.status_code == 200
+    revision_rows = revisions.json()["rows"]
+    actions = [str(row["change_action"]) for row in revision_rows[:3]]
+    assert actions == ["deleted", "updated", "created"]
+    assert revision_rows[0]["before"]["qr_id"] == "QR-REVISION-CI"
+    assert revision_rows[0]["after"] == {}
+    assert revision_rows[1]["before"]["default_item"] == "revision item one"
+    assert revision_rows[1]["after"]["default_item"] == "revision item two"
+    assert revision_rows[2]["after"]["qr_id"] == "QR-REVISION-CI"
 
 def test_ops_inspection_qr_bulk_update_create_missing_requires_all_fields(app_client: TestClient) -> None:
     headers = _owner_headers()
@@ -472,6 +1395,55 @@ def test_work_order_sla_rules_and_inspection_priority_floor(app_client: TestClie
     )
     assert mismatch.status_code == 400
     assert "inspection_id site must match work order site" in mismatch.json()["detail"]
+
+
+def test_ops_inspection_create_rejects_master_id_mismatch(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    catalog = app_client.get(
+        "/api/ops/inspections/checklists/catalog",
+        headers=headers,
+    )
+    assert catalog.status_code == 200
+    body = catalog.json()
+    mismatch_row = next(row for row in body["qr_assets"] if row["qr_id"] == "QR-001")
+    inspected_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "task_type": "전기점검",
+        "equipment": "변압기 1호기",
+        "equipment_location": "B1 수변전실",
+        "qr_id": "QR-002",
+        "checklist_set_id": "electrical_60",
+        "summary": {"total": 3, "normal": 0, "abnormal": 3, "na": 0},
+        "abnormal_action": "단자 체결 상태 및 발열 재점검",
+    }
+    checklist = [
+        {"group": "변압기", "item": "변압기 외관 점검", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 온도 상승 여부 확인", "result": "abnormal", "action": ""},
+        {"group": "변압기", "item": "변압기 이상 소음 확인", "result": "abnormal", "action": ""},
+    ]
+    notes = "\n".join(
+        [
+            "[OPS_CHECKLIST_V1]",
+            "meta=" + json.dumps(meta, ensure_ascii=False),
+            "checklist=" + json.dumps(checklist, ensure_ascii=False),
+        ]
+    )
+    inspection = app_client.post(
+        "/api/inspections",
+        headers=headers,
+        json={
+            "site": "Mismatch Site",
+            "location": "B1 수변전실",
+            "cycle": "daily",
+            "inspector": "owner_ci",
+            "inspected_at": inspected_at,
+            "equipment_id": int(mismatch_row["equipment_id"]),
+            "qr_asset_id": int(mismatch_row["qr_asset_id"]),
+            "notes": notes,
+        },
+    )
+    assert inspection.status_code == 422
+    assert inspection.json()["detail"] == "qr_asset_id does not match meta.qr_id"
 
 def test_workflow_lock_matrix_enforcement(app_client: TestClient) -> None:
     def issue_token(

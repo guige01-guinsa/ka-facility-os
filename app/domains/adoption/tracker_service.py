@@ -2,19 +2,104 @@
 
 from __future__ import annotations
 
-from app import main as main_module
+import json
+from datetime import datetime, timezone
+from typing import Any
 
-globals().update(
-    {
-        key: value
-        for key, value in main_module.__dict__.items()
-        if key not in {"bind", "main_module", "_LOCAL_SYMBOLS"}
-    }
+from sqlalchemy import select, update
+
+from app.database import (
+    adoption_w02_site_runs,
+    adoption_w02_tracker_items,
+    adoption_w03_site_runs,
+    adoption_w03_tracker_items,
+    adoption_w04_site_runs,
+    adoption_w04_tracker_items,
+    adoption_w07_site_runs,
+    adoption_w07_tracker_items,
+    adoption_w09_site_runs,
+    adoption_w09_tracker_items,
+    adoption_w10_site_runs,
+    adoption_w10_tracker_items,
+    adoption_w11_site_runs,
+    adoption_w11_tracker_items,
+    adoption_w12_site_runs,
+    adoption_w12_tracker_items,
+    adoption_w13_site_runs,
+    adoption_w13_tracker_items,
+    adoption_w14_site_runs,
+    adoption_w14_tracker_items,
+    adoption_w15_site_runs,
+    adoption_w15_tracker_items,
+    get_conn,
+)
+from app.domains.adoption.content import *  # noqa: F403
+from app.domains.ops.inspection_service import (
+    _as_datetime,
+    _as_optional_datetime,
+    _normalize_evidence_storage_backend,
+)
+from app.domains.ops.record_service import _to_json_text
+from app.schemas import (
+    W02EvidenceRead,
+    W02TrackerCompletionRead,
+    W02TrackerItemRead,
+    W02TrackerOverviewRead,
+    W02TrackerReadinessRead,
+    W03EvidenceRead,
+    W03TrackerCompletionRead,
+    W03TrackerItemRead,
+    W03TrackerOverviewRead,
+    W03TrackerReadinessRead,
+    W04EvidenceRead,
+    W04TrackerCompletionRead,
+    W04TrackerItemRead,
+    W04TrackerOverviewRead,
+    W04TrackerReadinessRead,
+    W07EvidenceRead,
+    W07TrackerCompletionRead,
+    W07TrackerItemRead,
+    W07TrackerOverviewRead,
+    W07TrackerReadinessRead,
+    W09EvidenceRead,
+    W09TrackerCompletionRead,
+    W09TrackerItemRead,
+    W09TrackerOverviewRead,
+    W09TrackerReadinessRead,
+    W10EvidenceRead,
+    W10TrackerCompletionRead,
+    W10TrackerItemRead,
+    W10TrackerOverviewRead,
+    W10TrackerReadinessRead,
+    W11EvidenceRead,
+    W11TrackerCompletionRead,
+    W11TrackerItemRead,
+    W11TrackerOverviewRead,
+    W11TrackerReadinessRead,
+    W12EvidenceRead,
+    W12TrackerCompletionRead,
+    W12TrackerItemRead,
+    W12TrackerOverviewRead,
+    W12TrackerReadinessRead,
+    W13EvidenceRead,
+    W13TrackerCompletionRead,
+    W13TrackerItemRead,
+    W13TrackerOverviewRead,
+    W13TrackerReadinessRead,
+    W14EvidenceRead,
+    W14TrackerCompletionRead,
+    W14TrackerItemRead,
+    W14TrackerOverviewRead,
+    W14TrackerReadinessRead,
+    W15EvidenceRead,
+    W15TrackerCompletionRead,
+    W15TrackerItemRead,
+    W15TrackerOverviewRead,
+    W15TrackerReadinessRead,
 )
 
 _LOCAL_SYMBOLS = {
     "bind",
-    "main_module",
     "_LOCAL_SYMBOLS",
     "_row_to_w02_tracker_item_model",
     "_row_to_w02_evidence_model",
@@ -119,9 +204,7 @@ _LOCAL_SYMBOLS = {
 
 
 def bind(namespace: dict[str, object]) -> None:
-    for key, value in namespace.items():
-        if key not in _LOCAL_SYMBOLS:
-            globals()[key] = value
+    return None
 
 
 def _row_to_w02_tracker_item_model(row: dict[str, Any]) -> W02TrackerItemRead:
