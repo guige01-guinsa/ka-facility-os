@@ -79,6 +79,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert root_html.headers.get("x-frame-options") == "DENY"
     assert "default-src 'self'" in root_html.headers.get("content-security-policy", "")
     assert "시설관리시스템 메인" in root_html.text
+    assert "세대 민원처리" in root_html.text
     assert "운영요약" in root_html.text
     assert "작업지시" in root_html.text
     assert "점검" in root_html.text

@@ -630,6 +630,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       <div class="links">
         <a href="{html.escape(service_info.get("docs", "/docs"))}">스웨거 문서</a>
         <a href="/api/service-info">서비스 정보</a>
+        <a href="/web/complaints">세대 민원처리</a>
         <a href="/web/console">레거시 콘솔</a>
         <a href="/web/adoption">레거시 정착 계획</a>
         <a href="/web/tutorial-simulator">튜토리얼</a>
