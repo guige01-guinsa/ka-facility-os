@@ -24,6 +24,9 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "엑셀 출력" in page.text
     assert "PDF 출력" in page.text
     assert "DB 레코드 관리" in page.text
+    assert "칼럼 숨김/표시" in page.text
+    assert "전체 표시" in page.text
+    assert "기본값 복원" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:

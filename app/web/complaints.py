@@ -286,6 +286,11 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
     .table-textarea { min-height: 72px; resize: vertical; }
     .table-checkbox { width: 16px; height: 16px; }
     .table-readonly { white-space: pre-wrap; color: #294968; line-height: 1.45; }
+    .db-column-panel { margin-top: 12px; border: 1px solid rgba(209, 223, 241, 0.96); border-radius: 16px; background: rgba(248, 251, 255, 0.94); padding: 12px; }
+    .db-column-toolbar { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .db-column-title { margin: 0; font-size: 14px; color: #274f77; }
+    .db-column-toggle-wrap { margin-top: 10px; }
+    .db-column-chip.inactive { background: rgba(255,255,255,0.72); color: #5d7591; border-color: rgba(190, 206, 226, 0.95); }
     details.surface summary { list-style: none; cursor: pointer; padding: 14px; font-size: 17px; font-weight: 900; color: var(--brand); }
     details.surface summary::-webkit-details-marker { display: none; }
     details.surface .surface-body { padding-top: 0; }
@@ -465,6 +470,19 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
           <button class="ghost" id="clearDbSelectionBtn" type="button">선택/변경 초기화</button>
         </div>
         <div class="hint-line" id="dbSummary">site를 기준으로 DB 레코드 원본을 표로 불러오고, 수정된 셀만 일괄 반영합니다.</div>
+        <div class="db-column-panel">
+          <div class="db-column-toolbar">
+            <div>
+              <h3 class="db-column-title">칼럼 숨김/표시</h3>
+              <div class="hint-line" id="dbColumnSummary">레코드를 불러오면 표시할 칼럼을 선택할 수 있습니다.</div>
+            </div>
+            <div class="actions" style="margin-top:0;">
+              <button class="ghost" id="showAllDbColumnsBtn" type="button">전체 표시</button>
+              <button class="ghost" id="resetDbColumnsBtn" type="button">기본값 복원</button>
+            </div>
+          </div>
+          <div class="chip-row db-column-toggle-wrap" id="dbColumnToggleWrap"><div class="empty">레코드를 불러오면 칼럼 토글이 나타납니다.</div></div>
+        </div>
         <div class="table-wrap" id="dbTableWrap"><div class="empty">DB 레코드 관리 탭에서 레코드를 불러오면 표가 나타납니다.</div></div>
       </div>
     </section>
@@ -477,7 +495,7 @@ __SCRIPT__
 </html>
 """
     script = """
-const STORAGE_KEYS = { token: 'kaFacility.complaints.token', site: 'kaFacility.complaints.site' };
+const STORAGE_KEYS = { token: 'kaFacility.complaints.token', site: 'kaFacility.complaints.site', dbColumnPrefs: 'kaFacility.complaints.dbColumnPrefs' };
 const STATUS_LABELS = { received: '접수', assigned: '배정완료', visit_scheduled: '방문예정', in_progress: '처리중', resolved: '처리완료', resident_confirmed: '세대확인완료', reopened: '재민원', closed: '종결' };
 const TYPE_LABELS = { screen_contamination: '방충망 오염', screen_damage: '방충망 파손', glass_contamination: '유리/창문 오염', glass_damage: '유리/창문 파손', railing_contamination: '난간 오염', louver_issue: '루버창 불량', silicone_issue: '실리콘/퍼티 불량', wall_floor_contamination: '벽면/바닥 오염', other_finish_issue: '기타 마감불량', composite: '복합 민원' };
 const PRIORITY_LABELS = { low: '낮음', medium: '보통', high: '높음', urgent: '긴급' };
@@ -502,7 +520,7 @@ const state = {
   householdHistory: null,
   recurrenceOnly: false,
   activeTab: 'field',
-  dbEditor: { recordType: 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {} },
+  dbEditor: { recordType: 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {}, hiddenColumnsByType: {} },
 };
 let tokenHideTimer = null;
 const elements = {
@@ -536,6 +554,10 @@ const elements = {
   deleteDbRowsBtn: document.getElementById('deleteDbRowsBtn'),
   clearDbSelectionBtn: document.getElementById('clearDbSelectionBtn'),
   dbSummary: document.getElementById('dbSummary'),
+  dbColumnSummary: document.getElementById('dbColumnSummary'),
+  dbColumnToggleWrap: document.getElementById('dbColumnToggleWrap'),
+  showAllDbColumnsBtn: document.getElementById('showAllDbColumnsBtn'),
+  resetDbColumnsBtn: document.getElementById('resetDbColumnsBtn'),
   dbTableWrap: document.getElementById('dbTableWrap'),
   dbMeta: document.getElementById('dbMeta'),
   queueMeta: document.getElementById('queueMeta'),
@@ -700,14 +722,30 @@ function loadPrefs() {
   try {
     const token = localStorage.getItem(STORAGE_KEYS.token) || '';
     const site = localStorage.getItem(STORAGE_KEYS.site) || '';
+    const dbColumnPrefsRaw = localStorage.getItem(STORAGE_KEYS.dbColumnPrefs) || '{}';
+    let dbColumnPrefs = {};
+    try {
+      dbColumnPrefs = JSON.parse(dbColumnPrefsRaw) || {};
+    } catch (error) {
+      dbColumnPrefs = {};
+    }
     if (token) elements.token.value = token;
     if (site) {
       elements.siteFilter.value = site;
       if (!elements.createSite.value.trim()) elements.createSite.value = site;
     }
+    state.dbEditor.hiddenColumnsByType = dbColumnPrefs && typeof dbColumnPrefs === 'object' ? dbColumnPrefs : {};
     updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · site: ' + (site || '미설정'));
   } catch (error) {
     writeDebug('localStorage-load-error', error);
+  }
+}
+
+function saveDbColumnPrefs() {
+  try {
+    localStorage.setItem(STORAGE_KEYS.dbColumnPrefs, JSON.stringify(state.dbEditor.hiddenColumnsByType || {}));
+  } catch (error) {
+    writeDebug('localStorage-db-column-save-error', error);
   }
 }
 
@@ -742,7 +780,7 @@ function clearPrefs() {
   state.selectedId = null;
   state.detail = null;
   state.householdHistory = null;
-  state.dbEditor = { recordType: elements.dbRecordType.value || 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {} };
+  state.dbEditor = { recordType: elements.dbRecordType.value || 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {}, hiddenColumnsByType: state.dbEditor.hiddenColumnsByType || {} };
   renderStats();
   renderQueue();
   syncDbSiteMirror();
@@ -842,6 +880,73 @@ function syncDbSiteMirror() {
   elements.dbSiteMirror.value = elements.siteFilter.value.trim();
 }
 
+function getHiddenDbColumnMap(recordType) {
+  const prefs = state.dbEditor.hiddenColumnsByType || {};
+  const hiddenMap = prefs[recordType || state.dbEditor.recordType || 'cases'];
+  return hiddenMap && typeof hiddenMap === 'object' ? hiddenMap : {};
+}
+
+function getVisibleDbColumns() {
+  const hiddenMap = getHiddenDbColumnMap(state.dbEditor.recordType);
+  return (state.dbEditor.columns || []).filter((column) => !hiddenMap[column.key]);
+}
+
+function renderDbColumnToggles() {
+  if (!elements.dbColumnToggleWrap || !elements.dbColumnSummary) return;
+  const columns = state.dbEditor.columns || [];
+  if (!columns.length) {
+    elements.dbColumnSummary.textContent = '레코드를 불러오면 표시할 칼럼을 선택할 수 있습니다.';
+    elements.dbColumnToggleWrap.innerHTML = '<div class="empty">레코드를 불러오면 칼럼 토글이 나타납니다.</div>';
+    return;
+  }
+  const hiddenMap = getHiddenDbColumnMap(state.dbEditor.recordType);
+  const visibleCount = columns.filter((column) => !hiddenMap[column.key]).length;
+  elements.dbColumnSummary.textContent = '표시 ' + visibleCount + ' / ' + columns.length + ' · 칩을 눌러 칼럼을 숨기거나 다시 표시합니다.';
+  elements.dbColumnToggleWrap.innerHTML = columns.map((column) => {
+    const visible = !hiddenMap[column.key];
+    return '<button class="chip db-column-chip' + (visible ? ' active' : ' inactive') + '" type="button" data-db-column-key="' + escapeHtml(column.key) + '">' + escapeHtml(column.label) + ' · ' + (visible ? '표시' : '숨김') + '</button>';
+  }).join('');
+  elements.dbColumnToggleWrap.querySelectorAll('[data-db-column-key]').forEach((node) => {
+    node.addEventListener('click', () => toggleDbColumnVisibility(node.getAttribute('data-db-column-key') || ''));
+  });
+}
+
+function toggleDbColumnVisibility(columnKey) {
+  const normalizedKey = String(columnKey || '').trim();
+  if (!normalizedKey) return;
+  const columns = state.dbEditor.columns || [];
+  const hiddenMap = getHiddenDbColumnMap(state.dbEditor.recordType);
+  const isVisible = !hiddenMap[normalizedKey];
+  const visibleCount = columns.filter((column) => !hiddenMap[column.key]).length;
+  if (isVisible && visibleCount <= 1) {
+    setNotice('최소 1개 칼럼은 표시 상태여야 합니다.', 'error');
+    return;
+  }
+  if (!state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType]) state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType] = {};
+  if (isVisible) state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType][normalizedKey] = true;
+  else delete state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType][normalizedKey];
+  if (!Object.keys(state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType]).length) delete state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType];
+  saveDbColumnPrefs();
+  renderDbColumnToggles();
+  renderDbEditorTable();
+}
+
+function showAllDbColumns() {
+  if (state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType]) delete state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType];
+  saveDbColumnPrefs();
+  renderDbColumnToggles();
+  renderDbEditorTable();
+  setNotice('현재 레코드 종류의 모든 칼럼을 다시 표시했습니다.', 'success');
+}
+
+function resetDbColumnVisibility() {
+  if (state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType]) delete state.dbEditor.hiddenColumnsByType[state.dbEditor.recordType];
+  saveDbColumnPrefs();
+  renderDbColumnToggles();
+  renderDbEditorTable();
+  setNotice('현재 레코드 종류의 칼럼 표시를 기본값으로 되돌렸습니다.', 'success');
+}
+
 function updateDbSummary(message) {
   if (!elements.dbSummary) return;
   if (message) {
@@ -850,7 +955,9 @@ function updateDbSummary(message) {
   }
   const dirtyCount = Object.keys(state.dbEditor.dirtyRows || {}).length;
   const selectedCount = Object.keys(state.dbEditor.selectedIds || {}).length;
-  elements.dbSummary.textContent = '총 ' + state.dbEditor.totalCount + '행 · 변경 ' + dirtyCount + '행 · 선택 ' + selectedCount + '행';
+  const visibleCount = getVisibleDbColumns().length;
+  const totalColumns = (state.dbEditor.columns || []).length;
+  elements.dbSummary.textContent = '총 ' + state.dbEditor.totalCount + '행 · 변경 ' + dirtyCount + '행 · 선택 ' + selectedCount + '행 · 칼럼 ' + visibleCount + '/' + totalColumns + ' 표시';
 }
 
 function switchTab(nextTab) {
@@ -889,12 +996,18 @@ function buildDbCellValue(column, value) {
 }
 
 function renderDbEditorTable() {
+  renderDbColumnToggles();
   if (!state.dbEditor.rows.length) {
     elements.dbTableWrap.innerHTML = '<div class="empty">조건에 맞는 DB 레코드가 없습니다.</div>';
     updateDbSummary();
     return;
   }
-  const columns = state.dbEditor.columns || [];
+  const columns = getVisibleDbColumns();
+  if (!columns.length) {
+    elements.dbTableWrap.innerHTML = '<div class="empty">표시 중인 칼럼이 없습니다. 위의 칼럼 숨김/표시에서 다시 선택하세요.</div>';
+    updateDbSummary();
+    return;
+  }
   const headerHtml = '<tr><th style="width:44px;"><input id="dbSelectAllRows" class="table-checkbox" type="checkbox" /></th>' + columns.map((column) => '<th>' + escapeHtml(column.label) + '</th>').join('') + '</tr>';
   const bodyHtml = state.dbEditor.rows.map((row) => {
     const recordId = Number(row.id);
@@ -975,6 +1088,7 @@ async function loadDbRecords() {
     state.dbEditor.originalRows = {};
     state.dbEditor.rows.forEach((row) => { state.dbEditor.originalRows[Number(row.id)] = Object.assign({}, row); });
     elements.dbMeta.textContent = session.site + ' · ' + (payload.record_label || payload.record_type) + ' · ' + state.dbEditor.totalCount + '행';
+    renderDbColumnToggles();
     renderDbEditorTable();
     setNotice('DB 레코드를 불러왔습니다.', 'success');
   } catch (error) {
@@ -984,6 +1098,7 @@ async function loadDbRecords() {
     state.dbEditor.dirtyRows = {};
     state.dbEditor.selectedIds = {};
     state.dbEditor.originalRows = {};
+    renderDbColumnToggles();
     renderDbEditorTable();
     setNotice(error.message || 'DB 레코드 불러오기에 실패했습니다.', 'error');
     writeDebug('load-db-records-error', error);
@@ -1876,7 +1991,20 @@ function bindStaticEvents() {
   elements.applyDbChangesBtn.addEventListener('click', applyDbChanges);
   elements.deleteDbRowsBtn.addEventListener('click', deleteSelectedDbRows);
   elements.clearDbSelectionBtn.addEventListener('click', clearDbSelectionAndChanges);
-  elements.dbRecordType.addEventListener('change', () => { state.dbEditor.recordType = elements.dbRecordType.value || 'cases'; });
+  elements.showAllDbColumnsBtn.addEventListener('click', showAllDbColumns);
+  elements.resetDbColumnsBtn.addEventListener('click', resetDbColumnVisibility);
+  elements.dbRecordType.addEventListener('change', () => {
+    state.dbEditor.recordType = elements.dbRecordType.value || 'cases';
+    state.dbEditor.columns = [];
+    state.dbEditor.rows = [];
+    state.dbEditor.totalCount = 0;
+    state.dbEditor.dirtyRows = {};
+    state.dbEditor.selectedIds = {};
+    state.dbEditor.originalRows = {};
+    elements.dbMeta.textContent = (elements.siteFilter.value.trim() || 'site 미설정') + ' · 레코드 종류를 바꿨습니다. 다시 불러오세요.';
+    renderDbColumnToggles();
+    renderDbEditorTable();
+  });
   elements.dbSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') loadDbRecords(); });
   elements.token.addEventListener('blur', () => setTokenVisibility(false));
 }
