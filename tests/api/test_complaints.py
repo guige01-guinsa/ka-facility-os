@@ -238,8 +238,24 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
     workbook = load_workbook(BytesIO(xlsx_resp.content))
-    assert workbook.sheetnames == ["요약", "민원목록"]
+    assert workbook.sheetnames == [
+        "요약",
+        "민원목록",
+        "db_complaint_cases",
+        "db_complaint_events",
+        "db_complaint_attachments",
+        "db_complaint_messages",
+        "db_complaint_cost_items",
+    ]
     assert workbook["요약"]["B2"].value == "미처리"
+    assert workbook["민원목록"].max_row == 2
+    assert workbook["db_complaint_cases"].max_row == 2
+    assert workbook["db_complaint_cases"]["A2"].value == str(first.json()["id"])
+    assert workbook["db_complaint_events"].max_row == 2
+    assert workbook["db_complaint_events"]["B2"].value == str(first.json()["id"])
+    assert workbook["db_complaint_attachments"].max_row == 1
+    assert workbook["db_complaint_messages"].max_row == 1
+    assert workbook["db_complaint_cost_items"].max_row == 1
 
     pdf_resp = app_client.get(
         "/api/complaints/reports/pdf?site=연산더샵&report_type=building",

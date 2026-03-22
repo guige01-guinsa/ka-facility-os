@@ -13,7 +13,16 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
+from sqlalchemy import select
 
+from app.database import (
+    complaint_attachments,
+    complaint_cases,
+    complaint_cost_items,
+    complaint_events,
+    complaint_messages,
+    get_conn,
+)
 from app.domains.complaints import service
 from app.domains.complaints.schemas import ComplaintCaseRead
 
@@ -46,6 +55,7 @@ class ComplaintExportReport:
     rows: list[list[str]]
     primary_sheet_name: str
     file_stem: str
+    raw_sheets: list[tuple[str, list[str], list[list[str]]]]
 
 
 def normalize_report_type(value: str | None) -> str:
@@ -117,6 +127,101 @@ def _detail_rows(cases: Iterable[ComplaintCaseRead]) -> list[list[str]]:
             ]
         )
     return rows
+
+
+def _stringify_raw_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.astimezone().isoformat() if value.tzinfo is not None else value.isoformat(sep=" ")
+    return str(value)
+
+
+def _build_raw_sheet(*, name: str, headers: list[str], records: list[dict[str, object]]) -> tuple[str, list[str], list[list[str]]]:
+    rows = [[_stringify_raw_value(record.get(header)) for header in headers] for record in records]
+    return name, headers, rows
+
+
+def _load_raw_record_sheets(case_ids: list[int]) -> list[tuple[str, list[str], list[list[str]]]]:
+    normalized_case_ids = [int(item) for item in case_ids]
+    with get_conn() as conn:
+        case_rows = (
+            conn.execute(select(complaint_cases).where(complaint_cases.c.id.in_(normalized_case_ids)).order_by(complaint_cases.c.id.asc())).mappings().all()
+            if normalized_case_ids
+            else []
+        )
+        event_rows = (
+            conn.execute(
+                select(complaint_events)
+                .where(complaint_events.c.complaint_id.in_(normalized_case_ids))
+                .order_by(complaint_events.c.complaint_id.asc(), complaint_events.c.id.asc())
+            ).mappings().all()
+            if normalized_case_ids
+            else []
+        )
+        attachment_rows = (
+            conn.execute(
+                select(complaint_attachments)
+                .where(complaint_attachments.c.complaint_id.in_(normalized_case_ids))
+                .order_by(complaint_attachments.c.complaint_id.asc(), complaint_attachments.c.id.asc())
+            ).mappings().all()
+            if normalized_case_ids
+            else []
+        )
+        message_rows = (
+            conn.execute(
+                select(complaint_messages)
+                .where(complaint_messages.c.complaint_id.in_(normalized_case_ids))
+                .order_by(complaint_messages.c.complaint_id.asc(), complaint_messages.c.id.asc())
+            ).mappings().all()
+            if normalized_case_ids
+            else []
+        )
+        cost_rows = (
+            conn.execute(
+                select(complaint_cost_items)
+                .where(complaint_cost_items.c.complaint_id.in_(normalized_case_ids))
+                .order_by(complaint_cost_items.c.complaint_id.asc(), complaint_cost_items.c.id.asc())
+            ).mappings().all()
+            if normalized_case_ids
+            else []
+        )
+
+    attachment_headers = [column.name for column in complaint_attachments.columns if column.name != "file_bytes"] + ["file_bytes_size"]
+    attachment_records = []
+    for row in attachment_rows:
+        item = dict(row)
+        file_bytes = item.pop("file_bytes", None)
+        item["file_bytes_size"] = len(file_bytes or b"")
+        attachment_records.append(item)
+
+    return [
+        _build_raw_sheet(
+            name="db_complaint_cases",
+            headers=[column.name for column in complaint_cases.columns],
+            records=[dict(row) for row in case_rows],
+        ),
+        _build_raw_sheet(
+            name="db_complaint_events",
+            headers=[column.name for column in complaint_events.columns],
+            records=[dict(row) for row in event_rows],
+        ),
+        _build_raw_sheet(
+            name="db_complaint_attachments",
+            headers=attachment_headers,
+            records=attachment_records,
+        ),
+        _build_raw_sheet(
+            name="db_complaint_messages",
+            headers=[column.name for column in complaint_messages.columns],
+            records=[dict(row) for row in message_rows],
+        ),
+        _build_raw_sheet(
+            name="db_complaint_cost_items",
+            headers=[column.name for column in complaint_cost_items.columns],
+            records=[dict(row) for row in cost_rows],
+        ),
+    ]
 
 
 def _building_rows(cases: list[ComplaintCaseRead]) -> list[list[str]]:
@@ -242,6 +347,7 @@ def build_complaint_export_report(
         sheet_name = "민원목록"
 
     file_stem = f"complaints-{normalized_type}-{service.normalize_description(site or 'all').replace(' ', '_') or 'all'}"
+    raw_sheets = _load_raw_record_sheets([row.id for row in cases])
     return ComplaintExportReport(
         report_type=normalized_type,
         report_label=report_label,
@@ -253,6 +359,7 @@ def build_complaint_export_report(
         rows=rows,
         primary_sheet_name=sheet_name,
         file_stem=file_stem,
+        raw_sheets=raw_sheets,
     )
 
 
@@ -270,6 +377,13 @@ def build_complaint_export_xlsx(report: ComplaintExportReport) -> bytes:
     for row in report.rows:
         detail_ws.append(row)
     _style_table_sheet(detail_ws)
+
+    for sheet_name, headers, rows in report.raw_sheets:
+        raw_ws = workbook.create_sheet(sheet_name)
+        raw_ws.append(headers)
+        for row in rows:
+            raw_ws.append(row)
+        _style_table_sheet(raw_ws)
 
     buffer = io.BytesIO()
     workbook.save(buffer)
