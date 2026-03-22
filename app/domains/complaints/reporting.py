@@ -54,6 +54,9 @@ PDF_OK = colors.HexColor("#1E7E52")
 PDF_WARN = colors.HexColor("#D08B1F")
 PDF_DANGER = colors.HexColor("#C55A4A")
 PDF_CARD_BG = colors.HexColor("#F8FBFF")
+PDF_LOGO_GREEN = colors.HexColor("#0C6D58")
+PDF_LOGO_ORANGE = colors.HexColor("#CA5F2D")
+PDF_TITLE_BG = colors.HexColor("#F3F8FE")
 
 
 @dataclass(slots=True)
@@ -461,6 +464,27 @@ def _progress_metrics(report: ComplaintExportReport) -> dict[str, float]:
     }
 
 
+def _cover_metadata(report: ComplaintExportReport) -> dict[str, str]:
+    site_label = service.normalize_description(report.site or "전체 단지")
+    building_scope = service.normalize_description(report.building or "전체 동")
+    report_date = report.generated_at.strftime("%Y년 %m월 %d일")
+    return {
+        "submission_label": "관리사무소 제출용",
+        "document_title": "세대 민원 처리 현황 보고서",
+        "document_subtitle": "외벽 도색 작업 중 접수된 세대 민원과 처리 진행 현황을 정리한 제출 문서",
+        "recipient": f"{site_label} 관리사무소",
+        "site_name": site_label,
+        "construction_name": f"{site_label} 외벽 재도장 공사 세대 민원 처리",
+        "report_date": report_date,
+        "scope": building_scope,
+        "report_kind": f"{report.report_label} 보고",
+        "department": "시설관리 운영팀",
+        "company_name": "KA Facility OS",
+        "company_subtitle": "Field Operations Reporting",
+        "submission_copy": "상기 현황을 아래와 같이 보고드립니다.",
+    }
+
+
 def _draw_pdf_frame(pdf: canvas.Canvas, *, width: float, height: float) -> None:
     pdf.setStrokeColor(PDF_LINE)
     pdf.setLineWidth(1)
@@ -470,20 +494,108 @@ def _draw_pdf_frame(pdf: canvas.Canvas, *, width: float, height: float) -> None:
 def _draw_approval_box(pdf: canvas.Canvas, *, x: float, y_top: float, width: float, height: float, font_name: str) -> None:
     roles = ("주임", "계장", "과장", "소장")
     label_height = 8 * mm
-    cell_width = width / len(roles)
+    title_width = 14 * mm
+    cell_width = (width - title_width) / len(roles)
     y_bottom = y_top - height
     pdf.setStrokeColor(PDF_LINE)
     pdf.setFillColor(colors.white)
     pdf.roundRect(x, y_bottom, width, height, 6, stroke=1, fill=1)
+    pdf.setFillColor(PDF_SOFT_BLUE)
+    pdf.rect(x, y_top - label_height, width, label_height, stroke=0, fill=1)
+    pdf.setFillColor(colors.white)
+    pdf.rect(x, y_bottom, title_width, height, stroke=0, fill=1)
     pdf.line(x, y_top - label_height, x + width, y_top - label_height)
+    pdf.line(x + title_width, y_bottom, x + title_width, y_top)
     for index in range(1, len(roles)):
-        current_x = x + cell_width * index
+        current_x = x + title_width + cell_width * index
         pdf.line(current_x, y_bottom, current_x, y_top)
+    pdf.setFont(font_name, 9)
+    pdf.setFillColor(PDF_TEXT)
+    pdf.drawCentredString(x + title_width / 2, y_bottom + height / 2 - 3, "결재")
     pdf.setFont(font_name, 8)
     pdf.setFillColor(PDF_MUTED)
     for index, role in enumerate(roles):
-        center_x = x + cell_width * index + cell_width / 2
+        center_x = x + title_width + cell_width * index + cell_width / 2
         pdf.drawCentredString(center_x, y_top - 5.5 * mm, role)
+        pdf.setStrokeColor(PDF_LINE)
+        pdf.line(
+            x + title_width + cell_width * index + 4,
+            y_bottom + 9,
+            x + title_width + cell_width * (index + 1) - 4,
+            y_bottom + 9,
+        )
+
+
+def _draw_company_logo(pdf: canvas.Canvas, *, x: float, y_top: float, width: float, height: float, font_name: str, metadata: dict[str, str]) -> None:
+    y_bottom = y_top - height
+    pdf.setStrokeColor(PDF_LINE)
+    pdf.setFillColor(colors.white)
+    pdf.roundRect(x, y_bottom, width, height, 8, stroke=1, fill=1)
+    icon_size = min(height - 10, 18 * mm)
+    icon_x = x + 7
+    icon_y = y_bottom + (height - icon_size) / 2
+    pdf.setFillColor(PDF_LOGO_GREEN)
+    pdf.roundRect(icon_x, icon_y, icon_size, icon_size, 5, stroke=0, fill=1)
+    pdf.setFillColor(PDF_LOGO_ORANGE)
+    pdf.circle(icon_x + icon_size - 4, icon_y + icon_size - 4, 4, stroke=0, fill=1)
+    pdf.setFillColor(colors.white)
+    pdf.setFont(font_name, 14)
+    pdf.drawCentredString(icon_x + icon_size / 2, icon_y + icon_size / 2 - 5, "KA")
+    text_x = icon_x + icon_size + 8
+    pdf.setFillColor(PDF_TEXT)
+    pdf.setFont(font_name, 11)
+    pdf.drawString(text_x, y_bottom + height - 14, metadata["company_name"])
+    pdf.setFillColor(PDF_MUTED)
+    pdf.setFont(font_name, 8)
+    pdf.drawString(text_x, y_bottom + height - 25, metadata["company_subtitle"])
+    pdf.drawString(text_x, y_bottom + 9, "관리사무소 제출 문서")
+
+
+def _draw_cover_information_panel(
+    pdf: canvas.Canvas,
+    report: ComplaintExportReport,
+    *,
+    width: float,
+    start_y: float,
+    font_name: str,
+    metadata: dict[str, str],
+) -> float:
+    panel_height = 26 * mm
+    y_bottom = start_y - panel_height
+    pdf.setStrokeColor(PDF_LINE)
+    pdf.setFillColor(colors.white)
+    pdf.roundRect(PDF_MARGIN, y_bottom, width - 2 * PDF_MARGIN, panel_height, 8, stroke=1, fill=1)
+    pdf.setFont(font_name, 8)
+    pdf.setFillColor(PDF_MUTED)
+    row_one = [
+        ("제출처", metadata["recipient"]),
+        ("보고일", metadata["report_date"]),
+        ("문서구분", metadata["report_kind"]),
+    ]
+    row_two = [
+        ("단지명", metadata["site_name"]),
+        ("범위", metadata["scope"]),
+        ("작성부서", metadata["department"]),
+    ]
+    row_three = [("공사명", metadata["construction_name"])]
+    cell_width = (width - 2 * PDF_MARGIN - 16) / 3
+    row_positions = [y_bottom + panel_height - 12, y_bottom + panel_height - 25]
+    for row_index, row_items in enumerate((row_one, row_two)):
+        current_x = PDF_MARGIN + 8
+        current_y = row_positions[row_index]
+        for label, value in row_items:
+            pdf.setFillColor(PDF_MUTED)
+            pdf.drawString(current_x, current_y, f"{label}")
+            pdf.setFillColor(PDF_TEXT)
+            pdf.drawString(current_x + 17 * mm, current_y, str(value)[:36])
+            current_x += cell_width
+    pdf.setFillColor(PDF_MUTED)
+    pdf.drawString(PDF_MARGIN + 8, y_bottom + 14, row_three[0][0])
+    pdf.setFillColor(PDF_TEXT)
+    wrapped = simpleSplit(row_three[0][1], font_name, 8, width - 2 * PDF_MARGIN - 30 * mm)
+    for index, line in enumerate((wrapped or [row_three[0][1]])[:2]):
+        pdf.drawString(PDF_MARGIN + 25 * mm, y_bottom + 14 - index * 9, line)
+    return y_bottom - 8
 
 
 def _draw_summary_cards(pdf: canvas.Canvas, report: ComplaintExportReport, *, width: float, start_y: float, font_name: str) -> float:
@@ -517,7 +629,7 @@ def _draw_summary_cards(pdf: canvas.Canvas, report: ComplaintExportReport, *, wi
     pdf.drawString(
         PDF_MARGIN,
         y_bottom - 11,
-        f"출력일시 {report.generated_at.strftime('%Y-%m-%d %H:%M:%S')} · 단지 {report.site or '전체'} · 동 필터 {report.building or '전체'}",
+        f"보고기준 {report.generated_at.strftime('%Y-%m-%d %H:%M:%S')} · 단지 {report.site or '전체'} · 범위 {report.building or '전체'}",
     )
     return y_bottom - 18
 
@@ -673,22 +785,51 @@ def _draw_page_footer(pdf: canvas.Canvas, *, width: float, page_number: int, fon
 
 
 def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width: float, height: float, font_name: str) -> float:
+    metadata = _cover_metadata(report)
     _draw_pdf_frame(pdf, width=width, height=height)
-    approval_width = 74 * mm
-    approval_height = 24 * mm
-    approval_x = width - PDF_MARGIN - approval_width
+    approval_width = 96 * mm
+    approval_height = 32 * mm
+    logo_width = 72 * mm
+    logo_height = 28 * mm
     top_y = height - PDF_MARGIN + 2
+    _draw_company_logo(
+        pdf,
+        x=PDF_MARGIN,
+        y_top=top_y,
+        width=logo_width,
+        height=logo_height,
+        font_name=font_name,
+        metadata=metadata,
+    )
+    approval_x = width - PDF_MARGIN - approval_width
     _draw_approval_box(pdf, x=approval_x, y_top=top_y, width=approval_width, height=approval_height, font_name=font_name)
+    badge_y = height - PDF_MARGIN - 38
+    pdf.setFillColor(PDF_TITLE_BG)
+    pdf.setStrokeColor(PDF_LINE)
+    badge_width = 34 * mm
+    badge_height = 8 * mm
+    pdf.roundRect(PDF_MARGIN, badge_y - badge_height + 2, badge_width, badge_height, 4, stroke=1, fill=1)
+    pdf.setFillColor(PDF_HEADER_BLUE)
+    pdf.setFont(font_name, 8)
+    pdf.drawCentredString(PDF_MARGIN + badge_width / 2, badge_y - 3.5, metadata["submission_label"])
     pdf.setFillColor(PDF_HEADER_BLUE)
     pdf.setFont(font_name, 18)
-    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 4, f"세대 민원관리 {report.report_label} 보고서")
+    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 52, metadata["document_title"])
     pdf.setFont(font_name, 9)
     pdf.setFillColor(PDF_MUTED)
-    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 16, f"단지 {report.site or '전체'}")
-    pdf.drawString(PDF_MARGIN + 42 * mm, height - PDF_MARGIN - 16, f"동 필터 {report.building or '전체'}")
+    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 64, metadata["document_subtitle"])
+    pdf.setFont(font_name, 9)
+    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 78, metadata["submission_copy"])
     latest_value = _summary_value_map(report).get("최근접수", "-")
-    pdf.drawString(PDF_MARGIN + 82 * mm, height - PDF_MARGIN - 16, f"최근접수 {latest_value}")
-    current_y = height - PDF_MARGIN - 24
+    pdf.drawRightString(width - PDF_MARGIN, height - PDF_MARGIN - 78, f"최근 접수 {latest_value}")
+    current_y = _draw_cover_information_panel(
+        pdf,
+        report,
+        width=width,
+        start_y=height - PDF_MARGIN - 84,
+        font_name=font_name,
+        metadata=metadata,
+    )
     current_y = _draw_summary_cards(pdf, report, width=width, start_y=current_y, font_name=font_name)
     current_y = _draw_progress_bars(pdf, report, width=width, start_y=current_y, font_name=font_name)
     current_y = _draw_status_chart(pdf, report, width=width, start_y=current_y, font_name=font_name)
