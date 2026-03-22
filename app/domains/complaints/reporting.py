@@ -556,6 +556,32 @@ def _draw_pdf_frame(pdf: canvas.Canvas, *, width: float, height: float) -> None:
     pdf.roundRect(PDF_MARGIN, PDF_MARGIN, width - 2 * PDF_MARGIN, height - 2 * PDF_MARGIN, 8, stroke=1, fill=0)
 
 
+def _draw_wrapped_text_block(
+    pdf: canvas.Canvas,
+    *,
+    text: str,
+    x: float,
+    y_top: float,
+    max_width: float,
+    font_name: str,
+    font_size: float,
+    fill_color: colors.Color,
+    line_gap: float | None = None,
+    max_lines: int | None = None,
+) -> float:
+    wrapped = simpleSplit(str(text or ""), font_name, font_size, max(max_width, 20))
+    if max_lines is not None:
+        wrapped = wrapped[:max_lines]
+    pdf.setFillColor(fill_color)
+    pdf.setFont(font_name, font_size)
+    current_y = y_top
+    leading = line_gap if line_gap is not None else font_size + 3
+    for line in wrapped:
+        pdf.drawString(x, current_y, line[:180])
+        current_y -= leading
+    return current_y
+
+
 def _draw_approval_box(pdf: canvas.Canvas, *, x: float, y_top: float, width: float, height: float, font_name: str) -> None:
     roles = ("주임", "계장", "과장", "소장")
     label_height = 8 * mm
@@ -908,21 +934,56 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
     pdf.setFillColor(PDF_HEADER_BLUE)
     pdf.setFont(font_name, 8)
     pdf.drawCentredString(PDF_MARGIN + badge_width / 2, badge_y - 3.5, metadata["submission_label"])
-    pdf.setFillColor(PDF_HEADER_BLUE)
-    pdf.setFont(font_name, 18)
-    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 52, metadata["document_title"])
-    pdf.setFont(font_name, 9)
-    pdf.setFillColor(PDF_MUTED)
-    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 64, metadata["document_subtitle"])
-    pdf.setFont(font_name, 9)
-    pdf.drawString(PDF_MARGIN, height - PDF_MARGIN - 78, metadata["submission_copy"])
+    text_width = width - 2 * PDF_MARGIN
+    current_y = height - PDF_MARGIN - 52
+    current_y = _draw_wrapped_text_block(
+        pdf,
+        text=metadata["document_title"],
+        x=PDF_MARGIN,
+        y_top=current_y,
+        max_width=text_width,
+        font_name=font_name,
+        font_size=18,
+        fill_color=PDF_HEADER_BLUE,
+        line_gap=21,
+        max_lines=2,
+    )
+    current_y -= 2
+    current_y = _draw_wrapped_text_block(
+        pdf,
+        text=metadata["document_subtitle"],
+        x=PDF_MARGIN,
+        y_top=current_y,
+        max_width=text_width,
+        font_name=font_name,
+        font_size=9,
+        fill_color=PDF_MUTED,
+        line_gap=12,
+        max_lines=2,
+    )
+    current_y -= 2
+    current_y = _draw_wrapped_text_block(
+        pdf,
+        text=metadata["submission_copy"],
+        x=PDF_MARGIN,
+        y_top=current_y,
+        max_width=text_width,
+        font_name=font_name,
+        font_size=9,
+        fill_color=PDF_MUTED,
+        line_gap=12,
+        max_lines=3,
+    )
     latest_value = _summary_value_map(report).get("최근접수", "-")
-    pdf.drawRightString(width - PDF_MARGIN, height - PDF_MARGIN - 78, f"최근 접수 {latest_value}")
+    latest_y = current_y - 2
+    pdf.setFillColor(PDF_MUTED)
+    pdf.setFont(font_name, 8)
+    pdf.drawRightString(width - PDF_MARGIN, latest_y, f"최근 접수 {latest_value}")
     current_y = _draw_cover_information_panel(
         pdf,
         report,
         width=width,
-        start_y=height - PDF_MARGIN - 84,
+        start_y=min(latest_y - 14, height - PDF_MARGIN - 92),
         font_name=font_name,
         metadata=metadata,
     )
