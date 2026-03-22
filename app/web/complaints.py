@@ -304,14 +304,17 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
         <div class="surface-head"><h2>작업 세션</h2><div class="meta">토큰과 현장 site를 유지합니다.</div></div>
         <div class="surface-body">
           <div class="grid-2">
-            <div class="field-stack"><label class="caption" for="token">X-Admin-Token</label><input id="token" placeholder="관리자 토큰" /></div>
+            <div class="field-stack"><label class="caption" for="token">X-Admin-Token</label><input id="token" type="password" placeholder="관리자 토큰" autocomplete="off" spellcheck="false" /></div>
             <div class="field-stack"><label class="caption" for="siteFilter">site</label><input id="siteFilter" placeholder="예: 연산더샵" /></div>
           </div>
           <div class="actions">
             <button class="run" id="refreshQueueBtn" type="button">현장 큐 새로고침</button>
+            <button class="ghost" id="savePrefsBtn" type="button">토큰 저장</button>
+            <button class="ghost" id="checkConnectionBtn" type="button">연결 확인</button>
+            <button class="ghost" id="toggleTokenVisibilityBtn" type="button">토큰 보기</button>
             <button class="ghost" id="clearPrefsBtn" type="button">저장값 지우기</button>
           </div>
-          <div class="hint-line">토큰과 site는 브라우저 저장소에 유지됩니다. `/web/complaints`를 다시 열어도 같은 현장으로 복귀할 수 있습니다.</div>
+          <div class="hint-line" id="sessionStatus">토큰은 브라우저 저장소에 유지되며 기본 숨김 상태입니다. 연결 확인 후 같은 현장으로 바로 복귀할 수 있습니다.</div>
         </div>
       </section>
       <section class="surface">
@@ -348,6 +351,30 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
             <div class="mini-item"><strong>2. 상태와 방문일정 저장</strong><div class="meta">배정완료, 방문예정, 처리중 순으로 바꾸면서 이력을 남깁니다.</div></div>
             <div class="mini-item"><strong>3. 사진·문자·비용 입력</strong><div class="meta">증빙과 안내, 정산 자료를 같은 케이스 안에 누적합니다.</div></div>
           </div>
+        </div>
+      </section>
+      <section class="surface">
+        <div class="surface-head"><h2>출력</h2><div class="meta">엑셀 · PDF</div></div>
+        <div class="surface-body">
+          <div class="grid-2">
+            <div class="field-stack">
+              <label class="caption" for="reportType">출력 구분</label>
+              <select id="reportType">
+                <option value="all">전체</option>
+                <option value="building">동별</option>
+                <option value="complaint">민원</option>
+                <option value="category">분류별</option>
+                <option value="unresolved">미처리</option>
+                <option value="closed">종결</option>
+              </select>
+            </div>
+            <div class="field-stack"><label class="caption" for="reportBuilding">동 필터</label><input id="reportBuilding" placeholder="예: 101동, 비우면 전체" /></div>
+          </div>
+          <div class="actions">
+            <button class="run" id="downloadXlsxBtn" type="button">엑셀 출력</button>
+            <button class="ghost" id="downloadPdfBtn" type="button">PDF 출력</button>
+          </div>
+          <div class="hint-line">현재 site를 기준으로 `전체 / 동별 / 민원 / 분류별 / 미처리 / 종결` 보고서를 내려받습니다.</div>
         </div>
       </section>
     </section>
@@ -419,16 +446,25 @@ const MESSAGE_TEMPLATE_BUILDERS = {
 };
 
 const state = { queue: [], filteredQueue: [], selectedId: null, detail: null, householdHistory: null, recurrenceOnly: false };
+let tokenHideTimer = null;
 const elements = {
   noticeBar: document.getElementById('noticeBar'),
   token: document.getElementById('token'),
   siteFilter: document.getElementById('siteFilter'),
   refreshQueueBtn: document.getElementById('refreshQueueBtn'),
+  savePrefsBtn: document.getElementById('savePrefsBtn'),
+  checkConnectionBtn: document.getElementById('checkConnectionBtn'),
+  toggleTokenVisibilityBtn: document.getElementById('toggleTokenVisibilityBtn'),
   clearPrefsBtn: document.getElementById('clearPrefsBtn'),
+  sessionStatus: document.getElementById('sessionStatus'),
   statusFilter: document.getElementById('statusFilter'),
   searchFilter: document.getElementById('searchFilter'),
   recurrenceToggle: document.getElementById('recurrenceToggle'),
   clearFiltersBtn: document.getElementById('clearFiltersBtn'),
+  reportType: document.getElementById('reportType'),
+  reportBuilding: document.getElementById('reportBuilding'),
+  downloadXlsxBtn: document.getElementById('downloadXlsxBtn'),
+  downloadPdfBtn: document.getElementById('downloadPdfBtn'),
   queueMeta: document.getElementById('queueMeta'),
   queueCountLabel: document.getElementById('queueCountLabel'),
   queueList: document.getElementById('queueList'),
@@ -492,6 +528,18 @@ function nullIfBlank(value) {
   return normalized ? normalized : null;
 }
 
+function maskToken(value) {
+  const token = String(value ?? '').trim();
+  if (!token) return '미저장';
+  if (token.length <= 8) return token[0] + '***' + token[token.length - 1];
+  return token.slice(0, 4) + '...' + token.slice(-4);
+}
+
+function updateSessionStatus(message) {
+  if (!elements.sessionStatus) return;
+  elements.sessionStatus.textContent = message;
+}
+
 function numberValue(value) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
@@ -548,6 +596,19 @@ function buildOptions(map, currentValue, blankLabel) {
   return rows.join('');
 }
 
+function parseContentDispositionFilename(headerValue) {
+  const header = String(headerValue || '');
+  const utf8Match = header.match(/filename\\*=UTF-8''([^;]+)/i);
+  if (utf8Match && utf8Match[1]) {
+    try { return decodeURIComponent(utf8Match[1]); } catch (error) {}
+  }
+  const quotedMatch = header.match(/filename=\"([^\"]+)\"/i);
+  if (quotedMatch && quotedMatch[1]) return quotedMatch[1];
+  const rawMatch = header.match(/filename=([^;]+)/i);
+  if (rawMatch && rawMatch[1]) return rawMatch[1].trim();
+  return '';
+}
+
 function summarizeSearch(item) {
   return [item.site, item.building, item.unit_number, item.resident_name, item.contact_phone, item.complaint_type_label, item.title, item.description, item.assignee].filter(Boolean).join(' ').toLowerCase();
 }
@@ -556,6 +617,7 @@ function savePrefs() {
   try {
     localStorage.setItem(STORAGE_KEYS.token, elements.token.value.trim());
     localStorage.setItem(STORAGE_KEYS.site, elements.siteFilter.value.trim());
+    updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · site: ' + (elements.siteFilter.value.trim() || '미설정'));
   } catch (error) {
     writeDebug('localStorage-save-error', error);
   }
@@ -570,8 +632,23 @@ function loadPrefs() {
       elements.siteFilter.value = site;
       if (!elements.createSite.value.trim()) elements.createSite.value = site;
     }
+    updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · site: ' + (site || '미설정'));
   } catch (error) {
     writeDebug('localStorage-load-error', error);
+  }
+}
+
+function setTokenVisibility(visible) {
+  elements.token.type = visible ? 'text' : 'password';
+  if (elements.toggleTokenVisibilityBtn) {
+    elements.toggleTokenVisibilityBtn.textContent = visible ? '토큰 숨기기' : '토큰 보기';
+  }
+  if (tokenHideTimer) {
+    clearTimeout(tokenHideTimer);
+    tokenHideTimer = null;
+  }
+  if (visible) {
+    tokenHideTimer = setTimeout(() => setTokenVisibility(false), 8000);
   }
 }
 
@@ -585,6 +662,8 @@ function clearPrefs() {
   elements.token.value = '';
   elements.siteFilter.value = '';
   elements.createSite.value = '';
+  setTokenVisibility(false);
+  updateSessionStatus('저장된 토큰과 site를 지웠습니다.');
   state.queue = [];
   state.filteredQueue = [];
   state.selectedId = null;
@@ -602,6 +681,22 @@ function ensureSession(requireSite) {
   if (!token) throw new Error('X-Admin-Token을 입력하세요.');
   if (requireSite !== false && !site) throw new Error('site를 입력하세요.');
   return { token, site };
+}
+
+async function checkConnection() {
+  try {
+    ensureSession(false);
+    setNotice('토큰 연결을 확인하는 중입니다.');
+    const me = await request('/api/auth/me');
+    savePrefs();
+    updateSessionStatus('연결 확인됨 · ' + maskToken(elements.token.value) + ' · ' + String(me.username || me.display_name || 'admin') + ' / ' + String(me.role || '-'));
+    setNotice('토큰 연결을 확인했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '토큰 연결 확인에 실패했습니다.', 'error');
+    writeDebug('check-connection-error', error);
+  } finally {
+    setTokenVisibility(false);
+  }
 }
 
 async function request(path, options) {
@@ -629,6 +724,41 @@ async function request(path, options) {
   if (response.status === 204) return null;
   const contentType = response.headers.get('content-type') || '';
   return contentType.includes('application/json') ? response.json() : response.text();
+}
+
+async function downloadComplaintReport(format) {
+  try {
+    const session = ensureSession(true);
+    savePrefs();
+    const params = new URLSearchParams({ site: session.site, report_type: elements.reportType.value || 'all' });
+    const building = nullIfBlank(elements.reportBuilding.value);
+    if (building) params.set('building', building);
+    setNotice((format === 'xlsx' ? '엑셀' : 'PDF') + ' 출력 파일을 준비하는 중입니다.');
+    const response = await fetch('/api/complaints/reports/' + format + '?' + params.toString(), {
+      headers: { 'X-Admin-Token': elements.token.value.trim(), 'Accept': format === 'xlsx' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf' },
+    });
+    if (!response.ok) {
+      const contentType = response.headers.get('content-type') || '';
+      const detail = contentType.includes('application/json') ? formatApiError(await response.json()) : ((await response.text()).trim() || (response.status + ' error'));
+      throw new Error(detail);
+    }
+    const blob = await response.blob();
+    const fileName = parseContentDispositionFilename(response.headers.get('Content-Disposition')) || ('complaints-report.' + format);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setNotice((format === 'xlsx' ? '엑셀' : 'PDF') + ' 파일을 내려받았습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '출력 파일 다운로드에 실패했습니다.', 'error');
+    writeDebug('download-report-error', error);
+  } finally {
+    setTokenVisibility(false);
+  }
 }
 
 function sortQueue(rows) {
@@ -1163,6 +1293,13 @@ function resetFilters() {
 
 function bindStaticEvents() {
   elements.refreshQueueBtn.addEventListener('click', () => loadQueue({ selectId: state.selectedId }));
+  elements.savePrefsBtn.addEventListener('click', () => {
+    savePrefs();
+    setTokenVisibility(false);
+    setNotice('토큰과 site를 저장했습니다.', 'success');
+  });
+  elements.checkConnectionBtn.addEventListener('click', checkConnection);
+  elements.toggleTokenVisibilityBtn.addEventListener('click', () => setTokenVisibility(elements.token.type === 'password'));
   elements.clearPrefsBtn.addEventListener('click', clearPrefs);
   elements.statusFilter.addEventListener('change', renderQueue);
   elements.searchFilter.addEventListener('input', renderQueue);
@@ -1179,11 +1316,15 @@ function bindStaticEvents() {
   elements.seedCreateSiteBtn.addEventListener('click', () => {
     elements.createSite.value = elements.siteFilter.value.trim();
   });
+  elements.downloadXlsxBtn.addEventListener('click', () => downloadComplaintReport('xlsx'));
+  elements.downloadPdfBtn.addEventListener('click', () => downloadComplaintReport('pdf'));
   elements.createComplaintBtn.addEventListener('click', createComplaint);
+  elements.token.addEventListener('blur', () => setTokenVisibility(false));
 }
 
 function init() {
   loadPrefs();
+  setTokenVisibility(false);
   bindStaticEvents();
   renderStats();
   renderQueue();

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from io import BytesIO
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+from openpyxl import load_workbook
 
 from tests.helpers.common import _owner_headers
 
@@ -17,6 +19,10 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "세대 이력" in page.text
     assert "문자 발송" in page.text
     assert "비용 입력" in page.text
+    assert "연결 확인" in page.text
+    assert "토큰 보기" in page.text
+    assert "엑셀 출력" in page.text
+    assert "PDF 출력" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:
@@ -185,3 +191,60 @@ def test_complaint_attachment_message_and_cost_workflow(app_client: TestClient) 
     assert len(detail_body["messages"]) == 1
     assert len(detail_body["cost_items"]) == 1
     assert detail_body["total_cost"] == 25000.0
+
+
+def test_complaint_report_exports(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    first = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "building": "103동",
+            "unit_number": "901호",
+            "description": "거실 방충망 오염",
+            "contact_phone": "010-1111-2222",
+        },
+    )
+    assert first.status_code == 201
+
+    second = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "building": "104동",
+            "unit_number": "1201호",
+            "description": "난간 오염",
+            "contact_phone": "010-3333-4444",
+        },
+    )
+    assert second.status_code == 201
+    complaint_id = second.json()["id"]
+
+    resolved = app_client.patch(
+        f"/api/complaints/{complaint_id}",
+        headers=headers,
+        json={"status": "closed", "assignee": "현장3"},
+    )
+    assert resolved.status_code == 200
+
+    xlsx_resp = app_client.get(
+        "/api/complaints/reports/xlsx?site=연산더샵&report_type=unresolved",
+        headers=headers,
+    )
+    assert xlsx_resp.status_code == 200
+    assert xlsx_resp.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    workbook = load_workbook(BytesIO(xlsx_resp.content))
+    assert workbook.sheetnames == ["요약", "민원목록"]
+    assert workbook["요약"]["B2"].value == "미처리"
+
+    pdf_resp = app_client.get(
+        "/api/complaints/reports/pdf?site=연산더샵&report_type=building",
+        headers=headers,
+    )
+    assert pdf_resp.status_code == 200
+    assert pdf_resp.headers["content-type"].startswith("application/pdf")
+    assert pdf_resp.content.startswith(b"%PDF")

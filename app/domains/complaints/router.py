@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from fastapi.responses import HTMLResponse
 
-from app.domains.complaints import service
+from app.domains.complaints import reporting, service
 from app.domains.complaints.schemas import (
     ComplaintAttachmentRead,
     ComplaintCaseCreate,
@@ -25,6 +25,7 @@ from app.domains.complaints.schemas import (
 )
 from app.domains.iam.core import _principal_site_scope
 from app.domains.iam.security import _require_site_access, require_permission
+from app.domains.iam.service import _write_audit_log
 from app.web.complaints import build_complaints_mobile_html
 
 
@@ -86,6 +87,66 @@ def list_complaints(
         assignee=assignee,
         recurrence_flag=recurrence_flag,
         allowed_sites=_allowed_sites_for_principal(principal) if site is None else None,
+    )
+
+
+@router.get("/api/complaints/reports/xlsx", response_model=None)
+def export_complaints_xlsx(
+    site: Annotated[str | None, Query()] = None,
+    report_type: Annotated[str | None, Query()] = None,
+    building: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = reporting.build_complaint_export_report(
+        site=site,
+        report_type=report_type,
+        building=building,
+        allowed_sites=allowed_sites,
+    )
+    file_name = _safe_download_filename(f"{report.file_stem}.xlsx")
+    _write_audit_log(
+        principal=principal,
+        action="complaints.report.export.xlsx",
+        resource_type="complaint_report",
+        resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
+        detail={"site": report.site, "building": report.building, "report_type": report.report_type},
+    )
+    return Response(
+        content=reporting.build_complaint_export_xlsx(report),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.get("/api/complaints/reports/pdf", response_model=None)
+def export_complaints_pdf(
+    site: Annotated[str | None, Query()] = None,
+    report_type: Annotated[str | None, Query()] = None,
+    building: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> Response:
+    _require_site_access(principal, site)
+    allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
+    report = reporting.build_complaint_export_report(
+        site=site,
+        report_type=report_type,
+        building=building,
+        allowed_sites=allowed_sites,
+    )
+    file_name = _safe_download_filename(f"{report.file_stem}.pdf")
+    _write_audit_log(
+        principal=principal,
+        action="complaints.report.export.pdf",
+        resource_type="complaint_report",
+        resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
+        detail={"site": report.site, "building": report.building, "report_type": report.report_type},
+    )
+    return Response(
+        content=reporting.build_complaint_export_pdf(report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 
