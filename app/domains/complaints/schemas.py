@@ -276,3 +276,18 @@ class ComplaintAdminBulkMutationResultRead(BaseModel):
     updated_count: int = 0
     deleted_count: int = 0
     rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ComplaintReportCoverOptions(BaseModel):
+    company_name: Optional[str] = Field(default=None, max_length=120)
+    contractor_name: Optional[str] = Field(default=None, max_length=120)
+    submission_phrase: Optional[str] = Field(default=None, max_length=500)
+    logo_data_url: Optional[str] = Field(default=None, max_length=2_000_000)
+    logo_file_name: Optional[str] = Field(default=None, max_length=200)
+
+
+class ComplaintPdfExportRequest(BaseModel):
+    site: Optional[str] = Field(default=None, max_length=120)
+    report_type: Optional[str] = Field(default=None, max_length=40)
+    building: Optional[str] = Field(default=None, max_length=120)
+    cover: ComplaintReportCoverOptions = Field(default_factory=ComplaintReportCoverOptions)

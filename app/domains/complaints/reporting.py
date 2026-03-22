@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import io
+import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -12,7 +15,7 @@ from openpyxl.utils import get_column_letter
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
-from reportlab.lib.utils import simpleSplit
+from reportlab.lib.utils import ImageReader, simpleSplit
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfgen import canvas
@@ -27,7 +30,7 @@ from app.database import (
     get_conn,
 )
 from app.domains.complaints import service
-from app.domains.complaints.schemas import ComplaintCaseRead
+from app.domains.complaints.schemas import ComplaintCaseRead, ComplaintReportCoverOptions
 
 
 REPORT_TYPE_LABELS: dict[str, str] = {
@@ -72,6 +75,17 @@ class ComplaintExportReport:
     primary_sheet_name: str
     file_stem: str
     raw_sheets: list[tuple[str, list[str], list[list[str]]]]
+    cover_settings: "ComplaintPdfCoverSettings | None" = None
+
+
+@dataclass(slots=True)
+class ComplaintPdfCoverSettings:
+    company_name: str | None = None
+    contractor_name: str | None = None
+    submission_phrase: str | None = None
+    logo_bytes: bytes | None = None
+    logo_file_name: str | None = None
+    logo_content_type: str | None = None
 
 
 def normalize_report_type(value: str | None) -> str:
@@ -105,6 +119,54 @@ def _style_table_sheet(ws: object) -> None:
     if ws.max_row >= 1 and ws.max_column >= 1:
         ws.auto_filter.ref = ws.dimensions
     _autosize(ws)
+
+
+def _normalize_cover_text(value: str | None, *, fallback: str | None = None, max_length: int = 240) -> str | None:
+    normalized = service.normalize_description(value)
+    if not normalized:
+        return fallback
+    return normalized[:max_length]
+
+
+def _decode_logo_data_url(value: str | None) -> tuple[bytes | None, str | None]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+    matched = re.match(r"^data:(image/(png|jpeg|jpg));base64,(.+)$", raw, re.IGNORECASE)
+    if matched is None:
+        return None, None
+    content_type = matched.group(1).lower().replace("jpg", "jpeg")
+    try:
+        payload = base64.b64decode(matched.group(3), validate=True)
+    except (ValueError, binascii.Error):
+        return None, None
+    if not payload or len(payload) > 1_500_000:
+        return None, None
+    return payload, content_type
+
+
+def build_cover_settings(options: ComplaintReportCoverOptions | None) -> ComplaintPdfCoverSettings | None:
+    if options is None:
+        return None
+    logo_bytes, logo_content_type = _decode_logo_data_url(options.logo_data_url)
+    settings = ComplaintPdfCoverSettings(
+        company_name=_normalize_cover_text(options.company_name, max_length=120),
+        contractor_name=_normalize_cover_text(options.contractor_name, max_length=120),
+        submission_phrase=_normalize_cover_text(options.submission_phrase, max_length=500),
+        logo_bytes=logo_bytes,
+        logo_file_name=_normalize_cover_text(options.logo_file_name, max_length=200),
+        logo_content_type=logo_content_type,
+    )
+    if not any(
+        (
+            settings.company_name,
+            settings.contractor_name,
+            settings.submission_phrase,
+            settings.logo_bytes,
+        )
+    ):
+        return None
+    return settings
 
 
 def _summary_rows(cases: list[ComplaintCaseRead], *, site: str | None, building: str | None, report_label: str) -> list[tuple[str, str]]:
@@ -338,6 +400,7 @@ def build_complaint_export_report(
     report_type: str | None,
     building: str | None = None,
     allowed_sites: list[str] | None = None,
+    cover_options: ComplaintReportCoverOptions | None = None,
 ) -> ComplaintExportReport:
     normalized_type = normalize_report_type(report_type)
     normalized_building = service.normalize_building(building) if service.normalize_description(building) else None
@@ -376,6 +439,7 @@ def build_complaint_export_report(
         primary_sheet_name=sheet_name,
         file_stem=file_stem,
         raw_sheets=raw_sheets,
+        cover_settings=build_cover_settings(cover_options),
     )
 
 
@@ -465,6 +529,7 @@ def _progress_metrics(report: ComplaintExportReport) -> dict[str, float]:
 
 
 def _cover_metadata(report: ComplaintExportReport) -> dict[str, str]:
+    cover = report.cover_settings
     site_label = service.normalize_description(report.site or "전체 단지")
     building_scope = service.normalize_description(report.building or "전체 동")
     report_date = report.generated_at.strftime("%Y년 %m월 %d일")
@@ -478,10 +543,10 @@ def _cover_metadata(report: ComplaintExportReport) -> dict[str, str]:
         "report_date": report_date,
         "scope": building_scope,
         "report_kind": f"{report.report_label} 보고",
-        "department": "시설관리 운영팀",
-        "company_name": "KA Facility OS",
+        "company_name": _normalize_cover_text(getattr(cover, "company_name", None), fallback="KA Facility OS", max_length=120) or "KA Facility OS",
+        "contractor_name": _normalize_cover_text(getattr(cover, "contractor_name", None), fallback="외벽 재도장 협력업체", max_length=120) or "외벽 재도장 협력업체",
         "company_subtitle": "Field Operations Reporting",
-        "submission_copy": "상기 현황을 아래와 같이 보고드립니다.",
+        "submission_copy": _normalize_cover_text(getattr(cover, "submission_phrase", None), fallback="상기 현황을 아래와 같이 보고드립니다.", max_length=500) or "상기 현황을 아래와 같이 보고드립니다.",
     }
 
 
@@ -526,7 +591,17 @@ def _draw_approval_box(pdf: canvas.Canvas, *, x: float, y_top: float, width: flo
         )
 
 
-def _draw_company_logo(pdf: canvas.Canvas, *, x: float, y_top: float, width: float, height: float, font_name: str, metadata: dict[str, str]) -> None:
+def _draw_company_logo(
+    pdf: canvas.Canvas,
+    *,
+    x: float,
+    y_top: float,
+    width: float,
+    height: float,
+    font_name: str,
+    metadata: dict[str, str],
+    report: ComplaintExportReport,
+) -> None:
     y_bottom = y_top - height
     pdf.setStrokeColor(PDF_LINE)
     pdf.setFillColor(colors.white)
@@ -534,13 +609,32 @@ def _draw_company_logo(pdf: canvas.Canvas, *, x: float, y_top: float, width: flo
     icon_size = min(height - 10, 18 * mm)
     icon_x = x + 7
     icon_y = y_bottom + (height - icon_size) / 2
-    pdf.setFillColor(PDF_LOGO_GREEN)
-    pdf.roundRect(icon_x, icon_y, icon_size, icon_size, 5, stroke=0, fill=1)
-    pdf.setFillColor(PDF_LOGO_ORANGE)
-    pdf.circle(icon_x + icon_size - 4, icon_y + icon_size - 4, 4, stroke=0, fill=1)
-    pdf.setFillColor(colors.white)
-    pdf.setFont(font_name, 14)
-    pdf.drawCentredString(icon_x + icon_size / 2, icon_y + icon_size / 2 - 5, "KA")
+    cover = report.cover_settings
+    image_drawn = False
+    if cover and cover.logo_bytes:
+        try:
+            reader = ImageReader(io.BytesIO(cover.logo_bytes))
+            pdf.drawImage(
+                reader,
+                icon_x,
+                icon_y,
+                width=icon_size,
+                height=icon_size,
+                preserveAspectRatio=True,
+                anchor="c",
+                mask="auto",
+            )
+            image_drawn = True
+        except Exception:
+            image_drawn = False
+    if not image_drawn:
+        pdf.setFillColor(PDF_LOGO_GREEN)
+        pdf.roundRect(icon_x, icon_y, icon_size, icon_size, 5, stroke=0, fill=1)
+        pdf.setFillColor(PDF_LOGO_ORANGE)
+        pdf.circle(icon_x + icon_size - 4, icon_y + icon_size - 4, 4, stroke=0, fill=1)
+        pdf.setFillColor(colors.white)
+        pdf.setFont(font_name, 14)
+        pdf.drawCentredString(icon_x + icon_size / 2, icon_y + icon_size / 2 - 5, "KA")
     text_x = icon_x + icon_size + 8
     pdf.setFillColor(PDF_TEXT)
     pdf.setFont(font_name, 11)
@@ -548,7 +642,8 @@ def _draw_company_logo(pdf: canvas.Canvas, *, x: float, y_top: float, width: flo
     pdf.setFillColor(PDF_MUTED)
     pdf.setFont(font_name, 8)
     pdf.drawString(text_x, y_bottom + height - 25, metadata["company_subtitle"])
-    pdf.drawString(text_x, y_bottom + 9, "관리사무소 제출 문서")
+    contractor_line = simpleSplit("시공사 " + metadata["contractor_name"], font_name, 8, max(width - icon_size - 20, 40))
+    pdf.drawString(text_x, y_bottom + 9, (contractor_line or ["관리사무소 제출 문서"])[0][:48])
 
 
 def _draw_cover_information_panel(
@@ -560,7 +655,7 @@ def _draw_cover_information_panel(
     font_name: str,
     metadata: dict[str, str],
 ) -> float:
-    panel_height = 26 * mm
+    panel_height = 30 * mm
     y_bottom = start_y - panel_height
     pdf.setStrokeColor(PDF_LINE)
     pdf.setFillColor(colors.white)
@@ -574,8 +669,8 @@ def _draw_cover_information_panel(
     ]
     row_two = [
         ("단지명", metadata["site_name"]),
-        ("범위", metadata["scope"]),
-        ("작성부서", metadata["department"]),
+        ("제출사", metadata["company_name"]),
+        ("시공사", metadata["contractor_name"]),
     ]
     row_three = [("공사명", metadata["construction_name"])]
     cell_width = (width - 2 * PDF_MARGIN - 16) / 3
@@ -800,6 +895,7 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
         height=logo_height,
         font_name=font_name,
         metadata=metadata,
+        report=report,
     )
     approval_x = width - PDF_MARGIN - approval_width
     _draw_approval_box(pdf, x=approval_x, y_top=top_y, width=approval_width, height=approval_height, font_name=font_name)

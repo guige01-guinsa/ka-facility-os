@@ -30,6 +30,7 @@ from app.domains.complaints.schemas import (
     ComplaintMessageRead,
     ComplaintMessageSend,
     ComplaintMessageUpdate,
+    ComplaintPdfExportRequest,
 )
 from app.domains.iam.core import _principal_site_scope
 from app.domains.iam.security import _require_site_access, require_permission
@@ -194,6 +195,40 @@ def export_complaints_pdf(
         resource_type="complaint_report",
         resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
         detail={"site": report.site, "building": report.building, "report_type": report.report_type},
+    )
+    return Response(
+        content=reporting.build_complaint_export_pdf(report),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
+
+
+@router.post("/api/complaints/reports/pdf", response_model=None)
+def export_complaints_pdf_with_cover(
+    payload: ComplaintPdfExportRequest,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> Response:
+    _require_site_access(principal, payload.site)
+    allowed_sites = _allowed_sites_for_principal(principal) if payload.site is None else None
+    report = reporting.build_complaint_export_report(
+        site=payload.site,
+        report_type=payload.report_type,
+        building=payload.building,
+        allowed_sites=allowed_sites,
+        cover_options=payload.cover,
+    )
+    file_name = _safe_download_filename(f"{report.file_stem}.pdf")
+    _write_audit_log(
+        principal=principal,
+        action="complaints.report.export.pdf",
+        resource_type="complaint_report",
+        resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
+        detail={
+            "site": report.site,
+            "building": report.building,
+            "report_type": report.report_type,
+            "custom_cover": bool(report.cover_settings),
+        },
     )
     return Response(
         content=reporting.build_complaint_export_pdf(report),

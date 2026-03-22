@@ -27,6 +27,10 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "칼럼 숨김/표시" in page.text
     assert "전체 표시" in page.text
     assert "기본값 복원" in page.text
+    assert "출력 표지 설정" in page.text
+    assert "회사명 선택" in page.text
+    assert "공사업체 선택" in page.text
+    assert "로고 이미지 불러오기" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:
@@ -372,6 +376,26 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
     assert pdf_resp.status_code == 200
     assert pdf_resp.headers["content-type"].startswith("application/pdf")
     assert pdf_resp.content.startswith(b"%PDF")
+
+    custom_pdf_resp = app_client.post(
+        "/api/complaints/reports/pdf",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "report_type": "all",
+            "building": "103동",
+            "cover": {
+                "company_name": "테스트 시설관리",
+                "contractor_name": "테스트 도장업체",
+                "submission_phrase": "귀 관리사무소 검토를 위해 아래와 같이 제출합니다.",
+                "logo_data_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5tQAAAAASUVORK5CYII=",
+                "logo_file_name": "test-logo.png",
+            },
+        },
+    )
+    assert custom_pdf_resp.status_code == 200
+    assert custom_pdf_resp.headers["content-type"].startswith("application/pdf")
+    assert custom_pdf_resp.content.startswith(b"%PDF")
 
 
 def test_complaint_admin_record_grid_bulk_api(app_client: TestClient) -> None:
