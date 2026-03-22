@@ -23,6 +23,11 @@ from app.database import (
 )
 from app.domains.complaints import message_provider
 from app.domains.complaints.schemas import (
+    ComplaintAdminBulkDeleteRequest,
+    ComplaintAdminBulkMutationResultRead,
+    ComplaintAdminBulkUpdateRequest,
+    ComplaintAdminRecordColumnRead,
+    ComplaintAdminRecordListRead,
     ComplaintAttachmentRead,
     ComplaintAttachmentUpdate,
     ComplaintCaseCreate,
@@ -91,6 +96,104 @@ STATUS_VALUES = set(STATUS_LABELS)
 PRIORITY_VALUES = set(PRIORITY_LABELS)
 ATTACHMENT_KIND_VALUES = set(ATTACHMENT_KIND_LABELS)
 SOURCE_CHANNEL_VALUES = {"manual", "phone", "visit", "office", "legacy_excel", "other"}
+ADMIN_RECORD_LABELS: dict[str, str] = {
+    "cases": "민원 본체",
+    "events": "처리 이력",
+    "attachments": "첨부",
+    "messages": "문자 이력",
+    "cost_items": "비용 항목",
+}
+
+
+def _choice_options(values: dict[str, str]) -> list[dict[str, str]]:
+    return [{"value": key, "label": label} for key, label in values.items()]
+
+
+ADMIN_RECORD_COLUMNS: dict[str, list[ComplaintAdminRecordColumnRead]] = {
+    "cases": [
+        ComplaintAdminRecordColumnRead(key="id", label="ID"),
+        ComplaintAdminRecordColumnRead(key="building", label="동"),
+        ComplaintAdminRecordColumnRead(key="unit_number", label="호수"),
+        ComplaintAdminRecordColumnRead(key="title", label="제목", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="description", label="민원내용", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="status", label="상태", editable=True, input_type="select", options=_choice_options(STATUS_LABELS)),
+        ComplaintAdminRecordColumnRead(key="complaint_type", label="민원유형", editable=True, input_type="select", options=_choice_options(COMPLAINT_TYPE_LABELS)),
+        ComplaintAdminRecordColumnRead(key="priority", label="우선순위", editable=True, input_type="select", options=_choice_options(PRIORITY_LABELS)),
+        ComplaintAdminRecordColumnRead(key="assignee", label="담당자", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="resident_name", label="입주민명", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="contact_phone", label="연락처", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="scheduled_visit_at", label="방문예정", editable=True, input_type="datetime"),
+        ComplaintAdminRecordColumnRead(key="recurrence_flag", label="재민원", editable=True, input_type="checkbox"),
+        ComplaintAdminRecordColumnRead(key="linked_work_order_id", label="연결 작업지시", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(
+            key="source_channel",
+            label="접수경로",
+            editable=True,
+            input_type="select",
+            options=_choice_options({value: value for value in sorted(SOURCE_CHANNEL_VALUES)}),
+        ),
+        ComplaintAdminRecordColumnRead(key="updated_at", label="수정일시"),
+    ],
+    "events": [
+        ComplaintAdminRecordColumnRead(key="id", label="ID"),
+        ComplaintAdminRecordColumnRead(key="complaint_id", label="민원ID"),
+        ComplaintAdminRecordColumnRead(key="building", label="동"),
+        ComplaintAdminRecordColumnRead(key="unit_number", label="호수"),
+        ComplaintAdminRecordColumnRead(key="event_type", label="이력유형", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="note", label="메모", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="detail_json", label="detail JSON", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="from_status", label="이전상태"),
+        ComplaintAdminRecordColumnRead(key="to_status", label="이후상태"),
+        ComplaintAdminRecordColumnRead(key="actor_username", label="작성자"),
+        ComplaintAdminRecordColumnRead(key="created_at", label="작성일시"),
+    ],
+    "attachments": [
+        ComplaintAdminRecordColumnRead(key="id", label="ID"),
+        ComplaintAdminRecordColumnRead(key="complaint_id", label="민원ID"),
+        ComplaintAdminRecordColumnRead(key="building", label="동"),
+        ComplaintAdminRecordColumnRead(key="unit_number", label="호수"),
+        ComplaintAdminRecordColumnRead(key="attachment_kind", label="첨부구분", editable=True, input_type="select", options=_choice_options(ATTACHMENT_KIND_LABELS)),
+        ComplaintAdminRecordColumnRead(key="file_name", label="파일명"),
+        ComplaintAdminRecordColumnRead(key="content_type", label="콘텐츠유형"),
+        ComplaintAdminRecordColumnRead(key="file_size", label="파일크기"),
+        ComplaintAdminRecordColumnRead(key="note", label="메모", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="uploaded_by", label="업로더"),
+        ComplaintAdminRecordColumnRead(key="uploaded_at", label="업로드일시"),
+    ],
+    "messages": [
+        ComplaintAdminRecordColumnRead(key="id", label="ID"),
+        ComplaintAdminRecordColumnRead(key="complaint_id", label="민원ID"),
+        ComplaintAdminRecordColumnRead(key="building", label="동"),
+        ComplaintAdminRecordColumnRead(key="unit_number", label="호수"),
+        ComplaintAdminRecordColumnRead(key="recipient", label="수신번호", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="template_key", label="템플릿", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="body", label="문자내용", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="delivery_status", label="발송상태", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="error", label="오류", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="provider_name", label="업체"),
+        ComplaintAdminRecordColumnRead(key="sent_by", label="발송자"),
+        ComplaintAdminRecordColumnRead(key="sent_at", label="발송일시"),
+        ComplaintAdminRecordColumnRead(key="created_at", label="기록일시"),
+    ],
+    "cost_items": [
+        ComplaintAdminRecordColumnRead(key="id", label="ID"),
+        ComplaintAdminRecordColumnRead(key="complaint_id", label="민원ID"),
+        ComplaintAdminRecordColumnRead(key="building", label="동"),
+        ComplaintAdminRecordColumnRead(key="unit_number", label="호수"),
+        ComplaintAdminRecordColumnRead(key="cost_category", label="비용구분", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="item_name", label="항목명", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="quantity", label="수량", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="unit_price", label="단가", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="material_cost", label="자재비", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="labor_cost", label="인건비", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="vendor_cost", label="외주비", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="total_cost", label="총액", editable=True, input_type="number"),
+        ComplaintAdminRecordColumnRead(key="note", label="메모", editable=True, input_type="textarea"),
+        ComplaintAdminRecordColumnRead(key="approved_by", label="승인자", editable=True, input_type="text"),
+        ComplaintAdminRecordColumnRead(key="approved_at", label="승인일시", editable=True, input_type="datetime"),
+        ComplaintAdminRecordColumnRead(key="updated_at", label="수정일시"),
+    ],
+}
 
 
 def complaint_type_label(value: str) -> str:
@@ -470,6 +573,397 @@ def _row_to_cost_item_model(row: dict[str, Any]) -> ComplaintCostItemRead:
         created_by=str(row.get("created_by") or "system"),
         created_at=_as_datetime(row["created_at"]),
         updated_at=_as_datetime(row["updated_at"]),
+    )
+
+
+def _serialize_admin_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.astimezone().isoformat() if value.tzinfo is not None else value.isoformat(sep=" ")
+    return value
+
+
+def _coerce_admin_change_value(value: Any) -> Any:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized == "":
+            return None
+        if normalized.lower() == "true":
+            return True
+        if normalized.lower() == "false":
+            return False
+        return normalized
+    return value
+
+
+def _ensure_admin_site_allowed(site: str, allowed_sites: list[str] | None) -> str:
+    normalized_site = _normalize_site(site)
+    if allowed_sites is not None and normalized_site not in set(allowed_sites):
+        raise HTTPException(status_code=403, detail="Site access denied")
+    return normalized_site
+
+
+def _search_matches(row: dict[str, Any], query: str) -> bool:
+    if not query:
+        return True
+    haystack = " ".join(str(value or "") for value in row.values()).lower()
+    return query in haystack
+
+
+def _limit_records(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    normalized_limit = max(1, min(int(limit or 200), 1000))
+    return rows[:normalized_limit]
+
+
+def _admin_case_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "building": str(row["building"]),
+        "unit_number": str(row["unit_number"]),
+        "title": str(row["title"]),
+        "description": str(row["description"]),
+        "status": str(row["status"]),
+        "complaint_type": str(row["complaint_type"]),
+        "priority": str(row["priority"]),
+        "assignee": str(row["assignee"]) if row.get("assignee") else None,
+        "resident_name": str(row["resident_name"]) if row.get("resident_name") else None,
+        "contact_phone": str(row["contact_phone"]) if row.get("contact_phone") else None,
+        "scheduled_visit_at": _serialize_admin_value(_as_optional_datetime(row.get("scheduled_visit_at"))),
+        "recurrence_flag": bool(row.get("recurrence_flag")),
+        "linked_work_order_id": int(row["linked_work_order_id"]) if row.get("linked_work_order_id") is not None else None,
+        "source_channel": str(row.get("source_channel") or "manual"),
+        "updated_at": _serialize_admin_value(_as_datetime(row["updated_at"])),
+    }
+
+
+def _admin_event_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "complaint_id": int(row["complaint_id"]),
+        "building": str(row["building"]),
+        "unit_number": str(row["unit_number"]),
+        "event_type": str(row["event_type"]),
+        "note": str(row.get("note") or ""),
+        "detail_json": str(row.get("detail_json") or "{}"),
+        "from_status": str(row["from_status"]) if row.get("from_status") else None,
+        "to_status": str(row["to_status"]) if row.get("to_status") else None,
+        "actor_username": str(row.get("actor_username") or "system"),
+        "created_at": _serialize_admin_value(_as_datetime(row["created_at"])),
+    }
+
+
+def _admin_attachment_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "complaint_id": int(row["complaint_id"]),
+        "building": str(row["building"]),
+        "unit_number": str(row["unit_number"]),
+        "attachment_kind": str(row.get("attachment_kind") or "intake"),
+        "file_name": str(row["file_name"]),
+        "content_type": str(row.get("content_type") or "application/octet-stream"),
+        "file_size": int(row.get("file_size") or 0),
+        "note": str(row.get("note") or ""),
+        "uploaded_by": str(row.get("uploaded_by") or "system"),
+        "uploaded_at": _serialize_admin_value(_as_datetime(row["uploaded_at"])),
+    }
+
+
+def _admin_message_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "complaint_id": int(row["complaint_id"]),
+        "building": str(row["building"]),
+        "unit_number": str(row["unit_number"]),
+        "recipient": str(row["recipient"]),
+        "template_key": str(row["template_key"]) if row.get("template_key") else None,
+        "body": str(row.get("body") or ""),
+        "delivery_status": str(row.get("delivery_status") or "queued"),
+        "error": str(row["error"]) if row.get("error") else None,
+        "provider_name": str(row.get("provider_name") or "stub"),
+        "sent_by": str(row.get("sent_by") or "system"),
+        "sent_at": _serialize_admin_value(_as_optional_datetime(row.get("sent_at"))),
+        "created_at": _serialize_admin_value(_as_datetime(row["created_at"])),
+    }
+
+
+def _admin_cost_item_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "complaint_id": int(row["complaint_id"]),
+        "building": str(row["building"]),
+        "unit_number": str(row["unit_number"]),
+        "cost_category": str(row["cost_category"]),
+        "item_name": str(row["item_name"]),
+        "quantity": float(row.get("quantity") or 0.0),
+        "unit_price": float(row.get("unit_price") or 0.0),
+        "material_cost": float(row.get("material_cost") or 0.0),
+        "labor_cost": float(row.get("labor_cost") or 0.0),
+        "vendor_cost": float(row.get("vendor_cost") or 0.0),
+        "total_cost": float(row.get("total_cost") or 0.0),
+        "note": str(row.get("note") or ""),
+        "approved_by": str(row["approved_by"]) if row.get("approved_by") else None,
+        "approved_at": _serialize_admin_value(_as_optional_datetime(row.get("approved_at"))),
+        "updated_at": _serialize_admin_value(_as_datetime(row["updated_at"])),
+    }
+
+
+def _list_admin_case_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        select(complaint_cases)
+        .where(complaint_cases.c.site == site)
+        .order_by(complaint_cases.c.updated_at.desc(), complaint_cases.c.id.desc())
+    ).mappings().all()
+    return [_admin_case_row(row) for row in rows]
+
+
+def _list_admin_event_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
+    stmt = (
+        select(
+            complaint_events.c.id,
+            complaint_events.c.complaint_id,
+            complaint_events.c.event_type,
+            complaint_events.c.note,
+            complaint_events.c.detail_json,
+            complaint_events.c.from_status,
+            complaint_events.c.to_status,
+            complaint_events.c.actor_username,
+            complaint_events.c.created_at,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+        )
+        .select_from(complaint_events.join(complaint_cases, complaint_events.c.complaint_id == complaint_cases.c.id))
+        .where(complaint_cases.c.site == site)
+        .order_by(complaint_events.c.created_at.desc(), complaint_events.c.id.desc())
+    )
+    rows = conn.execute(stmt).mappings().all()
+    return [_admin_event_row(row) for row in rows]
+
+
+def _list_admin_attachment_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
+    stmt = (
+        select(
+            complaint_attachments.c.id,
+            complaint_attachments.c.complaint_id,
+            complaint_attachments.c.attachment_kind,
+            complaint_attachments.c.file_name,
+            complaint_attachments.c.content_type,
+            complaint_attachments.c.file_size,
+            complaint_attachments.c.note,
+            complaint_attachments.c.uploaded_by,
+            complaint_attachments.c.uploaded_at,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+        )
+        .select_from(complaint_attachments.join(complaint_cases, complaint_attachments.c.complaint_id == complaint_cases.c.id))
+        .where(complaint_cases.c.site == site)
+        .order_by(complaint_attachments.c.uploaded_at.desc(), complaint_attachments.c.id.desc())
+    )
+    rows = conn.execute(stmt).mappings().all()
+    return [_admin_attachment_row(row) for row in rows]
+
+
+def _list_admin_message_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
+    stmt = (
+        select(
+            complaint_messages.c.id,
+            complaint_messages.c.complaint_id,
+            complaint_messages.c.recipient,
+            complaint_messages.c.template_key,
+            complaint_messages.c.body,
+            complaint_messages.c.delivery_status,
+            complaint_messages.c.error,
+            complaint_messages.c.provider_name,
+            complaint_messages.c.sent_by,
+            complaint_messages.c.sent_at,
+            complaint_messages.c.created_at,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+        )
+        .select_from(complaint_messages.join(complaint_cases, complaint_messages.c.complaint_id == complaint_cases.c.id))
+        .where(complaint_cases.c.site == site)
+        .order_by(complaint_messages.c.created_at.desc(), complaint_messages.c.id.desc())
+    )
+    rows = conn.execute(stmt).mappings().all()
+    return [_admin_message_row(row) for row in rows]
+
+
+def _list_admin_cost_item_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
+    stmt = (
+        select(
+            complaint_cost_items.c.id,
+            complaint_cost_items.c.complaint_id,
+            complaint_cost_items.c.cost_category,
+            complaint_cost_items.c.item_name,
+            complaint_cost_items.c.quantity,
+            complaint_cost_items.c.unit_price,
+            complaint_cost_items.c.material_cost,
+            complaint_cost_items.c.labor_cost,
+            complaint_cost_items.c.vendor_cost,
+            complaint_cost_items.c.total_cost,
+            complaint_cost_items.c.note,
+            complaint_cost_items.c.approved_by,
+            complaint_cost_items.c.approved_at,
+            complaint_cost_items.c.updated_at,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+        )
+        .select_from(complaint_cost_items.join(complaint_cases, complaint_cost_items.c.complaint_id == complaint_cases.c.id))
+        .where(complaint_cases.c.site == site)
+        .order_by(complaint_cost_items.c.updated_at.desc(), complaint_cost_items.c.id.desc())
+    )
+    rows = conn.execute(stmt).mappings().all()
+    return [_admin_cost_item_row(row) for row in rows]
+
+
+def list_admin_records(
+    *,
+    site: str,
+    record_type: str,
+    limit: int = 200,
+    q: str | None = None,
+    allowed_sites: list[str] | None = None,
+) -> ComplaintAdminRecordListRead:
+    normalized_site = _ensure_admin_site_allowed(site, allowed_sites)
+    if record_type not in ADMIN_RECORD_COLUMNS:
+        raise HTTPException(status_code=422, detail=f"record_type must be one of {sorted(ADMIN_RECORD_COLUMNS)}")
+    query = normalize_description(q).lower()
+    with get_conn() as conn:
+        if record_type == "cases":
+            rows = _list_admin_case_rows(conn, site=normalized_site)
+        elif record_type == "events":
+            rows = _list_admin_event_rows(conn, site=normalized_site)
+        elif record_type == "attachments":
+            rows = _list_admin_attachment_rows(conn, site=normalized_site)
+        elif record_type == "messages":
+            rows = _list_admin_message_rows(conn, site=normalized_site)
+        else:
+            rows = _list_admin_cost_item_rows(conn, site=normalized_site)
+    filtered_rows = [row for row in rows if _search_matches(row, query)]
+    return ComplaintAdminRecordListRead(
+        record_type=record_type,
+        record_label=ADMIN_RECORD_LABELS[record_type],
+        site=normalized_site,
+        columns=ADMIN_RECORD_COLUMNS[record_type],
+        rows=_limit_records(filtered_rows, limit),
+        total_count=len(filtered_rows),
+    )
+
+
+def _assert_record_site(record_type: str, record_id: int, site: str) -> None:
+    with get_conn() as conn:
+        if record_type == "cases":
+            case_row = _load_case_row(conn, record_id)
+        elif record_type == "events":
+            event_row = _load_event_row(conn, record_id)
+            case_row = _load_case_row(conn, int(event_row["complaint_id"]))
+        elif record_type == "attachments":
+            attachment_row = _load_attachment_row(conn, record_id)
+            if str(attachment_row["site"]) != site:
+                raise HTTPException(status_code=403, detail="Site access denied")
+            return
+        elif record_type == "messages":
+            message_row = _load_message_row(conn, record_id)
+            if str(message_row["site"]) != site:
+                raise HTTPException(status_code=403, detail="Site access denied")
+            return
+        else:
+            cost_row = _load_cost_item_row(conn, record_id)
+            case_row = _load_case_row(conn, int(cost_row["complaint_id"]))
+    if str(case_row["site"]) != site:
+        raise HTTPException(status_code=403, detail="Site access denied")
+
+
+def bulk_update_admin_records(
+    *,
+    payload: ComplaintAdminBulkUpdateRequest,
+    principal: dict[str, Any] | None = None,
+    allowed_sites: list[str] | None = None,
+) -> ComplaintAdminBulkMutationResultRead:
+    normalized_site = _ensure_admin_site_allowed(payload.site, allowed_sites)
+    updated_rows: list[dict[str, Any]] = []
+    for item in payload.rows:
+        _assert_record_site(payload.record_type, int(item.record_id), normalized_site)
+        changes = {key: _coerce_admin_change_value(value) for key, value in dict(item.changes).items()}
+        if not changes:
+            continue
+        if payload.record_type == "cases":
+            updated = update_case(
+                complaint_id=int(item.record_id),
+                payload=ComplaintCaseUpdate.model_validate(changes),
+                principal=principal,
+            )
+            updated_rows.append(_admin_case_row(updated.model_dump()))
+        elif payload.record_type == "events":
+            if "detail_json" in changes:
+                raw_detail = changes.pop("detail_json")
+                if raw_detail in {None, ""}:
+                    changes["detail"] = {}
+                else:
+                    try:
+                        changes["detail"] = json.loads(str(raw_detail))
+                    except json.JSONDecodeError as exc:
+                        raise HTTPException(status_code=422, detail=f"invalid detail_json for event {item.record_id}") from exc
+            updated = update_event(
+                event_id=int(item.record_id),
+                payload=ComplaintEventUpdate.model_validate(changes),
+                principal=principal,
+            )
+            updated_rows.append(_admin_event_row({**updated.model_dump(mode="json"), "building": "", "unit_number": "", "detail_json": json.dumps(updated.detail, ensure_ascii=False)}))
+        elif payload.record_type == "attachments":
+            updated = update_attachment(
+                attachment_id=int(item.record_id),
+                payload=ComplaintAttachmentUpdate.model_validate(changes),
+                principal=principal,
+            )
+            updated_rows.append(_admin_attachment_row({**updated.model_dump(mode="json"), "building": "", "unit_number": ""}))
+        elif payload.record_type == "messages":
+            updated = update_message(
+                message_id=int(item.record_id),
+                payload=ComplaintMessageUpdate.model_validate(changes),
+                principal=principal,
+            )
+            updated_rows.append(_admin_message_row({**updated.model_dump(mode="json"), "building": "", "unit_number": ""}))
+        else:
+            updated = update_cost_item(
+                cost_item_id=int(item.record_id),
+                payload=ComplaintCostItemUpdate.model_validate(changes),
+                principal=principal,
+            )
+            updated_rows.append(_admin_cost_item_row({**updated.model_dump(mode="json"), "building": "", "unit_number": ""}))
+    return ComplaintAdminBulkMutationResultRead(
+        record_type=payload.record_type,
+        updated_count=len(updated_rows),
+        deleted_count=0,
+        rows=updated_rows,
+    )
+
+
+def bulk_delete_admin_records(
+    *,
+    payload: ComplaintAdminBulkDeleteRequest,
+    principal: dict[str, Any] | None = None,
+    allowed_sites: list[str] | None = None,
+) -> ComplaintAdminBulkMutationResultRead:
+    normalized_site = _ensure_admin_site_allowed(payload.site, allowed_sites)
+    deleted_count = 0
+    for record_id in payload.record_ids:
+        record_id_int = int(record_id)
+        _assert_record_site(payload.record_type, record_id_int, normalized_site)
+        if payload.record_type == "cases":
+            deleted = delete_case(complaint_id=record_id_int, principal=principal)
+        elif payload.record_type == "events":
+            deleted = delete_event(event_id=record_id_int, principal=principal)
+        elif payload.record_type == "attachments":
+            deleted = delete_attachment(attachment_id=record_id_int, principal=principal)
+        elif payload.record_type == "messages":
+            deleted = delete_message(message_id=record_id_int, principal=principal)
+        else:
+            deleted = delete_cost_item(cost_item_id=record_id_int, principal=principal)
+        deleted_count += 1 if deleted.get("deleted") else 0
+    return ComplaintAdminBulkMutationResultRead(
+        record_type=payload.record_type,
+        updated_count=0,
+        deleted_count=deleted_count,
+        rows=[],
     )
 
 

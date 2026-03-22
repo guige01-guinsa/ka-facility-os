@@ -21,6 +21,7 @@ ComplaintStatus = Literal[
 ComplaintPriority = Literal["low", "medium", "high", "urgent"]
 ComplaintAttachmentKind = Literal["intake", "before", "after", "other"]
 ComplaintDeliveryKind = Literal["sms"]
+ComplaintAdminRecordType = Literal["cases", "events", "attachments", "messages", "cost_items"]
 
 
 class ComplaintCaseCreate(BaseModel):
@@ -234,3 +235,44 @@ class ComplaintHouseholdHistoryRead(BaseModel):
     unit_number: str
     resident_name: Optional[str] = None
     complaints: list[ComplaintCaseRead]
+
+
+class ComplaintAdminRecordColumnRead(BaseModel):
+    key: str
+    label: str
+    editable: bool = False
+    input_type: str = "text"
+    options: list[dict[str, str]] = Field(default_factory=list)
+
+
+class ComplaintAdminRecordListRead(BaseModel):
+    record_type: ComplaintAdminRecordType
+    record_label: str
+    site: str
+    columns: list[ComplaintAdminRecordColumnRead]
+    rows: list[dict[str, Any]]
+    total_count: int
+
+
+class ComplaintAdminBulkUpdateRow(BaseModel):
+    record_id: int = Field(gt=0)
+    changes: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComplaintAdminBulkUpdateRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    record_type: ComplaintAdminRecordType
+    rows: list[ComplaintAdminBulkUpdateRow] = Field(min_length=1)
+
+
+class ComplaintAdminBulkDeleteRequest(BaseModel):
+    site: str = Field(min_length=1, max_length=120)
+    record_type: ComplaintAdminRecordType
+    record_ids: list[int] = Field(min_length=1)
+
+
+class ComplaintAdminBulkMutationResultRead(BaseModel):
+    record_type: ComplaintAdminRecordType
+    updated_count: int = 0
+    deleted_count: int = 0
+    rows: list[dict[str, Any]] = Field(default_factory=list)

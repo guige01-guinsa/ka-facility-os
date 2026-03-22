@@ -235,7 +235,15 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
       border-color: rgba(190, 206, 226, 0.95);
       color: #3d5f84;
     }
+    .tab-strip { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 8px; }
+    .tab-btn.active {
+      border-color: rgba(111, 197, 171, 0.98);
+      background: rgba(233, 248, 242, 0.98);
+      color: #0c5d4d;
+      box-shadow: 0 10px 18px rgba(15, 63, 47, 0.08);
+    }
     .workspace { margin-top: 14px; display: grid; grid-template-columns: 390px minmax(0, 1fr); gap: 12px; align-items: start; }
+    .workspace.hidden, .surface.hidden { display: none; }
     .queue-list { padding: 0 14px 14px; display: grid; gap: 8px; max-height: calc(100vh - 250px); overflow: auto; }
     .queue-item { border: 1px solid rgba(211, 224, 239, 0.95); border-radius: 16px; padding: 12px; background: rgba(251, 253, 255, 0.92); cursor: pointer; }
     .queue-item.active { border-color: rgba(92, 145, 197, 0.98); background: linear-gradient(140deg, rgba(246, 251, 255, 0.98) 0%, rgba(235, 248, 244, 0.96) 100%); }
@@ -269,12 +277,21 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
     .timeline-item .meta, .mini-item .meta { margin-top: 5px; color: var(--muted); font-size: 12px; line-height: 1.4; }
     .empty { border: 1px dashed rgba(184, 205, 228, 0.96); border-radius: 14px; background: rgba(249, 252, 255, 0.92); padding: 16px; text-align: center; color: var(--muted); font-size: 13px; }
     .debug-box { margin-top: 14px; border: 1px solid rgba(204, 218, 234, 0.95); border-radius: 16px; background: rgba(248, 251, 255, 0.94); padding: 12px; overflow: auto; font-size: 12px; line-height: 1.45; color: #2f4d6d; min-height: 100px; white-space: pre-wrap; }
+    .table-wrap { margin-top: 12px; overflow: auto; border: 1px solid rgba(209, 223, 241, 0.96); border-radius: 16px; background: rgba(252, 254, 255, 0.96); }
+    table.data-table { width: 100%; border-collapse: collapse; min-width: 1080px; }
+    table.data-table th, table.data-table td { border-bottom: 1px solid rgba(221, 231, 243, 0.92); padding: 8px; vertical-align: top; text-align: left; font-size: 12px; }
+    table.data-table th { position: sticky; top: 0; z-index: 1; background: rgba(241, 248, 255, 0.98); color: #325578; font-weight: 900; }
+    table.data-table tr.row-dirty { background: rgba(255, 249, 227, 0.7); }
+    .table-input, .table-select, .table-textarea { width: 100%; min-width: 120px; padding: 8px 9px; border-radius: 10px; font-size: 12px; }
+    .table-textarea { min-height: 72px; resize: vertical; }
+    .table-checkbox { width: 16px; height: 16px; }
+    .table-readonly { white-space: pre-wrap; color: #294968; line-height: 1.45; }
     details.surface summary { list-style: none; cursor: pointer; padding: 14px; font-size: 17px; font-weight: 900; color: var(--brand); }
     details.surface summary::-webkit-details-marker { display: none; }
     details.surface .surface-body { padding-top: 0; }
     .hint-line { margin-top: 10px; color: #5c738f; font-size: 12px; line-height: 1.45; }
     @media (max-width: 1180px) { .mast { grid-template-columns: 1fr; } .workspace { grid-template-columns: 1fr; } .queue-list { max-height: none; } }
-    @media (max-width: 900px) { .dock, .detail-grid, .grid-4 { grid-template-columns: 1fr; } .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-grid { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 900px) { .dock, .detail-grid, .grid-4 { grid-template-columns: 1fr; } .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .summary-grid { grid-template-columns: 1fr 1fr; } table.data-table { min-width: 900px; } }
     @media (max-width: 640px) { .wrap { padding-inline: 10px; } .grid-2, .grid-3, .summary-grid { grid-template-columns: 1fr; } .mast { border-radius: 22px; padding: 14px; } .surface-head { padding-inline: 12px; } .surface-body, .queue-list { padding-inline: 12px; } .snapshot-grid { grid-template-columns: 1fr 1fr; } .stat-card strong { font-size: 28px; } }
   </style>
 </head>
@@ -378,7 +395,11 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
         </div>
       </section>
     </section>
-    <section class="workspace">
+    <div class="tab-strip">
+      <button class="tab-btn active" id="fieldTabBtn" type="button">현장 처리</button>
+      <button class="tab-btn" id="dbTabBtn" type="button">DB 레코드 관리</button>
+    </div>
+    <section class="workspace" id="fieldWorkspace">
       <section class="surface queue-panel">
         <div class="surface-head"><h2>현장 큐</h2><div class="meta" id="queueCountLabel">0건</div></div>
         <div class="queue-list" id="queueList"><div class="empty">큐를 불러오면 여기에 민원 카드가 나타납니다.</div></div>
@@ -419,6 +440,34 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
         </section>
       </section>
     </section>
+    <section class="surface hidden" id="dbWorkspace" style="margin-top: 14px;">
+      <div class="surface-head"><h2>DB 레코드 전용 관리</h2><div class="meta" id="dbMeta">site 미설정</div></div>
+      <div class="surface-body">
+        <div class="grid-4">
+          <div class="field-stack">
+            <label class="caption" for="dbRecordType">레코드 종류</label>
+            <select id="dbRecordType">
+              <option value="cases">민원 본체</option>
+              <option value="events">처리 이력</option>
+              <option value="attachments">첨부</option>
+              <option value="messages">문자 이력</option>
+              <option value="cost_items">비용 항목</option>
+            </select>
+          </div>
+          <div class="field-stack"><label class="caption" for="dbLimit">행 수</label><input id="dbLimit" type="number" min="1" max="1000" value="200" /></div>
+          <div class="field-stack"><label class="caption" for="dbSearch">검색</label><input id="dbSearch" placeholder="동/호, 제목, 메모, 파일명 등" /></div>
+          <div class="field-stack"><label class="caption" for="dbSiteMirror">site</label><input id="dbSiteMirror" placeholder="현재 site 사용" readonly /></div>
+        </div>
+        <div class="actions">
+          <button class="run" id="loadDbRecordsBtn" type="button">DB 레코드 불러오기</button>
+          <button class="ghost" id="applyDbChangesBtn" type="button">변경 일괄 적용</button>
+          <button class="ghost" id="deleteDbRowsBtn" type="button">선택 행 삭제</button>
+          <button class="ghost" id="clearDbSelectionBtn" type="button">선택/변경 초기화</button>
+        </div>
+        <div class="hint-line" id="dbSummary">site를 기준으로 DB 레코드 원본을 표로 불러오고, 수정된 셀만 일괄 반영합니다.</div>
+        <div class="table-wrap" id="dbTableWrap"><div class="empty">DB 레코드 관리 탭에서 레코드를 불러오면 표가 나타납니다.</div></div>
+      </div>
+    </section>
     <pre id="debugBox" class="debug-box">ready</pre>
   </div>
   <script>
@@ -445,7 +494,16 @@ const MESSAGE_TEMPLATE_BUILDERS = {
   revisit_notice: (caseData) => '안녕하세요. 추가 조치가 필요하여 ' + (formatPlainDateTime(caseData.scheduled_visit_at) || '재방문 일정') + ' 재방문 예정입니다.',
 };
 
-const state = { queue: [], filteredQueue: [], selectedId: null, detail: null, householdHistory: null, recurrenceOnly: false };
+const state = {
+  queue: [],
+  filteredQueue: [],
+  selectedId: null,
+  detail: null,
+  householdHistory: null,
+  recurrenceOnly: false,
+  activeTab: 'field',
+  dbEditor: { recordType: 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {} },
+};
 let tokenHideTimer = null;
 const elements = {
   noticeBar: document.getElementById('noticeBar'),
@@ -465,6 +523,21 @@ const elements = {
   reportBuilding: document.getElementById('reportBuilding'),
   downloadXlsxBtn: document.getElementById('downloadXlsxBtn'),
   downloadPdfBtn: document.getElementById('downloadPdfBtn'),
+  fieldTabBtn: document.getElementById('fieldTabBtn'),
+  dbTabBtn: document.getElementById('dbTabBtn'),
+  fieldWorkspace: document.getElementById('fieldWorkspace'),
+  dbWorkspace: document.getElementById('dbWorkspace'),
+  dbRecordType: document.getElementById('dbRecordType'),
+  dbLimit: document.getElementById('dbLimit'),
+  dbSearch: document.getElementById('dbSearch'),
+  dbSiteMirror: document.getElementById('dbSiteMirror'),
+  loadDbRecordsBtn: document.getElementById('loadDbRecordsBtn'),
+  applyDbChangesBtn: document.getElementById('applyDbChangesBtn'),
+  deleteDbRowsBtn: document.getElementById('deleteDbRowsBtn'),
+  clearDbSelectionBtn: document.getElementById('clearDbSelectionBtn'),
+  dbSummary: document.getElementById('dbSummary'),
+  dbTableWrap: document.getElementById('dbTableWrap'),
+  dbMeta: document.getElementById('dbMeta'),
   queueMeta: document.getElementById('queueMeta'),
   queueCountLabel: document.getElementById('queueCountLabel'),
   queueList: document.getElementById('queueList'),
@@ -669,8 +742,11 @@ function clearPrefs() {
   state.selectedId = null;
   state.detail = null;
   state.householdHistory = null;
+  state.dbEditor = { recordType: elements.dbRecordType.value || 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {} };
   renderStats();
   renderQueue();
+  syncDbSiteMirror();
+  renderDbEditorTable();
   clearDetail('토큰과 site 저장값을 지웠습니다. 다시 입력하면 현장 큐를 불러올 수 있습니다.');
   setNotice('저장된 세션 정보를 초기화했습니다.', 'success');
 }
@@ -759,6 +835,212 @@ async function downloadComplaintReport(format) {
   } finally {
     setTokenVisibility(false);
   }
+}
+
+function syncDbSiteMirror() {
+  if (!elements.dbSiteMirror) return;
+  elements.dbSiteMirror.value = elements.siteFilter.value.trim();
+}
+
+function updateDbSummary(message) {
+  if (!elements.dbSummary) return;
+  if (message) {
+    elements.dbSummary.textContent = message;
+    return;
+  }
+  const dirtyCount = Object.keys(state.dbEditor.dirtyRows || {}).length;
+  const selectedCount = Object.keys(state.dbEditor.selectedIds || {}).length;
+  elements.dbSummary.textContent = '총 ' + state.dbEditor.totalCount + '행 · 변경 ' + dirtyCount + '행 · 선택 ' + selectedCount + '행';
+}
+
+function switchTab(nextTab) {
+  state.activeTab = nextTab === 'db' ? 'db' : 'field';
+  elements.fieldWorkspace.classList.toggle('hidden', state.activeTab !== 'field');
+  elements.dbWorkspace.classList.toggle('hidden', state.activeTab !== 'db');
+  elements.fieldTabBtn.classList.toggle('active', state.activeTab === 'field');
+  elements.dbTabBtn.classList.toggle('active', state.activeTab === 'db');
+  syncDbSiteMirror();
+  if (state.activeTab === 'db' && !state.dbEditor.rows.length && elements.siteFilter.value.trim()) {
+    loadDbRecords();
+  }
+}
+
+function dbColumnByKey(key) {
+  return (state.dbEditor.columns || []).find((column) => column.key === key) || null;
+}
+
+function buildDbCellValue(column, value) {
+  if (column.input_type === 'checkbox') {
+    return '<input class="table-checkbox db-cell-input" type="checkbox" data-record-id="' + column.__recordId + '" data-field="' + escapeHtml(column.key) + '"' + (value ? ' checked' : '') + ' />';
+  }
+  if (column.input_type === 'select') {
+    const options = Array.isArray(column.options) ? column.options : [];
+    return '<select class="table-select db-cell-input" data-record-id="' + column.__recordId + '" data-field="' + escapeHtml(column.key) + '">' +
+      options.map((option) => '<option value="' + escapeHtml(option.value) + '"' + (String(option.value ?? '') === String(value ?? '') ? ' selected' : '') + '>' + escapeHtml(option.label) + '</option>').join('') +
+      '<option value=""' + (value == null || value === '' ? ' selected' : '') + '>비움</option>' +
+    '</select>';
+  }
+  if (column.input_type === 'textarea') {
+    return '<textarea class="table-textarea db-cell-input" data-record-id="' + column.__recordId + '" data-field="' + escapeHtml(column.key) + '">' + escapeHtml(value ?? '') + '</textarea>';
+  }
+  const inputType = column.input_type === 'number' ? 'number' : 'text';
+  const step = column.input_type === 'number' ? ' step="0.1"' : '';
+  return '<input class="table-input db-cell-input" type="' + inputType + '"' + step + ' data-record-id="' + column.__recordId + '" data-field="' + escapeHtml(column.key) + '" value="' + escapeHtml(value ?? '') + '" />';
+}
+
+function renderDbEditorTable() {
+  if (!state.dbEditor.rows.length) {
+    elements.dbTableWrap.innerHTML = '<div class="empty">조건에 맞는 DB 레코드가 없습니다.</div>';
+    updateDbSummary();
+    return;
+  }
+  const columns = state.dbEditor.columns || [];
+  const headerHtml = '<tr><th style="width:44px;"><input id="dbSelectAllRows" class="table-checkbox" type="checkbox" /></th>' + columns.map((column) => '<th>' + escapeHtml(column.label) + '</th>').join('') + '</tr>';
+  const bodyHtml = state.dbEditor.rows.map((row) => {
+    const recordId = Number(row.id);
+    const isDirty = Boolean(state.dbEditor.dirtyRows[recordId]);
+    const isSelected = Boolean(state.dbEditor.selectedIds[recordId]);
+    const cellHtml = columns.map((column) => {
+      const value = row[column.key];
+      if (!column.editable) return '<td><div class="table-readonly">' + escapeHtml(value ?? '') + '</div></td>';
+      const inputColumn = Object.assign({}, column, { __recordId: recordId });
+      return '<td>' + buildDbCellValue(inputColumn, value) + '</td>';
+    }).join('');
+    return '<tr class="' + (isDirty ? 'row-dirty' : '') + '" data-record-id="' + recordId + '"><td><input class="table-checkbox db-select-row" type="checkbox" data-record-id="' + recordId + '"' + (isSelected ? ' checked' : '') + ' /></td>' + cellHtml + '</tr>';
+  }).join('');
+  elements.dbTableWrap.innerHTML = '<table class="data-table"><thead>' + headerHtml + '</thead><tbody>' + bodyHtml + '</tbody></table>';
+  document.getElementById('dbSelectAllRows')?.addEventListener('change', (event) => {
+    const checked = Boolean(event.target.checked);
+    state.dbEditor.selectedIds = {};
+    state.dbEditor.rows.forEach((row) => {
+      if (checked) state.dbEditor.selectedIds[Number(row.id)] = true;
+    });
+    renderDbEditorTable();
+  });
+  elements.dbTableWrap.querySelectorAll('.db-select-row').forEach((node) => {
+    node.addEventListener('change', () => {
+      const recordId = Number(node.getAttribute('data-record-id'));
+      if (!Number.isFinite(recordId)) return;
+      if (node.checked) state.dbEditor.selectedIds[recordId] = true;
+      else delete state.dbEditor.selectedIds[recordId];
+      updateDbSummary();
+    });
+  });
+  elements.dbTableWrap.querySelectorAll('.db-cell-input').forEach((node) => {
+    const eventName = node.tagName === 'SELECT' || node.type === 'checkbox' ? 'change' : 'input';
+    node.addEventListener(eventName, () => {
+      const recordId = Number(node.getAttribute('data-record-id'));
+      const field = node.getAttribute('data-field') || '';
+      const column = dbColumnByKey(field);
+      if (!Number.isFinite(recordId) || !column) return;
+      const originalRow = state.dbEditor.originalRows[recordId] || {};
+      const nextValue = column.input_type === 'checkbox' ? Boolean(node.checked) : node.value;
+      const originalComparable = column.input_type === 'checkbox' ? Boolean(originalRow[field]) : String(originalRow[field] ?? '');
+      const nextComparable = column.input_type === 'checkbox' ? Boolean(nextValue) : String(nextValue ?? '');
+      if (originalComparable === nextComparable) {
+        if (state.dbEditor.dirtyRows[recordId]) {
+          delete state.dbEditor.dirtyRows[recordId][field];
+          if (!Object.keys(state.dbEditor.dirtyRows[recordId]).length) delete state.dbEditor.dirtyRows[recordId];
+        }
+      } else {
+        if (!state.dbEditor.dirtyRows[recordId]) state.dbEditor.dirtyRows[recordId] = {};
+        state.dbEditor.dirtyRows[recordId][field] = nextValue;
+      }
+      node.closest('tr')?.classList.toggle('row-dirty', Boolean(state.dbEditor.dirtyRows[recordId]));
+      updateDbSummary();
+    });
+  });
+  updateDbSummary();
+}
+
+async function loadDbRecords() {
+  try {
+    const session = ensureSession(true);
+    syncDbSiteMirror();
+    const params = new URLSearchParams({
+      site: session.site,
+      record_type: elements.dbRecordType.value || 'cases',
+      limit: String(numberValue(elements.dbLimit.value) || 200),
+    });
+    const search = nullIfBlank(elements.dbSearch.value);
+    if (search) params.set('q', search);
+    setNotice('DB 레코드를 불러오는 중입니다.');
+    const payload = await request('/api/complaints/admin/records?' + params.toString());
+    state.dbEditor.recordType = payload.record_type;
+    state.dbEditor.columns = Array.isArray(payload.columns) ? payload.columns : [];
+    state.dbEditor.rows = Array.isArray(payload.rows) ? payload.rows : [];
+    state.dbEditor.totalCount = Number(payload.total_count || state.dbEditor.rows.length);
+    state.dbEditor.dirtyRows = {};
+    state.dbEditor.selectedIds = {};
+    state.dbEditor.originalRows = {};
+    state.dbEditor.rows.forEach((row) => { state.dbEditor.originalRows[Number(row.id)] = Object.assign({}, row); });
+    elements.dbMeta.textContent = session.site + ' · ' + (payload.record_label || payload.record_type) + ' · ' + state.dbEditor.totalCount + '행';
+    renderDbEditorTable();
+    setNotice('DB 레코드를 불러왔습니다.', 'success');
+  } catch (error) {
+    state.dbEditor.columns = [];
+    state.dbEditor.rows = [];
+    state.dbEditor.totalCount = 0;
+    state.dbEditor.dirtyRows = {};
+    state.dbEditor.selectedIds = {};
+    state.dbEditor.originalRows = {};
+    renderDbEditorTable();
+    setNotice(error.message || 'DB 레코드 불러오기에 실패했습니다.', 'error');
+    writeDebug('load-db-records-error', error);
+  }
+}
+
+async function applyDbChanges() {
+  const dirtyRows = Object.entries(state.dbEditor.dirtyRows || {}).map(([recordId, changes]) => ({ record_id: Number(recordId), changes: changes }));
+  if (!dirtyRows.length) {
+    setNotice('적용할 변경 행이 없습니다.', 'error');
+    return;
+  }
+  try {
+    const session = ensureSession(true);
+    setNotice('DB 변경을 일괄 적용하는 중입니다.');
+    const result = await request('/api/complaints/admin/records/bulk-update', {
+      method: 'POST',
+      json: { site: session.site, record_type: state.dbEditor.recordType, rows: dirtyRows },
+    });
+    writeDebug('db-bulk-update', result);
+    await loadDbRecords();
+    setNotice('변경 ' + (result.updated_count || 0) + '행을 적용했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || 'DB 변경 적용에 실패했습니다.', 'error');
+    writeDebug('apply-db-changes-error', error);
+  }
+}
+
+async function deleteSelectedDbRows() {
+  const recordIds = Object.keys(state.dbEditor.selectedIds || {}).map((value) => Number(value)).filter((value) => Number.isFinite(value));
+  if (!recordIds.length) {
+    setNotice('삭제할 행을 먼저 선택하세요.', 'error');
+    return;
+  }
+  if (!window.confirm('선택한 ' + recordIds.length + '개 레코드를 삭제할까요?')) return;
+  try {
+    const session = ensureSession(true);
+    setNotice('선택 레코드를 삭제하는 중입니다.');
+    const result = await request('/api/complaints/admin/records/bulk-delete', {
+      method: 'POST',
+      json: { site: session.site, record_type: state.dbEditor.recordType, record_ids: recordIds },
+    });
+    writeDebug('db-bulk-delete', result);
+    await loadDbRecords();
+    setNotice('선택한 레코드 ' + (result.deleted_count || 0) + '행을 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '선택 레코드 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-db-rows-error', error);
+  }
+}
+
+function clearDbSelectionAndChanges() {
+  state.dbEditor.dirtyRows = {};
+  state.dbEditor.selectedIds = {};
+  state.dbEditor.rows = Object.values(state.dbEditor.originalRows || {}).map((row) => Object.assign({}, row));
+  renderDbEditorTable();
+  setNotice('DB 관리 탭의 선택과 미적용 변경을 지웠습니다.', 'success');
 }
 
 function sortQueue(rows) {
@@ -1560,6 +1842,8 @@ function resetFilters() {
 }
 
 function bindStaticEvents() {
+  elements.fieldTabBtn.addEventListener('click', () => switchTab('field'));
+  elements.dbTabBtn.addEventListener('click', () => switchTab('db'));
   elements.refreshQueueBtn.addEventListener('click', () => loadQueue({ selectId: state.selectedId }));
   elements.savePrefsBtn.addEventListener('click', () => {
     savePrefs();
@@ -1579,6 +1863,7 @@ function bindStaticEvents() {
   elements.token.addEventListener('change', savePrefs);
   elements.siteFilter.addEventListener('change', () => {
     if (!elements.createSite.value.trim()) elements.createSite.value = elements.siteFilter.value.trim();
+    syncDbSiteMirror();
     savePrefs();
   });
   elements.seedCreateSiteBtn.addEventListener('click', () => {
@@ -1587,16 +1872,25 @@ function bindStaticEvents() {
   elements.downloadXlsxBtn.addEventListener('click', () => downloadComplaintReport('xlsx'));
   elements.downloadPdfBtn.addEventListener('click', () => downloadComplaintReport('pdf'));
   elements.createComplaintBtn.addEventListener('click', createComplaint);
+  elements.loadDbRecordsBtn.addEventListener('click', loadDbRecords);
+  elements.applyDbChangesBtn.addEventListener('click', applyDbChanges);
+  elements.deleteDbRowsBtn.addEventListener('click', deleteSelectedDbRows);
+  elements.clearDbSelectionBtn.addEventListener('click', clearDbSelectionAndChanges);
+  elements.dbRecordType.addEventListener('change', () => { state.dbEditor.recordType = elements.dbRecordType.value || 'cases'; });
+  elements.dbSearch.addEventListener('keydown', (event) => { if (event.key === 'Enter') loadDbRecords(); });
   elements.token.addEventListener('blur', () => setTokenVisibility(false));
 }
 
 function init() {
   loadPrefs();
   setTokenVisibility(false);
+  syncDbSiteMirror();
   bindStaticEvents();
   renderStats();
   renderQueue();
+  renderDbEditorTable();
   clearDetail();
+  switchTab('field');
   writeDebug('ready', '토큰과 site를 입력하면 현장 큐를 불러올 수 있습니다.');
   if (elements.token.value.trim() && elements.siteFilter.value.trim()) loadQueue();
 }

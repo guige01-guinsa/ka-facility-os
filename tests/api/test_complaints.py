@@ -23,6 +23,7 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "토큰 보기" in page.text
     assert "엑셀 출력" in page.text
     assert "PDF 출력" in page.text
+    assert "DB 레코드 관리" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:
@@ -368,3 +369,184 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
     assert pdf_resp.status_code == 200
     assert pdf_resp.headers["content-type"].startswith("application/pdf")
     assert pdf_resp.content.startswith(b"%PDF")
+
+
+def test_complaint_admin_record_grid_bulk_api(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    created = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "building": "105동",
+            "unit_number": "1102호",
+            "description": "관리 탭 배치수정 테스트",
+            "contact_phone": "010-1111-9999",
+        },
+    )
+    assert created.status_code == 201
+    complaint_id = created.json()["id"]
+
+    added_event = app_client.post(
+        f"/api/complaints/{complaint_id}/events",
+        headers=headers,
+        json={"event_type": "note", "note": "배치 수정 전", "detail": {"step": 1}},
+    )
+    assert added_event.status_code == 201
+    event_id = added_event.json()["id"]
+
+    attachment = app_client.post(
+        f"/api/complaints/{complaint_id}/attachments",
+        headers=headers,
+        data={"attachment_kind": "intake", "note": "관리 탭 첨부"},
+        files={"file": ("admin-grid.txt", b"admin-grid", "text/plain")},
+    )
+    assert attachment.status_code == 201
+    attachment_id = attachment.json()["id"]
+
+    message = app_client.post(
+        f"/api/complaints/{complaint_id}/messages",
+        headers=headers,
+        json={"body": "관리 탭 메시지"},
+    )
+    assert message.status_code == 201
+    message_id = message.json()["id"]
+
+    cost = app_client.post(
+        f"/api/complaints/{complaint_id}/cost-items",
+        headers=headers,
+        json={"cost_category": "other", "item_name": "관리 탭 비용", "quantity": 1, "unit_price": 5000},
+    )
+    assert cost.status_code == 201
+    cost_item_id = cost.json()["id"]
+
+    listed_cases = app_client.get(
+        "/api/complaints/admin/records?site=연산더샵&record_type=cases&limit=50&q=관리 탭",
+        headers=headers,
+    )
+    assert listed_cases.status_code == 200
+    listed_cases_body = listed_cases.json()
+    assert listed_cases_body["record_type"] == "cases"
+    assert listed_cases_body["total_count"] >= 1
+    assert any(row["id"] == complaint_id for row in listed_cases_body["rows"])
+
+    listed_events = app_client.get(
+        "/api/complaints/admin/records?site=연산더샵&record_type=events&limit=50&q=배치 수정 전",
+        headers=headers,
+    )
+    assert listed_events.status_code == 200
+    assert listed_events.json()["total_count"] >= 1
+
+    listed_attachments = app_client.get(
+        "/api/complaints/admin/records?site=연산더샵&record_type=attachments&limit=50&q=admin-grid.txt",
+        headers=headers,
+    )
+    assert listed_attachments.status_code == 200
+    assert listed_attachments.json()["total_count"] == 1
+
+    listed_messages = app_client.get(
+        "/api/complaints/admin/records?site=연산더샵&record_type=messages&limit=50&q=관리 탭 메시지",
+        headers=headers,
+    )
+    assert listed_messages.status_code == 200
+    assert listed_messages.json()["total_count"] == 1
+
+    listed_costs = app_client.get(
+        "/api/complaints/admin/records?site=연산더샵&record_type=cost_items&limit=50&q=관리 탭 비용",
+        headers=headers,
+    )
+    assert listed_costs.status_code == 200
+    assert listed_costs.json()["total_count"] == 1
+
+    updated_cases = app_client.post(
+        "/api/complaints/admin/records/bulk-update",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "record_type": "cases",
+            "rows": [
+                {
+                    "record_id": complaint_id,
+                    "changes": {
+                        "title": "관리 탭 배치수정 완료",
+                        "assignee": "일괄편집반",
+                        "status": "assigned",
+                    },
+                }
+            ],
+        },
+    )
+    assert updated_cases.status_code == 200
+    assert updated_cases.json()["updated_count"] == 1
+
+    updated_events = app_client.post(
+        "/api/complaints/admin/records/bulk-update",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "record_type": "events",
+            "rows": [
+                {
+                    "record_id": event_id,
+                    "changes": {
+                        "event_type": "rework",
+                        "note": "배치 수정 후",
+                        "detail_json": "{\"step\": 2}",
+                    },
+                }
+            ],
+        },
+    )
+    assert updated_events.status_code == 200
+    assert updated_events.json()["updated_count"] == 1
+
+    case_detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
+    assert case_detail.status_code == 200
+    case_detail_body = case_detail.json()
+    assert case_detail_body["case"]["title"] == "관리 탭 배치수정 완료"
+    assert case_detail_body["case"]["assignee"] == "일괄편집반"
+    assert case_detail_body["case"]["status"] == "assigned"
+    assert any(item["id"] == event_id and item["note"] == "배치 수정 후" for item in case_detail_body["events"])
+
+    deleted_children = app_client.post(
+        "/api/complaints/admin/records/bulk-delete",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "record_type": "attachments",
+            "record_ids": [attachment_id],
+        },
+    )
+    assert deleted_children.status_code == 200
+    assert deleted_children.json()["deleted_count"] == 1
+
+    deleted_messages = app_client.post(
+        "/api/complaints/admin/records/bulk-delete",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "record_type": "messages",
+            "record_ids": [message_id],
+        },
+    )
+    assert deleted_messages.status_code == 200
+    assert deleted_messages.json()["deleted_count"] == 1
+
+    deleted_costs = app_client.post(
+        "/api/complaints/admin/records/bulk-delete",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "record_type": "cost_items",
+            "record_ids": [cost_item_id],
+        },
+    )
+    assert deleted_costs.status_code == 200
+    assert deleted_costs.json()["deleted_count"] == 1
+
+    after_delete_detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
+    assert after_delete_detail.status_code == 200
+    after_delete_body = after_delete_detail.json()
+    assert after_delete_body["attachments"] == []
+    assert after_delete_body["messages"] == []
+    assert after_delete_body["cost_items"] == []

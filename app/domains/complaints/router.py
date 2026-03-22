@@ -10,6 +10,10 @@ from fastapi.responses import HTMLResponse
 
 from app.domains.complaints import reporting, service
 from app.domains.complaints.schemas import (
+    ComplaintAdminBulkDeleteRequest,
+    ComplaintAdminBulkMutationResultRead,
+    ComplaintAdminBulkUpdateRequest,
+    ComplaintAdminRecordListRead,
     ComplaintAttachmentRead,
     ComplaintAttachmentUpdate,
     ComplaintCaseCreate,
@@ -91,6 +95,50 @@ def list_complaints(
         assignee=assignee,
         recurrence_flag=recurrence_flag,
         allowed_sites=_allowed_sites_for_principal(principal) if site is None else None,
+    )
+
+
+@router.get("/api/complaints/admin/records", response_model=ComplaintAdminRecordListRead)
+def list_complaint_admin_records(
+    site: str,
+    record_type: Annotated[str, Query()],
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    q: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> ComplaintAdminRecordListRead:
+    _require_site_access(principal, site)
+    return service.list_admin_records(
+        site=site,
+        record_type=record_type,
+        limit=limit,
+        q=q,
+        allowed_sites=_allowed_sites_for_principal(principal),
+    )
+
+
+@router.post("/api/complaints/admin/records/bulk-update", response_model=ComplaintAdminBulkMutationResultRead)
+def bulk_update_complaint_admin_records(
+    payload: ComplaintAdminBulkUpdateRequest,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintAdminBulkMutationResultRead:
+    _require_site_access(principal, payload.site)
+    return service.bulk_update_admin_records(
+        payload=payload,
+        principal=principal,
+        allowed_sites=_allowed_sites_for_principal(principal),
+    )
+
+
+@router.post("/api/complaints/admin/records/bulk-delete", response_model=ComplaintAdminBulkMutationResultRead)
+def bulk_delete_complaint_admin_records(
+    payload: ComplaintAdminBulkDeleteRequest,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintAdminBulkMutationResultRead:
+    _require_site_access(principal, payload.site)
+    return service.bulk_delete_admin_records(
+        payload=payload,
+        principal=principal,
+        allowed_sites=_allowed_sites_for_principal(principal),
     )
 
 
