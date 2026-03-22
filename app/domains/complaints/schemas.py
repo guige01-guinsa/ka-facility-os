@@ -100,6 +100,12 @@ class ComplaintEventCreate(BaseModel):
     detail: dict[str, Any] = Field(default_factory=dict)
 
 
+class ComplaintEventUpdate(BaseModel):
+    event_type: Optional[str] = Field(default=None, min_length=1, max_length=40)
+    note: Optional[str] = None
+    detail: Optional[dict[str, Any]] = None
+
+
 class ComplaintEventRead(BaseModel):
     id: int
     complaint_id: int
@@ -131,11 +137,24 @@ class ComplaintAttachmentRead(BaseModel):
     uploaded_at: datetime
 
 
+class ComplaintAttachmentUpdate(BaseModel):
+    attachment_kind: Optional[ComplaintAttachmentKind] = None
+    note: Optional[str] = None
+
+
 class ComplaintMessageSend(BaseModel):
     delivery_kind: ComplaintDeliveryKind = "sms"
     template_key: Optional[str] = Field(default=None, max_length=80)
     recipient: Optional[str] = Field(default=None, max_length=40)
     body: str = Field(min_length=1)
+
+
+class ComplaintMessageUpdate(BaseModel):
+    template_key: Optional[str] = Field(default=None, max_length=80)
+    recipient: Optional[str] = Field(default=None, max_length=40)
+    body: Optional[str] = None
+    delivery_status: Optional[str] = Field(default=None, max_length=20)
+    error: Optional[str] = None
 
 
 class ComplaintMessageRead(BaseModel):
@@ -165,6 +184,20 @@ class ComplaintCostItemCreate(BaseModel):
     vendor_cost: float = Field(default=0.0, ge=0)
     total_cost: Optional[float] = Field(default=None, ge=0)
     note: str = ""
+
+
+class ComplaintCostItemUpdate(BaseModel):
+    cost_category: Optional[str] = Field(default=None, max_length=40)
+    item_name: Optional[str] = Field(default=None, max_length=120)
+    quantity: Optional[float] = Field(default=None, ge=0)
+    unit_price: Optional[float] = Field(default=None, ge=0)
+    material_cost: Optional[float] = Field(default=None, ge=0)
+    labor_cost: Optional[float] = Field(default=None, ge=0)
+    vendor_cost: Optional[float] = Field(default=None, ge=0)
+    total_cost: Optional[float] = Field(default=None, ge=0)
+    note: Optional[str] = None
+    approved_by: Optional[str] = Field(default=None, max_length=80)
+    approved_at: Optional[datetime] = None
 
 
 class ComplaintCostItemRead(BaseModel):
@@ -201,4 +234,3 @@ class ComplaintHouseholdHistoryRead(BaseModel):
     unit_number: str
     resident_name: Optional[str] = None
     complaints: list[ComplaintCaseRead]
-

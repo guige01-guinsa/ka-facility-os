@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import func, insert, select, update
+from sqlalchemy import delete, func, insert, select, update
 
 from app.database import (
     complaint_attachments,
@@ -24,17 +24,21 @@ from app.database import (
 from app.domains.complaints import message_provider
 from app.domains.complaints.schemas import (
     ComplaintAttachmentRead,
+    ComplaintAttachmentUpdate,
     ComplaintCaseCreate,
     ComplaintCaseRead,
     ComplaintCaseUpdate,
     ComplaintCostItemCreate,
     ComplaintCostItemRead,
+    ComplaintCostItemUpdate,
     ComplaintDetailRead,
     ComplaintEventCreate,
     ComplaintEventRead,
+    ComplaintEventUpdate,
     ComplaintHouseholdHistoryRead,
     ComplaintMessageRead,
     ComplaintMessageSend,
+    ComplaintMessageUpdate,
 )
 from app.domains.iam.service import _write_audit_log
 from app.domains.ops.inspection_service import (
@@ -43,6 +47,7 @@ from app.domains.ops.inspection_service import (
     _is_allowed_evidence_content_type,
     _normalize_evidence_storage_backend,
     _read_evidence_blob,
+    _resolve_evidence_storage_abs_path,
     _scan_evidence_bytes,
     _write_evidence_blob,
 )
@@ -290,6 +295,46 @@ def _load_attachment_row(conn: Any, attachment_id: int) -> dict[str, Any]:
     if row is None:
         raise HTTPException(status_code=404, detail="complaint attachment not found")
     return row
+
+
+def _load_event_row(conn: Any, event_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        select(complaint_events).where(complaint_events.c.id == event_id).limit(1)
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="complaint event not found")
+    return row
+
+
+def _load_message_row(conn: Any, message_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        select(complaint_messages).where(complaint_messages.c.id == message_id).limit(1)
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="complaint message not found")
+    return row
+
+
+def _load_cost_item_row(conn: Any, cost_item_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        select(complaint_cost_items).where(complaint_cost_items.c.id == cost_item_id).limit(1)
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="complaint cost item not found")
+    return row
+
+
+def _delete_attachment_blob(row: dict[str, Any]) -> None:
+    if _normalize_evidence_storage_backend(str(row.get("storage_backend") or "db")) != "fs":
+        return
+    storage_key = str(row.get("storage_key") or "").strip()
+    abs_path = _resolve_evidence_storage_abs_path(storage_key) if storage_key else None
+    if abs_path is None or not abs_path.exists() or not abs_path.is_file():
+        return
+    try:
+        abs_path.unlink()
+    except OSError:
+        pass
 
 
 def _apply_status_transition_fields(existing_row: dict[str, Any], *, to_status: str, now: datetime) -> dict[str, Any]:
@@ -676,6 +721,58 @@ def update_case(
     return _row_to_case_model(row)
 
 
+def delete_case(
+    *,
+    complaint_id: int,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        row = _load_case_row(conn, complaint_id)
+        attachment_rows = conn.execute(
+            select(complaint_attachments).where(complaint_attachments.c.complaint_id == complaint_id)
+        ).mappings().all()
+        event_count = int(
+            conn.execute(delete(complaint_events).where(complaint_events.c.complaint_id == complaint_id)).rowcount or 0
+        )
+        message_count = int(
+            conn.execute(delete(complaint_messages).where(complaint_messages.c.complaint_id == complaint_id)).rowcount or 0
+        )
+        cost_count = int(
+            conn.execute(delete(complaint_cost_items).where(complaint_cost_items.c.complaint_id == complaint_id)).rowcount or 0
+        )
+        attachment_count = int(
+            conn.execute(delete(complaint_attachments).where(complaint_attachments.c.complaint_id == complaint_id)).rowcount or 0
+        )
+        deleted_case_count = int(
+            conn.execute(delete(complaint_cases).where(complaint_cases.c.id == complaint_id)).rowcount or 0
+        )
+    for attachment_row in attachment_rows:
+        _delete_attachment_blob(dict(attachment_row))
+    _write_audit_log(
+        principal=principal,
+        action="complaints.case.delete",
+        resource_type="complaint_case",
+        resource_id=str(complaint_id),
+        detail={
+            "site": str(row["site"]),
+            "building": str(row["building"]),
+            "unit_number": str(row["unit_number"]),
+            "events_deleted": event_count,
+            "attachments_deleted": attachment_count,
+            "messages_deleted": message_count,
+            "cost_items_deleted": cost_count,
+        },
+    )
+    return {
+        "deleted": deleted_case_count > 0,
+        "complaint_id": complaint_id,
+        "events_deleted": event_count,
+        "attachments_deleted": attachment_count,
+        "messages_deleted": message_count,
+        "cost_items_deleted": cost_count,
+    }
+
+
 def add_event(
     *,
     complaint_id: int,
@@ -717,6 +814,61 @@ def add_event(
         detail={"event_type": payload.event_type, "to_status": payload.to_status},
     )
     return _row_to_event_model(row or {})
+
+
+def get_event(*, event_id: int) -> ComplaintEventRead:
+    with get_conn() as conn:
+        row = _load_event_row(conn, event_id)
+    return _row_to_event_model(row)
+
+
+def update_event(
+    *,
+    event_id: int,
+    payload: ComplaintEventUpdate,
+    principal: dict[str, Any] | None = None,
+) -> ComplaintEventRead:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return get_event(event_id=event_id)
+    now = _now()
+    with get_conn() as conn:
+        existing = _load_event_row(conn, event_id)
+        updated_values: dict[str, Any] = {}
+        if "event_type" in changes:
+            updated_values["event_type"] = normalize_description(changes["event_type"]) or "note"
+        if "note" in changes:
+            updated_values["note"] = normalize_description(changes["note"])
+        if "detail" in changes:
+            updated_values["detail_json"] = _json_dumps(changes["detail"])
+        conn.execute(update(complaint_events).where(complaint_events.c.id == event_id).values(**updated_values))
+        row = _load_event_row(conn, event_id)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.event.update",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"event_id": event_id, "changed_fields": sorted(updated_values.keys()), "updated_at": now.isoformat()},
+    )
+    return _row_to_event_model(row)
+
+
+def delete_event(
+    *,
+    event_id: int,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        existing = _load_event_row(conn, event_id)
+        deleted_count = int(conn.execute(delete(complaint_events).where(complaint_events.c.id == event_id)).rowcount or 0)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.event.delete",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"event_id": event_id, "event_type": str(existing["event_type"])},
+    )
+    return {"deleted": deleted_count > 0, "event_id": event_id, "complaint_id": int(existing["complaint_id"])}
 
 
 def list_events(*, complaint_id: int) -> list[ComplaintEventRead]:
@@ -799,6 +951,64 @@ def add_attachment(
     return _row_to_attachment_model(row)
 
 
+def get_attachment(*, attachment_id: int) -> ComplaintAttachmentRead:
+    with get_conn() as conn:
+        row = _load_attachment_row(conn, attachment_id)
+    return _row_to_attachment_model(row)
+
+
+def update_attachment(
+    *,
+    attachment_id: int,
+    payload: ComplaintAttachmentUpdate,
+    principal: dict[str, Any] | None = None,
+) -> ComplaintAttachmentRead:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return get_attachment(attachment_id=attachment_id)
+    with get_conn() as conn:
+        existing = _load_attachment_row(conn, attachment_id)
+        updated_values: dict[str, Any] = {}
+        if "attachment_kind" in changes:
+            attachment_kind = normalize_description(changes["attachment_kind"]).lower()
+            if attachment_kind not in ATTACHMENT_KIND_VALUES:
+                raise HTTPException(status_code=422, detail=f"attachment_kind must be one of {sorted(ATTACHMENT_KIND_VALUES)}")
+            updated_values["attachment_kind"] = attachment_kind
+        if "note" in changes:
+            updated_values["note"] = normalize_description(changes["note"])
+        conn.execute(update(complaint_attachments).where(complaint_attachments.c.id == attachment_id).values(**updated_values))
+        row = _load_attachment_row(conn, attachment_id)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.attachment.update",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"attachment_id": attachment_id, "changed_fields": sorted(updated_values.keys())},
+    )
+    return _row_to_attachment_model(row)
+
+
+def delete_attachment(
+    *,
+    attachment_id: int,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        existing = _load_attachment_row(conn, attachment_id)
+        deleted_count = int(
+            conn.execute(delete(complaint_attachments).where(complaint_attachments.c.id == attachment_id)).rowcount or 0
+        )
+    _delete_attachment_blob(existing)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.attachment.delete",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"attachment_id": attachment_id, "file_name": str(existing["file_name"])},
+    )
+    return {"deleted": deleted_count > 0, "attachment_id": attachment_id, "complaint_id": int(existing["complaint_id"])}
+
+
 def get_attachment_download_payload(*, attachment_id: int) -> dict[str, Any]:
     with get_conn() as conn:
         row = _load_attachment_row(conn, attachment_id)
@@ -867,6 +1077,70 @@ def send_case_message(
     return _row_to_message_model(row or {})
 
 
+def get_message(*, message_id: int) -> ComplaintMessageRead:
+    with get_conn() as conn:
+        row = _load_message_row(conn, message_id)
+    return _row_to_message_model(row)
+
+
+def update_message(
+    *,
+    message_id: int,
+    payload: ComplaintMessageUpdate,
+    principal: dict[str, Any] | None = None,
+) -> ComplaintMessageRead:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return get_message(message_id=message_id)
+    with get_conn() as conn:
+        existing = _load_message_row(conn, message_id)
+        updated_values: dict[str, Any] = {}
+        if "template_key" in changes:
+            updated_values["template_key"] = normalize_description(changes["template_key"]) or None
+        if "recipient" in changes:
+            recipient = normalize_phone(changes["recipient"])
+            if not recipient:
+                raise HTTPException(status_code=422, detail="recipient phone is required")
+            updated_values["recipient"] = recipient
+        if "body" in changes:
+            body = normalize_description(changes["body"])
+            if not body:
+                raise HTTPException(status_code=422, detail="body cannot be empty")
+            updated_values["body"] = body
+        if "delivery_status" in changes:
+            updated_values["delivery_status"] = normalize_description(changes["delivery_status"]).lower() or "queued"
+        if "error" in changes:
+            updated_values["error"] = normalize_description(changes["error"]) or None
+        conn.execute(update(complaint_messages).where(complaint_messages.c.id == message_id).values(**updated_values))
+        row = _load_message_row(conn, message_id)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.message.update",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"message_id": message_id, "changed_fields": sorted(updated_values.keys())},
+    )
+    return _row_to_message_model(row)
+
+
+def delete_message(
+    *,
+    message_id: int,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        existing = _load_message_row(conn, message_id)
+        deleted_count = int(conn.execute(delete(complaint_messages).where(complaint_messages.c.id == message_id)).rowcount or 0)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.message.delete",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"message_id": message_id, "recipient": str(existing["recipient"])},
+    )
+    return {"deleted": deleted_count > 0, "message_id": message_id, "complaint_id": int(existing["complaint_id"])}
+
+
 def list_cost_items(*, complaint_id: int) -> list[ComplaintCostItemRead]:
     with get_conn() as conn:
         rows = conn.execute(
@@ -924,6 +1198,84 @@ def add_cost_item(
         detail={"cost_item_id": cost_item_id, "total_cost": float(total_cost)},
     )
     return _row_to_cost_item_model(row or {})
+
+
+def get_cost_item(*, cost_item_id: int) -> ComplaintCostItemRead:
+    with get_conn() as conn:
+        row = _load_cost_item_row(conn, cost_item_id)
+    return _row_to_cost_item_model(row)
+
+
+def update_cost_item(
+    *,
+    cost_item_id: int,
+    payload: ComplaintCostItemUpdate,
+    principal: dict[str, Any] | None = None,
+) -> ComplaintCostItemRead:
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        return get_cost_item(cost_item_id=cost_item_id)
+    with get_conn() as conn:
+        existing = _load_cost_item_row(conn, cost_item_id)
+        updated_values: dict[str, Any] = {}
+        if "cost_category" in changes:
+            updated_values["cost_category"] = normalize_description(changes["cost_category"]).lower() or "other"
+        if "item_name" in changes:
+            item_name = normalize_description(changes["item_name"])
+            if not item_name:
+                raise HTTPException(status_code=422, detail="item_name cannot be empty")
+            updated_values["item_name"] = item_name
+        numeric_fields = ("quantity", "unit_price", "material_cost", "labor_cost", "vendor_cost")
+        for field_name in numeric_fields:
+            if field_name in changes:
+                updated_values[field_name] = float(changes[field_name])
+        if "note" in changes:
+            updated_values["note"] = normalize_description(changes["note"])
+        if "approved_by" in changes:
+            updated_values["approved_by"] = normalize_description(changes["approved_by"]) or None
+        if "approved_at" in changes:
+            updated_values["approved_at"] = _as_optional_datetime(changes["approved_at"])
+        if "total_cost" in changes:
+            updated_values["total_cost"] = float(changes["total_cost"])
+        elif any(field_name in changes for field_name in numeric_fields):
+            updated_values["total_cost"] = (
+                float(updated_values.get("quantity", existing.get("quantity") or 0.0))
+                * float(updated_values.get("unit_price", existing.get("unit_price") or 0.0))
+                + float(updated_values.get("material_cost", existing.get("material_cost") or 0.0))
+                + float(updated_values.get("labor_cost", existing.get("labor_cost") or 0.0))
+                + float(updated_values.get("vendor_cost", existing.get("vendor_cost") or 0.0))
+            )
+        updated_values["updated_at"] = _now()
+        conn.execute(update(complaint_cost_items).where(complaint_cost_items.c.id == cost_item_id).values(**updated_values))
+        row = _load_cost_item_row(conn, cost_item_id)
+    _write_audit_log(
+        principal=principal,
+        action="complaints.cost.update",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"cost_item_id": cost_item_id, "changed_fields": sorted(updated_values.keys())},
+    )
+    return _row_to_cost_item_model(row)
+
+
+def delete_cost_item(
+    *,
+    cost_item_id: int,
+    principal: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    with get_conn() as conn:
+        existing = _load_cost_item_row(conn, cost_item_id)
+        deleted_count = int(
+            conn.execute(delete(complaint_cost_items).where(complaint_cost_items.c.id == cost_item_id)).rowcount or 0
+        )
+    _write_audit_log(
+        principal=principal,
+        action="complaints.cost.delete",
+        resource_type="complaint_case",
+        resource_id=str(existing["complaint_id"]),
+        detail={"cost_item_id": cost_item_id, "item_name": str(existing["item_name"])},
+    )
+    return {"deleted": deleted_count > 0, "cost_item_id": cost_item_id, "complaint_id": int(existing["complaint_id"])}
 
 
 def get_case_detail(*, complaint_id: int) -> ComplaintDetailRead:

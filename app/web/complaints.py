@@ -849,7 +849,13 @@ function renderEventTimeline(events) {
   if (!events.length) return '<div class="empty">기록된 처리 이력이 없습니다.</div>';
   return '<div class="timeline-list">' + events.map((item) => {
     const statusTrail = item.to_status ? ' · 상태 ' + (STATUS_LABELS[item.to_status] || item.to_status) : '';
-    return '<div class="timeline-item"><strong>' + escapeHtml(item.event_type) + '</strong><div class="meta">' + escapeHtml(formatDateTime(item.created_at)) + ' · ' + escapeHtml(item.actor_username) + statusTrail + '</div><div class="meta">' + escapeHtml(item.note || '메모 없음') + '</div></div>';
+    return '' +
+      '<div class="timeline-item">' +
+        '<strong>' + escapeHtml(item.event_type) + '</strong>' +
+        '<div class="meta">' + escapeHtml(formatDateTime(item.created_at)) + ' · ' + escapeHtml(item.actor_username) + statusTrail + '</div>' +
+        '<div class="meta">' + escapeHtml(item.note || '메모 없음') + '</div>' +
+        '<div class="actions"><button class="ghost edit-event-btn" type="button" data-event-id="' + item.id + '">수정</button><button class="ghost delete-event-btn" type="button" data-event-id="' + item.id + '">삭제</button></div>' +
+      '</div>';
   }).join('') + '</div>';
 }
 
@@ -861,7 +867,7 @@ function renderAttachmentTimeline(attachments) {
         '<strong>' + escapeHtml(item.attachment_kind_label) + ' · ' + escapeHtml(item.file_name) + '</strong>' +
         '<div class="meta">' + escapeHtml(formatDateTime(item.uploaded_at)) + ' · ' + escapeHtml(item.uploaded_by) + ' · ' + escapeHtml(String(item.file_size)) + ' bytes</div>' +
         '<div class="meta">' + escapeHtml(item.note || '메모 없음') + '</div>' +
-        '<div class="actions"><button class="ghost download-attachment-btn" type="button" data-attachment-id="' + item.id + '" data-file-name="' + escapeHtml(item.file_name) + '">파일 받기</button></div>' +
+        '<div class="actions"><button class="ghost download-attachment-btn" type="button" data-attachment-id="' + item.id + '" data-file-name="' + escapeHtml(item.file_name) + '">파일 받기</button><button class="ghost edit-attachment-btn" type="button" data-attachment-id="' + item.id + '">수정</button><button class="ghost delete-attachment-btn" type="button" data-attachment-id="' + item.id + '">삭제</button></div>' +
       '</div>';
   }).join('') + '</div>';
 }
@@ -870,14 +876,26 @@ function renderMessageTimeline(messages) {
   if (!messages.length) return '<div class="empty">발송된 문자가 없습니다.</div>';
   return '<div class="timeline-list">' + messages.map((item) => {
     const suffix = (item.template_key ? ' · 템플릿 ' + item.template_key : '') + (item.error ? ' · 실패 ' + item.error : '');
-    return '<div class="timeline-item"><strong>' + escapeHtml(item.recipient) + ' · ' + escapeHtml(item.delivery_status) + '</strong><div class="meta">' + escapeHtml(formatDateTime(item.created_at)) + ' · ' + escapeHtml(item.provider_name) + suffix + '</div><div class="meta">' + escapeHtml(item.body) + '</div></div>';
+    return '' +
+      '<div class="timeline-item">' +
+        '<strong>' + escapeHtml(item.recipient) + ' · ' + escapeHtml(item.delivery_status) + '</strong>' +
+        '<div class="meta">' + escapeHtml(formatDateTime(item.created_at)) + ' · ' + escapeHtml(item.provider_name) + suffix + '</div>' +
+        '<div class="meta">' + escapeHtml(item.body) + '</div>' +
+        '<div class="actions"><button class="ghost edit-message-btn" type="button" data-message-id="' + item.id + '">수정</button><button class="ghost delete-message-btn" type="button" data-message-id="' + item.id + '">삭제</button></div>' +
+      '</div>';
   }).join('') + '</div>';
 }
 
 function renderCostTimeline(costItems) {
   if (!costItems.length) return '<div class="empty">입력된 비용 항목이 없습니다.</div>';
   return '<div class="timeline-list">' + costItems.map((item) => {
-    return '<div class="timeline-item"><strong>' + escapeHtml(item.item_name) + ' · ' + escapeHtml(formatCurrency(item.total_cost)) + '</strong><div class="meta">' + escapeHtml(item.cost_category) + ' · 수량 ' + escapeHtml(String(item.quantity)) + ' · 단가 ' + escapeHtml(formatCurrency(item.unit_price)) + '</div><div class="meta">' + escapeHtml(item.note || '메모 없음') + '</div></div>';
+    return '' +
+      '<div class="timeline-item">' +
+        '<strong>' + escapeHtml(item.item_name) + ' · ' + escapeHtml(formatCurrency(item.total_cost)) + '</strong>' +
+        '<div class="meta">' + escapeHtml(item.cost_category) + ' · 수량 ' + escapeHtml(String(item.quantity)) + ' · 단가 ' + escapeHtml(formatCurrency(item.unit_price)) + '</div>' +
+        '<div class="meta">' + escapeHtml(item.note || '메모 없음') + '</div>' +
+        '<div class="actions"><button class="ghost edit-cost-btn" type="button" data-cost-id="' + item.id + '">수정</button><button class="ghost delete-cost-btn" type="button" data-cost-id="' + item.id + '">삭제</button></div>' +
+      '</div>';
   }).join('') + '</div>';
 }
 
@@ -922,6 +940,8 @@ function renderDetail() {
       '<div class="detail-grid">' +
         '<article class="card">' +
           '<h3>담당/상태 관리</h3>' +
+          '<div class="field-stack" style="margin-top:12px;"><label class="caption" for="detailTitle">제목</label><input id="detailTitle" value="' + escapeHtml(caseData.title || '') + '" /></div>' +
+          '<div class="field-stack"><label class="caption" for="detailDescription">민원내용</label><textarea id="detailDescription">' + escapeHtml(caseData.description || '') + '</textarea></div>' +
           '<div class="grid-3" style="margin-top:12px;">' +
             '<div class="field-stack"><label class="caption" for="detailAssignee">담당자</label><input id="detailAssignee" value="' + escapeHtml(caseData.assignee || '') + '" placeholder="현장반장" /></div>' +
             '<div class="field-stack"><label class="caption" for="detailStatus">상태</label><select id="detailStatus">' + buildOptions(STATUS_LABELS, caseData.status) + '</select></div>' +
@@ -936,7 +956,7 @@ function renderDetail() {
             '<div class="field-stack"><label class="caption" for="detailResidentName">입주민명</label><input id="detailResidentName" value="' + escapeHtml(caseData.resident_name || '') + '" /></div>' +
             '<div class="field-stack"><label class="caption" for="detailPhone">연락처</label><input id="detailPhone" value="' + escapeHtml(caseData.contact_phone || '') + '" /></div>' +
           '</div>' +
-          '<div class="actions"><button class="run" id="saveCaseBtn" type="button">기본정보 저장</button></div>' +
+          '<div class="actions"><button class="run" id="saveCaseBtn" type="button">기본정보 저장</button><button class="ghost" id="deleteCaseBtn" type="button">민원 삭제</button></div>' +
           '<div class="hint-line">상태만 빨리 바꿀 때는 위의 상태 칩을 눌러도 됩니다.</div>' +
         '</article>' +
         '<article class="card">' +
@@ -1013,6 +1033,11 @@ function applyMessageTemplate(force) {
   target.value = builder(state.detail.case);
 }
 
+function findDetailRecord(collectionName, recordId) {
+  const rows = state.detail && Array.isArray(state.detail[collectionName]) ? state.detail[collectionName] : [];
+  return rows.find((item) => Number(item.id) === Number(recordId)) || null;
+}
+
 function bindDetailActions() {
   elements.detailBody.querySelectorAll('[data-quick-status]').forEach((node) => {
     node.addEventListener('click', () => quickSetStatus(node.getAttribute('data-quick-status')));
@@ -1024,7 +1049,56 @@ function bindDetailActions() {
       if (Number.isFinite(attachmentId)) downloadAttachment(attachmentId, fileName);
     });
   });
+  elements.detailBody.querySelectorAll('.edit-event-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const eventId = Number(node.getAttribute('data-event-id'));
+      if (Number.isFinite(eventId)) editEventRecord(eventId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.delete-event-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const eventId = Number(node.getAttribute('data-event-id'));
+      if (Number.isFinite(eventId)) deleteEventRecord(eventId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.edit-attachment-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const attachmentId = Number(node.getAttribute('data-attachment-id'));
+      if (Number.isFinite(attachmentId)) editAttachmentRecord(attachmentId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.delete-attachment-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const attachmentId = Number(node.getAttribute('data-attachment-id'));
+      if (Number.isFinite(attachmentId)) deleteAttachmentRecord(attachmentId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.edit-message-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const messageId = Number(node.getAttribute('data-message-id'));
+      if (Number.isFinite(messageId)) editMessageRecord(messageId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.delete-message-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const messageId = Number(node.getAttribute('data-message-id'));
+      if (Number.isFinite(messageId)) deleteMessageRecord(messageId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.edit-cost-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const costId = Number(node.getAttribute('data-cost-id'));
+      if (Number.isFinite(costId)) editCostRecord(costId);
+    });
+  });
+  elements.detailBody.querySelectorAll('.delete-cost-btn').forEach((node) => {
+    node.addEventListener('click', () => {
+      const costId = Number(node.getAttribute('data-cost-id'));
+      if (Number.isFinite(costId)) deleteCostRecord(costId);
+    });
+  });
   document.getElementById('saveCaseBtn')?.addEventListener('click', saveCaseChanges);
+  document.getElementById('deleteCaseBtn')?.addEventListener('click', deleteComplaintCase);
   document.getElementById('addEventBtn')?.addEventListener('click', addCaseEvent);
   document.getElementById('fillTemplateBtn')?.addEventListener('click', () => applyMessageTemplate(true));
   document.getElementById('messageTemplate')?.addEventListener('change', () => applyMessageTemplate(true));
@@ -1055,6 +1129,8 @@ async function saveCaseChanges() {
   try {
     ensureSession(true);
     const payload = {
+      title: nullIfBlank(document.getElementById('detailTitle')?.value),
+      description: document.getElementById('detailDescription')?.value || '',
       assignee: nullIfBlank(document.getElementById('detailAssignee')?.value),
       status: document.getElementById('detailStatus')?.value || null,
       priority: document.getElementById('detailPriority')?.value || null,
@@ -1074,6 +1150,25 @@ async function saveCaseChanges() {
   }
 }
 
+async function deleteComplaintCase() {
+  if (!state.selectedId || !state.detail) return;
+  if (!window.confirm(state.detail.case.building + ' ' + state.detail.case.unit_number + ' 민원과 하위 레코드를 모두 삭제할까요?')) return;
+  try {
+    ensureSession(true);
+    const complaintId = state.selectedId;
+    setNotice('민원 레코드를 삭제하는 중입니다.');
+    await request('/api/complaints/' + complaintId, { method: 'DELETE' });
+    state.selectedId = null;
+    state.detail = null;
+    state.householdHistory = null;
+    await loadQueue({ selectId: null });
+    setNotice('민원 레코드를 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '민원 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-case-error', error);
+  }
+}
+
 async function addCaseEvent() {
   if (!state.selectedId) return;
   try {
@@ -1086,6 +1181,47 @@ async function addCaseEvent() {
   } catch (error) {
     setNotice(error.message || '처리 이력 저장에 실패했습니다.', 'error');
     writeDebug('add-event-error', error);
+  }
+}
+
+async function editEventRecord(eventId) {
+  const item = findDetailRecord('events', eventId);
+  if (!item) return;
+  const eventType = window.prompt('이력 유형을 입력하세요.', item.event_type || 'note');
+  if (eventType === null) return;
+  const note = window.prompt('이력 메모를 입력하세요.', item.note || '');
+  if (note === null) return;
+  const detailText = window.prompt('detail JSON을 입력하세요.', JSON.stringify(item.detail || {}));
+  if (detailText === null) return;
+  try {
+    let detailPayload = {};
+    try {
+      detailPayload = detailText.trim() ? JSON.parse(detailText) : {};
+    } catch (error) {
+      throw new Error('detail JSON 형식이 올바르지 않습니다.');
+    }
+    ensureSession(true);
+    setNotice('처리 이력 레코드를 수정하는 중입니다.');
+    await request('/api/complaints/events/' + eventId, { method: 'PATCH', json: { event_type: eventType, note: note, detail: detailPayload } });
+    await refreshSelectedDetail();
+    setNotice('처리 이력 레코드를 수정했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '처리 이력 수정에 실패했습니다.', 'error');
+    writeDebug('edit-event-error', error);
+  }
+}
+
+async function deleteEventRecord(eventId) {
+  if (!window.confirm('이 처리 이력 레코드를 삭제할까요?')) return;
+  try {
+    ensureSession(true);
+    setNotice('처리 이력 레코드를 삭제하는 중입니다.');
+    await request('/api/complaints/events/' + eventId, { method: 'DELETE' });
+    await refreshSelectedDetail();
+    setNotice('처리 이력 레코드를 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '처리 이력 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-event-error', error);
   }
 }
 
@@ -1129,6 +1265,39 @@ async function uploadAttachment() {
   }
 }
 
+async function editAttachmentRecord(attachmentId) {
+  const item = findDetailRecord('attachments', attachmentId);
+  if (!item) return;
+  const attachmentKind = window.prompt('첨부 구분을 입력하세요. intake / before / after / other', item.attachment_kind || 'intake');
+  if (attachmentKind === null) return;
+  const note = window.prompt('첨부 메모를 입력하세요.', item.note || '');
+  if (note === null) return;
+  try {
+    ensureSession(true);
+    setNotice('첨부 레코드를 수정하는 중입니다.');
+    await request('/api/complaints/attachments/' + attachmentId, { method: 'PATCH', json: { attachment_kind: attachmentKind, note: note } });
+    await refreshSelectedDetail();
+    setNotice('첨부 레코드를 수정했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '첨부 수정에 실패했습니다.', 'error');
+    writeDebug('edit-attachment-error', error);
+  }
+}
+
+async function deleteAttachmentRecord(attachmentId) {
+  if (!window.confirm('이 첨부 레코드를 삭제할까요?')) return;
+  try {
+    ensureSession(true);
+    setNotice('첨부 레코드를 삭제하는 중입니다.');
+    await request('/api/complaints/attachments/' + attachmentId, { method: 'DELETE' });
+    await refreshSelectedDetail();
+    setNotice('첨부 레코드를 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '첨부 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-attachment-error', error);
+  }
+}
+
 async function addCostItem() {
   if (!state.selectedId) return;
   try {
@@ -1154,6 +1323,105 @@ async function addCostItem() {
   } catch (error) {
     setNotice(error.message || '비용 항목 저장에 실패했습니다.', 'error');
     writeDebug('add-cost-error', error);
+  }
+}
+
+async function editMessageRecord(messageId) {
+  const item = findDetailRecord('messages', messageId);
+  if (!item) return;
+  const recipient = window.prompt('수신번호를 입력하세요.', item.recipient || '');
+  if (recipient === null) return;
+  const templateKey = window.prompt('템플릿 키를 입력하세요. 비우면 직접입력입니다.', item.template_key || '');
+  if (templateKey === null) return;
+  const deliveryStatus = window.prompt('발송 상태를 입력하세요.', item.delivery_status || 'sent');
+  if (deliveryStatus === null) return;
+  const body = window.prompt('문자 내용을 입력하세요.', item.body || '');
+  if (body === null) return;
+  const errorText = window.prompt('오류 메시지를 입력하세요. 없으면 비워두세요.', item.error || '');
+  if (errorText === null) return;
+  try {
+    ensureSession(true);
+    setNotice('문자 레코드를 수정하는 중입니다.');
+    await request('/api/complaints/messages/' + messageId, {
+      method: 'PATCH',
+      json: { recipient: recipient, template_key: nullIfBlank(templateKey), delivery_status: deliveryStatus, body: body, error: nullIfBlank(errorText) },
+    });
+    await refreshSelectedDetail();
+    setNotice('문자 레코드를 수정했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '문자 레코드 수정에 실패했습니다.', 'error');
+    writeDebug('edit-message-error', error);
+  }
+}
+
+async function deleteMessageRecord(messageId) {
+  if (!window.confirm('이 문자 레코드를 삭제할까요?')) return;
+  try {
+    ensureSession(true);
+    setNotice('문자 레코드를 삭제하는 중입니다.');
+    await request('/api/complaints/messages/' + messageId, { method: 'DELETE' });
+    await refreshSelectedDetail();
+    setNotice('문자 레코드를 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '문자 레코드 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-message-error', error);
+  }
+}
+
+async function editCostRecord(costId) {
+  const item = findDetailRecord('cost_items', costId);
+  if (!item) return;
+  const costCategory = window.prompt('비용 구분을 입력하세요.', item.cost_category || 'other');
+  if (costCategory === null) return;
+  const itemName = window.prompt('항목명을 입력하세요.', item.item_name || '');
+  if (itemName === null) return;
+  const quantity = window.prompt('수량을 입력하세요.', String(item.quantity ?? 0));
+  if (quantity === null) return;
+  const unitPrice = window.prompt('단가를 입력하세요.', String(item.unit_price ?? 0));
+  if (unitPrice === null) return;
+  const materialCost = window.prompt('자재비를 입력하세요.', String(item.material_cost ?? 0));
+  if (materialCost === null) return;
+  const laborCost = window.prompt('인건비를 입력하세요.', String(item.labor_cost ?? 0));
+  if (laborCost === null) return;
+  const vendorCost = window.prompt('외주비를 입력하세요.', String(item.vendor_cost ?? 0));
+  if (vendorCost === null) return;
+  const note = window.prompt('메모를 입력하세요.', item.note || '');
+  if (note === null) return;
+  try {
+    ensureSession(true);
+    setNotice('비용 레코드를 수정하는 중입니다.');
+    await request('/api/complaints/cost-items/' + costId, {
+      method: 'PATCH',
+      json: {
+        cost_category: costCategory,
+        item_name: itemName,
+        quantity: numberValue(quantity),
+        unit_price: numberValue(unitPrice),
+        material_cost: numberValue(materialCost),
+        labor_cost: numberValue(laborCost),
+        vendor_cost: numberValue(vendorCost),
+        note: note,
+      },
+    });
+    await refreshSelectedDetail();
+    setNotice('비용 레코드를 수정했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '비용 레코드 수정에 실패했습니다.', 'error');
+    writeDebug('edit-cost-error', error);
+  }
+}
+
+async function deleteCostRecord(costId) {
+  if (!window.confirm('이 비용 레코드를 삭제할까요?')) return;
+  try {
+    ensureSession(true);
+    setNotice('비용 레코드를 삭제하는 중입니다.');
+    await request('/api/complaints/cost-items/' + costId, { method: 'DELETE' });
+    await refreshSelectedDetail();
+    setNotice('비용 레코드를 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '비용 레코드 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-cost-error', error);
   }
 }
 

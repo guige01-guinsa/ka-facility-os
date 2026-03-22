@@ -87,6 +87,19 @@ def test_complaint_case_crud_and_household_history(app_client: TestClient) -> No
     assert event_body["event_type"] == "field_visit"
     assert event_body["to_status"] == "resolved"
 
+    updated_event = app_client.patch(
+        f"/api/complaints/events/{event_body['id']}",
+        headers=headers,
+        json={
+            "event_type": "rework",
+            "note": "재방문 준비",
+            "detail": {"worker": "1인1조"},
+        },
+    )
+    assert updated_event.status_code == 200
+    assert updated_event.json()["event_type"] == "rework"
+    assert updated_event.json()["note"] == "재방문 준비"
+
     detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
     assert detail.status_code == 200
     detail_body = detail.json()
@@ -102,6 +115,30 @@ def test_complaint_case_crud_and_household_history(app_client: TestClient) -> No
     assert history_body["site"] == "연산더샵"
     assert len(history_body["complaints"]) == 1
     assert history_body["complaints"][0]["id"] == complaint_id
+
+    deleted_event = app_client.delete(
+        f"/api/complaints/events/{event_body['id']}",
+        headers=headers,
+    )
+    assert deleted_event.status_code == 200
+    assert deleted_event.json()["deleted"] is True
+
+    deleted_case = app_client.delete(
+        f"/api/complaints/{complaint_id}",
+        headers=headers,
+    )
+    assert deleted_case.status_code == 200
+    assert deleted_case.json()["deleted"] is True
+
+    after_delete = app_client.get(
+        "/api/complaints?site=연산더샵&building=101동&unit_number=503호",
+        headers=headers,
+    )
+    assert after_delete.status_code == 200
+    assert after_delete.json() == []
+
+    deleted_detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
+    assert deleted_detail.status_code == 404
 
 
 def test_complaint_attachment_message_and_cost_workflow(app_client: TestClient) -> None:
@@ -167,6 +204,30 @@ def test_complaint_attachment_message_and_cost_workflow(app_client: TestClient) 
     assert message["delivery_status"] == "sent"
     assert message["recipient"] == "010-8529-4439"
 
+    updated_attachment = app_client.patch(
+        f"/api/complaints/attachments/{attachment_id}",
+        headers=headers,
+        json={"attachment_kind": "after", "note": "작업 후 사진"},
+    )
+    assert updated_attachment.status_code == 200
+    assert updated_attachment.json()["attachment_kind"] == "after"
+    assert updated_attachment.json()["note"] == "작업 후 사진"
+
+    updated_message = app_client.patch(
+        f"/api/complaints/messages/{message['id']}",
+        headers=headers,
+        json={
+            "recipient": "01077778888",
+            "template_key": "visit_notice",
+            "delivery_status": "sent",
+            "body": "내일 방문 예정입니다.",
+        },
+    )
+    assert updated_message.status_code == 200
+    assert updated_message.json()["recipient"] == "010-7777-8888"
+    assert updated_message.json()["template_key"] == "visit_notice"
+    assert updated_message.json()["body"] == "내일 방문 예정입니다."
+
     cost = app_client.post(
         f"/api/complaints/{complaint_id}/cost-items",
         headers=headers,
@@ -184,13 +245,56 @@ def test_complaint_attachment_message_and_cost_workflow(app_client: TestClient) 
     cost_item = cost.json()
     assert cost_item["total_cost"] == 25000.0
 
+    updated_cost = app_client.patch(
+        f"/api/complaints/cost-items/{cost_item['id']}",
+        headers=headers,
+        json={
+            "quantity": 3,
+            "unit_price": 9000,
+            "note": "3면 작업으로 수정",
+        },
+    )
+    assert updated_cost.status_code == 200
+    assert updated_cost.json()["quantity"] == 3.0
+    assert updated_cost.json()["total_cost"] == 32000.0
+    assert updated_cost.json()["note"] == "3면 작업으로 수정"
+
     detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
     assert detail.status_code == 200
     detail_body = detail.json()
     assert len(detail_body["attachments"]) == 1
     assert len(detail_body["messages"]) == 1
     assert len(detail_body["cost_items"]) == 1
-    assert detail_body["total_cost"] == 25000.0
+    assert detail_body["total_cost"] == 32000.0
+
+    deleted_attachment = app_client.delete(
+        f"/api/complaints/attachments/{attachment_id}",
+        headers=headers,
+    )
+    assert deleted_attachment.status_code == 200
+    assert deleted_attachment.json()["deleted"] is True
+
+    deleted_message = app_client.delete(
+        f"/api/complaints/messages/{message['id']}",
+        headers=headers,
+    )
+    assert deleted_message.status_code == 200
+    assert deleted_message.json()["deleted"] is True
+
+    deleted_cost = app_client.delete(
+        f"/api/complaints/cost-items/{cost_item['id']}",
+        headers=headers,
+    )
+    assert deleted_cost.status_code == 200
+    assert deleted_cost.json()["deleted"] is True
+
+    after_delete_detail = app_client.get(f"/api/complaints/{complaint_id}", headers=headers)
+    assert after_delete_detail.status_code == 200
+    after_delete_body = after_delete_detail.json()
+    assert after_delete_body["attachments"] == []
+    assert after_delete_body["messages"] == []
+    assert after_delete_body["cost_items"] == []
+    assert after_delete_body["total_cost"] == 0.0
 
 
 def test_complaint_report_exports(app_client: TestClient) -> None:

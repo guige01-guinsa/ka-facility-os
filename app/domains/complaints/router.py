@@ -11,17 +11,21 @@ from fastapi.responses import HTMLResponse
 from app.domains.complaints import reporting, service
 from app.domains.complaints.schemas import (
     ComplaintAttachmentRead,
+    ComplaintAttachmentUpdate,
     ComplaintCaseCreate,
     ComplaintCaseRead,
     ComplaintCaseUpdate,
     ComplaintCostItemCreate,
     ComplaintCostItemRead,
+    ComplaintCostItemUpdate,
     ComplaintDetailRead,
     ComplaintEventCreate,
     ComplaintEventRead,
+    ComplaintEventUpdate,
     ComplaintHouseholdHistoryRead,
     ComplaintMessageRead,
     ComplaintMessageSend,
+    ComplaintMessageUpdate,
 )
 from app.domains.iam.core import _principal_site_scope
 from app.domains.iam.security import _require_site_access, require_permission
@@ -180,6 +184,16 @@ def update_complaint(
     return service.update_case(complaint_id=complaint_id, payload=payload, principal=principal)
 
 
+@router.delete("/api/complaints/{complaint_id}")
+def delete_complaint(
+    complaint_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> dict[str, Any]:
+    existing = service.get_case_detail(complaint_id=complaint_id)
+    _require_site_access(principal, existing.case.site)
+    return service.delete_case(complaint_id=complaint_id, principal=principal)
+
+
 @router.get("/api/complaints/{complaint_id}/events", response_model=list[ComplaintEventRead])
 def list_complaint_events(
     complaint_id: int,
@@ -199,6 +213,29 @@ def add_complaint_event(
     detail = service.get_case_detail(complaint_id=complaint_id)
     _require_site_access(principal, detail.case.site)
     return service.add_event(complaint_id=complaint_id, payload=payload, principal=principal)
+
+
+@router.patch("/api/complaints/events/{event_id}", response_model=ComplaintEventRead)
+def update_complaint_event(
+    event_id: int,
+    payload: ComplaintEventUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintEventRead:
+    event = service.get_event(event_id=event_id)
+    detail = service.get_case_detail(complaint_id=event.complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.update_event(event_id=event_id, payload=payload, principal=principal)
+
+
+@router.delete("/api/complaints/events/{event_id}")
+def delete_complaint_event(
+    event_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> dict[str, Any]:
+    event = service.get_event(event_id=event_id)
+    detail = service.get_case_detail(complaint_id=event.complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.delete_event(event_id=event_id, principal=principal)
 
 
 @router.get("/api/complaints/{complaint_id}/attachments", response_model=list[ComplaintAttachmentRead])
@@ -231,6 +268,27 @@ async def upload_complaint_attachment(
         file_bytes=file_bytes,
         principal=principal,
     )
+
+
+@router.patch("/api/complaints/attachments/{attachment_id}", response_model=ComplaintAttachmentRead)
+def update_complaint_attachment(
+    attachment_id: int,
+    payload: ComplaintAttachmentUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintAttachmentRead:
+    attachment = service.get_attachment(attachment_id=attachment_id)
+    _require_site_access(principal, attachment.site)
+    return service.update_attachment(attachment_id=attachment_id, payload=payload, principal=principal)
+
+
+@router.delete("/api/complaints/attachments/{attachment_id}")
+def delete_complaint_attachment(
+    attachment_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> dict[str, Any]:
+    attachment = service.get_attachment(attachment_id=attachment_id)
+    _require_site_access(principal, attachment.site)
+    return service.delete_attachment(attachment_id=attachment_id, principal=principal)
 
 
 @router.get("/api/complaints/attachments/{attachment_id}/download", response_model=None)
@@ -272,6 +330,27 @@ def send_complaint_message(
     return service.send_case_message(complaint_id=complaint_id, payload=payload, principal=principal)
 
 
+@router.patch("/api/complaints/messages/{message_id}", response_model=ComplaintMessageRead)
+def update_complaint_message(
+    message_id: int,
+    payload: ComplaintMessageUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:message")),
+) -> ComplaintMessageRead:
+    message = service.get_message(message_id=message_id)
+    _require_site_access(principal, message.site)
+    return service.update_message(message_id=message_id, payload=payload, principal=principal)
+
+
+@router.delete("/api/complaints/messages/{message_id}")
+def delete_complaint_message(
+    message_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:message")),
+) -> dict[str, Any]:
+    message = service.get_message(message_id=message_id)
+    _require_site_access(principal, message.site)
+    return service.delete_message(message_id=message_id, principal=principal)
+
+
 @router.get("/api/complaints/{complaint_id}/cost-items", response_model=list[ComplaintCostItemRead])
 def list_complaint_cost_items(
     complaint_id: int,
@@ -291,3 +370,26 @@ def add_complaint_cost_item(
     detail = service.get_case_detail(complaint_id=complaint_id)
     _require_site_access(principal, detail.case.site)
     return service.add_cost_item(complaint_id=complaint_id, payload=payload, principal=principal)
+
+
+@router.patch("/api/complaints/cost-items/{cost_item_id}", response_model=ComplaintCostItemRead)
+def update_complaint_cost_item(
+    cost_item_id: int,
+    payload: ComplaintCostItemUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:costs")),
+) -> ComplaintCostItemRead:
+    cost_item = service.get_cost_item(cost_item_id=cost_item_id)
+    detail = service.get_case_detail(complaint_id=cost_item.complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.update_cost_item(cost_item_id=cost_item_id, payload=payload, principal=principal)
+
+
+@router.delete("/api/complaints/cost-items/{cost_item_id}")
+def delete_complaint_cost_item(
+    cost_item_id: int,
+    principal: dict[str, Any] = Depends(require_permission("complaints:costs")),
+) -> dict[str, Any]:
+    cost_item = service.get_cost_item(cost_item_id=cost_item_id)
+    detail = service.get_case_detail(complaint_id=cost_item.complaint_id)
+    _require_site_access(principal, detail.case.site)
+    return service.delete_cost_item(cost_item_id=cost_item_id, principal=principal)
