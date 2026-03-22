@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import HTMLResponse
 
 from app.domains.complaints import reporting, service
@@ -31,9 +31,11 @@ from app.domains.complaints.schemas import (
     ComplaintMessageSend,
     ComplaintMessageUpdate,
     ComplaintPdfExportRequest,
+    ComplaintReportCoverDefaultRead,
+    ComplaintReportCoverDefaultUpdate,
 )
 from app.domains.iam.core import _principal_site_scope
-from app.domains.iam.security import _require_site_access, require_permission
+from app.domains.iam.security import _require_global_site_scope, _require_site_access, require_permission
 from app.domains.iam.service import _write_audit_log
 from app.web.complaints import build_complaints_mobile_html
 
@@ -187,6 +189,7 @@ def export_complaints_pdf(
         report_type=report_type,
         building=building,
         allowed_sites=allowed_sites,
+        cover_options=service.resolve_effective_report_cover_options(site=site, allowed_sites=allowed_sites),
     )
     file_name = _safe_download_filename(f"{report.file_stem}.pdf")
     _write_audit_log(
@@ -210,12 +213,13 @@ def export_complaints_pdf_with_cover(
 ) -> Response:
     _require_site_access(principal, payload.site)
     allowed_sites = _allowed_sites_for_principal(principal) if payload.site is None else None
+    effective_cover = service.resolve_effective_report_cover_options(site=payload.site, override=payload.cover, allowed_sites=allowed_sites)
     report = reporting.build_complaint_export_report(
         site=payload.site,
         report_type=payload.report_type,
         building=payload.building,
         allowed_sites=allowed_sites,
-        cover_options=payload.cover,
+        cover_options=effective_cover,
     )
     file_name = _safe_download_filename(f"{report.file_stem}.pdf")
     _write_audit_log(
@@ -235,6 +239,56 @@ def export_complaints_pdf_with_cover(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
+
+
+@router.get("/api/complaints/report-cover/default", response_model=ComplaintReportCoverDefaultRead)
+def get_complaint_report_cover_default(
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:read")),
+) -> ComplaintReportCoverDefaultRead:
+    _require_site_access(principal, site)
+    return service.get_effective_report_cover_default(
+        site=site,
+        allowed_sites=_allowed_sites_for_principal(principal) if site is not None else None,
+    )
+
+
+@router.put("/api/complaints/report-cover/default", response_model=ComplaintReportCoverDefaultRead)
+def update_complaint_report_cover_default(
+    payload: ComplaintReportCoverDefaultUpdate,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> ComplaintReportCoverDefaultRead:
+    if payload.scope_type == "global":
+        _require_global_site_scope(principal)
+        return service.save_report_cover_default(payload=payload, principal=principal)
+    _require_site_access(principal, payload.site)
+    return service.save_report_cover_default(
+        payload=payload,
+        principal=principal,
+        allowed_sites=_allowed_sites_for_principal(principal),
+    )
+
+
+@router.delete("/api/complaints/report-cover/default", response_model=None)
+def delete_complaint_report_cover_default(
+    scope_type: Annotated[str, Query()],
+    site: Annotated[str | None, Query()] = None,
+    principal: dict[str, Any] = Depends(require_permission("complaints:write")),
+) -> Response:
+    normalized_scope = str(scope_type or "").strip().lower()
+    if not normalized_scope:
+        raise HTTPException(status_code=422, detail="scope_type is required")
+    if normalized_scope == "global":
+        _require_global_site_scope(principal)
+        service.delete_report_cover_default(scope_type=normalized_scope, site=None)
+    else:
+        _require_site_access(principal, site)
+        service.delete_report_cover_default(
+            scope_type=normalized_scope,
+            site=site,
+            allowed_sites=_allowed_sites_for_principal(principal),
+        )
+    return Response(status_code=204)
 
 
 @router.post("/api/complaints", response_model=ComplaintCaseRead, status_code=201)

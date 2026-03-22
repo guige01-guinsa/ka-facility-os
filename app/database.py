@@ -65,6 +65,7 @@ complaint_events = _complaint_tables["complaint_events"]
 complaint_attachments = _complaint_tables["complaint_attachments"]
 complaint_messages = _complaint_tables["complaint_messages"]
 complaint_cost_items = _complaint_tables["complaint_cost_items"]
+complaint_report_cover_defaults = _complaint_tables["complaint_report_cover_defaults"]
 
 admin_users = Table(
     "admin_users",

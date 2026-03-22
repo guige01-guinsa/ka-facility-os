@@ -441,6 +441,40 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
               <button class="ghost" id="saveReportPrefsBtn" type="button">표지 설정 저장</button>
             </div>
           </div>
+          <div class="field-stack" style="margin-top:12px;">
+            <label class="caption">표지 프리셋</label>
+            <div class="grid-2">
+              <div class="field-stack"><label class="caption" for="reportPresetName">프리셋 이름</label><input id="reportPresetName" placeholder="예: 관리사무소 제출 기본안" /></div>
+              <div class="field-stack"><label class="caption" for="reportPresetSelect">저장된 프리셋</label><select id="reportPresetSelect"><option value="">저장된 프리셋 없음</option></select></div>
+            </div>
+            <div class="actions">
+              <button class="ghost" id="saveReportPresetBtn" type="button">프리셋 저장</button>
+              <button class="ghost" id="loadReportPresetBtn" type="button">프리셋 불러오기</button>
+              <button class="ghost" id="deleteReportPresetBtn" type="button">프리셋 삭제</button>
+            </div>
+          </div>
+          <div class="field-stack" style="margin-top:12px;">
+            <label class="caption">관리자 공통 기본값</label>
+            <div class="grid-2">
+              <div class="field-stack">
+                <label class="caption" for="reportAdminScope">기본값 범위</label>
+                <select id="reportAdminScope">
+                  <option value="site">현재 site 기본값</option>
+                  <option value="global">공통 기본값</option>
+                </select>
+              </div>
+              <div class="field-stack"><label class="caption" for="reportAdminStatus">관리자 기본값 상태</label><input id="reportAdminStatus" placeholder="관리자 기본값 미확인" readonly /></div>
+            </div>
+            <div class="actions">
+              <button class="ghost" id="loadAdminReportDefaultBtn" type="button">관리자 기본값 불러오기</button>
+              <button class="ghost" id="saveAdminReportDefaultBtn" type="button">현재 값 관리자 기본값 저장</button>
+              <button class="ghost" id="deleteAdminReportDefaultBtn" type="button">관리자 기본값 삭제</button>
+            </div>
+          </div>
+          <div class="field-stack" style="margin-top:12px;">
+            <label class="caption">표지 미리보기</label>
+            <div class="card" id="reportPreviewCard"><div class="empty">표지 설정을 입력하면 여기에 미리보기가 나타납니다.</div></div>
+          </div>
           <div class="actions">
             <button class="run" id="downloadXlsxBtn" type="button">엑셀 출력</button>
             <button class="ghost" id="downloadPdfBtn" type="button">PDF 출력</button>
@@ -544,7 +578,13 @@ __SCRIPT__
 </html>
 """
     script = """
-const STORAGE_KEYS = { token: 'kaFacility.complaints.token', site: 'kaFacility.complaints.site', dbColumnPrefs: 'kaFacility.complaints.dbColumnPrefs', reportCoverPrefs: 'kaFacility.complaints.reportCoverPrefs' };
+const STORAGE_KEYS = {
+  token: 'kaFacility.complaints.token',
+  site: 'kaFacility.complaints.site',
+  dbColumnPrefs: 'kaFacility.complaints.dbColumnPrefs',
+  reportCoverPrefs: 'kaFacility.complaints.reportCoverPrefs',
+  reportCoverPresets: 'kaFacility.complaints.reportCoverPresets',
+};
 const STATUS_LABELS = { received: '접수', assigned: '배정완료', visit_scheduled: '방문예정', in_progress: '처리중', resolved: '처리완료', resident_confirmed: '세대확인완료', reopened: '재민원', closed: '종결' };
 const TYPE_LABELS = { screen_contamination: '방충망 오염', screen_damage: '방충망 파손', glass_contamination: '유리/창문 오염', glass_damage: '유리/창문 파손', railing_contamination: '난간 오염', louver_issue: '루버창 불량', silicone_issue: '실리콘/퍼티 불량', wall_floor_contamination: '벽면/바닥 오염', other_finish_issue: '기타 마감불량', composite: '복합 민원' };
 const PRIORITY_LABELS = { low: '낮음', medium: '보통', high: '높음', urgent: '긴급' };
@@ -567,6 +607,7 @@ const REPORT_SUBMISSION_PRESETS = {
   share: '공사 협의 및 확인용으로 아래와 같이 공유드립니다.',
   custom: '',
 };
+const REPORT_TYPE_LABELS = { all: '전체', building: '동별', complaint: '민원', category: '분류별', unresolved: '미처리', closed: '종결' };
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 const ACTIVE_STATUSES = new Set(['assigned', 'visit_scheduled', 'in_progress', 'reopened']);
 const DONE_STATUSES = new Set(['resolved', 'resident_confirmed', 'closed']);
@@ -589,6 +630,9 @@ const state = {
   activeTab: 'field',
   dbEditor: { recordType: 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {}, hiddenColumnsByType: {} },
   reportCover: { companyName: 'KA Facility OS', contractorName: '외벽 재도장 협력업체', submissionPhrase: '상기 현황을 아래와 같이 보고드립니다.', logoDataUrl: '', logoFileName: '', logoPersisted: false },
+  reportPresets: {},
+  reportCoverPrefsLoaded: false,
+  reportAdminDefault: null,
 };
 let tokenHideTimer = null;
 const elements = {
@@ -619,6 +663,17 @@ const elements = {
   applyReportDefaultsBtn: document.getElementById('applyReportDefaultsBtn'),
   clearReportLogoBtn: document.getElementById('clearReportLogoBtn'),
   saveReportPrefsBtn: document.getElementById('saveReportPrefsBtn'),
+  reportPresetName: document.getElementById('reportPresetName'),
+  reportPresetSelect: document.getElementById('reportPresetSelect'),
+  saveReportPresetBtn: document.getElementById('saveReportPresetBtn'),
+  loadReportPresetBtn: document.getElementById('loadReportPresetBtn'),
+  deleteReportPresetBtn: document.getElementById('deleteReportPresetBtn'),
+  reportAdminScope: document.getElementById('reportAdminScope'),
+  reportAdminStatus: document.getElementById('reportAdminStatus'),
+  loadAdminReportDefaultBtn: document.getElementById('loadAdminReportDefaultBtn'),
+  saveAdminReportDefaultBtn: document.getElementById('saveAdminReportDefaultBtn'),
+  deleteAdminReportDefaultBtn: document.getElementById('deleteAdminReportDefaultBtn'),
+  reportPreviewCard: document.getElementById('reportPreviewCard'),
   downloadXlsxBtn: document.getElementById('downloadXlsxBtn'),
   downloadPdfBtn: document.getElementById('downloadPdfBtn'),
   fieldTabBtn: document.getElementById('fieldTabBtn'),
@@ -804,8 +859,10 @@ function loadPrefs() {
     const site = localStorage.getItem(STORAGE_KEYS.site) || '';
     const dbColumnPrefsRaw = localStorage.getItem(STORAGE_KEYS.dbColumnPrefs) || '{}';
     const reportCoverPrefsRaw = localStorage.getItem(STORAGE_KEYS.reportCoverPrefs) || '{}';
+    const reportCoverPresetsRaw = localStorage.getItem(STORAGE_KEYS.reportCoverPresets) || '{}';
     let dbColumnPrefs = {};
     let reportCoverPrefs = {};
+    let reportCoverPresets = {};
     try {
       dbColumnPrefs = JSON.parse(dbColumnPrefsRaw) || {};
     } catch (error) {
@@ -816,6 +873,11 @@ function loadPrefs() {
     } catch (error) {
       reportCoverPrefs = {};
     }
+    try {
+      reportCoverPresets = JSON.parse(reportCoverPresetsRaw) || {};
+    } catch (error) {
+      reportCoverPresets = {};
+    }
     if (token) elements.token.value = token;
     if (site) {
       elements.siteFilter.value = site;
@@ -823,6 +885,7 @@ function loadPrefs() {
     }
     state.dbEditor.hiddenColumnsByType = dbColumnPrefs && typeof dbColumnPrefs === 'object' ? dbColumnPrefs : {};
     if (reportCoverPrefs && typeof reportCoverPrefs === 'object') {
+      state.reportCoverPrefsLoaded = Object.keys(reportCoverPrefs).length > 0;
       state.reportCover = {
         companyName: String(reportCoverPrefs.companyName || state.reportCover.companyName || ''),
         contractorName: String(reportCoverPrefs.contractorName || state.reportCover.contractorName || ''),
@@ -832,6 +895,7 @@ function loadPrefs() {
         logoPersisted: Boolean(reportCoverPrefs.logoDataUrl),
       };
     }
+    state.reportPresets = reportCoverPresets && typeof reportCoverPresets === 'object' ? reportCoverPresets : {};
     updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · site: ' + (site || '미설정'));
   } catch (error) {
     writeDebug('localStorage-load-error', error);
@@ -853,6 +917,9 @@ function syncReportCoverStatus() {
   if (elements.reportSettingsStatus) {
     elements.reportSettingsStatus.value = '회사명 ' + (state.reportCover.companyName || '미입력') + ' · 공사업체 ' + (state.reportCover.contractorName || '미입력');
   }
+  if (elements.reportAdminStatus && !elements.reportAdminStatus.value) {
+    elements.reportAdminStatus.value = '관리자 기본값 미확인';
+  }
 }
 
 function fillReportCoverInputs() {
@@ -869,6 +936,7 @@ function fillReportCoverInputs() {
     elements.reportPhrasePreset.value = Object.entries(REPORT_SUBMISSION_PRESETS).find(([, value]) => value && value === state.reportCover.submissionPhrase)?.[0] || 'custom';
   }
   syncReportCoverStatus();
+  renderReportPreview();
 }
 
 function readReportCoverInputs() {
@@ -878,23 +946,238 @@ function readReportCoverInputs() {
   syncReportCoverStatus();
 }
 
-function saveReportCoverPrefs() {
+function buildPersistableReportCoverSnapshot() {
   readReportCoverInputs();
+  const persistableLogo = state.reportCover.logoDataUrl && state.reportCover.logoDataUrl.length <= 350000 ? state.reportCover.logoDataUrl : '';
+  return {
+    companyName: state.reportCover.companyName,
+    contractorName: state.reportCover.contractorName,
+    submissionPhrase: state.reportCover.submissionPhrase,
+    logoDataUrl: persistableLogo,
+    logoFileName: persistableLogo ? state.reportCover.logoFileName : '',
+  };
+}
+
+function applyReportCoverSnapshot(snapshot, options) {
+  const payload = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  state.reportCover.companyName = String(payload.companyName ?? payload.company_name ?? '');
+  state.reportCover.contractorName = String(payload.contractorName ?? payload.contractor_name ?? '');
+  state.reportCover.submissionPhrase = String(payload.submissionPhrase ?? payload.submission_phrase ?? '');
+  state.reportCover.logoDataUrl = String(payload.logoDataUrl ?? payload.logo_data_url ?? '');
+  state.reportCover.logoFileName = String(payload.logoFileName ?? payload.logo_file_name ?? '');
+  state.reportCover.logoPersisted = Boolean(state.reportCover.logoDataUrl && state.reportCover.logoDataUrl.length <= 350000);
+  fillReportCoverInputs();
+  if (!(options && options.persist === false)) saveReportCoverPrefs();
+}
+
+function saveReportPresets() {
   try {
-    const payload = {
-      companyName: state.reportCover.companyName,
-      contractorName: state.reportCover.contractorName,
-      submissionPhrase: state.reportCover.submissionPhrase,
-      logoDataUrl: state.reportCover.logoDataUrl && state.reportCover.logoDataUrl.length <= 350000 ? state.reportCover.logoDataUrl : '',
-      logoFileName: state.reportCover.logoDataUrl && state.reportCover.logoDataUrl.length <= 350000 ? state.reportCover.logoFileName : '',
-    };
-    state.reportCover.logoPersisted = Boolean(payload.logoDataUrl);
+    localStorage.setItem(STORAGE_KEYS.reportCoverPresets, JSON.stringify(state.reportPresets || {}));
+  } catch (error) {
+    writeDebug('localStorage-report-presets-save-error', error);
+  }
+}
+
+function renderReportPresetOptions(selectedName) {
+  if (!elements.reportPresetSelect) return;
+  const presets = state.reportPresets && typeof state.reportPresets === 'object' ? state.reportPresets : {};
+  const names = Object.keys(presets).sort((left, right) => left.localeCompare(right, 'ko'));
+  const selected = names.includes(String(selectedName || '').trim()) ? String(selectedName || '').trim() : (elements.reportPresetSelect.value || '');
+  if (!names.length) {
+    elements.reportPresetSelect.innerHTML = '<option value="">저장된 프리셋 없음</option>';
+    return;
+  }
+  elements.reportPresetSelect.innerHTML = '<option value="">프리셋 선택</option>' + names.map((name) => '<option value="' + escapeHtml(name) + '"' + (name === selected ? ' selected' : '') + '>' + escapeHtml(name) + '</option>').join('');
+  if (selected && elements.reportPresetName) elements.reportPresetName.value = selected;
+}
+
+function saveReportCoverPrefs() {
+  const payload = buildPersistableReportCoverSnapshot();
+  state.reportCover.logoPersisted = Boolean(payload.logoDataUrl);
+  state.reportCoverPrefsLoaded = true;
+  try {
     localStorage.setItem(STORAGE_KEYS.reportCoverPrefs, JSON.stringify(payload));
   } catch (error) {
     state.reportCover.logoPersisted = false;
     writeDebug('localStorage-report-cover-save-error', error);
   }
   syncReportCoverStatus();
+  renderReportPreview();
+}
+
+function saveCurrentReportPreset() {
+  const presetName = String(elements.reportPresetName?.value || '').trim();
+  if (!presetName) {
+    setNotice('프리셋 이름을 입력하세요.', 'error');
+    return;
+  }
+  saveReportCoverPrefs();
+  const alreadyExists = Boolean(state.reportPresets[presetName]);
+  if (alreadyExists && !window.confirm('같은 이름의 프리셋을 덮어쓸까요?')) return;
+  const snapshot = buildPersistableReportCoverSnapshot();
+  const droppedLogo = Boolean(state.reportCover.logoDataUrl && !snapshot.logoDataUrl);
+  state.reportPresets[presetName] = Object.assign({}, snapshot, { savedAt: new Date().toISOString() });
+  saveReportPresets();
+  renderReportPresetOptions(presetName);
+  setNotice('표지 프리셋을 저장했습니다.' + (droppedLogo ? ' 큰 로고 파일은 프리셋에 포함되지 않았습니다.' : ''), 'success');
+}
+
+function loadSelectedReportPreset() {
+  const presetName = String(elements.reportPresetSelect?.value || elements.reportPresetName?.value || '').trim();
+  if (!presetName) {
+    setNotice('불러올 프리셋을 선택하세요.', 'error');
+    return;
+  }
+  const snapshot = state.reportPresets[presetName];
+  if (!snapshot) {
+    setNotice('선택한 프리셋을 찾지 못했습니다.', 'error');
+    return;
+  }
+  if (elements.reportPresetName) elements.reportPresetName.value = presetName;
+  if (elements.reportPresetSelect) elements.reportPresetSelect.value = presetName;
+  applyReportCoverSnapshot(snapshot);
+  setNotice('표지 프리셋을 불러왔습니다.', 'success');
+}
+
+function deleteSelectedReportPreset() {
+  const presetName = String(elements.reportPresetSelect?.value || elements.reportPresetName?.value || '').trim();
+  if (!presetName || !state.reportPresets[presetName]) {
+    setNotice('삭제할 프리셋을 선택하세요.', 'error');
+    return;
+  }
+  if (!window.confirm('프리셋 "' + presetName + '"을 삭제할까요?')) return;
+  delete state.reportPresets[presetName];
+  saveReportPresets();
+  renderReportPresetOptions('');
+  if (elements.reportPresetName && elements.reportPresetName.value.trim() === presetName) elements.reportPresetName.value = '';
+  setNotice('표지 프리셋을 삭제했습니다.', 'success');
+}
+
+function renderReportPreview() {
+  if (!elements.reportPreviewCard) return;
+  readReportCoverInputs();
+  const site = elements.siteFilter?.value.trim() || 'site 미설정';
+  const building = elements.reportBuilding?.value.trim() || '전체 동';
+  const reportType = REPORT_TYPE_LABELS[elements.reportType?.value || 'all'] || '전체';
+  const companyName = state.reportCover.companyName || '회사명 미입력';
+  const contractorName = state.reportCover.contractorName || '공사업체 미입력';
+  const submissionPhrase = state.reportCover.submissionPhrase || '제출 문구 미입력';
+  const adminSource = state.reportAdminDefault?.source_scope || 'none';
+  const adminSourceLabel = adminSource === 'site' ? 'site 기본값' : (adminSource === 'global' ? 'global 기본값' : '미확인');
+  const logoHtml = state.reportCover.logoDataUrl
+    ? '<img src="' + escapeHtml(state.reportCover.logoDataUrl) + '" alt="표지 로고 미리보기" style="max-width:120px;max-height:52px;object-fit:contain;border-radius:8px;background:#fff;padding:6px;border:1px solid rgba(15,23,42,0.08);" />'
+    : '<div style="min-width:120px;min-height:52px;display:flex;align-items:center;justify-content:center;border-radius:8px;background:#f3f6fb;border:1px dashed rgba(15,23,42,0.12);font-weight:700;color:#1f4e78;">LOGO</div>';
+  elements.reportPreviewCard.innerHTML = '' +
+    '<div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;">' +
+      '<div style="flex:1 1 320px;">' +
+        '<div class="meta" style="font-weight:700;color:#1f4e78;">관리사무소 제출용 표지 미리보기</div>' +
+        '<h3 style="margin:8px 0 6px;">' + escapeHtml(site) + ' 세대 민원 처리 현황 보고</h3>' +
+        '<div class="meta">단지명 ' + escapeHtml(site) + ' · 공사명 ' + escapeHtml(contractorName) + ' · 보고일 ' + escapeHtml(new Date().toLocaleDateString('ko-KR')) + '</div>' +
+        '<div class="meta">출력 구분 ' + escapeHtml(reportType) + ' · 범위 ' + escapeHtml(building) + ' · 관리자 기본값 ' + escapeHtml(adminSourceLabel) + '</div>' +
+      '</div>' +
+      '<div style="flex:0 0 140px;display:flex;justify-content:flex-end;">' + logoHtml + '</div>' +
+    '</div>' +
+    '<div style="margin-top:14px;padding:14px;border:1px solid rgba(15,23,42,0.08);border-radius:14px;background:#f8fbff;">' +
+      '<div style="font-size:18px;font-weight:800;color:#0f172a;">' + escapeHtml(companyName) + '</div>' +
+      '<div class="meta" style="margin-top:6px;">공사업체 ' + escapeHtml(contractorName) + '</div>' +
+      '<div style="margin-top:10px;line-height:1.6;color:#334155;">' + escapeHtml(submissionPhrase) + '</div>' +
+    '</div>';
+}
+
+function selectedReportAdminScope() {
+  return elements.reportAdminScope?.value === 'global' ? 'global' : 'site';
+}
+
+function describeReportAdminDefault(model, requestedScope) {
+  if (!elements.reportAdminStatus) return;
+  if (!model || model.source_scope === 'none') {
+    elements.reportAdminStatus.value = requestedScope === 'global' ? 'global 기본값 없음' : 'site 기본값 없음';
+    return;
+  }
+  const updatedAt = model.updated_at ? formatDateTime(model.updated_at) : '시간 미기록';
+  const scopeLabel = model.source_scope === 'site' ? ((model.site || 'site') + ' 기본값') : 'global 기본값';
+  const requestedLabel = requestedScope === 'global' ? 'global 조회' : 'site 조회';
+  const logoLabel = model.logo_present ? '로고 포함' : '로고 없음';
+  elements.reportAdminStatus.value = requestedLabel + ' · ' + scopeLabel + ' · ' + logoLabel + ' · ' + updatedAt;
+}
+
+async function loadAdminReportDefault(options) {
+  const opts = options || {};
+  const scope = opts.scope || selectedReportAdminScope();
+  if (scope === 'site' && !nullIfBlank(elements.siteFilter?.value)) {
+    state.reportAdminDefault = null;
+    if (elements.reportAdminStatus) elements.reportAdminStatus.value = 'site 입력 후 관리자 기본값을 확인하세요';
+    renderReportPreview();
+    return null;
+  }
+  try {
+    const session = ensureSession(scope !== 'global');
+    const params = new URLSearchParams();
+    if (scope === 'site' && session.site) params.set('site', session.site);
+    const model = await request('/api/complaints/report-cover/default' + (params.toString() ? '?' + params.toString() : ''));
+    state.reportAdminDefault = model;
+    describeReportAdminDefault(model, scope);
+    renderReportPreview();
+    if (opts.applyToForm && model && model.source_scope !== 'none') applyReportCoverSnapshot(model);
+    if (!opts.silent) {
+      setNotice(model && model.source_scope !== 'none' ? '관리자 공통 기본값을 불러왔습니다.' : '저장된 관리자 기본값이 없습니다.', model && model.source_scope !== 'none' ? 'success' : undefined);
+    }
+    return model;
+  } catch (error) {
+    state.reportAdminDefault = null;
+    describeReportAdminDefault(null, scope);
+    renderReportPreview();
+    if (!opts.silent) {
+      setNotice(error.message || '관리자 기본값을 불러오지 못했습니다.', 'error');
+      writeDebug('load-admin-report-default-error', error);
+    }
+    return null;
+  }
+}
+
+async function saveAdminReportDefault() {
+  try {
+    const scope = selectedReportAdminScope();
+    const session = ensureSession(scope !== 'global');
+    const cover = buildReportCoverPayload();
+    const result = await request('/api/complaints/report-cover/default', {
+      method: 'PUT',
+      json: {
+        scope_type: scope,
+        site: scope === 'site' ? session.site : null,
+        company_name: cover.company_name,
+        contractor_name: cover.contractor_name,
+        submission_phrase: cover.submission_phrase,
+        logo_data_url: cover.logo_data_url,
+        logo_file_name: cover.logo_file_name,
+        clear_logo: !cover.logo_data_url,
+      },
+    });
+    state.reportAdminDefault = result;
+    describeReportAdminDefault(result, scope);
+    renderReportPreview();
+    setNotice(scope === 'global' ? 'global 기본값을 저장했습니다.' : 'site 기본값을 저장했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '관리자 기본값 저장에 실패했습니다.', 'error');
+    writeDebug('save-admin-report-default-error', error);
+  }
+}
+
+async function deleteAdminReportDefault() {
+  const scope = selectedReportAdminScope();
+  const scopeLabel = scope === 'global' ? 'global' : 'site';
+  if (!window.confirm(scopeLabel + ' 기본값을 삭제할까요?')) return;
+  try {
+    const session = ensureSession(scope !== 'global');
+    const params = new URLSearchParams({ scope_type: scope });
+    if (scope === 'site' && session.site) params.set('site', session.site);
+    await request('/api/complaints/report-cover/default?' + params.toString(), { method: 'DELETE' });
+    await loadAdminReportDefault({ scope: scope, applyToForm: false, silent: true });
+    setNotice(scopeLabel + ' 기본값을 삭제했습니다.', 'success');
+  } catch (error) {
+    setNotice(error.message || '관리자 기본값 삭제에 실패했습니다.', 'error');
+    writeDebug('delete-admin-report-default-error', error);
+  }
 }
 
 function applyReportPreset(kind, presetKey) {
@@ -966,6 +1249,11 @@ function buildReportCoverPayload() {
   };
 }
 
+function updateReportCoverDraft() {
+  readReportCoverInputs();
+  renderReportPreview();
+}
+
 function setTokenVisibility(visible) {
   elements.token.type = visible ? 'text' : 'password';
   if (elements.toggleTokenVisibilityBtn) {
@@ -997,11 +1285,14 @@ function clearPrefs() {
   state.selectedId = null;
   state.detail = null;
   state.householdHistory = null;
+  state.reportAdminDefault = null;
+  if (elements.reportAdminStatus) elements.reportAdminStatus.value = '관리자 기본값 미확인';
   state.dbEditor = { recordType: elements.dbRecordType.value || 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {}, hiddenColumnsByType: state.dbEditor.hiddenColumnsByType || {} };
   renderStats();
   renderQueue();
   syncDbSiteMirror();
   renderDbEditorTable();
+  renderReportPreview();
   clearDetail('토큰과 site 저장값을 지웠습니다. 다시 입력하면 현장 큐를 불러올 수 있습니다.');
   setNotice('저장된 세션 정보를 초기화했습니다.', 'success');
 }
@@ -2216,6 +2507,8 @@ function bindStaticEvents() {
     if (!elements.createSite.value.trim()) elements.createSite.value = elements.siteFilter.value.trim();
     syncDbSiteMirror();
     savePrefs();
+    renderReportPreview();
+    if (elements.token.value.trim()) loadAdminReportDefault({ applyToForm: false, silent: true });
   });
   elements.seedCreateSiteBtn.addEventListener('click', () => {
     elements.createSite.value = elements.siteFilter.value.trim();
@@ -2223,6 +2516,9 @@ function bindStaticEvents() {
   elements.reportCompanyPreset.addEventListener('change', () => applyReportPreset('company', elements.reportCompanyPreset.value));
   elements.reportContractorPreset.addEventListener('change', () => applyReportPreset('contractor', elements.reportContractorPreset.value));
   elements.reportPhrasePreset.addEventListener('change', () => applyReportPreset('phrase', elements.reportPhrasePreset.value));
+  elements.reportCompanyName.addEventListener('input', updateReportCoverDraft);
+  elements.reportContractorName.addEventListener('input', updateReportCoverDraft);
+  elements.reportSubmissionPhrase.addEventListener('input', updateReportCoverDraft);
   elements.reportCompanyName.addEventListener('change', saveReportCoverPrefs);
   elements.reportContractorName.addEventListener('change', saveReportCoverPrefs);
   elements.reportSubmissionPhrase.addEventListener('change', saveReportCoverPrefs);
@@ -2242,6 +2538,20 @@ function bindStaticEvents() {
       writeDebug('report-logo-load-error', error);
     }
   });
+  elements.reportType.addEventListener('change', renderReportPreview);
+  elements.reportBuilding.addEventListener('input', renderReportPreview);
+  elements.reportPresetSelect.addEventListener('change', () => {
+    if (elements.reportPresetName) elements.reportPresetName.value = elements.reportPresetSelect.value || '';
+  });
+  elements.saveReportPresetBtn.addEventListener('click', saveCurrentReportPreset);
+  elements.loadReportPresetBtn.addEventListener('click', loadSelectedReportPreset);
+  elements.deleteReportPresetBtn.addEventListener('click', deleteSelectedReportPreset);
+  elements.reportAdminScope.addEventListener('change', () => {
+    if (elements.token.value.trim()) loadAdminReportDefault({ applyToForm: false, silent: true });
+  });
+  elements.loadAdminReportDefaultBtn.addEventListener('click', () => loadAdminReportDefault({ applyToForm: true }));
+  elements.saveAdminReportDefaultBtn.addEventListener('click', saveAdminReportDefault);
+  elements.deleteAdminReportDefaultBtn.addEventListener('click', deleteAdminReportDefault);
   elements.downloadXlsxBtn.addEventListener('click', () => downloadComplaintReport('xlsx'));
   elements.downloadPdfBtn.addEventListener('click', () => downloadComplaintReport('pdf'));
   elements.createComplaintBtn.addEventListener('click', createComplaint);
@@ -2272,6 +2582,7 @@ function init() {
   setTokenVisibility(false);
   syncDbSiteMirror();
   fillReportCoverInputs();
+  renderReportPresetOptions('');
   bindStaticEvents();
   renderStats();
   renderQueue();
@@ -2279,6 +2590,9 @@ function init() {
   clearDetail();
   switchTab('field');
   writeDebug('ready', '토큰과 site를 입력하면 현장 큐를 불러올 수 있습니다.');
+  if (elements.token.value.trim()) {
+    loadAdminReportDefault({ applyToForm: !state.reportCoverPrefsLoaded, silent: true });
+  }
   if (elements.token.value.trim() && elements.siteFilter.value.trim()) loadQueue();
 }
 

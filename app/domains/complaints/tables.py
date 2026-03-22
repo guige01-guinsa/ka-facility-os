@@ -117,10 +117,28 @@ def register_complaint_tables(metadata: MetaData) -> dict[str, Table]:
         Column("updated_at", DateTime(timezone=True), nullable=False),
     )
 
+    complaint_report_cover_defaults = Table(
+        "complaint_report_cover_defaults",
+        metadata,
+        Column("id", Integer, primary_key=True, autoincrement=True),
+        Column("scope_type", String(20), nullable=False, default="site"),
+        Column("site", String(120), nullable=True),
+        Column("company_name", String(120), nullable=True),
+        Column("contractor_name", String(120), nullable=True),
+        Column("submission_phrase", Text, nullable=True),
+        Column("logo_file_name", String(200), nullable=True),
+        Column("logo_content_type", String(120), nullable=True),
+        Column("logo_bytes", LargeBinary, nullable=False, default=b""),
+        Column("updated_by", String(80), nullable=False, default="system"),
+        Column("created_at", DateTime(timezone=True), nullable=False),
+        Column("updated_at", DateTime(timezone=True), nullable=False),
+    )
+
     return {
         "complaint_cases": complaint_cases,
         "complaint_events": complaint_events,
         "complaint_attachments": complaint_attachments,
         "complaint_messages": complaint_messages,
         "complaint_cost_items": complaint_cost_items,
+        "complaint_report_cover_defaults": complaint_report_cover_defaults,
     }

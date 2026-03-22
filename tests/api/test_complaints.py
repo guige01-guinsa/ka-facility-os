@@ -31,6 +31,9 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "회사명 선택" in page.text
     assert "공사업체 선택" in page.text
     assert "로고 이미지 불러오기" in page.text
+    assert "표지 프리셋" in page.text
+    assert "관리자 공통 기본값" in page.text
+    assert "표지 미리보기" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:
@@ -396,6 +399,83 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
     assert custom_pdf_resp.status_code == 200
     assert custom_pdf_resp.headers["content-type"].startswith("application/pdf")
     assert custom_pdf_resp.content.startswith(b"%PDF")
+
+
+def test_complaint_report_cover_default_api(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    tiny_png_data_url = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a5tQAAAAASUVORK5CYII="
+    )
+
+    global_updated = app_client.put(
+        "/api/complaints/report-cover/default",
+        headers=headers,
+        json={
+            "scope_type": "global",
+            "company_name": "글로벌 시설관리",
+            "contractor_name": "글로벌 도장업체",
+            "submission_phrase": "글로벌 기본 제출 문구",
+            "logo_data_url": tiny_png_data_url,
+            "logo_file_name": "global-logo.png",
+        },
+    )
+    assert global_updated.status_code == 200
+    global_body = global_updated.json()
+    assert global_body["source_scope"] == "global"
+    assert global_body["company_name"] == "글로벌 시설관리"
+    assert global_body["logo_present"] is True
+
+    global_loaded = app_client.get("/api/complaints/report-cover/default", headers=headers)
+    assert global_loaded.status_code == 200
+    assert global_loaded.json()["company_name"] == "글로벌 시설관리"
+
+    site_updated = app_client.put(
+        "/api/complaints/report-cover/default",
+        headers=headers,
+        json={
+            "scope_type": "site",
+            "site": "연산더샵",
+            "company_name": "연산더샵 시설관리팀",
+            "contractor_name": "연산더샵 도장업체",
+            "submission_phrase": "연산더샵 제출 문구",
+            "clear_logo": True,
+        },
+    )
+    assert site_updated.status_code == 200
+    site_body = site_updated.json()
+    assert site_body["source_scope"] == "site"
+    assert site_body["site"] == "연산더샵"
+    assert site_body["company_name"] == "연산더샵 시설관리팀"
+    assert site_body["logo_present"] is False
+
+    site_loaded = app_client.get("/api/complaints/report-cover/default?site=연산더샵", headers=headers)
+    assert site_loaded.status_code == 200
+    assert site_loaded.json()["source_scope"] == "site"
+    assert site_loaded.json()["company_name"] == "연산더샵 시설관리팀"
+
+    deleted_site = app_client.delete(
+        "/api/complaints/report-cover/default?scope_type=site&site=연산더샵",
+        headers=headers,
+    )
+    assert deleted_site.status_code == 204
+
+    site_fallback = app_client.get("/api/complaints/report-cover/default?site=연산더샵", headers=headers)
+    assert site_fallback.status_code == 200
+    assert site_fallback.json()["source_scope"] == "global"
+    assert site_fallback.json()["company_name"] == "글로벌 시설관리"
+    assert site_fallback.json()["logo_present"] is True
+
+    deleted_global = app_client.delete(
+        "/api/complaints/report-cover/default?scope_type=global",
+        headers=headers,
+    )
+    assert deleted_global.status_code == 204
+
+    no_default = app_client.get("/api/complaints/report-cover/default?site=연산더샵", headers=headers)
+    assert no_default.status_code == 200
+    assert no_default.json()["source_scope"] == "none"
+    assert no_default.json()["company_name"] is None
 
 
 def test_complaint_admin_record_grid_bulk_api(app_client: TestClient) -> None:

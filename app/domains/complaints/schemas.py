@@ -22,6 +22,7 @@ ComplaintPriority = Literal["low", "medium", "high", "urgent"]
 ComplaintAttachmentKind = Literal["intake", "before", "after", "other"]
 ComplaintDeliveryKind = Literal["sms"]
 ComplaintAdminRecordType = Literal["cases", "events", "attachments", "messages", "cost_items"]
+ComplaintReportCoverScopeType = Literal["site", "global"]
 
 
 class ComplaintCaseCreate(BaseModel):
@@ -291,3 +292,29 @@ class ComplaintPdfExportRequest(BaseModel):
     report_type: Optional[str] = Field(default=None, max_length=40)
     building: Optional[str] = Field(default=None, max_length=120)
     cover: ComplaintReportCoverOptions = Field(default_factory=ComplaintReportCoverOptions)
+
+
+class ComplaintReportCoverDefaultUpdate(BaseModel):
+    scope_type: ComplaintReportCoverScopeType = "site"
+    site: Optional[str] = Field(default=None, max_length=120)
+    company_name: Optional[str] = Field(default=None, max_length=120)
+    contractor_name: Optional[str] = Field(default=None, max_length=120)
+    submission_phrase: Optional[str] = Field(default=None, max_length=500)
+    logo_data_url: Optional[str] = Field(default=None, max_length=2_000_000)
+    logo_file_name: Optional[str] = Field(default=None, max_length=200)
+    clear_logo: bool = False
+
+
+class ComplaintReportCoverDefaultRead(BaseModel):
+    scope_type: ComplaintReportCoverScopeType
+    source_scope: str
+    site: Optional[str] = None
+    company_name: Optional[str] = None
+    contractor_name: Optional[str] = None
+    submission_phrase: Optional[str] = None
+    logo_data_url: Optional[str] = None
+    logo_file_name: Optional[str] = None
+    logo_content_type: Optional[str] = None
+    logo_present: bool = False
+    updated_by: Optional[str] = None
+    updated_at: Optional[datetime] = None

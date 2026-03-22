@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -17,6 +19,7 @@ from app.database import (
     complaint_cost_items,
     complaint_events,
     complaint_messages,
+    complaint_report_cover_defaults,
     get_conn,
     utility_billing_units,
     work_orders,
@@ -44,6 +47,9 @@ from app.domains.complaints.schemas import (
     ComplaintMessageRead,
     ComplaintMessageSend,
     ComplaintMessageUpdate,
+    ComplaintReportCoverDefaultRead,
+    ComplaintReportCoverDefaultUpdate,
+    ComplaintReportCoverOptions,
 )
 from app.domains.iam.service import _write_audit_log
 from app.domains.ops.inspection_service import (
@@ -347,6 +353,39 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _normalize_cover_text(value: Any, *, max_length: int) -> str | None:
+    normalized = normalize_description(value)
+    if not normalized:
+        return None
+    return normalized[:max_length]
+
+
+def _decode_logo_data_url(value: Any) -> tuple[bytes | None, str | None]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+    matched = re.match(r"^data:(image/(png|jpeg|jpg));base64,(.+)$", raw, re.IGNORECASE)
+    if matched is None:
+        raise HTTPException(status_code=422, detail="logo_data_url must be a PNG or JPEG data URL")
+    content_type = matched.group(1).lower().replace("jpg", "jpeg")
+    try:
+        payload = base64.b64decode(matched.group(3), validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise HTTPException(status_code=422, detail="logo_data_url is not valid base64") from exc
+    if len(payload) > 1_500_000:
+        raise HTTPException(status_code=422, detail="logo image must be 1.5MB or smaller")
+    return payload, content_type
+
+
+def _logo_bytes_to_data_url(content_type: Any, payload: bytes | None) -> str | None:
+    if not payload:
+        return None
+    normalized_type = str(content_type or "").strip().lower()
+    if normalized_type not in {"image/png", "image/jpeg"}:
+        normalized_type = "image/png"
+    return f"data:{normalized_type};base64,{base64.b64encode(payload).decode('ascii')}"
+
+
 def _build_title(*, building: str, unit_number: str, complaint_type: str, title: str | None = None) -> str:
     preferred = normalize_description(title)
     if preferred:
@@ -600,6 +639,167 @@ def _ensure_admin_site_allowed(site: str, allowed_sites: list[str] | None) -> st
     if allowed_sites is not None and normalized_site not in set(allowed_sites):
         raise HTTPException(status_code=403, detail="Site access denied")
     return normalized_site
+
+
+def _scope_site_value(*, scope_type: str, site: str | None) -> str | None:
+    normalized_scope = normalize_description(scope_type).lower() or "site"
+    if normalized_scope == "global":
+        return None
+    return _normalize_site(site)
+
+
+def _cover_default_row_to_model(row: dict[str, Any], *, source_scope: str) -> ComplaintReportCoverDefaultRead:
+    logo_bytes = row.get("logo_bytes")
+    logo_payload = bytes(logo_bytes) if isinstance(logo_bytes, (bytes, bytearray, memoryview)) else (logo_bytes if isinstance(logo_bytes, bytes) else b"")
+    return ComplaintReportCoverDefaultRead(
+        scope_type=str(row.get("scope_type") or "site"),
+        source_scope=source_scope,
+        site=str(row["site"]) if row.get("site") else None,
+        company_name=str(row["company_name"]) if row.get("company_name") else None,
+        contractor_name=str(row["contractor_name"]) if row.get("contractor_name") else None,
+        submission_phrase=str(row["submission_phrase"]) if row.get("submission_phrase") else None,
+        logo_data_url=_logo_bytes_to_data_url(row.get("logo_content_type"), logo_payload),
+        logo_file_name=str(row["logo_file_name"]) if row.get("logo_file_name") else None,
+        logo_content_type=str(row["logo_content_type"]) if row.get("logo_content_type") else None,
+        logo_present=bool(logo_payload),
+        updated_by=str(row["updated_by"]) if row.get("updated_by") else None,
+        updated_at=_as_optional_datetime(row.get("updated_at")),
+    )
+
+
+def get_effective_report_cover_default(*, site: str | None, allowed_sites: list[str] | None = None) -> ComplaintReportCoverDefaultRead:
+    normalized_site = _ensure_admin_site_allowed(site, allowed_sites) if site else None
+    with get_conn() as conn:
+        if normalized_site:
+            row = conn.execute(
+                select(complaint_report_cover_defaults)
+                .where(complaint_report_cover_defaults.c.scope_type == "site")
+                .where(complaint_report_cover_defaults.c.site == normalized_site)
+                .limit(1)
+            ).mappings().first()
+            if row is not None:
+                return _cover_default_row_to_model(row, source_scope="site")
+        row = conn.execute(
+            select(complaint_report_cover_defaults)
+            .where(complaint_report_cover_defaults.c.scope_type == "global")
+            .limit(1)
+        ).mappings().first()
+    if row is not None:
+        return _cover_default_row_to_model(row, source_scope="global")
+    return ComplaintReportCoverDefaultRead(scope_type="global", source_scope="none", site=normalized_site)
+
+
+def resolve_effective_report_cover_options(
+    *,
+    site: str | None,
+    override: ComplaintReportCoverOptions | None = None,
+    allowed_sites: list[str] | None = None,
+) -> ComplaintReportCoverOptions | None:
+    default_model = get_effective_report_cover_default(site=site, allowed_sites=allowed_sites)
+    default_cover = ComplaintReportCoverOptions(
+        company_name=default_model.company_name,
+        contractor_name=default_model.contractor_name,
+        submission_phrase=default_model.submission_phrase,
+        logo_data_url=default_model.logo_data_url,
+        logo_file_name=default_model.logo_file_name,
+    )
+    if override is None:
+        if any(
+            (
+                default_cover.company_name,
+                default_cover.contractor_name,
+                default_cover.submission_phrase,
+                default_cover.logo_data_url,
+            )
+        ):
+            return default_cover
+        return None
+    merged = ComplaintReportCoverOptions(
+        company_name=_normalize_cover_text(override.company_name, max_length=120) or default_cover.company_name,
+        contractor_name=_normalize_cover_text(override.contractor_name, max_length=120) or default_cover.contractor_name,
+        submission_phrase=_normalize_cover_text(override.submission_phrase, max_length=500) or default_cover.submission_phrase,
+        logo_data_url=str(override.logo_data_url or "").strip() or default_cover.logo_data_url,
+        logo_file_name=_normalize_cover_text(override.logo_file_name, max_length=200) or default_cover.logo_file_name,
+    )
+    if any((merged.company_name, merged.contractor_name, merged.submission_phrase, merged.logo_data_url)):
+        return merged
+    return None
+
+
+def save_report_cover_default(
+    *,
+    payload: ComplaintReportCoverDefaultUpdate,
+    principal: dict[str, Any],
+    allowed_sites: list[str] | None = None,
+) -> ComplaintReportCoverDefaultRead:
+    scope_type = normalize_description(payload.scope_type).lower() or "site"
+    if scope_type not in {"site", "global"}:
+        raise HTTPException(status_code=422, detail="scope_type must be site or global")
+    site_value = _scope_site_value(scope_type=scope_type, site=payload.site)
+    if scope_type == "site":
+        _ensure_admin_site_allowed(site_value, allowed_sites)
+    logo_bytes = None
+    logo_content_type = None
+    if str(payload.logo_data_url or "").strip():
+        logo_bytes, logo_content_type = _decode_logo_data_url(payload.logo_data_url)
+    now = _now()
+    actor = _actor_username(principal)
+    values = {
+        "scope_type": scope_type,
+        "site": site_value,
+        "company_name": _normalize_cover_text(payload.company_name, max_length=120),
+        "contractor_name": _normalize_cover_text(payload.contractor_name, max_length=120),
+        "submission_phrase": _normalize_cover_text(payload.submission_phrase, max_length=500),
+        "logo_file_name": _normalize_cover_text(payload.logo_file_name, max_length=200),
+        "logo_content_type": logo_content_type,
+        "updated_by": actor,
+        "updated_at": now,
+    }
+    with get_conn() as conn:
+        existing = conn.execute(
+            select(complaint_report_cover_defaults)
+            .where(complaint_report_cover_defaults.c.scope_type == scope_type)
+            .where(complaint_report_cover_defaults.c.site.is_(site_value) if site_value is None else complaint_report_cover_defaults.c.site == site_value)
+            .limit(1)
+        ).mappings().first()
+        if existing is None:
+            insert_values = dict(values)
+            insert_values["created_at"] = now
+            insert_values["logo_bytes"] = logo_bytes or b""
+            conn.execute(insert(complaint_report_cover_defaults).values(**insert_values))
+        else:
+            update_values = dict(values)
+            if payload.clear_logo:
+                update_values["logo_bytes"] = b""
+                update_values["logo_content_type"] = None
+                update_values["logo_file_name"] = None
+            elif logo_bytes is not None:
+                update_values["logo_bytes"] = logo_bytes
+            conn.execute(
+                update(complaint_report_cover_defaults)
+                .where(complaint_report_cover_defaults.c.id == int(existing["id"]))
+                .values(**update_values)
+            )
+    return get_effective_report_cover_default(site=site_value or payload.site, allowed_sites=allowed_sites if scope_type == "site" else None)
+
+
+def delete_report_cover_default(
+    *,
+    scope_type: str,
+    site: str | None,
+    allowed_sites: list[str] | None = None,
+) -> bool:
+    normalized_scope = normalize_description(scope_type).lower() or "site"
+    if normalized_scope not in {"site", "global"}:
+        raise HTTPException(status_code=422, detail="scope_type must be site or global")
+    site_value = _scope_site_value(scope_type=normalized_scope, site=site)
+    if normalized_scope == "site":
+        _ensure_admin_site_allowed(site_value, allowed_sites)
+    with get_conn() as conn:
+        stmt = delete(complaint_report_cover_defaults).where(complaint_report_cover_defaults.c.scope_type == normalized_scope)
+        stmt = stmt.where(complaint_report_cover_defaults.c.site.is_(None)) if site_value is None else stmt.where(complaint_report_cover_defaults.c.site == site_value)
+        result = conn.execute(stmt)
+    return bool(result.rowcount)
 
 
 def _search_matches(row: dict[str, Any], query: str) -> bool:
