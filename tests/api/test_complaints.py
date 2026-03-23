@@ -409,11 +409,13 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
 
 
 def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:
-    layout = reporting._cover_layout(height=A4[1])
+    layout = reporting._cover_layout(width=A4[0], height=A4[1])
     assert layout.header_bottom_y < layout.top_y
     assert layout.badge_top_y < layout.header_bottom_y
     assert layout.title_top_y < layout.badge_top_y - layout.badge_height
     assert layout.title_top_y < layout.header_bottom_y - (8 * reporting.mm)
+    assert layout.badge_width == A4[0] - (2 * reporting.PDF_MARGIN)
+    assert layout.badge_height > (8 * reporting.mm)
 
 
 def test_complaint_report_cover_default_api(app_client: TestClient) -> None:

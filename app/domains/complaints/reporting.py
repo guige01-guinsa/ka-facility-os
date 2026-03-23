@@ -919,17 +919,17 @@ def _draw_page_footer(pdf: canvas.Canvas, *, width: float, page_number: int, fon
     pdf.drawRightString(width - PDF_MARGIN, PDF_MARGIN - 2, f"{page_number} page")
 
 
-def _cover_layout(*, height: float) -> ComplaintPdfCoverLayout:
+def _cover_layout(*, width: float, height: float) -> ComplaintPdfCoverLayout:
     top_y = height - PDF_MARGIN - 2
     logo_width = 72 * mm
     logo_height = 28 * mm
     approval_width = 96 * mm
     approval_height = 32 * mm
     header_bottom_y = min(top_y - logo_height, top_y - approval_height)
-    badge_width = 34 * mm
-    badge_height = 8 * mm
+    badge_width = width - 2 * PDF_MARGIN
+    badge_height = 16 * mm
     badge_top_y = header_bottom_y - 4 * mm
-    title_top_y = badge_top_y - badge_height - 4.5 * mm
+    title_top_y = badge_top_y - badge_height - 5 * mm
     return ComplaintPdfCoverLayout(
         top_y=top_y,
         logo_width=logo_width,
@@ -947,7 +947,7 @@ def _cover_layout(*, height: float) -> ComplaintPdfCoverLayout:
 def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width: float, height: float, font_name: str) -> float:
     metadata = _cover_metadata(report)
     _draw_pdf_frame(pdf, width=width, height=height)
-    layout = _cover_layout(height=height)
+    layout = _cover_layout(width=width, height=height)
     _draw_company_logo(
         pdf,
         x=PDF_MARGIN,
@@ -969,37 +969,25 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
     )
     pdf.setFillColor(PDF_TITLE_BG)
     pdf.setStrokeColor(PDF_LINE)
+    title_box_y = layout.badge_top_y - layout.badge_height
     pdf.roundRect(
         PDF_MARGIN,
-        layout.badge_top_y - layout.badge_height,
+        title_box_y,
         layout.badge_width,
         layout.badge_height,
-        4,
+        6,
         stroke=1,
         fill=1,
     )
     pdf.setFillColor(PDF_HEADER_BLUE)
-    pdf.setFont(font_name, 8)
+    pdf.setFont(font_name, 18)
     pdf.drawCentredString(
         PDF_MARGIN + layout.badge_width / 2,
-        layout.badge_top_y - 5.5,
-        metadata["submission_label"],
+        title_box_y + (layout.badge_height - 18) / 2 + 5,
+        metadata["document_title"],
     )
     text_width = width - 2 * PDF_MARGIN
     current_y = layout.title_top_y
-    current_y = _draw_wrapped_text_block(
-        pdf,
-        text=metadata["document_title"],
-        x=PDF_MARGIN,
-        y_top=current_y,
-        max_width=text_width,
-        font_name=font_name,
-        font_size=18,
-        fill_color=PDF_HEADER_BLUE,
-        line_gap=21,
-        max_lines=2,
-    )
-    current_y -= 4
     current_y = _draw_wrapped_text_block(
         pdf,
         text=metadata["document_subtitle"],
