@@ -853,7 +853,7 @@ def _pdf_table_layout(report: ComplaintExportReport) -> tuple[list[str], list[fl
         return report.headers, [17 * mm, 17 * mm, 17 * mm, 17 * mm, 17 * mm, 17 * mm, 44 * mm], 7.6
     if report.report_type == "category":
         return report.headers, [32 * mm, 18 * mm, 18 * mm, 18 * mm, 18 * mm, 42 * mm], 7.8
-    return report.headers, [10 * mm, 12 * mm, 12 * mm, 18 * mm, 14 * mm, 16 * mm, 20 * mm, 20 * mm, 53 * mm], 7.0
+    return report.headers, [10 * mm, 12 * mm, 12 * mm, 18 * mm, 14 * mm, 16 * mm, 20 * mm, 30 * mm, 53 * mm], 7.0
 
 
 def _draw_table_header(pdf: canvas.Canvas, *, headers: list[str], widths: list[float], x: float, y_top: float, font_name: str, font_size: float) -> float:

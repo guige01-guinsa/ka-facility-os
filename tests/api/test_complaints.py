@@ -418,6 +418,25 @@ def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:
     assert layout.badge_height > (8 * reporting.mm)
 
 
+def test_complaint_pdf_table_layout_widens_contact_column() -> None:
+    report = reporting.ComplaintExportReport(
+        report_type="all",
+        report_label="전체",
+        site="연산더샵",
+        building=None,
+        generated_at=datetime.now(timezone.utc),
+        summary_rows=[],
+        headers=["민원ID", "동", "호수", "민원유형", "상태", "담당자", "접수일시", "연락처", "민원내용"],
+        rows=[],
+        primary_sheet_name="민원목록",
+        file_stem="complaints-all-yeonsan",
+        raw_sheets=[],
+    )
+    _, widths, _ = reporting._pdf_table_layout(report)
+    assert widths[7] == 30 * reporting.mm
+    assert sum(widths) <= A4[0] - (2 * reporting.PDF_MARGIN)
+
+
 def test_complaint_report_cover_default_api(app_client: TestClient) -> None:
     headers = _owner_headers()
     tiny_png_data_url = (
