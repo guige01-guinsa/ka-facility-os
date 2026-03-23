@@ -24,6 +24,10 @@ def test_rbac_user_and_token_lifecycle(app_client: TestClient) -> None:
     assert me_body["meta"]["scope_type"] == "global"
     assert me.headers.get("cache-control") == "no-store"
     assert me.headers.get("pragma") == "no-cache"
+    assert me.headers.get("x-content-type-options") == "nosniff"
+    assert me.headers.get("cross-origin-opener-policy") == "same-origin"
+    assert me.headers.get("cross-origin-resource-policy") == "same-origin"
+    assert me.headers.get("origin-agent-cluster") == "?1"
 
     created = app_client.post(
         "/api/admin/users",
@@ -143,6 +147,9 @@ def test_auth_logout_revokes_issued_token_and_handles_legacy_token(app_client: T
     assert logout_body["status"] == "logged_out"
     assert logout_body["token_revoked"] is True
     assert logout_body["is_legacy"] is False
+    assert logout.headers.get("cache-control") == "no-store"
+    assert logout.headers.get("pragma") == "no-cache"
+    assert logout.headers.get("clear-site-data") == '"cache", "storage"'
 
     me_after = app_client.get("/api/auth/me", headers=issued_headers)
     assert me_after.status_code == 401

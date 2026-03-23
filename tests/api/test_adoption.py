@@ -75,6 +75,9 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     root_html = app_client.get("/", headers={"Accept": "text/html"})
     assert root_html.status_code == 200
     assert root_html.headers["content-type"].startswith("text/html")
+    assert root_html.headers.get("cache-control") == "no-store"
+    assert root_html.headers.get("pragma") == "no-cache"
+    assert root_html.headers.get("x-robots-tag") == "noindex, nofollow"
     assert root_html.headers.get("x-content-type-options") == "nosniff"
     assert root_html.headers.get("x-frame-options") == "DENY"
     assert "default-src 'self'" in root_html.headers.get("content-security-policy", "")
@@ -126,6 +129,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "알림 채널 KPI" in root_html.text
     assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
+    assert "kaFacility.auth.token" in root_html.text
+    assert "kaFacility.auth.profile" in root_html.text
     assert "ID/PW 로그인" in root_html.text
     assert "사용자 신규가입" in root_html.text
     assert "권한관리" in root_html.text
@@ -531,12 +536,17 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     console_html = app_client.get("/web/console")
     assert console_html.status_code == 200
     assert console_html.headers["content-type"].startswith("text/html")
+    assert console_html.headers.get("cache-control") == "no-store"
+    assert console_html.headers.get("pragma") == "no-cache"
+    assert console_html.headers.get("x-robots-tag") == "noindex, nofollow"
     assert "KA Facility OS 시설관리 운영 콘솔" in console_html.text
     assert "X-Admin-Token" in console_html.text
     assert "결과 보기" in console_html.text
     assert "알림 채널 KPI (7/30일)" in console_html.text
     assert "알림 데이터 보관정책" in console_html.text
     assert "토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다." in console_html.text
+    assert "kaFacility.auth.token" in console_html.text
+    assert "kaFacility.auth.profile" in console_html.text
     assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_html.text
     assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
     assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
@@ -547,6 +557,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     console_guide_html = app_client.get("/web/console/guide")
     assert console_guide_html.status_code == 200
     assert console_guide_html.headers["content-type"].startswith("text/html")
+    assert console_guide_html.headers.get("cache-control") == "no-store"
+    assert console_guide_html.headers.get("pragma") == "no-cache"
     assert "운영 콘솔 1페이지 시작 가이드" in console_guide_html.text
     assert "연결 테스트 (/api/auth/me)" in console_guide_html.text
     assert "점검 목록" in console_guide_html.text

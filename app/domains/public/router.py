@@ -74,6 +74,17 @@ def _utf8_text_download_response(*, content_text: str, file_name: str, media_typ
     )
 
 
+def _secure_shell_html_response(content: str) -> HTMLResponse:
+    return HTMLResponse(
+        content,
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
+
+
 def build_router(deps: PublicRouteDeps) -> APIRouter:
     router = APIRouter(tags=["public"])
     tutorial_sample_types = {str(item).strip().lower() for item in deps.tutorial_simulator_sample_allowed_content_types}
@@ -88,7 +99,7 @@ def build_router(deps: PublicRouteDeps) -> APIRouter:
 
     @router.get("/web/console", response_model=None)
     def facility_console() -> HTMLResponse:
-        return HTMLResponse(
+        return _secure_shell_html_response(
             deps.build_facility_console_html(
                 deps.service_info_payload(),
                 deps.facility_modules_payload(),
@@ -97,11 +108,11 @@ def build_router(deps: PublicRouteDeps) -> APIRouter:
 
     @router.get("/web/console/guide", response_model=None)
     def facility_console_guide() -> HTMLResponse:
-        return HTMLResponse(deps.build_facility_console_guide_html(deps.service_info_payload()))
+        return _secure_shell_html_response(deps.build_facility_console_guide_html(deps.service_info_payload()))
 
     @router.get("/web/iam-guide", response_model=None)
     def iam_guide() -> HTMLResponse:
-        return HTMLResponse(deps.build_iam_guide_html(deps.service_info_payload()))
+        return _secure_shell_html_response(deps.build_iam_guide_html(deps.service_info_payload()))
 
     @router.get("/web/tutorial-guide", response_model=None)
     def tutorial_guide() -> HTMLResponse:
@@ -124,7 +135,7 @@ def build_router(deps: PublicRouteDeps) -> APIRouter:
     def root(request: Request) -> Any:
         if _accepts_html(request):
             selected_tab = request.query_params.get("tab", "").strip().lower()
-            return HTMLResponse(deps.build_system_main_tabs_html(deps.service_info_payload(), selected_tab))
+            return _secure_shell_html_response(deps.build_system_main_tabs_html(deps.service_info_payload(), selected_tab))
         return deps.service_info_payload()
 
     @router.get("/api/public/adoption-plan")

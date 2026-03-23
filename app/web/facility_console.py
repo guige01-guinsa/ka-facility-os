@@ -337,7 +337,7 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
       <h2>1) 인증 연결</h2>
       <p class="sub">권한이 필요한 모듈(점검/작업지시/SLA/리포트)은 관리자 토큰(X-Admin-Token)으로 조회합니다.</p>
       <div class="auth-row">
-        <input id="adminTokenInput" type="password" placeholder="X-Admin-Token 입력" autocomplete="off" />
+        <input id="adminTokenInput" type="password" placeholder="X-Admin-Token 입력" autocomplete="off" autocapitalize="off" spellcheck="false" />
         <button id="saveTokenBtn" class="btn" type="button">토큰 저장</button>
         <button id="testTokenBtn" class="btn run" type="button">연결 테스트 (/api/auth/me)</button>
         <button id="clearTokenBtn" class="btn" type="button">토큰 지우기</button>
@@ -494,13 +494,15 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
 
   <script>
     (function() {
-      const TOKEN_KEY = 'kaFacilityAdminToken';
-      const TOKEN_KEY_ALIASES = ['kaFacilityAdminToken', 'kaFacilityMainToken'];
+      const TOKEN_KEY = 'kaFacility.auth.token';
+      const TOKEN_KEY_ALIASES = ['kaFacility.auth.token', 'kaFacilityAdminToken', 'kaFacilityMainToken', 'kaFacility.complaints.token'];
+      const PROFILE_KEY = 'kaFacility.auth.profile';
       const tokenInput = document.getElementById('adminTokenInput');
       const tokenState = document.getElementById('tokenState');
       const resultMeta = document.getElementById('resultMeta');
       const resultView = document.getElementById('resultView');
       const resultRaw = document.getElementById('resultRaw');
+      let authProfile = null;
       const STATIC_TOOLTIP_TEXT_BY_ID = {
         saveTokenBtn: '토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다.',
         testTokenBtn: '연결 테스트: 현재 토큰으로 /api/auth/me를 호출해 권한과 역할을 확인합니다.',
@@ -630,6 +632,19 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
         });
       }
 
+      function persistToken(token) {
+        const normalized = String(token || '').trim();
+        if (!normalized) return;
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        window.sessionStorage.setItem(TOKEN_KEY, normalized);
+        keys.forEach((key) => {
+          if (key !== TOKEN_KEY) {
+            window.sessionStorage.removeItem(key);
+          }
+          window.localStorage.removeItem(key);
+        });
+      }
+
       function getToken() {
         const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
         for (const key of keys) {
@@ -656,11 +671,65 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
         return '';
       }
 
+      function getStoredAuthProfile() {
+        const raw = window.sessionStorage.getItem(PROFILE_KEY) || window.localStorage.getItem(PROFILE_KEY) || '';
+        if (!raw) return null;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            window.sessionStorage.setItem(PROFILE_KEY, JSON.stringify(parsed));
+            window.localStorage.removeItem(PROFILE_KEY);
+            return parsed;
+          }
+        } catch (err) {
+          window.sessionStorage.removeItem(PROFILE_KEY);
+          window.localStorage.removeItem(PROFILE_KEY);
+        }
+        return null;
+      }
+
+      function persistAuthProfile(profile) {
+        if (!profile) {
+          window.sessionStorage.removeItem(PROFILE_KEY);
+          window.localStorage.removeItem(PROFILE_KEY);
+          return;
+        }
+        window.sessionStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+        window.localStorage.removeItem(PROFILE_KEY);
+      }
+
+      function clearStoredAuth(options = {}) {
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        keys.forEach((key) => {
+          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
+        });
+        persistAuthProfile(null);
+        authProfile = null;
+        if (!options.preserveInput) {
+          tokenInput.value = '';
+        }
+      }
+
       function updateTokenState() {
         const token = getToken();
-        tokenState.textContent = token
-          ? '토큰 상태: 저장됨 (길이 ' + token.length + ')'
-          : '토큰 상태: 없음';
+        if (!token) {
+          authProfile = null;
+          persistAuthProfile(null);
+          tokenState.textContent = '토큰 상태: 없음';
+          return;
+        }
+        if (!authProfile) {
+          authProfile = getStoredAuthProfile();
+        }
+        if (authProfile) {
+          const siteScope = Array.isArray(authProfile.site_scope) && authProfile.site_scope.length
+            ? authProfile.site_scope.join(', ')
+            : '*';
+          tokenState.textContent = '토큰 상태: 확인됨 | 사용자 ' + String(authProfile.username || '-') + ' | 역할 ' + String(authProfile.role || '-') + ' | 범위 ' + siteScope;
+          return;
+        }
+        tokenState.textContent = '토큰 상태: 저장됨 (권한 확인 전)';
       }
 
       function readInput(id) {
@@ -763,14 +832,28 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
           resultRaw.textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 
           if (!res.ok) {
+            if (def.auth && res.status === 401) {
+              clearStoredAuth({ preserveInput: true });
+              updateTokenState();
+            }
             resultMeta.textContent = '실패: HTTP ' + res.status + ' | ' + path;
             resultView.innerHTML = renderData(data);
             return;
           }
 
+          if (panelId === 'authMe' && data && typeof data === 'object') {
+            authProfile = data;
+            persistAuthProfile(authProfile);
+            updateTokenState();
+          }
           resultMeta.textContent = '성공: HTTP ' + res.status + ' | ' + path;
           resultView.innerHTML = renderData(data);
         } catch (err) {
+          if (panelId === 'authMe') {
+            authProfile = null;
+            persistAuthProfile(null);
+            updateTokenState();
+          }
           resultMeta.textContent = '요청 오류: ' + (err && err.message ? err.message : 'unknown error');
           resultView.innerHTML = '<div class="empty">네트워크 또는 런타임 오류가 발생했습니다.</div>';
         }
@@ -792,28 +875,21 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
         btn.addEventListener('click', () => runPanel(btn.dataset.panel));
       });
 
-      document.getElementById('saveTokenBtn').addEventListener('click', () => {
+      document.getElementById('saveTokenBtn').addEventListener('click', async () => {
         const token = (tokenInput.value || '').trim();
         if (!token) {
           tokenState.textContent = '토큰 상태: 빈 값은 저장할 수 없습니다.';
           return;
         }
-        window.sessionStorage.setItem(TOKEN_KEY, token);
-        TOKEN_KEY_ALIASES.forEach((key) => {
-          if (key !== TOKEN_KEY) {
-            window.sessionStorage.removeItem(key);
-          }
-          window.localStorage.removeItem(key);
-        });
+        persistToken(token);
+        authProfile = null;
+        persistAuthProfile(null);
         updateTokenState();
+        await runPanel('authMe');
       });
 
       document.getElementById('clearTokenBtn').addEventListener('click', () => {
-        TOKEN_KEY_ALIASES.forEach((key) => {
-          window.sessionStorage.removeItem(key);
-          window.localStorage.removeItem(key);
-        });
-        tokenInput.value = '';
+        clearStoredAuth();
         updateTokenState();
       });
 
@@ -823,9 +899,13 @@ def build_facility_console_html(service_info: dict[str, str], modules_payload: d
         if (node) node.addEventListener('input', updateReportLinks);
       });
 
+      authProfile = getStoredAuthProfile();
       const storedToken = getToken();
       if (storedToken) tokenInput.value = storedToken;
       updateTokenState();
+      if (storedToken && !authProfile) {
+        runPanel('authMe');
+      }
       applyTooltips();
       updateReportLinks();
       runPanel('serviceInfo');

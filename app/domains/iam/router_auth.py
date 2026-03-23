@@ -212,6 +212,7 @@ def auth_logout(
     )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+    response.headers["Clear-Site-Data"] = '"cache", "storage"'
     return AuthLogoutResponse(
         status="logged_out",
         token_id=token_id,

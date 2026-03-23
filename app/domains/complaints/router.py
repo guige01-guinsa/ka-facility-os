@@ -56,9 +56,20 @@ def _safe_download_filename(value: str) -> str:
     return normalized or "complaint-attachment.bin"
 
 
+def _secure_html_response(content: str) -> HTMLResponse:
+    return HTMLResponse(
+        content,
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
+
+
 @router.get("/web/complaints", response_model=None)
 def complaints_mobile_page() -> HTMLResponse:
-    return HTMLResponse(build_complaints_mobile_html())
+    return _secure_html_response(build_complaints_mobile_html())
 
 
 @router.get("/api/complaints/households/history", response_model=ComplaintHouseholdHistoryRead)

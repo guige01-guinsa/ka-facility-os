@@ -13,6 +13,9 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     page = app_client.get("/web/complaints")
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
+    assert page.headers.get("cache-control") == "no-store"
+    assert page.headers.get("pragma") == "no-cache"
+    assert page.headers.get("x-robots-tag") == "noindex, nofollow"
     assert "Field Workflow Console" in page.text
     assert "현장 큐" in page.text
     assert "민원 신규 등록" in page.text
@@ -34,6 +37,8 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "표지 프리셋" in page.text
     assert "관리자 공통 기본값" in page.text
     assert "표지 미리보기" in page.text
+    assert "kaFacility.auth.token" in page.text
+    assert "kaFacility.auth.profile" in page.text
 
 
 def test_complaint_case_crud_and_household_history(app_client: TestClient) -> None:

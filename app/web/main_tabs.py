@@ -651,7 +651,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       </div>
       <div class="shell">
         <div class="auth-row">
-          <input id="adminTokenInput" type="password" placeholder="X-Admin-Token 입력" autocomplete="off" />
+          <input id="adminTokenInput" type="password" placeholder="X-Admin-Token 입력" autocomplete="off" autocapitalize="off" spellcheck="false" />
           <button id="saveTokenBtn" class="btn" type="button">토큰 저장</button>
           <button id="testTokenBtn" class="btn run" type="button">권한 확인</button>
           <button id="clearTokenBtn" class="btn" type="button">토큰 지우기</button>
@@ -2036,8 +2036,9 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
   </div>
   <script>
     (function() {{
-      const TOKEN_KEY = "kaFacilityAdminToken";
-      const TOKEN_KEY_ALIASES = ["kaFacilityAdminToken", "kaFacilityMainToken"];
+      const TOKEN_KEY = "kaFacility.auth.token";
+      const TOKEN_KEY_ALIASES = ["kaFacility.auth.token", "kaFacilityAdminToken", "kaFacilityMainToken", "kaFacility.complaints.token"];
+      const PROFILE_KEY = "kaFacility.auth.profile";
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
       const panels = {{
         overview: document.getElementById("panelOverview"),
@@ -2225,6 +2226,19 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       ];
       let opsElectricalChecklistRows = [];
 
+      function persistToken(token) {{
+        const normalized = String(token || "").trim();
+        if (!normalized) return;
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        window.sessionStorage.setItem(TOKEN_KEY, normalized);
+        keys.forEach((key) => {{
+          if (key !== TOKEN_KEY) {{
+            window.sessionStorage.removeItem(key);
+          }}
+          window.localStorage.removeItem(key);
+        }});
+      }}
+
       function getToken() {{
         const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
         for (const key of keys) {{
@@ -2249,6 +2263,46 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           return localToken;
         }}
         return "";
+      }}
+
+      function getStoredAuthProfile() {{
+        const raw = window.sessionStorage.getItem(PROFILE_KEY) || window.localStorage.getItem(PROFILE_KEY) || "";
+        if (!raw) return null;
+        try {{
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {{
+            window.sessionStorage.setItem(PROFILE_KEY, JSON.stringify(parsed));
+            window.localStorage.removeItem(PROFILE_KEY);
+            return parsed;
+          }}
+        }} catch (err) {{
+          window.sessionStorage.removeItem(PROFILE_KEY);
+          window.localStorage.removeItem(PROFILE_KEY);
+        }}
+        return null;
+      }}
+
+      function persistAuthProfile(profile) {{
+        if (!profile) {{
+          window.sessionStorage.removeItem(PROFILE_KEY);
+          window.localStorage.removeItem(PROFILE_KEY);
+          return;
+        }}
+        window.sessionStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+        window.localStorage.removeItem(PROFILE_KEY);
+      }}
+
+      function clearStoredAuthArtifacts(options = {{}}) {{
+        const keys = Array.from(new Set([TOKEN_KEY].concat(TOKEN_KEY_ALIASES)));
+        keys.forEach((key) => {{
+          window.sessionStorage.removeItem(key);
+          window.localStorage.removeItem(key);
+        }});
+        persistAuthProfile(null);
+        authProfile = null;
+        if (!options.preserveInput && tokenInput) {{
+          tokenInput.value = "";
+        }}
       }}
 
       function setAuthState(text) {{
@@ -2294,13 +2348,21 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       function updateAuthStateFromToken() {{
         const token = getToken();
         if (!token) {{
+          authProfile = null;
+          persistAuthProfile(null);
           setAuthState("토큰 상태: 없음");
           return;
+        }}
+        if (!authProfile) {{
+          authProfile = getStoredAuthProfile();
         }}
         if (authProfile) {{
           const role = authProfile.role || "unknown";
           const username = authProfile.username || "unknown";
-          setAuthState("토큰 상태: 저장됨 | 사용자: " + username + " | 역할: " + role);
+          const siteScope = Array.isArray(authProfile.site_scope) && authProfile.site_scope.length
+            ? authProfile.site_scope.join(", ")
+            : "*";
+          setAuthState("토큰 상태: 저장됨 | 사용자: " + username + " | 역할: " + role + " | 범위: " + siteScope);
           return;
         }}
         setAuthState("토큰 상태: 저장됨 (연결 테스트 전)");
@@ -3034,6 +3096,10 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           data = text;
         }}
         if (!response.ok) {{
+          if (requiresAuth && response.status === 401) {{
+            clearStoredAuthArtifacts({{ preserveInput: true }});
+            updateAuthStateFromToken();
+          }}
           throw new Error("HTTP " + response.status + " | " + (typeof data === "string" ? data : JSON.stringify(data)));
         }}
         return data;
@@ -3113,6 +3179,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       async function runAuthMe() {{
         try {{
           authProfile = await fetchJson("/api/auth/me", true);
+          persistAuthProfile(authProfile);
           const inspectorNode = document.getElementById("inCreateInspector");
           if (inspectorNode && !(inspectorNode.value || "").trim()) {{
             inspectorNode.value = String(authProfile && authProfile.username ? authProfile.username : "");
@@ -3125,6 +3192,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           return authProfile;
         }} catch (err) {{
           authProfile = null;
+          persistAuthProfile(null);
           updateAuthStateFromToken();
           throw err;
         }}
@@ -3157,13 +3225,13 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           if (!result || !result.token) {{
             throw new Error("로그인 응답에 token이 없습니다.");
           }}
-          window.sessionStorage.setItem(TOKEN_KEY, String(result.token));
-          window.localStorage.removeItem(TOKEN_KEY);
+          persistToken(String(result.token));
           tokenInput.value = String(result.token);
           if (loginPasswordInput) {{
             loginPasswordInput.value = "";
           }}
           authProfile = result.profile || null;
+          persistAuthProfile(authProfile);
           updateAuthStateFromToken();
           if (authProfile) {{
             setAuthState("로그인 성공 | 사용자: " + authProfile.username + " | 역할: " + authProfile.role);
@@ -3175,6 +3243,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
           }}
         }} catch (err) {{
           authProfile = null;
+          persistAuthProfile(null);
           updateAuthStateFromToken();
           setAuthState("로그인 실패 | " + err.message);
         }}
@@ -3193,12 +3262,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
             headers: {{ "Content-Type": "application/json" }},
             body: JSON.stringify({{}}),
           }});
-          TOKEN_KEY_ALIASES.forEach((key) => {{
-            window.sessionStorage.removeItem(key);
-            window.localStorage.removeItem(key);
-          }});
-          tokenInput.value = "";
-          authProfile = null;
+          clearStoredAuthArtifacts();
           iamUsersCache = [];
           iamFilteredUsersCache = [];
           iamTokensCache = [];
@@ -10892,29 +10956,26 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         btn.addEventListener("click", () => activate(btn.dataset.tab, true));
       }});
 
-      document.getElementById("saveTokenBtn").addEventListener("click", () => {{
+      document.getElementById("saveTokenBtn").addEventListener("click", async () => {{
         const token = (tokenInput.value || "").trim();
         if (!token) {{
           setAuthState("토큰 상태: 빈 값은 저장할 수 없습니다.");
           return;
         }}
-        window.sessionStorage.setItem(TOKEN_KEY, token);
-        TOKEN_KEY_ALIASES.forEach((key) => {{
-          if (key !== TOKEN_KEY) {{
-            window.sessionStorage.removeItem(key);
-          }}
-          window.localStorage.removeItem(key);
-        }});
+        persistToken(token);
         authProfile = null;
+        persistAuthProfile(null);
         updateAuthStateFromToken();
+        try {{
+          const profile = await runAuthMe();
+          setAuthState("토큰 저장 성공 | 사용자: " + profile.username + " | 역할: " + profile.role);
+        }} catch (err) {{
+          clearStoredAuthArtifacts({{ preserveInput: true }});
+          setAuthState("토큰 저장 실패 | " + err.message);
+        }}
       }});
       document.getElementById("clearTokenBtn").addEventListener("click", () => {{
-        TOKEN_KEY_ALIASES.forEach((key) => {{
-          window.sessionStorage.removeItem(key);
-          window.localStorage.removeItem(key);
-        }});
-        tokenInput.value = "";
-        authProfile = null;
+        clearStoredAuthArtifacts();
         updateAuthStateFromToken();
       }});
       document.getElementById("testTokenBtn").addEventListener("click", async () => {{
@@ -11310,11 +11371,17 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
         }}
       }});
 
+      authProfile = getStoredAuthProfile();
       const savedToken = getToken();
       if (savedToken) {{
         tokenInput.value = savedToken;
       }}
       updateAuthStateFromToken();
+      if (savedToken && !authProfile) {{
+        runAuthMe().catch((err) => {{
+          setAuthState("토큰 상태: 자동 확인 실패 | " + err.message);
+        }});
+      }}
       applyStaticUiTooltips();
       updateReportLinks();
       updateOfficialReportLinks();

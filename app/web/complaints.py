@@ -326,7 +326,7 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
         <div class="surface-head"><h2>작업 세션</h2><div class="meta">토큰과 현장 site를 유지합니다.</div></div>
         <div class="surface-body">
           <div class="grid-2">
-            <div class="field-stack"><label class="caption" for="token">X-Admin-Token</label><input id="token" type="password" placeholder="관리자 토큰" autocomplete="off" spellcheck="false" /></div>
+            <div class="field-stack"><label class="caption" for="token">X-Admin-Token</label><input id="token" type="password" placeholder="관리자 토큰" autocomplete="off" autocapitalize="off" spellcheck="false" /></div>
             <div class="field-stack"><label class="caption" for="siteFilter">site</label><input id="siteFilter" placeholder="예: 연산더샵" /></div>
           </div>
           <div class="actions">
@@ -579,12 +579,14 @@ __SCRIPT__
 """
     script = """
 const STORAGE_KEYS = {
-  token: 'kaFacility.complaints.token',
+  token: 'kaFacility.auth.token',
   site: 'kaFacility.complaints.site',
   dbColumnPrefs: 'kaFacility.complaints.dbColumnPrefs',
   reportCoverPrefs: 'kaFacility.complaints.reportCoverPrefs',
   reportCoverPresets: 'kaFacility.complaints.reportCoverPresets',
 };
+const TOKEN_STORAGE_KEYS = ['kaFacility.auth.token', 'kaFacilityAdminToken', 'kaFacilityMainToken', 'kaFacility.complaints.token'];
+const AUTH_PROFILE_KEY = 'kaFacility.auth.profile';
 const STATUS_LABELS = { received: '접수', assigned: '배정완료', visit_scheduled: '방문예정', in_progress: '처리중', resolved: '처리완료', resident_confirmed: '세대확인완료', reopened: '재민원', closed: '종결' };
 const TYPE_LABELS = { screen_contamination: '방충망 오염', screen_damage: '방충망 파손', glass_contamination: '유리/창문 오염', glass_damage: '유리/창문 파손', railing_contamination: '난간 오염', louver_issue: '루버창 불량', silicone_issue: '실리콘/퍼티 불량', wall_floor_contamination: '벽면/바닥 오염', other_finish_issue: '기타 마감불량', composite: '복합 민원' };
 const PRIORITY_LABELS = { low: '낮음', medium: '보통', high: '높음', urgent: '긴급' };
@@ -843,9 +845,91 @@ function summarizeSearch(item) {
   return [item.site, item.building, item.unit_number, item.resident_name, item.contact_phone, item.complaint_type_label, item.title, item.description, item.assignee].filter(Boolean).join(' ').toLowerCase();
 }
 
+function getStoredToken() {
+  const keys = Array.from(new Set([STORAGE_KEYS.token].concat(TOKEN_STORAGE_KEYS)));
+  for (const key of keys) {
+    const sessionToken = window.sessionStorage.getItem(key) || '';
+    if (!sessionToken) continue;
+    if (key !== STORAGE_KEYS.token) {
+      window.sessionStorage.setItem(STORAGE_KEYS.token, sessionToken);
+      window.sessionStorage.removeItem(key);
+    }
+    return sessionToken;
+  }
+  for (const key of keys) {
+    const localToken = window.localStorage.getItem(key) || '';
+    if (!localToken) continue;
+    window.sessionStorage.setItem(STORAGE_KEYS.token, localToken);
+    keys.forEach((aliasKey) => {
+      if (aliasKey !== STORAGE_KEYS.token) {
+        window.sessionStorage.removeItem(aliasKey);
+      }
+      window.localStorage.removeItem(aliasKey);
+    });
+    return localToken;
+  }
+  return '';
+}
+
+function persistStoredToken(token) {
+  const normalized = String(token || '').trim();
+  if (!normalized) return;
+  const keys = Array.from(new Set([STORAGE_KEYS.token].concat(TOKEN_STORAGE_KEYS)));
+  window.sessionStorage.setItem(STORAGE_KEYS.token, normalized);
+  keys.forEach((key) => {
+    if (key !== STORAGE_KEYS.token) {
+      window.sessionStorage.removeItem(key);
+    }
+    window.localStorage.removeItem(key);
+  });
+}
+
+function clearStoredToken() {
+  const keys = Array.from(new Set([STORAGE_KEYS.token].concat(TOKEN_STORAGE_KEYS)));
+  keys.forEach((key) => {
+    window.sessionStorage.removeItem(key);
+    window.localStorage.removeItem(key);
+  });
+}
+
+function getStoredAuthProfile() {
+  const raw = window.sessionStorage.getItem(AUTH_PROFILE_KEY) || window.localStorage.getItem(AUTH_PROFILE_KEY) || '';
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      window.sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(parsed));
+      window.localStorage.removeItem(AUTH_PROFILE_KEY);
+      return parsed;
+    }
+  } catch (error) {
+    window.sessionStorage.removeItem(AUTH_PROFILE_KEY);
+    window.localStorage.removeItem(AUTH_PROFILE_KEY);
+  }
+  return null;
+}
+
+function persistAuthProfile(profile) {
+  if (!profile) {
+    window.sessionStorage.removeItem(AUTH_PROFILE_KEY);
+    window.localStorage.removeItem(AUTH_PROFILE_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(AUTH_PROFILE_KEY, JSON.stringify(profile));
+  window.localStorage.removeItem(AUTH_PROFILE_KEY);
+}
+
+function clearStoredAuthArtifacts(options) {
+  clearStoredToken();
+  persistAuthProfile(null);
+  if (!(options && options.preserveInput)) {
+    elements.token.value = '';
+  }
+}
+
 function savePrefs() {
   try {
-    localStorage.setItem(STORAGE_KEYS.token, elements.token.value.trim());
+    persistStoredToken(elements.token.value.trim());
     localStorage.setItem(STORAGE_KEYS.site, elements.siteFilter.value.trim());
     updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · site: ' + (elements.siteFilter.value.trim() || '미설정'));
   } catch (error) {
@@ -855,8 +939,9 @@ function savePrefs() {
 
 function loadPrefs() {
   try {
-    const token = localStorage.getItem(STORAGE_KEYS.token) || '';
+    const token = getStoredToken();
     const site = localStorage.getItem(STORAGE_KEYS.site) || '';
+    const authProfile = getStoredAuthProfile();
     const dbColumnPrefsRaw = localStorage.getItem(STORAGE_KEYS.dbColumnPrefs) || '{}';
     const reportCoverPrefsRaw = localStorage.getItem(STORAGE_KEYS.reportCoverPrefs) || '{}';
     const reportCoverPresetsRaw = localStorage.getItem(STORAGE_KEYS.reportCoverPresets) || '{}';
@@ -896,7 +981,11 @@ function loadPrefs() {
       };
     }
     state.reportPresets = reportCoverPresets && typeof reportCoverPresets === 'object' ? reportCoverPresets : {};
-    updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · site: ' + (site || '미설정'));
+    if (authProfile && typeof authProfile === 'object') {
+      updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · ' + String(authProfile.username || '-') + ' / ' + String(authProfile.role || '-') + ' · site: ' + (site || '미설정'));
+    } else {
+      updateSessionStatus('저장된 토큰: ' + maskToken(token) + ' · site: ' + (site || '미설정'));
+    }
   } catch (error) {
     writeDebug('localStorage-load-error', error);
   }
@@ -1270,12 +1359,11 @@ function setTokenVisibility(visible) {
 
 function clearPrefs() {
   try {
-    localStorage.removeItem(STORAGE_KEYS.token);
+    clearStoredAuthArtifacts();
     localStorage.removeItem(STORAGE_KEYS.site);
   } catch (error) {
     writeDebug('localStorage-clear-error', error);
   }
-  elements.token.value = '';
   elements.siteFilter.value = '';
   elements.createSite.value = '';
   setTokenVisibility(false);
@@ -1305,19 +1393,36 @@ function ensureSession(requireSite) {
   return { token, site };
 }
 
-async function checkConnection() {
+async function probeAuthProfile(options) {
+  const silent = Boolean(options && options.silent);
   try {
     ensureSession(false);
-    setNotice('토큰 연결을 확인하는 중입니다.');
     const me = await request('/api/auth/me');
+    persistAuthProfile(me);
     savePrefs();
-    updateSessionStatus('연결 확인됨 · ' + maskToken(elements.token.value) + ' · ' + String(me.username || me.display_name || 'admin') + ' / ' + String(me.role || '-'));
-    setNotice('토큰 연결을 확인했습니다.', 'success');
+    updateSessionStatus('연결 확인됨 · ' + maskToken(elements.token.value) + ' · ' + String(me.username || me.display_name || 'admin') + ' / ' + String(me.role || '-') + ' · site: ' + (elements.siteFilter.value.trim() || '미설정'));
+    if (!silent) setNotice('토큰 연결을 확인했습니다.', 'success');
+    return me;
   } catch (error) {
-    setNotice(error.message || '토큰 연결 확인에 실패했습니다.', 'error');
-    writeDebug('check-connection-error', error);
+    persistAuthProfile(null);
+    if (!silent) {
+      setNotice(error.message || '토큰 연결 확인에 실패했습니다.', 'error');
+    } else {
+      updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 권한 확인 필요');
+    }
+    writeDebug('auth-profile-probe-error', error);
+    throw error;
   } finally {
     setTokenVisibility(false);
+  }
+}
+
+async function checkConnection() {
+  setNotice('토큰 연결을 확인하는 중입니다.');
+  try {
+    await probeAuthProfile();
+  } catch (error) {
+    writeDebug('check-connection-error', error);
   }
 }
 
@@ -1340,6 +1445,13 @@ async function request(path, options) {
     let detail = response.status + ' error';
     if (contentType.includes('application/json')) detail = formatApiError(await response.json());
     else detail = (await response.text()).trim() || detail;
+    if (response.status === 401) {
+      clearStoredAuthArtifacts({ preserveInput: true });
+      updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 인증 만료 또는 무효 토큰');
+      setTokenVisibility(false);
+    } else if (response.status === 403) {
+      updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 권한 또는 site 범위 확인 필요');
+    }
     throw new Error(response.status + ' ' + detail);
   }
   if (init.responseType === 'blob') return response.blob();
@@ -2592,6 +2704,9 @@ function init() {
   writeDebug('ready', '토큰과 site를 입력하면 현장 큐를 불러올 수 있습니다.');
   if (elements.token.value.trim()) {
     loadAdminReportDefault({ applyToForm: !state.reportCoverPrefsLoaded, silent: true });
+    if (!getStoredAuthProfile()) {
+      probeAuthProfile({ silent: true }).catch(() => {});
+    }
   }
   if (elements.token.value.trim() && elements.siteFilter.value.trim()) loadQueue();
 }

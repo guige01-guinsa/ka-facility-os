@@ -506,6 +506,10 @@ SECURITY_HEADERS_BASE: dict[str, str] = {
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Cross-Origin-Resource-Policy": "same-origin",
+    "Origin-Agent-Cluster": "?1",
+    "X-Permitted-Cross-Domain-Policies": "none",
 }
 HTML_CSP_POLICY = (
     "default-src 'self'; "
