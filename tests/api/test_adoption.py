@@ -84,6 +84,7 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "시설관리시스템 메인" in root_html.text
     assert "세대 민원처리" in root_html.text
     assert "운영요약" in root_html.text
+    assert ".split(/\\r?\\n/)" in root_html.text
     assert "작업지시" in root_html.text
     assert "점검" in root_html.text
     assert "월간리포트" in root_html.text

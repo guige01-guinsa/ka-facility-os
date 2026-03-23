@@ -4904,7 +4904,7 @@ def build_system_main_tabs_html(service_info: dict[str, str], *, initial_tab: st
       function parseOpsMasterChecklistItemsInput() {{
         const raw = String((document.getElementById("opsMasterChecklistItems") || {{ value: "" }}).value || "");
         return raw
-          .split(/\r?\n/)
+          .split(/\\r?\\n/)
           .map((line) => line.trim())
           .filter((line) => line !== "");
       }}
