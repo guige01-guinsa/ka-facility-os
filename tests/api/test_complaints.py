@@ -5,7 +5,9 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from reportlab.lib.pagesizes import A4
 
+from app.domains.complaints import reporting
 from tests.helpers.common import _owner_headers
 
 
@@ -404,6 +406,14 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
     assert custom_pdf_resp.status_code == 200
     assert custom_pdf_resp.headers["content-type"].startswith("application/pdf")
     assert custom_pdf_resp.content.startswith(b"%PDF")
+
+
+def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:
+    layout = reporting._cover_layout(height=A4[1])
+    assert layout.header_bottom_y < layout.top_y
+    assert layout.badge_top_y < layout.header_bottom_y
+    assert layout.title_top_y < layout.badge_top_y - layout.badge_height
+    assert layout.title_top_y < layout.header_bottom_y - (8 * reporting.mm)
 
 
 def test_complaint_report_cover_default_api(app_client: TestClient) -> None:

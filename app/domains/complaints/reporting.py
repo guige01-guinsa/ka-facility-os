@@ -88,6 +88,20 @@ class ComplaintPdfCoverSettings:
     logo_content_type: str | None = None
 
 
+@dataclass(slots=True)
+class ComplaintPdfCoverLayout:
+    top_y: float
+    logo_width: float
+    logo_height: float
+    approval_width: float
+    approval_height: float
+    header_bottom_y: float
+    badge_width: float
+    badge_height: float
+    badge_top_y: float
+    title_top_y: float
+
+
 def normalize_report_type(value: str | None) -> str:
     normalized = service.normalize_description(value).lower()
     if normalized not in REPORT_TYPE_LABELS:
@@ -905,37 +919,74 @@ def _draw_page_footer(pdf: canvas.Canvas, *, width: float, page_number: int, fon
     pdf.drawRightString(width - PDF_MARGIN, PDF_MARGIN - 2, f"{page_number} page")
 
 
+def _cover_layout(*, height: float) -> ComplaintPdfCoverLayout:
+    top_y = height - PDF_MARGIN - 2
+    logo_width = 72 * mm
+    logo_height = 28 * mm
+    approval_width = 96 * mm
+    approval_height = 32 * mm
+    header_bottom_y = min(top_y - logo_height, top_y - approval_height)
+    badge_width = 34 * mm
+    badge_height = 8 * mm
+    badge_top_y = header_bottom_y - 4 * mm
+    title_top_y = badge_top_y - badge_height - 4.5 * mm
+    return ComplaintPdfCoverLayout(
+        top_y=top_y,
+        logo_width=logo_width,
+        logo_height=logo_height,
+        approval_width=approval_width,
+        approval_height=approval_height,
+        header_bottom_y=header_bottom_y,
+        badge_width=badge_width,
+        badge_height=badge_height,
+        badge_top_y=badge_top_y,
+        title_top_y=title_top_y,
+    )
+
+
 def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width: float, height: float, font_name: str) -> float:
     metadata = _cover_metadata(report)
     _draw_pdf_frame(pdf, width=width, height=height)
-    approval_width = 96 * mm
-    approval_height = 32 * mm
-    logo_width = 72 * mm
-    logo_height = 28 * mm
-    top_y = height - PDF_MARGIN + 2
+    layout = _cover_layout(height=height)
     _draw_company_logo(
         pdf,
         x=PDF_MARGIN,
-        y_top=top_y,
-        width=logo_width,
-        height=logo_height,
+        y_top=layout.top_y,
+        width=layout.logo_width,
+        height=layout.logo_height,
         font_name=font_name,
         metadata=metadata,
         report=report,
     )
-    approval_x = width - PDF_MARGIN - approval_width
-    _draw_approval_box(pdf, x=approval_x, y_top=top_y, width=approval_width, height=approval_height, font_name=font_name)
-    badge_y = height - PDF_MARGIN - 38
+    approval_x = width - PDF_MARGIN - layout.approval_width
+    _draw_approval_box(
+        pdf,
+        x=approval_x,
+        y_top=layout.top_y,
+        width=layout.approval_width,
+        height=layout.approval_height,
+        font_name=font_name,
+    )
     pdf.setFillColor(PDF_TITLE_BG)
     pdf.setStrokeColor(PDF_LINE)
-    badge_width = 34 * mm
-    badge_height = 8 * mm
-    pdf.roundRect(PDF_MARGIN, badge_y - badge_height + 2, badge_width, badge_height, 4, stroke=1, fill=1)
+    pdf.roundRect(
+        PDF_MARGIN,
+        layout.badge_top_y - layout.badge_height,
+        layout.badge_width,
+        layout.badge_height,
+        4,
+        stroke=1,
+        fill=1,
+    )
     pdf.setFillColor(PDF_HEADER_BLUE)
     pdf.setFont(font_name, 8)
-    pdf.drawCentredString(PDF_MARGIN + badge_width / 2, badge_y - 3.5, metadata["submission_label"])
+    pdf.drawCentredString(
+        PDF_MARGIN + layout.badge_width / 2,
+        layout.badge_top_y - 5.5,
+        metadata["submission_label"],
+    )
     text_width = width - 2 * PDF_MARGIN
-    current_y = height - PDF_MARGIN - 52
+    current_y = layout.title_top_y
     current_y = _draw_wrapped_text_block(
         pdf,
         text=metadata["document_title"],
@@ -948,7 +999,7 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
         line_gap=21,
         max_lines=2,
     )
-    current_y -= 2
+    current_y -= 4
     current_y = _draw_wrapped_text_block(
         pdf,
         text=metadata["document_subtitle"],
@@ -961,7 +1012,7 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
         line_gap=12,
         max_lines=2,
     )
-    current_y -= 2
+    current_y -= 4
     current_y = _draw_wrapped_text_block(
         pdf,
         text=metadata["submission_copy"],
@@ -975,7 +1026,7 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
         max_lines=3,
     )
     latest_value = _summary_value_map(report).get("최근접수", "-")
-    latest_y = current_y - 2
+    latest_y = current_y - 4
     pdf.setFillColor(PDF_MUTED)
     pdf.setFont(font_name, 8)
     pdf.drawRightString(width - PDF_MARGIN, latest_y, f"최근 접수 {latest_value}")
@@ -983,7 +1034,7 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
         pdf,
         report,
         width=width,
-        start_y=min(latest_y - 14, height - PDF_MARGIN - 92),
+        start_y=latest_y - 12,
         font_name=font_name,
         metadata=metadata,
     )
