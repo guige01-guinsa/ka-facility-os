@@ -606,17 +606,20 @@ def _draw_approval_box(pdf: canvas.Canvas, *, x: float, y_top: float, width: flo
     pdf.setFillColor(colors.white)
     pdf.roundRect(x, y_bottom, width, height, 6, stroke=1, fill=1)
     pdf.setFillColor(PDF_SOFT_BLUE)
-    pdf.rect(x, y_top - label_height, width, label_height, stroke=0, fill=1)
-    pdf.setFillColor(colors.white)
-    pdf.rect(x, y_bottom, title_width, height, stroke=0, fill=1)
-    pdf.line(x, y_top - label_height, x + width, y_top - label_height)
+    pdf.rect(x + title_width, y_top - label_height, width - title_width, label_height, stroke=0, fill=1)
+    pdf.line(x + title_width, y_top - label_height, x + width, y_top - label_height)
     pdf.line(x + title_width, y_bottom, x + title_width, y_top)
     for index in range(1, len(roles)):
         current_x = x + title_width + cell_width * index
         pdf.line(current_x, y_bottom, current_x, y_top)
     pdf.setFont(font_name, 9)
     pdf.setFillColor(PDF_TEXT)
-    pdf.drawCentredString(x + title_width / 2, y_bottom + height / 2 - 3, "결재")
+    vertical_chars = ("결", "재")
+    vertical_gap = 11
+    first_center_y = y_bottom + (height / 2) + (vertical_gap / 2)
+    for index, char in enumerate(vertical_chars):
+        center_y = first_center_y - (index * vertical_gap)
+        pdf.drawCentredString(x + title_width / 2, center_y - 3, char)
     pdf.setFont(font_name, 8)
     pdf.setFillColor(PDF_MUTED)
     for index, role in enumerate(roles):
