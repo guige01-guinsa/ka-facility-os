@@ -404,7 +404,7 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
       <section class="surface">
         <div class="surface-head"><h2>출력</h2><div class="meta">엑셀 · PDF</div></div>
         <div class="surface-body">
-          <div class="grid-3">
+          <div class="grid-4">
             <div class="field-stack">
               <label class="caption" for="reportType">출력 구분</label>
               <select id="reportType">
@@ -422,6 +422,15 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
               <select id="reportSortBy">
                 <option value="reported_at">접수일시 순</option>
                 <option value="building_unit">동/호 순</option>
+                <option value="category_building_unit">분류/동/호 순</option>
+              </select>
+            </div>
+            <div class="field-stack">
+              <label class="caption" for="reportGroupBy">그룹 표시</label>
+              <select id="reportGroupBy">
+                <option value="none">없음</option>
+                <option value="category">분류별 묶음</option>
+                <option value="building">동별 묶음</option>
               </select>
             </div>
           </div>

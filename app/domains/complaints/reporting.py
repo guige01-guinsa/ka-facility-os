@@ -44,6 +44,12 @@ REPORT_TYPE_LABELS: dict[str, str] = {
 REPORT_SORT_LABELS: dict[str, str] = {
     "reported_at": "접수일시 순",
     "building_unit": "동/호 순",
+    "category_building_unit": "분류/동/호 순",
+}
+REPORT_GROUP_LABELS: dict[str, str] = {
+    "none": "없음",
+    "category": "분류별 묶음",
+    "building": "동별 묶음",
 }
 ACTIVE_STATUSES = {"received", "assigned", "visit_scheduled", "in_progress", "reopened"}
 CLOSED_STATUSES = {"resolved", "resident_confirmed", "closed"}
@@ -72,6 +78,8 @@ class ComplaintExportReport:
     report_label: str
     sort_by: str
     sort_label: str
+    group_by: str
+    group_label: str
     site: str | None
     building: str | None
     generated_at: datetime
@@ -119,6 +127,13 @@ def normalize_report_sort(value: str | None) -> str:
     normalized = service.normalize_description(value).lower().replace("-", "_").replace(" ", "_")
     if normalized not in REPORT_SORT_LABELS:
         return "reported_at"
+    return normalized
+
+
+def normalize_report_group(value: str | None) -> str:
+    normalized = service.normalize_description(value).lower().replace("-", "_").replace(" ", "_")
+    if normalized not in REPORT_GROUP_LABELS:
+        return "none"
     return normalized
 
 
@@ -203,6 +218,7 @@ def _summary_rows(
     building: str | None,
     report_label: str,
     sort_label: str,
+    group_label: str,
 ) -> list[tuple[str, str]]:
     building_count = len({(row.building, row.unit_number) for row in cases})
     recurrence_count = sum(1 for row in cases if row.recurrence_flag)
@@ -214,6 +230,7 @@ def _summary_rows(
         ("단지", site or "전체"),
         ("동 필터", building or "전체"),
         ("정렬기준", sort_label),
+        ("그룹표시", group_label),
         ("민원건수", str(len(cases))),
         ("세대수", str(building_count)),
         ("미처리건수", str(active_count)),
@@ -242,28 +259,68 @@ def _detail_rows(cases: Iterable[ComplaintCaseRead]) -> list[list[str]]:
     return rows
 
 
-def _sort_cases_for_export(cases: list[ComplaintCaseRead], *, sort_by: str) -> list[ComplaintCaseRead]:
+def _building_sort_key(value: str) -> tuple[int, str]:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return (int(digits) if digits else 999999, str(value or ""))
+
+
+def _unit_sort_key(value: str) -> tuple[int, str]:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return (int(digits) if digits else 999999, str(value or ""))
+
+
+def _group_sort_key(row: ComplaintCaseRead, group_by: str) -> tuple[object, ...]:
+    if group_by == "category":
+        return (row.complaint_type_label, row.complaint_type)
+    if group_by == "building":
+        return (_building_sort_key(row.building),)
+    return tuple()
+
+
+def _sort_cases_for_export(cases: list[ComplaintCaseRead], *, sort_by: str, group_by: str) -> list[ComplaintCaseRead]:
     normalized_sort = normalize_report_sort(sort_by)
-    if normalized_sort != "building_unit":
+    normalized_group = normalize_report_group(group_by)
+    if normalized_sort == "reported_at" and normalized_group == "none":
         return list(cases)
 
-    def _building_key(value: str) -> tuple[int, str]:
-        digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-        return (int(digits) if digits else 999999, str(value or ""))
-
-    def _unit_key(value: str) -> tuple[int, str]:
-        digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-        return (int(digits) if digits else 999999, str(value or ""))
+    def _sort_key(row: ComplaintCaseRead) -> tuple[object, ...]:
+        group_key = _group_sort_key(row, normalized_group)
+        if normalized_sort == "building_unit":
+            base_key: tuple[object, ...] = (
+                _building_sort_key(row.building),
+                _unit_sort_key(row.unit_number),
+                row.reported_at,
+                row.id,
+            )
+        elif normalized_sort == "category_building_unit":
+            base_key = (
+                row.complaint_type_label,
+                row.complaint_type,
+                _building_sort_key(row.building),
+                _unit_sort_key(row.unit_number),
+                row.reported_at,
+                row.id,
+            )
+        else:
+            base_key = (
+                -row.reported_at.timestamp(),
+                -row.id,
+            )
+        return group_key + base_key
 
     return sorted(
         cases,
-        key=lambda row: (
-            _building_key(row.building),
-            _unit_key(row.unit_number),
-            row.reported_at,
-            row.id,
-        ),
+        key=_sort_key,
     )
+
+
+def _group_label_for_detail_row(row: list[str], *, group_by: str) -> str | None:
+    normalized_group = normalize_report_group(group_by)
+    if normalized_group == "category" and len(row) >= 4:
+        return f"분류: {row[3]}"
+    if normalized_group == "building" and len(row) >= 2:
+        return f"동: {row[1]}"
+    return None
 
 
 def _stringify_raw_value(value: object) -> str:
@@ -459,18 +516,22 @@ def build_complaint_export_report(
     report_type: str | None,
     building: str | None = None,
     sort_by: str | None = None,
+    group_by: str | None = None,
     allowed_sites: list[str] | None = None,
     cover_options: ComplaintReportCoverOptions | None = None,
 ) -> ComplaintExportReport:
     normalized_type = normalize_report_type(report_type)
     normalized_sort = normalize_report_sort(sort_by)
+    normalized_group = normalize_report_group(group_by)
     normalized_building = service.normalize_building(building) if service.normalize_description(building) else None
     cases = service.list_cases(site=site, building=normalized_building, allowed_sites=allowed_sites)
     if normalized_type == "unresolved":
         cases = [row for row in cases if row.status in ACTIVE_STATUSES]
     elif normalized_type == "closed":
         cases = [row for row in cases if row.status in CLOSED_STATUSES]
-    cases = _sort_cases_for_export(cases, sort_by=normalized_sort)
+    if normalized_type in {"building", "category"}:
+        normalized_group = "none"
+    cases = _sort_cases_for_export(cases, sort_by=normalized_sort, group_by=normalized_group)
     report_label = REPORT_TYPE_LABELS[normalized_type]
     summary_rows = _summary_rows(
         cases,
@@ -478,6 +539,7 @@ def build_complaint_export_report(
         building=normalized_building,
         report_label=report_label,
         sort_label=REPORT_SORT_LABELS[normalized_sort],
+        group_label=REPORT_GROUP_LABELS[normalized_group],
     )
 
     if normalized_type == "building":
@@ -500,6 +562,8 @@ def build_complaint_export_report(
         report_label=report_label,
         sort_by=normalized_sort,
         sort_label=REPORT_SORT_LABELS[normalized_sort],
+        group_by=normalized_group,
+        group_label=REPORT_GROUP_LABELS[normalized_group],
         site=site,
         building=normalized_building,
         generated_at=datetime.now().astimezone(),
@@ -524,9 +588,26 @@ def build_complaint_export_xlsx(report: ComplaintExportReport) -> bytes:
 
     detail_ws = workbook.create_sheet(report.primary_sheet_name)
     detail_ws.append(report.headers)
+    grouped_row_indexes: list[int] = []
+    current_group_label: str | None = None
     for row in report.rows:
+        group_label = _group_label_for_detail_row(row, group_by=report.group_by)
+        if group_label and group_label != current_group_label:
+            detail_ws.append([group_label] + [""] * (len(report.headers) - 1))
+            grouped_row_indexes.append(detail_ws.max_row)
+            detail_ws.merge_cells(
+                start_row=detail_ws.max_row,
+                start_column=1,
+                end_row=detail_ws.max_row,
+                end_column=len(report.headers),
+            )
+            current_group_label = group_label
         detail_ws.append(row)
     _style_table_sheet(detail_ws)
+    for row_index in grouped_row_indexes:
+        cell = detail_ws.cell(row=row_index, column=1)
+        cell.fill = PatternFill(fill_type="solid", fgColor="DCEAF7")
+        cell.font = Font(color="1F4E78", bold=True)
 
     for sheet_name, headers, rows in report.raw_sheets:
         raw_ws = workbook.create_sheet(sheet_name)
@@ -912,6 +993,17 @@ def _pdf_table_layout(report: ComplaintExportReport) -> tuple[list[str], list[fl
     return report.headers, [10 * mm, 12 * mm, 12 * mm, 18 * mm, 14 * mm, 16 * mm, 20 * mm, 30 * mm, 53 * mm], 7.0
 
 
+def _draw_group_header(pdf: canvas.Canvas, *, label: str, x: float, y_top: float, width: float, font_name: str) -> float:
+    height = 12
+    pdf.setStrokeColor(PDF_LINE)
+    pdf.setFillColor(PDF_SOFT_BLUE)
+    pdf.rect(x, y_top - height, width, height, stroke=1, fill=1)
+    pdf.setFillColor(PDF_HEADER_BLUE)
+    pdf.setFont(font_name, 8)
+    pdf.drawString(x + 4, y_top - 8.5, label[:120])
+    return y_top - height
+
+
 def _draw_table_header(pdf: canvas.Canvas, *, headers: list[str], widths: list[float], x: float, y_top: float, font_name: str, font_size: float) -> float:
     header_height = 14
     pdf.setFillColor(PDF_HEADER_BLUE)
@@ -938,11 +1030,17 @@ def _draw_table_rows(
     bottom_y: float,
     font_name: str,
     font_size: float,
+    group_by: str = "none",
 ) -> int:
     y = _draw_table_header(pdf, headers=headers, widths=widths, x=x, y_top=y_top, font_name=font_name, font_size=font_size)
     line_height = font_size + 2
     index = start_index
     while index < len(rows):
+        group_label = _group_label_for_detail_row(rows[index], group_by=group_by)
+        if group_label and (index == start_index or _group_label_for_detail_row(rows[index - 1], group_by=group_by) != group_label):
+            if y - 12 < bottom_y:
+                return index
+            y = _draw_group_header(pdf, label=group_label, x=x, y_top=y, width=sum(widths), font_name=font_name)
         wrapped_cells: list[list[str]] = []
         max_lines = 1
         for cell_value, width in zip(rows[index], widths):
@@ -1113,6 +1211,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
         bottom_y=PDF_MARGIN + 12,
         font_name=font_name,
         font_size=font_size,
+        group_by=report.group_by,
     )
     _draw_page_footer(pdf, width=width, page_number=page_number, font_name=font_name)
     while next_index < len(report.rows):
@@ -1136,6 +1235,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
             bottom_y=PDF_MARGIN + 12,
             font_name=font_name,
             font_size=font_size,
+            group_by=report.group_by,
         )
         _draw_page_footer(pdf, width=width, page_number=page_number, font_name=font_name)
     pdf.save()

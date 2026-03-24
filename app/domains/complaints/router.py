@@ -175,6 +175,7 @@ def export_complaints_xlsx(
     report_type: Annotated[str | None, Query()] = None,
     building: Annotated[str | None, Query()] = None,
     sort_by: Annotated[str | None, Query()] = None,
+    group_by: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -184,6 +185,7 @@ def export_complaints_xlsx(
         report_type=report_type,
         building=building,
         sort_by=sort_by,
+        group_by=group_by,
         allowed_sites=allowed_sites,
     )
     file_name = _safe_download_filename(f"{report.file_stem}.xlsx")
@@ -192,7 +194,7 @@ def export_complaints_xlsx(
         action="complaints.report.export.xlsx",
         resource_type="complaint_report",
         resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
-        detail={"site": report.site, "building": report.building, "report_type": report.report_type, "sort_by": report.sort_by},
+        detail={"site": report.site, "building": report.building, "report_type": report.report_type, "sort_by": report.sort_by, "group_by": report.group_by},
     )
     return Response(
         content=reporting.build_complaint_export_xlsx(report),
@@ -207,6 +209,7 @@ def export_complaints_pdf(
     report_type: Annotated[str | None, Query()] = None,
     building: Annotated[str | None, Query()] = None,
     sort_by: Annotated[str | None, Query()] = None,
+    group_by: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -216,6 +219,7 @@ def export_complaints_pdf(
         report_type=report_type,
         building=building,
         sort_by=sort_by,
+        group_by=group_by,
         allowed_sites=allowed_sites,
         cover_options=service.resolve_effective_report_cover_options(site=site, allowed_sites=allowed_sites),
     )
@@ -225,7 +229,7 @@ def export_complaints_pdf(
         action="complaints.report.export.pdf",
         resource_type="complaint_report",
         resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
-        detail={"site": report.site, "building": report.building, "report_type": report.report_type, "sort_by": report.sort_by},
+        detail={"site": report.site, "building": report.building, "report_type": report.report_type, "sort_by": report.sort_by, "group_by": report.group_by},
     )
     return Response(
         content=reporting.build_complaint_export_pdf(report),
@@ -247,6 +251,7 @@ def export_complaints_pdf_with_cover(
         report_type=payload.report_type,
         building=payload.building,
         sort_by=payload.sort_by,
+        group_by=payload.group_by,
         allowed_sites=allowed_sites,
         cover_options=effective_cover,
     )
@@ -261,6 +266,7 @@ def export_complaints_pdf_with_cover(
             "building": report.building,
             "report_type": report.report_type,
             "sort_by": report.sort_by,
+            "group_by": report.group_by,
             "custom_cover": bool(report.cover_settings),
         },
     )

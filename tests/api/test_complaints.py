@@ -27,6 +27,8 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "엑셀 출력" in page.text
     assert "PDF 출력" in page.text
     assert "동/호 순" in page.text
+    assert "분류/동/호 순" in page.text
+    assert "그룹 표시" in page.text
     assert "DB 레코드 관리" in page.text
     assert "칼럼 숨김/표시" in page.text
     assert "전체 표시" in page.text
@@ -419,8 +421,13 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
         "db_complaint_messages",
         "db_complaint_cost_items",
     ]
-    assert workbook["요약"]["B2"].value == "미처리"
-    assert workbook["요약"]["B5"].value == "동/호 순"
+    summary_map = {
+        workbook["요약"][f"A{row_idx}"].value: workbook["요약"][f"B{row_idx}"].value
+        for row_idx in range(2, workbook["요약"].max_row + 1)
+    }
+    assert summary_map["출력구분"] == "미처리"
+    assert summary_map["정렬기준"] == "동/호 순"
+    assert summary_map["그룹표시"] == "없음"
     assert workbook["민원목록"].max_row == 2
     assert workbook["db_complaint_cases"].max_row == 2
     assert workbook["db_complaint_cases"]["A2"].value == str(first.json()["id"])
@@ -446,6 +453,7 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
             "report_type": "all",
             "building": "103동",
             "sort_by": "building_unit",
+            "group_by": "building",
             "cover": {
                 "company_name": "테스트 시설관리",
                 "contractor_name": "테스트 도장업체",
@@ -494,8 +502,51 @@ def test_complaint_export_report_supports_building_unit_sort(app_client: TestCli
     assert report.sort_by == "building_unit"
     assert report.sort_label == "동/호 순"
     assert report.summary_rows[3] == ("정렬기준", "동/호 순")
+    assert report.summary_rows[4] == ("그룹표시", "없음")
     assert report.rows[0][2] == "301호"
     assert report.rows[1][2] == "1202호"
+
+
+def test_complaint_export_report_supports_category_building_unit_sort_and_grouping(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    screen_case = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "정렬테스트2",
+            "building": "102동",
+            "unit_number": "402호",
+            "description": "방충망 오염",
+        },
+    )
+    assert screen_case.status_code == 201
+
+    glass_case = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "정렬테스트2",
+            "building": "101동",
+            "unit_number": "1201호",
+            "description": "유리 오염",
+        },
+    )
+    assert glass_case.status_code == 201
+
+    report = reporting.build_complaint_export_report(
+        site="정렬테스트2",
+        report_type="all",
+        sort_by="category_building_unit",
+        group_by="category",
+    )
+    assert report.sort_by == "category_building_unit"
+    assert report.sort_label == "분류/동/호 순"
+    assert report.group_by == "category"
+    assert report.group_label == "분류별 묶음"
+    assert report.summary_rows[3] == ("정렬기준", "분류/동/호 순")
+    assert report.summary_rows[4] == ("그룹표시", "분류별 묶음")
+    assert report.rows[0][3] == "방충망 오염"
+    assert report.rows[1][3] == "유리/창문 오염"
 
 
 def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:
@@ -514,6 +565,8 @@ def test_complaint_pdf_table_layout_widens_contact_column() -> None:
         report_label="전체",
         sort_by="reported_at",
         sort_label="접수일시 순",
+        group_by="none",
+        group_label="없음",
         site="연산더샵",
         building=None,
         generated_at=datetime.now(timezone.utc),

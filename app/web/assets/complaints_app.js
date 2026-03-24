@@ -30,7 +30,8 @@ const REPORT_SUBMISSION_PRESETS = {
   custom: '',
 };
 const REPORT_TYPE_LABELS = { all: '전체', building: '동별', complaint: '민원', category: '분류별', unresolved: '미처리', closed: '종결' };
-const REPORT_SORT_LABELS = { reported_at: '접수일시 순', building_unit: '동/호 순' };
+const REPORT_SORT_LABELS = { reported_at: '접수일시 순', building_unit: '동/호 순', category_building_unit: '분류/동/호 순' };
+const REPORT_GROUP_LABELS = { none: '없음', category: '분류별 묶음', building: '동별 묶음' };
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 const ACTIVE_STATUSES = new Set(['assigned', 'visit_scheduled', 'in_progress', 'reopened']);
 const DONE_STATUSES = new Set(['resolved', 'resident_confirmed', 'closed']);
@@ -75,6 +76,7 @@ const elements = {
   reportType: document.getElementById('reportType'),
   reportBuilding: document.getElementById('reportBuilding'),
   reportSortBy: document.getElementById('reportSortBy'),
+  reportGroupBy: document.getElementById('reportGroupBy'),
   reportCompanyPreset: document.getElementById('reportCompanyPreset'),
   reportCompanyName: document.getElementById('reportCompanyName'),
   reportContractorPreset: document.getElementById('reportContractorPreset'),
@@ -571,6 +573,7 @@ function renderReportPreview() {
   const building = elements.reportBuilding?.value.trim() || '전체 동';
   const reportType = REPORT_TYPE_LABELS[elements.reportType?.value || 'all'] || '전체';
   const reportSort = REPORT_SORT_LABELS[elements.reportSortBy?.value || 'reported_at'] || '접수일시 순';
+  const reportGroup = REPORT_GROUP_LABELS[elements.reportGroupBy?.value || 'none'] || '없음';
   const companyName = state.reportCover.companyName || '회사명 미입력';
   const contractorName = state.reportCover.contractorName || '공사업체 미입력';
   const submissionPhrase = state.reportCover.submissionPhrase || '제출 문구 미입력';
@@ -585,7 +588,7 @@ function renderReportPreview() {
         '<div class="meta" style="font-weight:700;color:#1f4e78;">관리사무소 제출용 표지 미리보기</div>' +
         '<h3 style="margin:8px 0 6px;">' + escapeHtml(site) + ' 세대 민원 처리 현황 보고</h3>' +
         '<div class="meta">단지명 ' + escapeHtml(site) + ' · 공사명 ' + escapeHtml(contractorName) + ' · 보고일 ' + escapeHtml(new Date().toLocaleDateString('ko-KR')) + '</div>' +
-        '<div class="meta">출력 구분 ' + escapeHtml(reportType) + ' · 범위 ' + escapeHtml(building) + ' · 정렬 ' + escapeHtml(reportSort) + ' · 관리자 기본값 ' + escapeHtml(adminSourceLabel) + '</div>' +
+        '<div class="meta">출력 구분 ' + escapeHtml(reportType) + ' · 범위 ' + escapeHtml(building) + ' · 정렬 ' + escapeHtml(reportSort) + ' · 그룹 ' + escapeHtml(reportGroup) + ' · 관리자 기본값 ' + escapeHtml(adminSourceLabel) + '</div>' +
       '</div>' +
       '<div style="flex:0 0 140px;display:flex;justify-content:flex-end;">' + logoHtml + '</div>' +
     '</div>' +
@@ -890,8 +893,10 @@ async function downloadComplaintReport(format) {
     const params = new URLSearchParams({ site: session.site, report_type: elements.reportType.value || 'all' });
     const building = nullIfBlank(elements.reportBuilding.value);
     const sortBy = elements.reportSortBy?.value || 'reported_at';
+    const groupBy = elements.reportGroupBy?.value || 'none';
     if (building) params.set('building', building);
     params.set('sort_by', sortBy);
+    params.set('group_by', groupBy);
     setNotice((format === 'xlsx' ? '엑셀' : 'PDF') + ' 출력 파일을 준비하는 중입니다.');
     let response;
     if (format === 'pdf') {
@@ -908,6 +913,7 @@ async function downloadComplaintReport(format) {
           report_type: elements.reportType.value || 'all',
           building: building,
           sort_by: sortBy,
+          group_by: groupBy,
           cover: buildReportCoverPayload(),
         }),
       });
@@ -2080,6 +2086,7 @@ function bindStaticEvents() {
   elements.reportType.addEventListener('change', renderReportPreview);
   elements.reportBuilding.addEventListener('input', renderReportPreview);
   elements.reportSortBy.addEventListener('change', renderReportPreview);
+  elements.reportGroupBy.addEventListener('change', renderReportPreview);
   elements.reportPresetSelect.addEventListener('change', () => {
     if (elements.reportPresetName) elements.reportPresetName.value = elements.reportPresetSelect.value || '';
   });
