@@ -316,6 +316,44 @@ def test_complaint_attachment_message_and_cost_workflow(app_client: TestClient) 
     assert after_delete_body["total_cost"] == 0.0
 
 
+def test_complaint_admin_record_grid_uses_server_side_limit_and_count(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    token = "limit-search-token-20260324"
+    first = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "building": "106동",
+            "unit_number": "601호",
+            "description": token + " 첫 번째",
+        },
+    )
+    assert first.status_code == 201
+
+    second = app_client.post(
+        "/api/complaints",
+        headers=headers,
+        json={
+            "site": "연산더샵",
+            "building": "106동",
+            "unit_number": "602호",
+            "description": token + " 두 번째",
+        },
+    )
+    assert second.status_code == 201
+
+    listed = app_client.get(
+        f"/api/complaints/admin/records?site=연산더샵&record_type=cases&limit=1&q={token}",
+        headers=headers,
+    )
+    assert listed.status_code == 200
+    body = listed.json()
+    assert body["total_count"] == 2
+    assert len(body["rows"]) == 1
+    assert body["rows"][0]["id"] == second.json()["id"]
+
+
 def test_complaint_report_exports(app_client: TestClient) -> None:
     headers = _owner_headers()
     first = app_client.post(

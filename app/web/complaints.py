@@ -1605,11 +1605,12 @@ function updateDbSummary(message) {
     elements.dbSummary.textContent = message;
     return;
   }
+  const loadedCount = (state.dbEditor.rows || []).length;
   const dirtyCount = Object.keys(state.dbEditor.dirtyRows || {}).length;
   const selectedCount = Object.keys(state.dbEditor.selectedIds || {}).length;
   const visibleCount = getVisibleDbColumns().length;
   const totalColumns = (state.dbEditor.columns || []).length;
-  elements.dbSummary.textContent = '총 ' + state.dbEditor.totalCount + '행 · 변경 ' + dirtyCount + '행 · 선택 ' + selectedCount + '행 · 칼럼 ' + visibleCount + '/' + totalColumns + ' 표시';
+  elements.dbSummary.textContent = '조회 ' + loadedCount + ' / 전체 ' + state.dbEditor.totalCount + '행 · 변경 ' + dirtyCount + '행 · 선택 ' + selectedCount + '행 · 칼럼 ' + visibleCount + '/' + totalColumns + ' 표시';
 }
 
 function switchTab(nextTab) {
@@ -1739,7 +1740,7 @@ async function loadDbRecords() {
     state.dbEditor.selectedIds = {};
     state.dbEditor.originalRows = {};
     state.dbEditor.rows.forEach((row) => { state.dbEditor.originalRows[Number(row.id)] = Object.assign({}, row); });
-    elements.dbMeta.textContent = session.site + ' · ' + (payload.record_label || payload.record_type) + ' · ' + state.dbEditor.totalCount + '행';
+    elements.dbMeta.textContent = session.site + ' · ' + (payload.record_label || payload.record_type) + ' · 조회 ' + state.dbEditor.rows.length + ' / 전체 ' + state.dbEditor.totalCount + '행';
     renderDbColumnToggles();
     renderDbEditorTable();
     setNotice('DB 레코드를 불러왔습니다.', 'success');

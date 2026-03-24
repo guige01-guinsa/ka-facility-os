@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import delete, func, insert, select, update
+from sqlalchemy import String, cast, delete, func, insert, or_, select, update
 
 from app.database import (
     complaint_attachments,
@@ -802,16 +802,21 @@ def delete_report_cover_default(
     return bool(result.rowcount)
 
 
-def _search_matches(row: dict[str, Any], query: str) -> bool:
-    if not query:
-        return True
-    haystack = " ".join(str(value or "") for value in row.values()).lower()
-    return query in haystack
+def _normalize_admin_limit(limit: int) -> int:
+    return max(1, min(int(limit or 200), 1000))
 
 
-def _limit_records(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    normalized_limit = max(1, min(int(limit or 200), 1000))
-    return rows[:normalized_limit]
+def _escape_like_value(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _admin_search_clause(columns: list[Any], query: str | None) -> Any | None:
+    normalized_query = normalize_description(query)
+    if not normalized_query:
+        return None
+    pattern = f"%{_escape_like_value(normalized_query)}%"
+    clauses = [cast(column, String).ilike(pattern, escape="\\") for column in columns]
+    return or_(*clauses) if clauses else None
 
 
 def _admin_case_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -906,18 +911,34 @@ def _admin_cost_item_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _list_admin_case_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        select(complaint_cases)
-        .where(complaint_cases.c.site == site)
-        .order_by(complaint_cases.c.updated_at.desc(), complaint_cases.c.id.desc())
-    ).mappings().all()
-    return [_admin_case_row(row) for row in rows]
-
-
-def _list_admin_event_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
-    stmt = (
-        select(
+def _admin_record_query_parts(record_type: str, *, site: str) -> tuple[Any, Any, list[Any], list[Any], Any, list[Any]]:
+    if record_type == "cases":
+        stmt = select(complaint_cases)
+        from_clause = complaint_cases
+        filters = [complaint_cases.c.site == site]
+        search_columns = [
+            complaint_cases.c.id,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+            complaint_cases.c.title,
+            complaint_cases.c.description,
+            complaint_cases.c.status,
+            complaint_cases.c.complaint_type,
+            complaint_cases.c.priority,
+            complaint_cases.c.assignee,
+            complaint_cases.c.resident_name,
+            complaint_cases.c.contact_phone,
+            complaint_cases.c.scheduled_visit_at,
+            complaint_cases.c.recurrence_flag,
+            complaint_cases.c.linked_work_order_id,
+            complaint_cases.c.source_channel,
+            complaint_cases.c.updated_at,
+        ]
+        order_by = [complaint_cases.c.updated_at.desc(), complaint_cases.c.id.desc()]
+        row_mapper = _admin_case_row
+    elif record_type == "events":
+        from_clause = complaint_events.join(complaint_cases, complaint_events.c.complaint_id == complaint_cases.c.id)
+        stmt = select(
             complaint_events.c.id,
             complaint_events.c.complaint_id,
             complaint_events.c.event_type,
@@ -929,18 +950,26 @@ def _list_admin_event_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
             complaint_events.c.created_at,
             complaint_cases.c.building,
             complaint_cases.c.unit_number,
-        )
-        .select_from(complaint_events.join(complaint_cases, complaint_events.c.complaint_id == complaint_cases.c.id))
-        .where(complaint_cases.c.site == site)
-        .order_by(complaint_events.c.created_at.desc(), complaint_events.c.id.desc())
-    )
-    rows = conn.execute(stmt).mappings().all()
-    return [_admin_event_row(row) for row in rows]
-
-
-def _list_admin_attachment_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
-    stmt = (
-        select(
+        ).select_from(from_clause)
+        filters = [complaint_cases.c.site == site]
+        search_columns = [
+            complaint_events.c.id,
+            complaint_events.c.complaint_id,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+            complaint_events.c.event_type,
+            complaint_events.c.note,
+            complaint_events.c.detail_json,
+            complaint_events.c.from_status,
+            complaint_events.c.to_status,
+            complaint_events.c.actor_username,
+            complaint_events.c.created_at,
+        ]
+        order_by = [complaint_events.c.created_at.desc(), complaint_events.c.id.desc()]
+        row_mapper = _admin_event_row
+    elif record_type == "attachments":
+        from_clause = complaint_attachments.join(complaint_cases, complaint_attachments.c.complaint_id == complaint_cases.c.id)
+        stmt = select(
             complaint_attachments.c.id,
             complaint_attachments.c.complaint_id,
             complaint_attachments.c.attachment_kind,
@@ -952,18 +981,26 @@ def _list_admin_attachment_rows(conn: Any, *, site: str) -> list[dict[str, Any]]
             complaint_attachments.c.uploaded_at,
             complaint_cases.c.building,
             complaint_cases.c.unit_number,
-        )
-        .select_from(complaint_attachments.join(complaint_cases, complaint_attachments.c.complaint_id == complaint_cases.c.id))
-        .where(complaint_cases.c.site == site)
-        .order_by(complaint_attachments.c.uploaded_at.desc(), complaint_attachments.c.id.desc())
-    )
-    rows = conn.execute(stmt).mappings().all()
-    return [_admin_attachment_row(row) for row in rows]
-
-
-def _list_admin_message_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
-    stmt = (
-        select(
+        ).select_from(from_clause)
+        filters = [complaint_cases.c.site == site]
+        search_columns = [
+            complaint_attachments.c.id,
+            complaint_attachments.c.complaint_id,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+            complaint_attachments.c.attachment_kind,
+            complaint_attachments.c.file_name,
+            complaint_attachments.c.content_type,
+            complaint_attachments.c.file_size,
+            complaint_attachments.c.note,
+            complaint_attachments.c.uploaded_by,
+            complaint_attachments.c.uploaded_at,
+        ]
+        order_by = [complaint_attachments.c.uploaded_at.desc(), complaint_attachments.c.id.desc()]
+        row_mapper = _admin_attachment_row
+    elif record_type == "messages":
+        from_clause = complaint_messages.join(complaint_cases, complaint_messages.c.complaint_id == complaint_cases.c.id)
+        stmt = select(
             complaint_messages.c.id,
             complaint_messages.c.complaint_id,
             complaint_messages.c.recipient,
@@ -977,18 +1014,28 @@ def _list_admin_message_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
             complaint_messages.c.created_at,
             complaint_cases.c.building,
             complaint_cases.c.unit_number,
-        )
-        .select_from(complaint_messages.join(complaint_cases, complaint_messages.c.complaint_id == complaint_cases.c.id))
-        .where(complaint_cases.c.site == site)
-        .order_by(complaint_messages.c.created_at.desc(), complaint_messages.c.id.desc())
-    )
-    rows = conn.execute(stmt).mappings().all()
-    return [_admin_message_row(row) for row in rows]
-
-
-def _list_admin_cost_item_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
-    stmt = (
-        select(
+        ).select_from(from_clause)
+        filters = [complaint_cases.c.site == site]
+        search_columns = [
+            complaint_messages.c.id,
+            complaint_messages.c.complaint_id,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+            complaint_messages.c.recipient,
+            complaint_messages.c.template_key,
+            complaint_messages.c.body,
+            complaint_messages.c.delivery_status,
+            complaint_messages.c.error,
+            complaint_messages.c.provider_name,
+            complaint_messages.c.sent_by,
+            complaint_messages.c.sent_at,
+            complaint_messages.c.created_at,
+        ]
+        order_by = [complaint_messages.c.created_at.desc(), complaint_messages.c.id.desc()]
+        row_mapper = _admin_message_row
+    else:
+        from_clause = complaint_cost_items.join(complaint_cases, complaint_cost_items.c.complaint_id == complaint_cases.c.id)
+        stmt = select(
             complaint_cost_items.c.id,
             complaint_cost_items.c.complaint_id,
             complaint_cost_items.c.cost_category,
@@ -1005,13 +1052,29 @@ def _list_admin_cost_item_rows(conn: Any, *, site: str) -> list[dict[str, Any]]:
             complaint_cost_items.c.updated_at,
             complaint_cases.c.building,
             complaint_cases.c.unit_number,
-        )
-        .select_from(complaint_cost_items.join(complaint_cases, complaint_cost_items.c.complaint_id == complaint_cases.c.id))
-        .where(complaint_cases.c.site == site)
-        .order_by(complaint_cost_items.c.updated_at.desc(), complaint_cost_items.c.id.desc())
-    )
-    rows = conn.execute(stmt).mappings().all()
-    return [_admin_cost_item_row(row) for row in rows]
+        ).select_from(from_clause)
+        filters = [complaint_cases.c.site == site]
+        search_columns = [
+            complaint_cost_items.c.id,
+            complaint_cost_items.c.complaint_id,
+            complaint_cases.c.building,
+            complaint_cases.c.unit_number,
+            complaint_cost_items.c.cost_category,
+            complaint_cost_items.c.item_name,
+            complaint_cost_items.c.quantity,
+            complaint_cost_items.c.unit_price,
+            complaint_cost_items.c.material_cost,
+            complaint_cost_items.c.labor_cost,
+            complaint_cost_items.c.vendor_cost,
+            complaint_cost_items.c.total_cost,
+            complaint_cost_items.c.note,
+            complaint_cost_items.c.approved_by,
+            complaint_cost_items.c.approved_at,
+            complaint_cost_items.c.updated_at,
+        ]
+        order_by = [complaint_cost_items.c.updated_at.desc(), complaint_cost_items.c.id.desc()]
+        row_mapper = _admin_cost_item_row
+    return stmt, from_clause, filters, search_columns, row_mapper, order_by
 
 
 def list_admin_records(
@@ -1025,26 +1088,27 @@ def list_admin_records(
     normalized_site = _ensure_admin_site_allowed(site, allowed_sites)
     if record_type not in ADMIN_RECORD_COLUMNS:
         raise HTTPException(status_code=422, detail=f"record_type must be one of {sorted(ADMIN_RECORD_COLUMNS)}")
-    query = normalize_description(q).lower()
+    normalized_limit = _normalize_admin_limit(limit)
+    stmt, from_clause, filters, search_columns, row_mapper, order_by = _admin_record_query_parts(record_type, site=normalized_site)
+    search_clause = _admin_search_clause(search_columns, q)
+    if search_clause is not None:
+        filters = [*filters, search_clause]
     with get_conn() as conn:
-        if record_type == "cases":
-            rows = _list_admin_case_rows(conn, site=normalized_site)
-        elif record_type == "events":
-            rows = _list_admin_event_rows(conn, site=normalized_site)
-        elif record_type == "attachments":
-            rows = _list_admin_attachment_rows(conn, site=normalized_site)
-        elif record_type == "messages":
-            rows = _list_admin_message_rows(conn, site=normalized_site)
-        else:
-            rows = _list_admin_cost_item_rows(conn, site=normalized_site)
-    filtered_rows = [row for row in rows if _search_matches(row, query)]
+        rows = (
+            conn.execute(stmt.where(*filters).order_by(*order_by).limit(normalized_limit))
+            .mappings()
+            .all()
+        )
+        total_count = int(
+            conn.execute(select(func.count()).select_from(from_clause).where(*filters)).scalar_one() or 0
+        )
     return ComplaintAdminRecordListRead(
         record_type=record_type,
         record_label=ADMIN_RECORD_LABELS[record_type],
         site=normalized_site,
         columns=ADMIN_RECORD_COLUMNS[record_type],
-        rows=_limit_records(filtered_rows, limit),
-        total_count=len(filtered_rows),
+        rows=[row_mapper(row) for row in rows],
+        total_count=total_count,
     )
 
 
