@@ -31,6 +31,8 @@ class PublicRouteDeps:
     main_tabs_script_text: Callable[[], str]
     main_tabs_script_version: Callable[[], str]
     build_facility_console_html: Callable[[dict[str, str], dict[str, Any]], str]
+    facility_console_script_text: Callable[[], str]
+    facility_console_script_version: Callable[[], str]
     build_facility_console_guide_html: Callable[[dict[str, str]], str]
     build_iam_guide_html: Callable[[dict[str, str]], str]
     build_public_main_page_html: Callable[[dict[str, str], dict[str, Any]], str]
@@ -106,6 +108,18 @@ def build_router(deps: PublicRouteDeps) -> APIRouter:
                 deps.service_info_payload(),
                 deps.facility_modules_payload(),
             )
+        )
+
+    @router.get("/web/console/app.js", response_model=None)
+    def facility_console_script() -> Response:
+        return Response(
+            content=deps.facility_console_script_text(),
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": deps.facility_console_script_version(),
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @router.get("/web/main-shell/app.js", response_model=None)

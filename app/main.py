@@ -101,6 +101,8 @@ from app.web.facility_console import (
     build_facility_console_html as _web_build_facility_console_html,
     build_facility_console_guide_html as _web_build_facility_console_guide_html,
     build_public_modules_html as _web_build_public_modules_html,
+    facility_console_script_text as _web_facility_console_script_text,
+    facility_console_script_version as _web_facility_console_script_version,
 )
 from app.web.iam_guide import build_iam_guide_html as _web_build_iam_guide_html
 from app.web.main_tabs import (
@@ -6970,6 +6972,8 @@ public_router = build_public_router(
         main_tabs_script_text=_web_main_tabs_script_text,
         main_tabs_script_version=_web_main_tabs_script_version,
         build_facility_console_html=_build_facility_console_html,
+        facility_console_script_text=_web_facility_console_script_text,
+        facility_console_script_version=_web_facility_console_script_version,
         build_facility_console_guide_html=_build_facility_console_guide_html,
         build_iam_guide_html=_build_iam_guide_html,
         build_public_main_page_html=_build_public_main_page_html,

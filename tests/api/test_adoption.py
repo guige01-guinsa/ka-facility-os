@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.web.facility_console import facility_console_script_version
 from app.web.main_tabs import main_tabs_script_version
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
@@ -555,15 +556,23 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "결과 보기" in console_html.text
     assert "알림 채널 KPI (7/30일)" in console_html.text
     assert "알림 데이터 보관정책" in console_html.text
-    assert "토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다." in console_html.text
-    assert "kaFacility.auth.token" in console_html.text
-    assert "kaFacility.auth.profile" in console_html.text
-    assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_html.text
-    assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_html.text
-    assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_html.text
+    assert f'/web/console/app.js?v={facility_console_script_version()}' in console_html.text
     assert "사용 설명서 열기" in console_html.text
     assert "세대 민원처리" in console_html.text
     assert "/web/complaints" in console_html.text
+
+    console_asset = app_client.get(f"/web/console/app.js?v={facility_console_script_version()}")
+    assert console_asset.status_code == 200
+    assert console_asset.headers["content-type"].startswith("application/javascript")
+    assert console_asset.headers.get("cache-control") == "public, max-age=31536000, immutable"
+    assert console_asset.headers.get("etag") == facility_console_script_version()
+    assert console_asset.headers.get("x-content-type-options") == "nosniff"
+    assert "토큰 저장: 현재 입력한 X-Admin-Token을 이 브라우저 세션에 저장합니다." in console_asset.text
+    assert "kaFacility.auth.token" in console_asset.text
+    assert "kaFacility.auth.profile" in console_asset.text
+    assert "조회 실행: 서비스 정보 API를 HTML 표 형태로 조회합니다." in console_asset.text
+    assert "조회 실행: 점검 목록을 조건별로 조회합니다." in console_asset.text
+    assert "JSON 조회: 월간리포트 원본 JSON을 조회합니다." in console_asset.text
 
     console_guide_html = app_client.get("/web/console/guide")
     assert console_guide_html.status_code == 200
