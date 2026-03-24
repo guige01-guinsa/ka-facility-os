@@ -344,22 +344,61 @@ def _group_header_label(group_value: str, *, group_by: str) -> str:
     return group_value
 
 
-def _group_subtotal_label(group_value: str, *, group_by: str, count: int) -> str:
+def _format_cost_amount(value: float) -> str:
+    return f"{float(value or 0.0):,.0f}원"
+
+
+def _group_subtotal_label(
+    group_value: str,
+    *,
+    group_by: str,
+    count: int,
+    total_cost: float = 0.0,
+    include_cost: bool = False,
+) -> str:
     normalized_group = normalize_report_group(group_by)
     if normalized_group == "category":
-        return f"분류 소계 · {group_value}: {count}건"
-    if normalized_group == "building":
-        return f"동 소계 · {group_value}: {count}건"
-    return f"소계: {count}건"
+        label = f"분류 소계 · {group_value}: {count}건"
+    elif normalized_group == "building":
+        label = f"동 소계 · {group_value}: {count}건"
+    else:
+        label = f"소계: {count}건"
+    if include_cost:
+        label += f" · 비용합계 {_format_cost_amount(total_cost)}"
+    return label
 
 
-def _build_detail_render_entries(rows: list[list[str]], *, group_by: str) -> list[ComplaintDetailRenderEntry]:
+def _detail_row_case_id(row: list[str]) -> int | None:
+    if not row:
+        return None
+    digits = "".join(ch for ch in str(row[0] or "") if ch.isdigit())
+    if not digits:
+        return None
+    return int(digits)
+
+
+def _build_detail_render_entries(
+    rows: list[list[str]],
+    *,
+    group_by: str,
+    case_cost_totals: dict[int, float] | None = None,
+) -> list[ComplaintDetailRenderEntry]:
     normalized_group = normalize_report_group(group_by)
     if normalized_group == "none":
         return [ComplaintDetailRenderEntry(kind="data", row=row) for row in rows]
 
     group_values = [_group_value_for_detail_row(row, group_by=normalized_group) for row in rows]
     group_counts = Counter(value for value in group_values if value)
+    group_cost_totals: defaultdict[str, float] = defaultdict(float)
+    include_cost = bool(case_cost_totals)
+    if include_cost:
+        for row, group_value in zip(rows, group_values):
+            if not group_value:
+                continue
+            case_id = _detail_row_case_id(row)
+            if case_id is None:
+                continue
+            group_cost_totals[group_value] += float((case_cost_totals or {}).get(case_id, 0.0))
     entries: list[ComplaintDetailRenderEntry] = []
     current_group_value: str | None = None
 
@@ -379,7 +418,13 @@ def _build_detail_render_entries(rows: list[list[str]], *, group_by: str) -> lis
             entries.append(
                 ComplaintDetailRenderEntry(
                     kind="group_subtotal",
-                    label=_group_subtotal_label(group_value, group_by=normalized_group, count=int(group_counts.get(group_value, 0))),
+                    label=_group_subtotal_label(
+                        group_value,
+                        group_by=normalized_group,
+                        count=int(group_counts.get(group_value, 0)),
+                        total_cost=float(group_cost_totals.get(group_value, 0.0)),
+                        include_cost=include_cost,
+                    ),
                 )
             )
     return entries
@@ -396,6 +441,41 @@ def _stringify_raw_value(value: object) -> str:
 def _build_raw_sheet(*, name: str, headers: list[str], records: list[dict[str, object]]) -> tuple[str, list[str], list[list[str]]]:
     rows = [[_stringify_raw_value(record.get(header)) for header in headers] for record in records]
     return name, headers, rows
+
+
+def _parse_int_value(value: object) -> int | None:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    if not digits:
+        return None
+    return int(digits)
+
+
+def _parse_float_value(value: object) -> float:
+    text = str(value or "").strip().replace(",", "")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _case_cost_totals_from_raw_sheets(raw_sheets: list[tuple[str, list[str], list[list[str]]]]) -> dict[int, float]:
+    for sheet_name, headers, rows in raw_sheets:
+        if sheet_name != "db_complaint_cost_items":
+            continue
+        if "complaint_id" not in headers or "total_cost" not in headers:
+            return {}
+        complaint_id_index = headers.index("complaint_id")
+        total_cost_index = headers.index("total_cost")
+        totals: defaultdict[int, float] = defaultdict(float)
+        for row in rows:
+            complaint_id = _parse_int_value(row[complaint_id_index] if complaint_id_index < len(row) else "")
+            if complaint_id is None:
+                continue
+            totals[complaint_id] += _parse_float_value(row[total_cost_index] if total_cost_index < len(row) else "")
+        return dict(totals)
+    return {}
 
 
 def _load_raw_record_sheets(case_ids: list[int]) -> list[tuple[str, list[str], list[list[str]]]]:
@@ -650,9 +730,10 @@ def build_complaint_export_xlsx(report: ComplaintExportReport) -> bytes:
 
     detail_ws = workbook.create_sheet(report.primary_sheet_name)
     detail_ws.append(report.headers)
+    case_cost_totals = _case_cost_totals_from_raw_sheets(report.raw_sheets)
     group_header_row_indexes: list[int] = []
     group_subtotal_row_indexes: list[int] = []
-    for entry in _build_detail_render_entries(report.rows, group_by=report.group_by):
+    for entry in _build_detail_render_entries(report.rows, group_by=report.group_by, case_cost_totals=case_cost_totals):
         if entry.kind == "data":
             detail_ws.append(entry.row or [""] * len(report.headers))
             continue
@@ -1123,6 +1204,7 @@ def _draw_table_rows(
     font_name: str,
     font_size: float,
     group_by: str = "none",
+    page_break_by_group: bool = False,
 ) -> int:
     y = _draw_table_header(pdf, headers=headers, widths=widths, x=x, y_top=y_top, font_name=font_name, font_size=font_size)
     line_height = font_size + 2
@@ -1135,6 +1217,8 @@ def _draw_table_rows(
     while index < len(entries):
         entry = entries[index]
         if entry.kind == "group_header":
+            if page_break_by_group and index > start_index:
+                return index
             if y - 12 < bottom_y:
                 return index
             y = _draw_group_header(pdf, label=entry.label or "", x=x, y_top=y, width=sum(widths), font_name=font_name)
@@ -1298,13 +1382,15 @@ def _draw_cover_page(pdf: canvas.Canvas, report: ComplaintExportReport, *, width
     return current_y - 6
 
 
-def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
+def build_complaint_export_pdf(report: ComplaintExportReport, *, page_break_by_group: bool = False) -> bytes:
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     width, height = A4
     font_name = _ensure_pdf_font()
     headers, widths, font_size = _pdf_table_layout(report)
-    detail_entries = _build_detail_render_entries(report.rows, group_by=report.group_by)
+    case_cost_totals = _case_cost_totals_from_raw_sheets(report.raw_sheets)
+    detail_entries = _build_detail_render_entries(report.rows, group_by=report.group_by, case_cost_totals=case_cost_totals)
+    normalized_page_break = bool(page_break_by_group and normalize_report_group(report.group_by) != "none")
     page_number = 1
     next_y = _draw_cover_page(pdf, report, width=width, height=height, font_name=font_name)
     next_index = _draw_table_rows(
@@ -1319,6 +1405,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
         font_name=font_name,
         font_size=font_size,
         group_by=report.group_by,
+        page_break_by_group=normalized_page_break,
     )
     _draw_page_footer(pdf, width=width, page_number=page_number, font_name=font_name)
     while next_index < len(detail_entries):
@@ -1343,6 +1430,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
             font_name=font_name,
             font_size=font_size,
             group_by=report.group_by,
+            page_break_by_group=normalized_page_break,
         )
         _draw_page_footer(pdf, width=width, page_number=page_number, font_name=font_name)
     pdf.save()

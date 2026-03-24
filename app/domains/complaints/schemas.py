@@ -293,6 +293,7 @@ class ComplaintPdfExportRequest(BaseModel):
     building: Optional[str] = Field(default=None, max_length=120)
     sort_by: Optional[str] = Field(default=None, max_length=40)
     group_by: Optional[str] = Field(default=None, max_length=40)
+    page_break_by_group: bool = False
     cover: ComplaintReportCoverOptions = Field(default_factory=ComplaintReportCoverOptions)
 
 

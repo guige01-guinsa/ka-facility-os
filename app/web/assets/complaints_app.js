@@ -54,6 +54,7 @@ const state = {
   activeTab: 'field',
   dbEditor: { recordType: 'cases', columns: [], rows: [], totalCount: 0, dirtyRows: {}, selectedIds: {}, originalRows: {}, hiddenColumnsByType: {} },
   reportCover: { companyName: 'KA Facility OS', contractorName: '외벽 재도장 협력업체', submissionPhrase: '상기 현황을 아래와 같이 보고드립니다.', logoDataUrl: '', logoFileName: '', logoPersisted: false },
+  reportPageBreakByGroup: false,
   reportPresets: {},
   reportCoverPrefsLoaded: false,
   reportAdminDefault: null,
@@ -77,6 +78,7 @@ const elements = {
   reportBuilding: document.getElementById('reportBuilding'),
   reportSortBy: document.getElementById('reportSortBy'),
   reportGroupBy: document.getElementById('reportGroupBy'),
+  reportPageBreakByGroup: document.getElementById('reportPageBreakByGroup'),
   reportCompanyPreset: document.getElementById('reportCompanyPreset'),
   reportCompanyName: document.getElementById('reportCompanyName'),
   reportContractorPreset: document.getElementById('reportContractorPreset'),
@@ -403,6 +405,7 @@ function loadPrefs() {
         logoFileName: String(reportCoverPrefs.logoFileName || ''),
         logoPersisted: Boolean(reportCoverPrefs.logoDataUrl),
       };
+      state.reportPageBreakByGroup = Boolean(reportCoverPrefs.pageBreakByGroup);
     }
     state.reportPresets = reportCoverPresets && typeof reportCoverPresets === 'object' ? reportCoverPresets : {};
     if (authProfile && typeof authProfile === 'object') {
@@ -448,6 +451,7 @@ function fillReportCoverInputs() {
   if (elements.reportPhrasePreset) {
     elements.reportPhrasePreset.value = Object.entries(REPORT_SUBMISSION_PRESETS).find(([, value]) => value && value === state.reportCover.submissionPhrase)?.[0] || 'custom';
   }
+  if (elements.reportPageBreakByGroup) elements.reportPageBreakByGroup.checked = Boolean(state.reportPageBreakByGroup);
   syncReportCoverStatus();
   renderReportPreview();
 }
@@ -456,6 +460,7 @@ function readReportCoverInputs() {
   state.reportCover.companyName = String(elements.reportCompanyName?.value || '').trim();
   state.reportCover.contractorName = String(elements.reportContractorName?.value || '').trim();
   state.reportCover.submissionPhrase = String(elements.reportSubmissionPhrase?.value || '').trim();
+  state.reportPageBreakByGroup = Boolean(elements.reportPageBreakByGroup?.checked);
   syncReportCoverStatus();
 }
 
@@ -466,6 +471,7 @@ function buildPersistableReportCoverSnapshot() {
     companyName: state.reportCover.companyName,
     contractorName: state.reportCover.contractorName,
     submissionPhrase: state.reportCover.submissionPhrase,
+    pageBreakByGroup: Boolean(state.reportPageBreakByGroup),
     logoDataUrl: persistableLogo,
     logoFileName: persistableLogo ? state.reportCover.logoFileName : '',
   };
@@ -476,6 +482,7 @@ function applyReportCoverSnapshot(snapshot, options) {
   state.reportCover.companyName = String(payload.companyName ?? payload.company_name ?? '');
   state.reportCover.contractorName = String(payload.contractorName ?? payload.contractor_name ?? '');
   state.reportCover.submissionPhrase = String(payload.submissionPhrase ?? payload.submission_phrase ?? '');
+  state.reportPageBreakByGroup = Boolean(payload.pageBreakByGroup ?? payload.page_break_by_group);
   state.reportCover.logoDataUrl = String(payload.logoDataUrl ?? payload.logo_data_url ?? '');
   state.reportCover.logoFileName = String(payload.logoFileName ?? payload.logo_file_name ?? '');
   state.reportCover.logoPersisted = Boolean(state.reportCover.logoDataUrl && state.reportCover.logoDataUrl.length <= 350000);
@@ -574,6 +581,7 @@ function renderReportPreview() {
   const reportType = REPORT_TYPE_LABELS[elements.reportType?.value || 'all'] || '전체';
   const reportSort = REPORT_SORT_LABELS[elements.reportSortBy?.value || 'reported_at'] || '접수일시 순';
   const reportGroup = REPORT_GROUP_LABELS[elements.reportGroupBy?.value || 'none'] || '없음';
+  const pageBreakLabel = state.reportPageBreakByGroup && (elements.reportGroupBy?.value || 'none') !== 'none' ? '그룹별 새 페이지' : '연속 출력';
   const companyName = state.reportCover.companyName || '회사명 미입력';
   const contractorName = state.reportCover.contractorName || '공사업체 미입력';
   const submissionPhrase = state.reportCover.submissionPhrase || '제출 문구 미입력';
@@ -588,7 +596,7 @@ function renderReportPreview() {
         '<div class="meta" style="font-weight:700;color:#1f4e78;">관리사무소 제출용 표지 미리보기</div>' +
         '<h3 style="margin:8px 0 6px;">' + escapeHtml(site) + ' 세대 민원 처리 현황 보고</h3>' +
         '<div class="meta">단지명 ' + escapeHtml(site) + ' · 공사명 ' + escapeHtml(contractorName) + ' · 보고일 ' + escapeHtml(new Date().toLocaleDateString('ko-KR')) + '</div>' +
-        '<div class="meta">출력 구분 ' + escapeHtml(reportType) + ' · 범위 ' + escapeHtml(building) + ' · 정렬 ' + escapeHtml(reportSort) + ' · 그룹 ' + escapeHtml(reportGroup) + ' · 관리자 기본값 ' + escapeHtml(adminSourceLabel) + '</div>' +
+        '<div class="meta">출력 구분 ' + escapeHtml(reportType) + ' · 범위 ' + escapeHtml(building) + ' · 정렬 ' + escapeHtml(reportSort) + ' · 그룹 ' + escapeHtml(reportGroup) + ' · 페이지 ' + escapeHtml(pageBreakLabel) + ' · 관리자 기본값 ' + escapeHtml(adminSourceLabel) + '</div>' +
       '</div>' +
       '<div style="flex:0 0 140px;display:flex;justify-content:flex-end;">' + logoHtml + '</div>' +
     '</div>' +
@@ -894,6 +902,7 @@ async function downloadComplaintReport(format) {
     const building = nullIfBlank(elements.reportBuilding.value);
     const sortBy = elements.reportSortBy?.value || 'reported_at';
     const groupBy = elements.reportGroupBy?.value || 'none';
+    const pageBreakByGroup = Boolean(elements.reportPageBreakByGroup?.checked && groupBy !== 'none');
     if (building) params.set('building', building);
     params.set('sort_by', sortBy);
     params.set('group_by', groupBy);
@@ -914,6 +923,7 @@ async function downloadComplaintReport(format) {
           building: building,
           sort_by: sortBy,
           group_by: groupBy,
+          page_break_by_group: pageBreakByGroup,
           cover: buildReportCoverPayload(),
         }),
       });
@@ -2087,6 +2097,7 @@ function bindStaticEvents() {
   elements.reportBuilding.addEventListener('input', renderReportPreview);
   elements.reportSortBy.addEventListener('change', renderReportPreview);
   elements.reportGroupBy.addEventListener('change', renderReportPreview);
+  if (elements.reportPageBreakByGroup) elements.reportPageBreakByGroup.addEventListener('change', saveReportCoverPrefs);
   elements.reportPresetSelect.addEventListener('change', () => {
     if (elements.reportPresetName) elements.reportPresetName.value = elements.reportPresetSelect.value || '';
   });

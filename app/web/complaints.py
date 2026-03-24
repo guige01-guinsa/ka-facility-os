@@ -434,6 +434,12 @@ def build_complaints_mobile_html(*, title: str = "세대 민원관리") -> str:
               </select>
             </div>
           </div>
+          <div class="actions" style="margin-top:12px;">
+            <label class="meta" style="display:flex;gap:8px;align-items:center;">
+              <input id="reportPageBreakByGroup" type="checkbox" />
+              <span>PDF에서 그룹별 새 페이지 시작</span>
+            </label>
+          </div>
           <div class="field-stack" style="margin-top:12px;">
             <label class="caption">출력 표지 설정</label>
             <div class="grid-2">

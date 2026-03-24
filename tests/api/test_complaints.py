@@ -29,6 +29,7 @@ def test_complaints_mobile_page_renders_field_console(app_client: TestClient) ->
     assert "동/호 순" in page.text
     assert "분류/동/호 순" in page.text
     assert "그룹 표시" in page.text
+    assert "PDF에서 그룹별 새 페이지 시작" in page.text
     assert "DB 레코드 관리" in page.text
     assert "칼럼 숨김/표시" in page.text
     assert "전체 표시" in page.text
@@ -52,6 +53,7 @@ def test_complaints_mobile_script_is_cacheable(app_client: TestClient) -> None:
     assert asset.headers.get("x-content-type-options") == "nosniff"
     assert "kaFacility.auth.token" in asset.text
     assert "kaFacility.auth.profile" in asset.text
+    assert "reportPageBreakByGroup" in asset.text
     assert "세대 이력" in asset.text
     assert "문자 발송" in asset.text
     assert "비용 입력" in asset.text
@@ -454,6 +456,7 @@ def test_complaint_report_exports(app_client: TestClient) -> None:
             "building": "103동",
             "sort_by": "building_unit",
             "group_by": "building",
+            "page_break_by_group": True,
             "cover": {
                 "company_name": "테스트 시설관리",
                 "contractor_name": "테스트 도장업체",
@@ -551,6 +554,7 @@ def test_complaint_export_report_supports_category_building_unit_sort_and_groupi
 
 def test_complaint_grouped_exports_include_group_subtotals(app_client: TestClient) -> None:
     headers = _owner_headers()
+    complaint_ids: list[int] = []
     for building, unit, description in [
         ("101동", "201호", "방충망 오염"),
         ("102동", "301호", "방충망 오염"),
@@ -567,6 +571,24 @@ def test_complaint_grouped_exports_include_group_subtotals(app_client: TestClien
             },
         )
         assert created.status_code == 201
+        complaint_ids.append(created.json()["id"])
+
+    for complaint_id, total_cost in [
+        (complaint_ids[0], 15000),
+        (complaint_ids[1], 30000),
+        (complaint_ids[2], 5000),
+    ]:
+        cost_created = app_client.post(
+            f"/api/complaints/{complaint_id}/cost-items",
+            headers=headers,
+            json={
+                "cost_category": "cleaning",
+                "item_name": f"소계 테스트 {complaint_id}",
+                "quantity": 1,
+                "unit_price": total_cost,
+            },
+        )
+        assert cost_created.status_code == 201
 
     report = reporting.build_complaint_export_report(
         site="소계테스트",
@@ -574,21 +596,25 @@ def test_complaint_grouped_exports_include_group_subtotals(app_client: TestClien
         sort_by="category_building_unit",
         group_by="category",
     )
-    entries = reporting._build_detail_render_entries(report.rows, group_by=report.group_by)
+    entries = reporting._build_detail_render_entries(
+        report.rows,
+        group_by=report.group_by,
+        case_cost_totals=reporting._case_cost_totals_from_raw_sheets(report.raw_sheets),
+    )
     labels = [entry.label for entry in entries if entry.kind != "data"]
     assert labels == [
         "분류: 방충망 오염",
-        "분류 소계 · 방충망 오염: 2건",
+        "분류 소계 · 방충망 오염: 2건 · 비용합계 45,000원",
         "분류: 유리/창문 오염",
-        "분류 소계 · 유리/창문 오염: 1건",
+        "분류 소계 · 유리/창문 오염: 1건 · 비용합계 5,000원",
     ]
 
     workbook = load_workbook(BytesIO(reporting.build_complaint_export_xlsx(report)))
     detail_ws = workbook["민원목록"]
     assert detail_ws["A2"].value == "분류: 방충망 오염"
-    assert detail_ws["A5"].value == "분류 소계 · 방충망 오염: 2건"
+    assert detail_ws["A5"].value == "분류 소계 · 방충망 오염: 2건 · 비용합계 45,000원"
     assert detail_ws["A6"].value == "분류: 유리/창문 오염"
-    assert detail_ws["A8"].value == "분류 소계 · 유리/창문 오염: 1건"
+    assert detail_ws["A8"].value == "분류 소계 · 유리/창문 오염: 1건 · 비용합계 5,000원"
 
 
 def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:

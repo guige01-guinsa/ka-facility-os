@@ -210,6 +210,7 @@ def export_complaints_pdf(
     building: Annotated[str | None, Query()] = None,
     sort_by: Annotated[str | None, Query()] = None,
     group_by: Annotated[str | None, Query()] = None,
+    page_break_by_group: Annotated[bool, Query()] = False,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
     _require_site_access(principal, site)
@@ -229,10 +230,17 @@ def export_complaints_pdf(
         action="complaints.report.export.pdf",
         resource_type="complaint_report",
         resource_id=f"{report.report_type}:{report.site or 'ALL'}:{report.building or 'ALL'}",
-        detail={"site": report.site, "building": report.building, "report_type": report.report_type, "sort_by": report.sort_by, "group_by": report.group_by},
+        detail={
+            "site": report.site,
+            "building": report.building,
+            "report_type": report.report_type,
+            "sort_by": report.sort_by,
+            "group_by": report.group_by,
+            "page_break_by_group": bool(page_break_by_group),
+        },
     )
     return Response(
-        content=reporting.build_complaint_export_pdf(report),
+        content=reporting.build_complaint_export_pdf(report, page_break_by_group=page_break_by_group),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
@@ -267,11 +275,12 @@ def export_complaints_pdf_with_cover(
             "report_type": report.report_type,
             "sort_by": report.sort_by,
             "group_by": report.group_by,
+            "page_break_by_group": bool(payload.page_break_by_group),
             "custom_cover": bool(report.cover_settings),
         },
     )
     return Response(
-        content=reporting.build_complaint_export_pdf(report),
+        content=reporting.build_complaint_export_pdf(report, page_break_by_group=payload.page_break_by_group),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
