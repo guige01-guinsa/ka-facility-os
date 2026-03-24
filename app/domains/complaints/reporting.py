@@ -55,11 +55,16 @@ ACTIVE_STATUSES = {"received", "assigned", "visit_scheduled", "in_progress", "re
 CLOSED_STATUSES = {"resolved", "resident_confirmed", "closed"}
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="1F4E78")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
+GROUP_HEADER_FILL = PatternFill(fill_type="solid", fgColor="DCEAF7")
+GROUP_HEADER_FONT = Font(color="1F4E78", bold=True)
+GROUP_SUBTOTAL_FILL = PatternFill(fill_type="solid", fgColor="EAF5EC")
+GROUP_SUBTOTAL_FONT = Font(color="0C6D58", bold=True)
 PDF_FONT_NAME = "HYSMyeongJo-Medium"
 _PDF_FONT_READY = False
 PDF_MARGIN = 12 * mm
 PDF_HEADER_BLUE = colors.HexColor("#1F4E78")
 PDF_SOFT_BLUE = colors.HexColor("#EAF2FB")
+PDF_SOFT_GREEN = colors.HexColor("#EAF5EC")
 PDF_LINE = colors.HexColor("#C9D8EA")
 PDF_TEXT = colors.HexColor("#18344E")
 PDF_MUTED = colors.HexColor("#5C738A")
@@ -114,6 +119,13 @@ class ComplaintPdfCoverLayout:
     badge_height: float
     badge_top_y: float
     title_top_y: float
+
+
+@dataclass(slots=True)
+class ComplaintDetailRenderEntry:
+    kind: str
+    row: list[str] | None = None
+    label: str | None = None
 
 
 def normalize_report_type(value: str | None) -> str:
@@ -314,13 +326,63 @@ def _sort_cases_for_export(cases: list[ComplaintCaseRead], *, sort_by: str, grou
     )
 
 
-def _group_label_for_detail_row(row: list[str], *, group_by: str) -> str | None:
+def _group_value_for_detail_row(row: list[str], *, group_by: str) -> str | None:
     normalized_group = normalize_report_group(group_by)
     if normalized_group == "category" and len(row) >= 4:
-        return f"분류: {row[3]}"
+        return str(row[3] or "").strip() or "-"
     if normalized_group == "building" and len(row) >= 2:
-        return f"동: {row[1]}"
+        return str(row[1] or "").strip() or "-"
     return None
+
+
+def _group_header_label(group_value: str, *, group_by: str) -> str:
+    normalized_group = normalize_report_group(group_by)
+    if normalized_group == "category":
+        return f"분류: {group_value}"
+    if normalized_group == "building":
+        return f"동: {group_value}"
+    return group_value
+
+
+def _group_subtotal_label(group_value: str, *, group_by: str, count: int) -> str:
+    normalized_group = normalize_report_group(group_by)
+    if normalized_group == "category":
+        return f"분류 소계 · {group_value}: {count}건"
+    if normalized_group == "building":
+        return f"동 소계 · {group_value}: {count}건"
+    return f"소계: {count}건"
+
+
+def _build_detail_render_entries(rows: list[list[str]], *, group_by: str) -> list[ComplaintDetailRenderEntry]:
+    normalized_group = normalize_report_group(group_by)
+    if normalized_group == "none":
+        return [ComplaintDetailRenderEntry(kind="data", row=row) for row in rows]
+
+    group_values = [_group_value_for_detail_row(row, group_by=normalized_group) for row in rows]
+    group_counts = Counter(value for value in group_values if value)
+    entries: list[ComplaintDetailRenderEntry] = []
+    current_group_value: str | None = None
+
+    for index, row in enumerate(rows):
+        group_value = group_values[index]
+        next_group_value = group_values[index + 1] if index + 1 < len(group_values) else None
+        if group_value and group_value != current_group_value:
+            entries.append(
+                ComplaintDetailRenderEntry(
+                    kind="group_header",
+                    label=_group_header_label(group_value, group_by=normalized_group),
+                )
+            )
+            current_group_value = group_value
+        entries.append(ComplaintDetailRenderEntry(kind="data", row=row))
+        if group_value and group_value != next_group_value:
+            entries.append(
+                ComplaintDetailRenderEntry(
+                    kind="group_subtotal",
+                    label=_group_subtotal_label(group_value, group_by=normalized_group, count=int(group_counts.get(group_value, 0))),
+                )
+            )
+    return entries
 
 
 def _stringify_raw_value(value: object) -> str:
@@ -588,26 +650,33 @@ def build_complaint_export_xlsx(report: ComplaintExportReport) -> bytes:
 
     detail_ws = workbook.create_sheet(report.primary_sheet_name)
     detail_ws.append(report.headers)
-    grouped_row_indexes: list[int] = []
-    current_group_label: str | None = None
-    for row in report.rows:
-        group_label = _group_label_for_detail_row(row, group_by=report.group_by)
-        if group_label and group_label != current_group_label:
-            detail_ws.append([group_label] + [""] * (len(report.headers) - 1))
-            grouped_row_indexes.append(detail_ws.max_row)
-            detail_ws.merge_cells(
-                start_row=detail_ws.max_row,
-                start_column=1,
-                end_row=detail_ws.max_row,
-                end_column=len(report.headers),
-            )
-            current_group_label = group_label
-        detail_ws.append(row)
+    group_header_row_indexes: list[int] = []
+    group_subtotal_row_indexes: list[int] = []
+    for entry in _build_detail_render_entries(report.rows, group_by=report.group_by):
+        if entry.kind == "data":
+            detail_ws.append(entry.row or [""] * len(report.headers))
+            continue
+        detail_ws.append([entry.label or ""] + [""] * (len(report.headers) - 1))
+        row_index = detail_ws.max_row
+        detail_ws.merge_cells(
+            start_row=row_index,
+            start_column=1,
+            end_row=row_index,
+            end_column=len(report.headers),
+        )
+        if entry.kind == "group_header":
+            group_header_row_indexes.append(row_index)
+        elif entry.kind == "group_subtotal":
+            group_subtotal_row_indexes.append(row_index)
     _style_table_sheet(detail_ws)
-    for row_index in grouped_row_indexes:
+    for row_index in group_header_row_indexes:
         cell = detail_ws.cell(row=row_index, column=1)
-        cell.fill = PatternFill(fill_type="solid", fgColor="DCEAF7")
-        cell.font = Font(color="1F4E78", bold=True)
+        cell.fill = GROUP_HEADER_FILL
+        cell.font = GROUP_HEADER_FONT
+    for row_index in group_subtotal_row_indexes:
+        cell = detail_ws.cell(row=row_index, column=1)
+        cell.fill = GROUP_SUBTOTAL_FILL
+        cell.font = GROUP_SUBTOTAL_FONT
 
     for sheet_name, headers, rows in report.raw_sheets:
         raw_ws = workbook.create_sheet(sheet_name)
@@ -1004,6 +1073,29 @@ def _draw_group_header(pdf: canvas.Canvas, *, label: str, x: float, y_top: float
     return y_top - height
 
 
+def _draw_group_subtotal(pdf: canvas.Canvas, *, label: str, x: float, y_top: float, width: float, font_name: str) -> float:
+    height = 12
+    pdf.setStrokeColor(PDF_LINE)
+    pdf.setFillColor(PDF_SOFT_GREEN)
+    pdf.rect(x, y_top - height, width, height, stroke=1, fill=1)
+    pdf.setFillColor(PDF_OK)
+    pdf.setFont(font_name, 8)
+    pdf.drawString(x + 4, y_top - 8.5, label[:120])
+    return y_top - height
+
+
+def _continued_group_header_label(entries: list[ComplaintDetailRenderEntry], start_index: int) -> str | None:
+    if start_index <= 0:
+        return None
+    for prior_index in range(start_index - 1, -1, -1):
+        entry = entries[prior_index]
+        if entry.kind == "group_subtotal":
+            return None
+        if entry.kind == "group_header":
+            return entry.label
+    return None
+
+
 def _draw_table_header(pdf: canvas.Canvas, *, headers: list[str], widths: list[float], x: float, y_top: float, font_name: str, font_size: float) -> float:
     header_height = 14
     pdf.setFillColor(PDF_HEADER_BLUE)
@@ -1023,7 +1115,7 @@ def _draw_table_rows(
     *,
     headers: list[str],
     widths: list[float],
-    rows: list[list[str]],
+    entries: list[ComplaintDetailRenderEntry],
     start_index: int,
     x: float,
     y_top: float,
@@ -1035,15 +1127,29 @@ def _draw_table_rows(
     y = _draw_table_header(pdf, headers=headers, widths=widths, x=x, y_top=y_top, font_name=font_name, font_size=font_size)
     line_height = font_size + 2
     index = start_index
-    while index < len(rows):
-        group_label = _group_label_for_detail_row(rows[index], group_by=group_by)
-        if group_label and (index == start_index or _group_label_for_detail_row(rows[index - 1], group_by=group_by) != group_label):
+    continued_group_label = _continued_group_header_label(entries, start_index)
+    if continued_group_label and (index >= len(entries) or entries[index].kind != "group_header"):
+        if y - 12 < bottom_y:
+            return index
+        y = _draw_group_header(pdf, label=continued_group_label, x=x, y_top=y, width=sum(widths), font_name=font_name)
+    while index < len(entries):
+        entry = entries[index]
+        if entry.kind == "group_header":
             if y - 12 < bottom_y:
                 return index
-            y = _draw_group_header(pdf, label=group_label, x=x, y_top=y, width=sum(widths), font_name=font_name)
+            y = _draw_group_header(pdf, label=entry.label or "", x=x, y_top=y, width=sum(widths), font_name=font_name)
+            index += 1
+            continue
+        if entry.kind == "group_subtotal":
+            if y - 12 < bottom_y:
+                return index
+            y = _draw_group_subtotal(pdf, label=entry.label or "", x=x, y_top=y, width=sum(widths), font_name=font_name)
+            index += 1
+            continue
+        row = entry.row or [""] * len(headers)
         wrapped_cells: list[list[str]] = []
         max_lines = 1
-        for cell_value, width in zip(rows[index], widths):
+        for cell_value, width in zip(row, widths):
             wrapped = simpleSplit(str(cell_value or ""), font_name, font_size, max(width - 6, 20))
             wrapped_cells.append(wrapped or [""])
             max_lines = max(max_lines, len(wrapped or [""]))
@@ -1198,13 +1304,14 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
     width, height = A4
     font_name = _ensure_pdf_font()
     headers, widths, font_size = _pdf_table_layout(report)
+    detail_entries = _build_detail_render_entries(report.rows, group_by=report.group_by)
     page_number = 1
     next_y = _draw_cover_page(pdf, report, width=width, height=height, font_name=font_name)
     next_index = _draw_table_rows(
         pdf,
         headers=headers,
         widths=widths,
-        rows=report.rows,
+        entries=detail_entries,
         start_index=0,
         x=PDF_MARGIN,
         y_top=next_y,
@@ -1214,7 +1321,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
         group_by=report.group_by,
     )
     _draw_page_footer(pdf, width=width, page_number=page_number, font_name=font_name)
-    while next_index < len(report.rows):
+    while next_index < len(detail_entries):
         pdf.showPage()
         page_number += 1
         _draw_pdf_frame(pdf, width=width, height=height)
@@ -1228,7 +1335,7 @@ def build_complaint_export_pdf(report: ComplaintExportReport) -> bytes:
             pdf,
             headers=headers,
             widths=widths,
-            rows=report.rows,
+            entries=detail_entries,
             start_index=next_index,
             x=PDF_MARGIN,
             y_top=height - PDF_MARGIN - 16,

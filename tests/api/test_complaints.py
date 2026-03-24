@@ -549,6 +549,48 @@ def test_complaint_export_report_supports_category_building_unit_sort_and_groupi
     assert report.rows[1][3] == "유리/창문 오염"
 
 
+def test_complaint_grouped_exports_include_group_subtotals(app_client: TestClient) -> None:
+    headers = _owner_headers()
+    for building, unit, description in [
+        ("101동", "201호", "방충망 오염"),
+        ("102동", "301호", "방충망 오염"),
+        ("103동", "401호", "유리 오염"),
+    ]:
+        created = app_client.post(
+            "/api/complaints",
+            headers=headers,
+            json={
+                "site": "소계테스트",
+                "building": building,
+                "unit_number": unit,
+                "description": description,
+            },
+        )
+        assert created.status_code == 201
+
+    report = reporting.build_complaint_export_report(
+        site="소계테스트",
+        report_type="all",
+        sort_by="category_building_unit",
+        group_by="category",
+    )
+    entries = reporting._build_detail_render_entries(report.rows, group_by=report.group_by)
+    labels = [entry.label for entry in entries if entry.kind != "data"]
+    assert labels == [
+        "분류: 방충망 오염",
+        "분류 소계 · 방충망 오염: 2건",
+        "분류: 유리/창문 오염",
+        "분류 소계 · 유리/창문 오염: 1건",
+    ]
+
+    workbook = load_workbook(BytesIO(reporting.build_complaint_export_xlsx(report)))
+    detail_ws = workbook["민원목록"]
+    assert detail_ws["A2"].value == "분류: 방충망 오염"
+    assert detail_ws["A5"].value == "분류 소계 · 방충망 오염: 2건"
+    assert detail_ws["A6"].value == "분류: 유리/창문 오염"
+    assert detail_ws["A8"].value == "분류 소계 · 유리/창문 오염: 1건"
+
+
 def test_complaint_pdf_cover_layout_keeps_title_below_header_block() -> None:
     layout = reporting._cover_layout(width=A4[0], height=A4[1])
     assert layout.header_bottom_y < layout.top_y
