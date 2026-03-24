@@ -167,7 +167,7 @@ function writeDebug(label, payload) {
   else {
     try { body = JSON.stringify(payload, null, 2); } catch (error) { body = String(payload); }
   }
-  elements.debugBox.textContent = '[' + stamp + '] ' + label + '\\n' + body;
+  elements.debugBox.textContent = '[' + stamp + '] ' + label + '\n' + body;
 }
 
 function setNotice(message, kind) {
@@ -252,11 +252,11 @@ function buildOptions(map, currentValue, blankLabel) {
 
 function parseContentDispositionFilename(headerValue) {
   const header = String(headerValue || '');
-  const utf8Match = header.match(/filename\\*=UTF-8''([^;]+)/i);
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
   if (utf8Match && utf8Match[1]) {
     try { return decodeURIComponent(utf8Match[1]); } catch (error) {}
   }
-  const quotedMatch = header.match(/filename=\"([^\"]+)\"/i);
+  const quotedMatch = header.match(/filename="([^"]+)"/i);
   if (quotedMatch && quotedMatch[1]) return quotedMatch[1];
   const rawMatch = header.match(/filename=([^;]+)/i);
   if (rawMatch && rawMatch[1]) return rawMatch[1].trim();
@@ -732,7 +732,7 @@ function clearReportLogo() {
 
 async function loadReportLogoFile(file) {
   if (!(file instanceof File)) return;
-  if (!/^image\\/(png|jpeg)$/.test(String(file.type || ''))) {
+  if (!/^image\/(png|jpeg)$/.test(String(file.type || ''))) {
     setNotice('로고 이미지는 PNG 또는 JPEG만 불러올 수 있습니다.', 'error');
     if (elements.reportLogoFile) elements.reportLogoFile.value = '';
     return;
