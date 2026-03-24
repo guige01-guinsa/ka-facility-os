@@ -41,6 +41,10 @@ REPORT_TYPE_LABELS: dict[str, str] = {
     "unresolved": "미처리",
     "closed": "종결",
 }
+REPORT_SORT_LABELS: dict[str, str] = {
+    "reported_at": "접수일시 순",
+    "building_unit": "동/호 순",
+}
 ACTIVE_STATUSES = {"received", "assigned", "visit_scheduled", "in_progress", "reopened"}
 CLOSED_STATUSES = {"resolved", "resident_confirmed", "closed"}
 HEADER_FILL = PatternFill(fill_type="solid", fgColor="1F4E78")
@@ -66,6 +70,8 @@ PDF_TITLE_BG = colors.HexColor("#F3F8FE")
 class ComplaintExportReport:
     report_type: str
     report_label: str
+    sort_by: str
+    sort_label: str
     site: str | None
     building: str | None
     generated_at: datetime
@@ -106,6 +112,13 @@ def normalize_report_type(value: str | None) -> str:
     normalized = service.normalize_description(value).lower()
     if normalized not in REPORT_TYPE_LABELS:
         return "all"
+    return normalized
+
+
+def normalize_report_sort(value: str | None) -> str:
+    normalized = service.normalize_description(value).lower().replace("-", "_").replace(" ", "_")
+    if normalized not in REPORT_SORT_LABELS:
+        return "reported_at"
     return normalized
 
 
@@ -183,7 +196,14 @@ def build_cover_settings(options: ComplaintReportCoverOptions | None) -> Complai
     return settings
 
 
-def _summary_rows(cases: list[ComplaintCaseRead], *, site: str | None, building: str | None, report_label: str) -> list[tuple[str, str]]:
+def _summary_rows(
+    cases: list[ComplaintCaseRead],
+    *,
+    site: str | None,
+    building: str | None,
+    report_label: str,
+    sort_label: str,
+) -> list[tuple[str, str]]:
     building_count = len({(row.building, row.unit_number) for row in cases})
     recurrence_count = sum(1 for row in cases if row.recurrence_flag)
     active_count = sum(1 for row in cases if row.status in ACTIVE_STATUSES)
@@ -193,6 +213,7 @@ def _summary_rows(cases: list[ComplaintCaseRead], *, site: str | None, building:
         ("출력구분", report_label),
         ("단지", site or "전체"),
         ("동 필터", building or "전체"),
+        ("정렬기준", sort_label),
         ("민원건수", str(len(cases))),
         ("세대수", str(building_count)),
         ("미처리건수", str(active_count)),
@@ -219,6 +240,30 @@ def _detail_rows(cases: Iterable[ComplaintCaseRead]) -> list[list[str]]:
             ]
         )
     return rows
+
+
+def _sort_cases_for_export(cases: list[ComplaintCaseRead], *, sort_by: str) -> list[ComplaintCaseRead]:
+    normalized_sort = normalize_report_sort(sort_by)
+    if normalized_sort != "building_unit":
+        return list(cases)
+
+    def _building_key(value: str) -> tuple[int, str]:
+        digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+        return (int(digits) if digits else 999999, str(value or ""))
+
+    def _unit_key(value: str) -> tuple[int, str]:
+        digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+        return (int(digits) if digits else 999999, str(value or ""))
+
+    return sorted(
+        cases,
+        key=lambda row: (
+            _building_key(row.building),
+            _unit_key(row.unit_number),
+            row.reported_at,
+            row.id,
+        ),
+    )
 
 
 def _stringify_raw_value(value: object) -> str:
@@ -413,18 +458,27 @@ def build_complaint_export_report(
     site: str | None,
     report_type: str | None,
     building: str | None = None,
+    sort_by: str | None = None,
     allowed_sites: list[str] | None = None,
     cover_options: ComplaintReportCoverOptions | None = None,
 ) -> ComplaintExportReport:
     normalized_type = normalize_report_type(report_type)
+    normalized_sort = normalize_report_sort(sort_by)
     normalized_building = service.normalize_building(building) if service.normalize_description(building) else None
     cases = service.list_cases(site=site, building=normalized_building, allowed_sites=allowed_sites)
     if normalized_type == "unresolved":
         cases = [row for row in cases if row.status in ACTIVE_STATUSES]
     elif normalized_type == "closed":
         cases = [row for row in cases if row.status in CLOSED_STATUSES]
+    cases = _sort_cases_for_export(cases, sort_by=normalized_sort)
     report_label = REPORT_TYPE_LABELS[normalized_type]
-    summary_rows = _summary_rows(cases, site=site, building=normalized_building, report_label=report_label)
+    summary_rows = _summary_rows(
+        cases,
+        site=site,
+        building=normalized_building,
+        report_label=report_label,
+        sort_label=REPORT_SORT_LABELS[normalized_sort],
+    )
 
     if normalized_type == "building":
         headers = ["동", "총건수", "세대수", "미처리", "종결", "재민원", "최근접수"]
@@ -444,6 +498,8 @@ def build_complaint_export_report(
     return ComplaintExportReport(
         report_type=normalized_type,
         report_label=report_label,
+        sort_by=normalized_sort,
+        sort_label=REPORT_SORT_LABELS[normalized_sort],
         site=site,
         building=normalized_building,
         generated_at=datetime.now().astimezone(),
