@@ -106,6 +106,8 @@ from app.web.iam_guide import build_iam_guide_html as _web_build_iam_guide_html
 from app.web.main_tabs import (
     build_shared_tracker_execution_box_html as _web_build_shared_tracker_execution_box_html,
     build_system_main_tabs_html as _web_build_system_main_tabs_html,
+    main_tabs_script_text as _web_main_tabs_script_text,
+    main_tabs_script_version as _web_main_tabs_script_version,
 )
 from app.web.public_pages import (
     build_public_main_page_html as _web_build_public_main_page_html,
@@ -6965,6 +6967,8 @@ public_router = build_public_router(
             service_info,
             initial_tab=initial_tab,
         ),
+        main_tabs_script_text=_web_main_tabs_script_text,
+        main_tabs_script_version=_web_main_tabs_script_version,
         build_facility_console_html=_build_facility_console_html,
         build_facility_console_guide_html=_build_facility_console_guide_html,
         build_iam_guide_html=_build_iam_guide_html,

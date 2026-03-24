@@ -28,6 +28,8 @@ class PublicRouteDeps:
     find_tutorial_simulator_sample_file: Callable[[str], dict[str, Any] | None]
     tutorial_simulator_sample_allowed_content_types: Sequence[str]
     build_system_main_tabs_html: Callable[[dict[str, str], str], str]
+    main_tabs_script_text: Callable[[], str]
+    main_tabs_script_version: Callable[[], str]
     build_facility_console_html: Callable[[dict[str, str], dict[str, Any]], str]
     build_facility_console_guide_html: Callable[[dict[str, str]], str]
     build_iam_guide_html: Callable[[dict[str, str]], str]
@@ -104,6 +106,18 @@ def build_router(deps: PublicRouteDeps) -> APIRouter:
                 deps.service_info_payload(),
                 deps.facility_modules_payload(),
             )
+        )
+
+    @router.get("/web/main-shell/app.js", response_model=None)
+    def main_shell_script() -> Response:
+        return Response(
+            content=deps.main_tabs_script_text(),
+            media_type="application/javascript",
+            headers={
+                "Cache-Control": "public, max-age=31536000, immutable",
+                "ETag": deps.main_tabs_script_version(),
+                "X-Content-Type-Options": "nosniff",
+            },
         )
 
     @router.get("/web/console/guide", response_model=None)

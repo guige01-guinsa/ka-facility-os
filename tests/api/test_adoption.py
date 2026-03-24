@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app.web.main_tabs import main_tabs_script_version
 from tests.helpers.common import _assert_adoption_policy_response_shape, _owner_headers
 
 
@@ -84,7 +85,8 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "시설관리시스템 메인" in root_html.text
     assert "세대 민원처리" in root_html.text
     assert "운영요약" in root_html.text
-    assert ".split(/\\r?\\n/)" in root_html.text
+    assert f'/web/main-shell/app.js?v={main_tabs_script_version()}' in root_html.text
+    assert 'id="kaMainBootstrap"' in root_html.text
     assert "작업지시" in root_html.text
     assert "점검" in root_html.text
     assert "월간리포트" in root_html.text
@@ -114,11 +116,6 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "처음 1일 운영 체크리스트" in root_html.text
     assert "역할별 시작 가이드" in root_html.text
     assert "운영 용어집" in root_html.text
-    assert "권한 확인: 현재 토큰으로 /api/auth/me를 호출해 사용자와 역할을 확인합니다." in root_html.text
-    assert "요약 새로고침: 운영요약 데이터와 핵심 지표를 다시 조회합니다." in root_html.text
-    assert "점검 저장: 법정점검 1건을 저장하고 필요 시 작업지시/증빙 업로드를 이어서 처리합니다." in root_html.text
-    assert "사용자 생성: 새 사용자 계정과 기본 권한을 등록합니다." in root_html.text
-    assert "용어집 새로고침: 운영 용어집을 다시 불러와 검색 기준에 맞게 보여줍니다." in root_html.text
     assert "W07 주간 자동화/트렌드" in root_html.text
     assert "W05 지표 새로고침" in root_html.text
     assert "W06 리듬 새로고침" in root_html.text
@@ -130,8 +127,6 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "알림 채널 KPI" in root_html.text
     assert "알림 채널 MTTR" in root_html.text
     assert "X-Admin-Token 입력" in root_html.text
-    assert "kaFacility.auth.token" in root_html.text
-    assert "kaFacility.auth.profile" in root_html.text
     assert "ID/PW 로그인" in root_html.text
     assert "사용자 신규가입" in root_html.text
     assert "권한관리" in root_html.text
@@ -144,6 +139,21 @@ def test_public_main_and_adoption_plan_endpoints(app_client: TestClient) -> None
     assert "Overview(운영요약)" in root_html.text
     assert "IAM(권한관리)" in root_html.text
     assert "요약 새로고침" in root_html.text
+
+    root_shell_asset = app_client.get(f"/web/main-shell/app.js?v={main_tabs_script_version()}")
+    assert root_shell_asset.status_code == 200
+    assert root_shell_asset.headers["content-type"].startswith("application/javascript")
+    assert root_shell_asset.headers.get("cache-control") == "public, max-age=31536000, immutable"
+    assert root_shell_asset.headers.get("etag") == main_tabs_script_version()
+    assert root_shell_asset.headers.get("x-content-type-options") == "nosniff"
+    assert "split(/" in root_shell_asset.text
+    assert "권한 확인: 현재 토큰으로 /api/auth/me를 호출해 사용자와 역할을 확인합니다." in root_shell_asset.text
+    assert "요약 새로고침: 운영요약 데이터와 핵심 지표를 다시 조회합니다." in root_shell_asset.text
+    assert "점검 저장: 법정점검 1건을 저장하고 필요 시 작업지시/증빙 업로드를 이어서 처리합니다." in root_shell_asset.text
+    assert "사용자 생성: 새 사용자 계정과 기본 권한을 등록합니다." in root_shell_asset.text
+    assert "용어집 새로고침: 운영 용어집을 다시 불러와 검색 기준에 맞게 보여줍니다." in root_shell_asset.text
+    assert "kaFacility.auth.token" in root_shell_asset.text
+    assert "kaFacility.auth.profile" in root_shell_asset.text
 
     root_html_adoption_tab = app_client.get("/?tab=adoption", headers={"Accept": "text/html"})
     assert root_html_adoption_tab.status_code == 200
