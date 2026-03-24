@@ -37,7 +37,7 @@ from app.domains.complaints.schemas import (
 from app.domains.iam.core import _principal_site_scope
 from app.domains.iam.security import _require_global_site_scope, _require_site_access, require_permission
 from app.domains.iam.service import _write_audit_log
-from app.web.complaints import build_complaints_mobile_html
+from app.web.complaints import build_complaints_mobile_html, complaints_script_text, complaints_script_version
 
 
 router = APIRouter(tags=["complaints"])
@@ -70,6 +70,19 @@ def _secure_html_response(content: str) -> HTMLResponse:
 @router.get("/web/complaints", response_model=None)
 def complaints_mobile_page() -> HTMLResponse:
     return _secure_html_response(build_complaints_mobile_html())
+
+
+@router.get("/web/complaints/app.js", response_model=None)
+def complaints_mobile_script() -> Response:
+    return Response(
+        content=complaints_script_text(),
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "ETag": complaints_script_version(),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/api/complaints/households/history", response_model=ComplaintHouseholdHistoryRead)
