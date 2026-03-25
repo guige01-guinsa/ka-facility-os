@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import HTMLResponse
 
-from app.domains.complaints import reporting, service
+from app.domains.complaints import service
 from app.domains.complaints.schemas import (
     ComplaintAdminBulkDeleteRequest,
     ComplaintAdminBulkMutationResultRead,
@@ -178,6 +178,8 @@ def export_complaints_xlsx(
     group_by: Annotated[str | None, Query()] = None,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
+    from app.domains.complaints import reporting
+
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
     report = reporting.build_complaint_export_report(
@@ -213,6 +215,8 @@ def export_complaints_pdf(
     page_break_by_group: Annotated[bool, Query()] = False,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
+    from app.domains.complaints import reporting
+
     _require_site_access(principal, site)
     allowed_sites = _allowed_sites_for_principal(principal) if site is None else None
     report = reporting.build_complaint_export_report(
@@ -251,6 +255,8 @@ def export_complaints_pdf_with_cover(
     payload: ComplaintPdfExportRequest,
     principal: dict[str, Any] = Depends(require_permission("complaints:read")),
 ) -> Response:
+    from app.domains.complaints import reporting
+
     _require_site_access(principal, payload.site)
     allowed_sites = _allowed_sites_for_principal(principal) if payload.site is None else None
     effective_cover = service.resolve_effective_report_cover_options(site=payload.site, override=payload.cover, allowed_sites=allowed_sites)

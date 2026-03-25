@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import base64
+import gzip
 import hashlib
 import html
 import hmac
@@ -28,6 +29,7 @@ from urllib import request as url_request
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Header, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.middleware.gzip import GZipMiddleware
 from sqlalchemy import delete, func, insert, select, update
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -2284,6 +2286,7 @@ app = FastAPI(
     version="0.32.0",
     lifespan=app_lifespan,
 )
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 def _build_browser_json_view_html(path_label: str, raw_href: str, status_code: int, payload: Any) -> str:
     payload_text = json.dumps(payload, ensure_ascii=False, indent=2) if payload is not None else "null"
@@ -3028,6 +3031,12 @@ async def browser_json_to_html_middleware(request: Request, call_next: Callable[
     body = b""
     async for chunk in response.body_iterator:
         body += chunk
+    content_encoding = response.headers.get("content-encoding", "").lower()
+    if content_encoding == "gzip" and body:
+        try:
+            body = gzip.decompress(body)
+        except OSError:
+            return response
 
     payload: Any
     if body:
@@ -3701,10 +3710,10 @@ def _build_w04_blocker_snapshot(
         tracker_stmt = tracker_stmt.where(adoption_w04_tracker_items.c.site.in_(allowed_sites))
 
     with get_conn() as conn:
-        overdue_count = len(conn.execute(overdue_stmt).all())
-        failed_alert_count = len(conn.execute(alert_stmt).all())
-        audit_fail_count = len(conn.execute(audit_fail_stmt).all())
-        tracker_open_count = len(conn.execute(tracker_stmt).all())
+        overdue_count = int(conn.execute(select(func.count()).select_from(overdue_stmt.subquery())).scalar_one() or 0)
+        failed_alert_count = int(conn.execute(select(func.count()).select_from(alert_stmt.subquery())).scalar_one() or 0)
+        audit_fail_count = int(conn.execute(select(func.count()).select_from(audit_fail_stmt.subquery())).scalar_one() or 0)
+        tracker_open_count = int(conn.execute(select(func.count()).select_from(tracker_stmt.subquery())).scalar_one() or 0)
 
     funnel = _build_w04_funnel_snapshot(site=site, days=window_days, allowed_sites=allowed_sites)
     ttv = funnel.get("metrics", {}).get("median_ttv_minutes")
@@ -7044,23 +7053,41 @@ public_router = build_public_router(
     )
 )
 
-app.include_router(iam_auth_router)
-app.include_router(complaints_router)
-app.include_router(ops_billing_router)
-app.include_router(ops_core_router)
-app.include_router(ops_governance_router)
-app.include_router(ops_official_documents_router)
-app.include_router(ops_alerts_router)
 ops_reporting_router = build_ops_reporting_router(globals())
 ops_tutorial_router = build_ops_tutorial_router(globals())
 adoption_router = build_adoption_tracker_router(globals())
 adoption_ops_router = build_adoption_ops_router(globals())
-app.include_router(ops_reporting_router)
-app.include_router(ops_tutorial_router)
-app.include_router(iam_admin_router)
-app.include_router(ops_sla_admin_router)
-app.include_router(adoption_router)
-app.include_router(adoption_ops_router)
-app.include_router(public_router)
+
+FACILITY_CORE_ROUTERS = (
+    iam_auth_router,
+    complaints_router,
+    ops_billing_router,
+    ops_core_router,
+    ops_official_documents_router,
+    public_router,
+)
+
+PLATFORM_ADMIN_ROUTERS = (
+    ops_governance_router,
+    ops_alerts_router,
+    ops_reporting_router,
+    ops_tutorial_router,
+    iam_admin_router,
+    ops_sla_admin_router,
+    adoption_router,
+    adoption_ops_router,
+)
+
+
+def facility_core_router_set() -> tuple[APIRouter, ...]:
+    return FACILITY_CORE_ROUTERS
+
+
+def platform_admin_router_set() -> tuple[APIRouter, ...]:
+    return PLATFORM_ADMIN_ROUTERS
+
+
+for included_router in facility_core_router_set() + platform_admin_router_set():
+    app.include_router(included_router)
 
 
