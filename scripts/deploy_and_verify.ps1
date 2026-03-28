@@ -3,6 +3,7 @@ param(
   [string]$ServiceId = "",
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
+  [string]$GovernanceBaseUrl = "",
   [string]$ExpectedServiceName = "ka-facility-os",
   [string]$ExpectedRepoFragment = "guige01-guinsa/ka-facility-os",
   [string]$AdminToken = "",
@@ -252,6 +253,7 @@ for ($attempt = 1; $attempt -le [Math]::Max(1, $MaxDeployAttempts); $attempt++) 
 
 & "$PSScriptRoot/post_deploy_smoke.ps1" `
   -BaseUrl $BaseUrl `
+  -GovernanceBaseUrl $GovernanceBaseUrl `
   -AdminToken $AdminToken `
   -ServiceId $ServiceId `
   -RenderApiKey $RenderApiKey `

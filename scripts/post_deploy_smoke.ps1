@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$BaseUrl,
+  [string]$GovernanceBaseUrl = "",
   [string]$AdminToken = "",
   [string]$ServiceId = "",
   [string]$RenderApiKey = "",
@@ -20,6 +21,9 @@ $ErrorActionPreference = "Stop"
 . "$PSScriptRoot/render_env_utils.ps1"
 $ServiceId = Resolve-RenderServiceId -ServiceId $ServiceId
 $AdminToken = Resolve-RenderAdminToken -AdminToken $AdminToken -ServiceId $ServiceId -RenderApiKey $RenderApiKey -EnvKey $AdminTokenEnvKey
+if ([string]::IsNullOrWhiteSpace($GovernanceBaseUrl)) {
+  $GovernanceBaseUrl = $BaseUrl
+}
 $startedAt = (Get-Date).ToUniversalTime()
 $smokeChecks = @()
 $overallStatus = "success"
@@ -173,7 +177,7 @@ function Record-SmokeRun {
       finished_at = ((Get-Date).ToUniversalTime()).ToString("o")
       checks = $smokeChecks
     } | ConvertTo-Json -Depth 8
-    Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/ops/deploy/smoke/record" -Headers $recordHeaders -Body $payload -TimeoutSec $TimeoutSec | Out-Null
+    Invoke-RestMethod -Method Post -Uri "$GovernanceBaseUrl/api/ops/deploy/smoke/record" -Headers $recordHeaders -Body $payload -TimeoutSec $TimeoutSec | Out-Null
   } catch {
     Write-Output "SMOKE_RECORD_WARN $($_.Exception.Message)"
   }
@@ -498,16 +502,34 @@ try {
 
   $mainShell = Invoke-HtmlGet -Uri "$BaseUrl/?tab=iam"
   $mainShellText = "$($mainShell.Content)"
-  foreach ($marker in @("openLoginModalBtn", "panelIam", "panelInspection")) {
+  $legacyShellMarkers = @("openLoginModalBtn", "panelIam", "panelInspection")
+  $splitShellMarkers = @("시설 운영 코어", "/web/complaints")
+  $matchedLegacyShell = $true
+  foreach ($marker in $legacyShellMarkers) {
     if (-not $mainShellText.Contains($marker)) {
-      throw "UI core path check failed: missing marker '$marker'"
+      $matchedLegacyShell = $false
+      break
     }
   }
-  Add-SmokeCheck -Id "ui_main_shell" -Status "ok" -Message "Main HTML shell exposes auth/IAM/inspection entry points"
+  $matchedSplitShell = $true
+  foreach ($marker in $splitShellMarkers) {
+    if (-not $mainShellText.Contains($marker)) {
+      $matchedSplitShell = $false
+      break
+    }
+  }
+  if (-not $matchedLegacyShell -and -not $matchedSplitShell) {
+    throw "UI core path check failed: expected either legacy main shell markers or split facility-core shell markers"
+  }
+  if ($matchedSplitShell) {
+    Add-SmokeCheck -Id "ui_main_shell" -Status "ok" -Message "Split facility-core shell is exposed"
+  } else {
+    Add-SmokeCheck -Id "ui_main_shell" -Status "ok" -Message "Main HTML shell exposes auth/IAM/inspection entry points"
+  }
 
   if ($AdminToken -ne "") {
     $headers = @{ "X-Admin-Token" = $AdminToken }
-    $deployChecklist = Invoke-JsonGet -Uri "$BaseUrl/api/ops/deploy/checklist" -Headers $headers
+    $deployChecklist = Invoke-JsonGet -Uri "$GovernanceBaseUrl/api/ops/deploy/checklist" -Headers $headers
     if (-not $deployChecklist.policy.rollback_guide_exists) {
       throw "Deploy checklist validation failed: rollback guide file missing"
     }
@@ -526,19 +548,19 @@ try {
     }
     Add-SmokeCheck -Id "rollback_guide" -Status "ok" -Message "Rollback guide presence/checksum validated ($rollbackReference)"
 
-    $me = Invoke-JsonGet -Uri "$BaseUrl/api/auth/me" -Headers $headers
+    $me = Invoke-JsonGet -Uri "$GovernanceBaseUrl/api/auth/me" -Headers $headers
     if (-not $me.role) {
       throw "Auth check failed: role missing"
     }
     Add-SmokeCheck -Id "auth_me" -Status "ok" -Message "/api/auth/me role resolved"
 
-    $integrity = Invoke-JsonGet -Uri "$BaseUrl/api/admin/audit-integrity" -Headers $headers
+    $integrity = Invoke-JsonGet -Uri "$GovernanceBaseUrl/api/admin/audit-integrity" -Headers $headers
     if ($RequireAuditChainOk -and (-not $integrity.chain.chain_ok)) {
       throw "Audit integrity check failed: hash chain mismatch"
     }
     Add-SmokeCheck -Id "audit_integrity" -Status "ok" -Message "Audit integrity endpoint responded"
 
-    $runbook = Invoke-JsonGet -Uri "$BaseUrl/api/ops/runbook/checks" -Headers $headers
+    $runbook = Invoke-JsonGet -Uri "$GovernanceBaseUrl/api/ops/runbook/checks" -Headers $headers
     $criticalChecks = @($runbook.checks | Where-Object { $_.status -eq "critical" })
     if (-not $RequireAuditChainOk) {
       $criticalChecks = @($criticalChecks | Where-Object { $_.id -ne "audit_chain_integrity" })
@@ -551,7 +573,7 @@ try {
     }
     Add-SmokeCheck -Id "runbook_checks" -Status "ok" -Message "Runbook checks have no blocking critical issue"
 
-    $posture = Invoke-JsonGet -Uri "$BaseUrl/api/ops/security/posture" -Headers $headers
+    $posture = Invoke-JsonGet -Uri "$GovernanceBaseUrl/api/ops/security/posture" -Headers $headers
     if (-not $posture.rate_limit.active_backend) {
       throw "Security posture check failed: missing rate_limit.active_backend"
     }
@@ -566,7 +588,7 @@ try {
     Invoke-A2LiteSmoke -Headers $headers
 
     if ($RunRunbookGate) {
-      $runbookRun = Invoke-RestMethod -Method Post -Uri "$BaseUrl/api/ops/runbook/checks/run" -Headers $headers -TimeoutSec $TimeoutSec
+      $runbookRun = Invoke-RestMethod -Method Post -Uri "$GovernanceBaseUrl/api/ops/runbook/checks/run" -Headers $headers -TimeoutSec $TimeoutSec
       $runbookRunCritical = @()
       if ($runbookRun.checks) {
         $runbookRunCritical = @($runbookRun.checks | Where-Object { $_.status -eq "critical" })
