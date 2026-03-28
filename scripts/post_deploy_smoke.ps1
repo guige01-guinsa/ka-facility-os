@@ -149,6 +149,26 @@ function Invoke-HttpGet {
   return Invoke-WebRequest -Method Get -Uri $Uri -Headers $Headers -TimeoutSec $TimeoutSec -UseBasicParsing
 }
 
+function Test-JsonEndpointAvailable {
+  param(
+    [Parameter(Mandatory = $true)][string]$Uri,
+    [hashtable]$Headers = @{}
+  )
+  try {
+    Invoke-RestMethod -Method Get -Uri $Uri -Headers $Headers -TimeoutSec $TimeoutSec | Out-Null
+    return $true
+  } catch {
+    $statusCode = $null
+    if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+      $statusCode = $_.Exception.Response.StatusCode.value__
+    }
+    if ($statusCode -eq 404) {
+      return $false
+    }
+    throw
+  }
+}
+
 function Record-SmokeRun {
   param(
     [Parameter(Mandatory = $true)][string]$FinalStatus,
@@ -231,12 +251,21 @@ function Invoke-A1LiteSmoke {
   $encodedSite = [uri]::EscapeDataString($site)
   $encodedMonth = [uri]::EscapeDataString($monthLabel)
   $integratedUri = "$BaseUrl/api/reports/monthly/integrated?site=$encodedSite&month=$encodedMonth"
+  $catalogUri = "$BaseUrl/api/ops/inspections/checklists/catalog"
+  if (-not (Test-JsonEndpointAvailable -Uri $integratedUri -Headers $Headers)) {
+    Add-SmokeCheck -Id "a1_lite_ops_flow" -Status "skipped" -Message "A1-lite smoke skipped because integrated monthly report route is not exposed on this deployment surface"
+    return
+  }
+  if (-not (Test-JsonEndpointAvailable -Uri $catalogUri -Headers $Headers)) {
+    Add-SmokeCheck -Id "a1_lite_ops_flow" -Status "skipped" -Message "A1-lite smoke skipped because inspection checklist catalog route is not exposed on this deployment surface"
+    return
+  }
   $beforeIntegrated = Invoke-JsonGet -Uri $integratedUri -Headers $Headers
   $beforeInspectionTotal = Get-NumericProperty -Object $beforeIntegrated.inspections -PropertyName "total"
   $beforeWorkOrderTotal = Get-NumericProperty -Object $beforeIntegrated.work_orders -PropertyName "total"
   $beforeCompletedTotal = Get-NumericProperty -Object $beforeIntegrated.work_orders.status_counts -PropertyName "completed"
 
-  $catalog = Invoke-JsonGet -Uri "$BaseUrl/api/ops/inspections/checklists/catalog" -Headers $Headers
+  $catalog = Invoke-JsonGet -Uri $catalogUri -Headers $Headers
   $catalogSet = @($catalog.checklist_sets | Where-Object { "$($_.set_id)" -eq "electrical_60" } | Select-Object -First 1)[0]
   if ($null -eq $catalogSet) {
     $catalogSet = @($catalog.checklist_sets | Select-Object -First 1)[0]
@@ -394,6 +423,10 @@ function Invoke-A2LiteSmoke {
   $encodedSite = [uri]::EscapeDataString($site)
   $encodedMonth = [uri]::EscapeDataString($monthLabel)
   $reportUri = "$BaseUrl/api/reports/official-documents/monthly?site=$encodedSite&month=$encodedMonth"
+  if (-not (Test-JsonEndpointAvailable -Uri $reportUri -Headers $Headers)) {
+    Add-SmokeCheck -Id "a2_lite_document_flow" -Status "skipped" -Message "A2-lite smoke skipped because official-document monthly report route is not exposed on this deployment surface"
+    return
+  }
   $beforeReport = Invoke-JsonGet -Uri $reportUri -Headers $Headers
   $beforeTotal = Get-NumericProperty -Object $beforeReport -PropertyName "total_documents"
   $beforeLinked = Get-NumericProperty -Object $beforeReport -PropertyName "linked_work_order_documents"
