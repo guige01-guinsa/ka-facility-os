@@ -3411,6 +3411,58 @@ def run_alert_mttr_slo_check_job(
         trigger=trigger,
     )
 
+def run_alert_guard_recover_job(
+    *,
+    event_type: str | None = None,
+    state_filter: str = "quarantined",
+    max_targets: int | None = None,
+    dry_run: bool = False,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    return _ops_alert_service_module().run_alert_guard_recover_job(
+        event_type=event_type,
+        state_filter=state_filter,
+        max_targets=max_targets,
+        dry_run=dry_run,
+        trigger=trigger,
+    )
+
+def run_alert_retention_job(
+    *,
+    retention_days: int | None = None,
+    max_delete: int | None = None,
+    dry_run: bool = False,
+    write_archive: bool | None = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    return _ops_alert_service_module().run_alert_retention_job(
+        retention_days=retention_days,
+        max_delete=max_delete,
+        dry_run=dry_run,
+        write_archive=write_archive,
+        trigger=trigger,
+    )
+
+def run_alert_retry_job(
+    *,
+    event_type: str | None = None,
+    only_status: list[str] | None = None,
+    limit: int = 200,
+    max_attempt_count: int = 10,
+    min_last_attempt_age_sec: int = 30,
+    trigger: str = "manual",
+) -> Any:
+    from app.domains.ops.router_alerts import run_alert_retry_job as _impl
+
+    return _impl(
+        event_type=event_type,
+        only_status=only_status,
+        limit=limit,
+        max_attempt_count=max_attempt_count,
+        min_last_attempt_age_sec=min_last_attempt_age_sec,
+        trigger=trigger,
+    )
+
 def _dispatch_alert_event(
     *,
     event_type: str,
