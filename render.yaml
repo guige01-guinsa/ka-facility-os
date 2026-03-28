@@ -216,7 +216,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "45 0 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_governance_gate
@@ -260,7 +260,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "20 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_governance_remediation_escalation
@@ -298,7 +298,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "35 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_governance_remediation_auto_assign
@@ -318,7 +318,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "50 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_governance_remediation_kpi
@@ -338,7 +338,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "55 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_governance_remediation_autopilot
@@ -388,7 +388,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "40 23 * * 5"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_quality_report --window weekly
@@ -422,7 +422,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "20 0 1 * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_quality_report --window monthly
@@ -454,7 +454,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "50 1 * * 0"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.dr_rehearsal
@@ -482,7 +482,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "*/15 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.sla_escalation --limit 500
@@ -538,7 +538,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "*/10 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.alert_retry --limit 300 --max-attempt-count 10 --min-last-attempt-age-sec 30
@@ -560,7 +560,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "5 0 1 * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.monthly_audit_archive --write-file
@@ -578,7 +578,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "15 0 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.ops_daily_check
@@ -646,7 +646,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "35 1 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.alert_retention --write-archive
@@ -670,7 +670,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "25 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.alert_guard_recover --state quarantined --max-targets 30
@@ -702,7 +702,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "10 * * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.alert_mttr_slo
@@ -756,7 +756,7 @@ services:
     runtime: python
     plan: starter
     region: singapore
-    autoDeployTrigger: commit
+    autoDeployTrigger: off
     schedule: "30 23 * * 5"
     buildCommand: pip install -r requirements.txt
     startCommand: python -m app.jobs.adoption_w07_weekly --days 14
