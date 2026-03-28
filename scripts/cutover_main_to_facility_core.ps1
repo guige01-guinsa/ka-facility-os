@@ -1,7 +1,7 @@
 param(
   [string]$PrimaryServiceId = "",
   [string]$PrimaryServiceName = "ka-facility-os",
-  [string]$CoreMirrorServiceName = "ka-facility-core",
+  [string]$CoreMirrorServiceName = "",
   [string]$AdminServiceName = "ka-platform-admin",
   [string]$RenderApiKey = "",
   [int]$PollSeconds = 10,
@@ -260,7 +260,10 @@ $adminService = Find-RenderServiceByName -OwnerId $ownerId -Name $AdminServiceNa
 if ($null -eq $adminService) {
   throw "Could not find admin service '$AdminServiceName'."
 }
-$coreMirrorService = Find-RenderServiceByName -OwnerId $ownerId -Name $CoreMirrorServiceName
+$coreMirrorService = $null
+if (-not [string]::IsNullOrWhiteSpace($CoreMirrorServiceName)) {
+  $coreMirrorService = Find-RenderServiceByName -OwnerId $ownerId -Name $CoreMirrorServiceName
+}
 
 $adminBaseUrl = "$($adminService.serviceDetails.url)"
 $primaryBaseUrl = "$($primaryService.serviceDetails.url)"

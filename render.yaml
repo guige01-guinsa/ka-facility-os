@@ -202,16 +202,6 @@ services:
       - key: W07_WEEKLY_ARCHIVE_PATH
         value: data/adoption-w07-archives
   - type: web
-    name: ka-facility-core
-    runtime: python
-    plan: free
-    region: singapore
-    autoDeployTrigger: commit
-    healthCheckPath: /health
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.entrypoints.facility_core:app --host 0.0.0.0 --port $PORT
-    envVars: *shared_web_envs
-  - type: web
     name: ka-platform-admin
     runtime: python
     plan: free

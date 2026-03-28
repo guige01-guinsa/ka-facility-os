@@ -1,7 +1,7 @@
 param(
   [string]$SourceServiceId = "",
   [string]$RenderApiKey = "",
-  [string]$CoreServiceName = "ka-facility-core",
+  [string]$CoreServiceName = "",
   [string]$AdminServiceName = "ka-platform-admin",
   [int]$PollSeconds = 10,
   [int]$MaxWaitSeconds = 1800
@@ -238,20 +238,27 @@ if (-not $sourceEnvVars -or $sourceEnvVars.Count -eq 0) {
 }
 
 $ownerId = "$($sourceService.ownerId)"
-$targets = @(
-  @{
+$targets = @()
+if (-not [string]::IsNullOrWhiteSpace($CoreServiceName)) {
+  $targets += @{
     Name = $CoreServiceName
     StartCommand = "uvicorn app.entrypoints.facility_core:app --host 0.0.0.0 --port `$PORT"
     HtmlNeedle = "시설 운영 코어"
     ExpectedServiceName = "ka-facility-core"
-  },
-  @{
+  }
+}
+if (-not [string]::IsNullOrWhiteSpace($AdminServiceName)) {
+  $targets += @{
     Name = $AdminServiceName
     StartCommand = "uvicorn app.entrypoints.platform_admin:app --host 0.0.0.0 --port `$PORT"
     HtmlNeedle = "플랫폼 관리 허브"
     ExpectedServiceName = "ka-platform-admin"
   }
-)
+}
+
+if ($targets.Count -lt 1) {
+  throw "At least one split target service name must be provided."
+}
 
 foreach ($target in $targets) {
   $existing = Find-RenderServiceByName -OwnerId $ownerId -Name $target.Name
