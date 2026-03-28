@@ -52,15 +52,21 @@ def _build_split_client(tmp_path, monkeypatch, module_name: str) -> TestClient:
     import app.domains.complaints.service as complaints_service_module
     import app.domains.iam.core as iam_core_module
     import app.domains.iam.security as iam_security_module
+    import app.domains.team_ops.router as team_ops_router_module
+    import app.domains.team_ops.service as team_ops_service_module
     import app.entrypoints.split_apps as split_apps_module
     import app.main as main_module
+    import app.domains.ops.router_governance as ops_router_governance_module
 
     importlib.reload(database_module)
     importlib.reload(iam_core_module)
     importlib.reload(iam_security_module)
     importlib.reload(complaints_service_module)
     importlib.reload(complaints_router_module)
+    importlib.reload(team_ops_service_module)
+    importlib.reload(team_ops_router_module)
     importlib.reload(main_module)
+    ops_router_governance_module.ENV_NAME = iam_core_module.ENV_NAME
     importlib.reload(split_apps_module)
     entrypoint_module = importlib.import_module(module_name)
     importlib.reload(entrypoint_module)
@@ -86,10 +92,13 @@ def test_facility_core_entrypoint_routes(tmp_path, monkeypatch) -> None:
         assert modules.status_code == 200
         module_ids = {item["id"] for item in modules.json()["modules"]}
         assert "household-complaints" in module_ids
+        assert "facility-team-ops" in module_ids
         assert "rbac-governance" not in module_ids
 
         complaints = client.get("/web/complaints")
         assert complaints.status_code == 200
+        team_ops = client.get("/web/team-ops")
+        assert team_ops.status_code == 200
 
         adoption_public = client.get("/api/public/adoption-plan")
         assert adoption_public.status_code == 404
@@ -115,6 +124,7 @@ def test_platform_admin_entrypoint_routes(tmp_path, monkeypatch) -> None:
         module_ids = {item["id"] for item in modules.json()["modules"]}
         assert "rbac-governance" in module_ids
         assert "household-complaints" not in module_ids
+        assert "facility-team-ops" not in module_ids
 
         adoption_public = client.get("/api/public/adoption-plan")
         assert adoption_public.status_code == 200
@@ -125,3 +135,5 @@ def test_platform_admin_entrypoint_routes(tmp_path, monkeypatch) -> None:
 
         complaints = client.get("/api/complaints")
         assert complaints.status_code == 404
+        team_ops = client.get("/api/team-ops/dashboard?site=%EC%97%B0%EC%82%B0%EB%8D%94%EC%83%B5")
+        assert team_ops.status_code == 404

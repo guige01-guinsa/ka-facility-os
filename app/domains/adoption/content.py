@@ -2840,6 +2840,18 @@ FACILITY_WEB_MODULES: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "facility-team-ops",
+        "name": "Facility Team Ops",
+        "name_ko": "시설팀 운영",
+        "description": "현장기록, 시설위치, 공구/자재 관리를 한 화면에서 운영하고, 기존 작업지시·점검·민원과 읽기 전용으로 연결합니다.",
+        "kpi_hint": "Field record completion rate",
+        "links": [
+            {"label": "Team Ops Console", "href": "/web/team-ops"},
+            {"label": "Team Ops Dashboard API", "href": "/api/team-ops/dashboard?site=%EC%97%B0%EC%82%B0%EB%8D%94%EC%83%B5&range_key=week"},
+            {"label": "Team Ops Logs API", "href": "/api/team-ops/logs?site=%EC%97%B0%EC%82%B0%EB%8D%94%EC%83%B5"},
+        ],
+    },
+    {
         "id": "utility-billing",
         "name": "Utility Billing",
         "name_ko": "전기/수도 요금부과",

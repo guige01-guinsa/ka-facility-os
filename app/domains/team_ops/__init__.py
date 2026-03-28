@@ -1,0 +1,1 @@
+"""Team operations domain."""

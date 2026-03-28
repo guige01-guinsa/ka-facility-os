@@ -6960,6 +6960,7 @@ from app.domains.ops.router_alerts import admin_router as ops_sla_admin_router, 
 from app.domains.ops.router_reporting import build_router as build_ops_reporting_router
 from app.domains.ops.router_tutorial import build_router as build_ops_tutorial_router
 from app.domains.public.router import PublicRouteDeps, build_router as build_public_router
+from app.domains.team_ops.router import router as team_ops_router
 
 public_router = build_public_router(
     PublicRouteDeps(
@@ -7061,6 +7062,7 @@ adoption_ops_router = build_adoption_ops_router(globals())
 FACILITY_CORE_ROUTERS = (
     iam_auth_router,
     complaints_router,
+    team_ops_router,
     ops_billing_router,
     ops_core_router,
     ops_official_documents_router,

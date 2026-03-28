@@ -54,14 +54,20 @@ def app_client(tmp_path, monkeypatch):
     import app.domains.complaints.service as complaints_service_module
     import app.domains.iam.core as iam_core_module
     import app.domains.iam.security as iam_security_module
+    import app.domains.team_ops.router as team_ops_router_module
+    import app.domains.team_ops.service as team_ops_service_module
     import app.main as main_module
+    import app.domains.ops.router_governance as ops_router_governance_module
 
     importlib.reload(database_module)
     importlib.reload(iam_core_module)
     importlib.reload(iam_security_module)
     importlib.reload(complaints_service_module)
     importlib.reload(complaints_router_module)
+    importlib.reload(team_ops_service_module)
+    importlib.reload(team_ops_router_module)
     importlib.reload(main_module)
+    ops_router_governance_module.ENV_NAME = iam_core_module.ENV_NAME
 
     with TestClient(main_module.app) as client:
         yield client
@@ -111,14 +117,20 @@ def strict_rate_limit_client(tmp_path, monkeypatch):
     import app.domains.complaints.service as complaints_service_module
     import app.domains.iam.core as iam_core_module
     import app.domains.iam.security as iam_security_module
+    import app.domains.team_ops.router as team_ops_router_module
+    import app.domains.team_ops.service as team_ops_service_module
     import app.main as main_module
+    import app.domains.ops.router_governance as ops_router_governance_module
 
     importlib.reload(database_module)
     importlib.reload(iam_core_module)
     importlib.reload(iam_security_module)
     importlib.reload(complaints_service_module)
     importlib.reload(complaints_router_module)
+    importlib.reload(team_ops_service_module)
+    importlib.reload(team_ops_router_module)
     importlib.reload(main_module)
+    ops_router_governance_module.ENV_NAME = iam_core_module.ENV_NAME
 
     with TestClient(main_module.app) as client:
         yield client

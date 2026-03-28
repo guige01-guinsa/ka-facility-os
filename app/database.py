@@ -13,6 +13,7 @@ from sqlalchemy.engine import Connection, make_url
 
 from app.domains.complaints.tables import register_complaint_tables
 from app.domains.ops.tables import register_ops_tables
+from app.domains.team_ops.tables import register_team_ops_tables
 
 DEFAULT_SQLITE_URL = "sqlite:///data/facility.db"
 
@@ -50,6 +51,7 @@ engine = create_engine(
 metadata = MetaData()
 _ops_tables = register_ops_tables(metadata)
 _complaint_tables = register_complaint_tables(metadata)
+_team_ops_tables = register_team_ops_tables(metadata)
 ops_checklist_sets = _ops_tables["ops_checklist_sets"]
 ops_checklist_set_items = _ops_tables["ops_checklist_set_items"]
 ops_checklist_set_revisions = _ops_tables["ops_checklist_set_revisions"]
@@ -66,6 +68,9 @@ complaint_attachments = _complaint_tables["complaint_attachments"]
 complaint_messages = _complaint_tables["complaint_messages"]
 complaint_cost_items = _complaint_tables["complaint_cost_items"]
 complaint_report_cover_defaults = _complaint_tables["complaint_report_cover_defaults"]
+team_ops_logs = _team_ops_tables["team_ops_logs"]
+team_ops_facilities = _team_ops_tables["team_ops_facilities"]
+team_ops_inventory_items = _team_ops_tables["team_ops_inventory_items"]
 
 admin_users = Table(
     "admin_users",

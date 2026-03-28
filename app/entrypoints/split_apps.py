@@ -23,6 +23,7 @@ FACILITY_CORE_MODULE_IDS = frozenset(
         "inspection-ops",
         "work-order-ops",
         "household-complaints",
+        "facility-team-ops",
         "utility-billing",
         "official-documents",
         "reporting-audit",
@@ -59,6 +60,7 @@ FACILITY_CORE_SURFACE = SplitSurface(
     title="시설 운영 코어",
     description="점검, 작업지시, 세대 민원, 요금부과, 공문관리처럼 현장 실무에 직접 쓰는 기능만 묶은 경량 엔트리포인트입니다.",
     quick_links=(
+        {"label": "시설팀 운영", "href": "/web/team-ops"},
         {"label": "세대 민원처리", "href": "/web/complaints"},
         {"label": "Swagger Docs", "href": "/docs"},
         {"label": "모듈 JSON", "href": "/api/public/modules"},
@@ -250,6 +252,7 @@ def create_facility_core_app(*, run_background_automation: bool = False) -> Fast
     app.include_router(_build_split_shell_router(FACILITY_CORE_SURFACE, modules_payload))
     app.include_router(main_module.iam_auth_router)
     app.include_router(main_module.complaints_router)
+    app.include_router(main_module.team_ops_router)
     app.include_router(main_module.ops_billing_router)
     app.include_router(main_module.ops_core_router)
     app.include_router(main_module.ops_official_documents_router)
