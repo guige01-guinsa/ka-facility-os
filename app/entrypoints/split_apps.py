@@ -202,10 +202,11 @@ def _attach_common_middlewares(app: FastAPI) -> None:
     app.middleware("http")(main_module.security_headers_middleware)
 
 
-def _build_lifespan(*, run_background_automation: bool) -> Callable[[FastAPI], AsyncIterator[None]]:
+def _build_lifespan(*, run_background_automation: bool, run_database_migrations: bool) -> Callable[[FastAPI], AsyncIterator[None]]:
     @asynccontextmanager
     async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
-        main_module.ensure_database()
+        if run_database_migrations:
+            main_module.ensure_database()
         main_module._ensure_evidence_storage_ready()
         main_module.ensure_legacy_admin_token_seed()
         main_module._init_rate_limit_backend()
@@ -238,13 +239,16 @@ def _build_lifespan(*, run_background_automation: bool) -> Callable[[FastAPI], A
     return _lifespan
 
 
-def create_facility_core_app(*, run_background_automation: bool = False) -> FastAPI:
+def create_facility_core_app(*, run_background_automation: bool = False, run_database_migrations: bool = True) -> FastAPI:
     modules_payload = _filtered_modules_payload(include_ids=FACILITY_CORE_MODULE_IDS)
     app = FastAPI(
         title="KA Facility Core",
         description="Facility core split deployment for field operations",
         version=main_module.app.version,
-        lifespan=_build_lifespan(run_background_automation=run_background_automation),
+        lifespan=_build_lifespan(
+            run_background_automation=run_background_automation,
+            run_database_migrations=run_database_migrations,
+        ),
     )
     _attach_common_middlewares(app)
 
@@ -259,13 +263,16 @@ def create_facility_core_app(*, run_background_automation: bool = False) -> Fast
     return app
 
 
-def create_platform_admin_app(*, run_background_automation: bool = False) -> FastAPI:
+def create_platform_admin_app(*, run_background_automation: bool = False, run_database_migrations: bool = True) -> FastAPI:
     modules_payload = _filtered_modules_payload(exclude_ids=FACILITY_CORE_MODULE_IDS)
     app = FastAPI(
         title="KA Platform Admin",
         description="Platform admin split deployment for governance and adoption operations",
         version=main_module.app.version,
-        lifespan=_build_lifespan(run_background_automation=run_background_automation),
+        lifespan=_build_lifespan(
+            run_background_automation=run_background_automation,
+            run_database_migrations=run_database_migrations,
+        ),
     )
     _attach_common_middlewares(app)
 
