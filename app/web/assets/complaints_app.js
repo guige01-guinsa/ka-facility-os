@@ -4,6 +4,7 @@ const STORAGE_KEYS = {
   dbColumnPrefs: 'kaFacility.complaints.dbColumnPrefs',
   reportCoverPrefs: 'kaFacility.complaints.reportCoverPrefs',
   reportCoverPresets: 'kaFacility.complaints.reportCoverPresets',
+  queueCache: 'kaFacility.complaints.queueCache',
 };
 const TOKEN_STORAGE_KEYS = ['kaFacility.auth.token', 'kaFacilityAdminToken', 'kaFacilityMainToken', 'kaFacility.complaints.token'];
 const AUTH_PROFILE_KEY = 'kaFacility.auth.profile';
@@ -36,6 +37,8 @@ const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 const ACTIVE_STATUSES = new Set(['assigned', 'visit_scheduled', 'in_progress', 'reopened']);
 const DONE_STATUSES = new Set(['resolved', 'resident_confirmed', 'closed']);
 const STATUS_SEQUENCE = ['received', 'assigned', 'visit_scheduled', 'in_progress', 'resolved', 'resident_confirmed', 'reopened', 'closed'];
+const RETRYABLE_REQUEST_STATUSES = new Set([429, 500, 502, 503, 504]);
+const REQUEST_RETRY_DELAYS_MS = [400, 1200, 2400];
 const MESSAGE_TEMPLATE_BUILDERS = {
   '': () => '',
   intake_ack: () => '안녕하세요. 외부도색 관련 민원이 접수되었습니다. 확인 후 방문 일정을 안내드리겠습니다.',
@@ -174,11 +177,26 @@ function writeDebug(label, payload) {
   elements.debugBox.textContent = '[' + stamp + '] ' + label + '\n' + body;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 function setNotice(message, kind) {
   elements.noticeBar.textContent = message;
   elements.noticeBar.className = 'notice-bar';
   if (kind === 'error') elements.noticeBar.classList.add('error');
   if (kind === 'success') elements.noticeBar.classList.add('success');
+}
+
+function isRetryableRequestStatus(status) {
+  return RETRYABLE_REQUEST_STATUSES.has(Number(status));
+}
+
+function isTransientRequestError(error) {
+  if (!error) return false;
+  if (isRetryableRequestStatus(error.status)) return true;
+  if (error.name === 'AbortError') return true;
+  return error instanceof TypeError;
 }
 
 function nullIfBlank(value) {
@@ -361,6 +379,43 @@ function savePrefs() {
   } catch (error) {
     writeDebug('localStorage-save-error', error);
   }
+}
+
+function loadQueueCache(site) {
+  const normalizedSite = String(site || '').trim();
+  if (!normalizedSite) return [];
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.queueCache) || '{}';
+    const parsed = JSON.parse(raw) || {};
+    const entry = parsed[normalizedSite];
+    if (!entry || !Array.isArray(entry.rows)) return [];
+    return entry.rows;
+  } catch (error) {
+    writeDebug('queue-cache-load-error', error);
+    return [];
+  }
+}
+
+function saveQueueCache(site, rows) {
+  const normalizedSite = String(site || '').trim();
+  if (!normalizedSite || !Array.isArray(rows)) return;
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.queueCache) || '{}';
+    const parsed = JSON.parse(raw) || {};
+    parsed[normalizedSite] = {
+      updated_at: new Date().toISOString(),
+      rows: rows,
+    };
+    localStorage.setItem(STORAGE_KEYS.queueCache, JSON.stringify(parsed));
+  } catch (error) {
+    writeDebug('queue-cache-save-error', error);
+  }
+}
+
+function describeFallbackSource(previousRows, cachedRows) {
+  if (Array.isArray(previousRows) && previousRows.length) return '현재 화면에 남아 있는 최근 성공 큐';
+  if (Array.isArray(cachedRows) && cachedRows.length) return '브라우저에 저장된 최근 성공 큐';
+  return '';
 }
 
 function loadPrefs() {
@@ -862,6 +917,9 @@ async function checkConnection() {
 
 async function request(path, options) {
   const init = Object.assign({ method: 'GET' }, options || {});
+  const method = String(init.method || 'GET').toUpperCase();
+  const retries = Number.isFinite(Number(init.retries)) ? Number(init.retries) : ((method === 'GET' || method === 'HEAD') ? 2 : 0);
+  const retryDelays = Array.isArray(init.retryDelays) && init.retryDelays.length ? init.retryDelays.slice() : REQUEST_RETRY_DELAYS_MS;
   const headers = new Headers(init.headers || {});
   const token = elements.token.value.trim();
   if (token) headers.set('X-Admin-Token', token);
@@ -872,26 +930,50 @@ async function request(path, options) {
   }
   delete init.json;
   delete init.accept;
+  delete init.retries;
+  delete init.retryDelays;
   init.headers = headers;
-  const response = await fetch(path, init);
-  if (!response.ok) {
-    const contentType = response.headers.get('content-type') || '';
-    let detail = response.status + ' error';
-    if (contentType.includes('application/json')) detail = formatApiError(await response.json());
-    else detail = (await response.text()).trim() || detail;
-    if (response.status === 401) {
-      clearStoredAuthArtifacts({ preserveInput: true });
-      updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 인증 만료 또는 무효 토큰');
-      setTokenVisibility(false);
-    } else if (response.status === 403) {
-      updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 권한 또는 site 범위 확인 필요');
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const response = await fetch(path, init);
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') || '';
+        let detail = response.status + ' error';
+        if (contentType.includes('application/json')) detail = formatApiError(await response.json());
+        else detail = (await response.text()).trim() || detail;
+        const requestError = new Error(response.status + ' ' + detail);
+        requestError.status = response.status;
+        requestError.detail = detail;
+        if (response.status === 401) {
+          clearStoredAuthArtifacts({ preserveInput: true });
+          updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 인증 만료 또는 무효 토큰');
+          setTokenVisibility(false);
+        } else if (response.status === 403) {
+          updateSessionStatus('저장된 토큰: ' + maskToken(elements.token.value) + ' · 권한 또는 site 범위 확인 필요');
+        }
+        if (attempt < retries && isRetryableRequestStatus(response.status)) {
+          const delay = retryDelays[Math.min(attempt, retryDelays.length - 1)];
+          writeDebug('request-retry', { path: path, status: response.status, attempt: attempt + 1, next_delay_ms: delay });
+          await sleep(delay);
+          continue;
+        }
+        throw requestError;
+      }
+      if (init.responseType === 'blob') return response.blob();
+      if (response.status === 204) return null;
+      const contentType = response.headers.get('content-type') || '';
+      return contentType.includes('application/json') ? response.json() : response.text();
+    } catch (error) {
+      if (attempt < retries && isTransientRequestError(error)) {
+        const delay = retryDelays[Math.min(attempt, retryDelays.length - 1)];
+        writeDebug('request-retry-error', { path: path, attempt: attempt + 1, next_delay_ms: delay, message: error.message || String(error) });
+        await sleep(delay);
+        continue;
+      }
+      throw error;
     }
-    throw new Error(response.status + ' ' + detail);
   }
-  if (init.responseType === 'blob') return response.blob();
-  if (response.status === 204) return null;
-  const contentType = response.headers.get('content-type') || '';
-  return contentType.includes('application/json') ? response.json() : response.text();
+  throw new Error('요청을 완료하지 못했습니다.');
 }
 
 async function downloadComplaintReport(format) {
@@ -1930,12 +2012,15 @@ async function downloadAttachment(attachmentId, fileName) {
 }
 
 async function loadQueue(options) {
+  const previousQueue = Array.isArray(state.queue) ? state.queue.slice() : [];
+  const currentSite = String(elements.siteFilter.value || '').trim();
   try {
     const session = ensureSession(true);
     savePrefs();
     setNotice('현장 큐를 불러오는 중입니다.');
     const rows = await request('/api/complaints?' + new URLSearchParams({ site: session.site }).toString());
     state.queue = sortQueue(Array.isArray(rows) ? rows : []);
+    saveQueueCache(session.site, state.queue);
     renderStats();
     renderQueue();
     writeDebug('queue-loaded', { site: session.site, count: state.queue.length, sample: state.queue[0] || null });
@@ -1952,6 +2037,17 @@ async function loadQueue(options) {
     }
     setNotice('민원 ' + state.queue.length + '건을 불러왔습니다.', 'success');
   } catch (error) {
+    const cachedQueue = loadQueueCache(currentSite);
+    const fallbackQueue = previousQueue.length ? previousQueue : cachedQueue;
+    if (fallbackQueue.length) {
+      state.queue = sortQueue(fallbackQueue);
+      renderStats();
+      renderQueue();
+      const sourceLabel = describeFallbackSource(previousQueue, cachedQueue);
+      setNotice((error.message || '현장 큐를 불러오지 못했습니다.') + (sourceLabel ? ' · ' + sourceLabel + '를 유지합니다.' : ''), 'error');
+      writeDebug('queue-fallback', { site: currentSite, error: error.message || String(error), source: sourceLabel, count: state.queue.length });
+      return;
+    }
     state.queue = [];
     state.filteredQueue = [];
     renderStats();
@@ -1963,6 +2059,7 @@ async function loadQueue(options) {
 }
 
 async function loadDetail(complaintId, options) {
+  let historyFailed = false;
   try {
     ensureSession(true);
     state.selectedId = complaintId;
@@ -1974,11 +2071,22 @@ async function loadDetail(complaintId, options) {
     if (state.selectedId !== complaintId) return;
     state.detail = detail;
     renderDetail();
-    const history = await request('/api/complaints/households/history?' + new URLSearchParams({ site: detail.case.site, building: detail.case.building, unit_number: detail.case.unit_number }).toString());
-    if (state.selectedId !== complaintId) return;
-    state.householdHistory = history;
-    renderDetail();
-    if (!(options && options.suppressNotice)) setNotice(detail.case.building + ' ' + detail.case.unit_number + ' 상세를 불러왔습니다.', 'success');
+    try {
+      const history = await request('/api/complaints/households/history?' + new URLSearchParams({ site: detail.case.site, building: detail.case.building, unit_number: detail.case.unit_number }).toString());
+      if (state.selectedId !== complaintId) return;
+      state.householdHistory = history;
+      renderDetail();
+    } catch (historyError) {
+      if (state.selectedId !== complaintId) return;
+      historyFailed = true;
+      state.householdHistory = null;
+      renderDetail();
+      writeDebug('detail-history-error', historyError);
+      if (!(options && options.suppressNotice)) {
+        setNotice('민원 상세는 열었지만 세대 이력은 잠시 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.', 'error');
+      }
+    }
+    if (!(options && options.suppressNotice) && !historyFailed) setNotice(detail.case.building + ' ' + detail.case.unit_number + ' 상세를 불러왔습니다.', 'success');
     writeDebug('detail-loaded', detail);
   } catch (error) {
     setNotice(error.message || '상세를 불러오지 못했습니다.', 'error');
