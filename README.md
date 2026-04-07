@@ -7,13 +7,41 @@
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+pip install -r requirements-dev.txt
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-run.ps1
 ```
 
 - 공개 안내: `http://localhost:8000/pwa/public.html`
 - 로그인: `http://localhost:8000/pwa/login.html`
 - 운영 포털: `http://localhost:8000/pwa/`
+
+## Dev Workflow
+
+Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-setup.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-run.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-test.ps1
+```
+
+macOS/Linux:
+
+```bash
+bash ./scripts/dev-setup.sh
+bash ./scripts/dev-run.sh
+bash ./scripts/dev-test.sh
+```
+
+- 로컬 개발 데이터는 `runtime/local` 아래에 저장됩니다.
+- 기본 개발 실행은 `ALLOW_INSECURE_DEFAULTS=1`, `KA_HSTS_ENABLED=0`, `KA_STORAGE_ROOT=runtime/local`를 사용합니다.
+- `dev-run`에 `-SeedDemo`를 주면 로컬 테스트용 관리자/테넌트가 자동 생성됩니다.
+
+기본 로컬 시드값:
+
+- 관리자: `devadmin` / `DevPassword123!`
+- tenant_id: `demo_apt`
+- API Key: `sk-ka-dev-local-demo-key`
 
 ## Main API
 
@@ -69,6 +97,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 pip install -r requirements-dev.txt
-pytest -q tests/test_engine_routes.py
 python -m compileall app
+python -m ruff check app tests
+pytest -q tests/test_engine_routes.py
 ```
