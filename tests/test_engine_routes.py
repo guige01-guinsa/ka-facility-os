@@ -23,17 +23,22 @@ def app_client(tmp_path, monkeypatch):
         "app.main",
         "app.db",
         "app.engine_db",
+        "app.voice_db",
+        "app.voice_service",
         "app.ai_service",
         "app.routes.core",
         "app.routes.engine",
+        "app.routes.voice",
     ):
         sys.modules.pop(name, None)
 
     db = importlib.import_module("app.db")
     engine_db = importlib.import_module("app.engine_db")
+    voice_db = importlib.import_module("app.voice_db")
 
     monkeypatch.setattr(db, "DB_PATH", tmp_path / "engine_test.db")
     monkeypatch.setattr(engine_db, "DB_PATH", tmp_path / "engine_test.db")
+    monkeypatch.setattr(voice_db, "DB_PATH", tmp_path / "engine_test.db")
 
     main = importlib.import_module("app.main")
     db.init_db()
@@ -317,6 +322,83 @@ def test_user_management_crud_and_permission_boundaries(app_client) -> None:
     deleted = client.delete(f"/api/users/{user_id}")
     assert deleted.status_code == 200
     assert client.get(f"/api/users/{user_id}").status_code == 404
+
+
+def test_voice_twilio_flow_creates_complaint_and_tracks_session(app_client) -> None:
+    client = app_client
+    _bootstrap_admin_and_tenant(client)
+
+    inbound = client.post(
+        "/api/voice/twilio/inbound?tenant_id=ys_thesharp",
+        data={"CallSid": "CA1001", "From": "+821055551234", "To": "+82212345678"},
+    )
+    assert inbound.status_code == 200
+    assert "<Gather" in inbound.text
+    assert "동과 호수" in inbound.text
+
+    location = client.post(
+        "/api/voice/twilio/gather?tenant_id=ys_thesharp&call_sid=CA1001",
+        data={"CallSid": "CA1001", "SpeechResult": "101동 1203호입니다", "From": "+821055551234", "To": "+82212345678"},
+    )
+    assert location.status_code == 200
+    assert "불편하신 내용을 말씀해 주세요" in location.text
+
+    issue = client.post(
+        "/api/voice/twilio/gather?tenant_id=ys_thesharp&call_sid=CA1001",
+        data={"CallSid": "CA1001", "SpeechResult": "주차장 이중주차가 계속되고 있습니다", "From": "+821055551234", "To": "+82212345678"},
+    )
+    assert issue.status_code == 200
+    assert "접수 내용을 확인" in issue.text
+
+    confirm = client.post(
+        "/api/voice/twilio/gather?tenant_id=ys_thesharp&call_sid=CA1001",
+        data={"CallSid": "CA1001", "Digits": "1", "From": "+821055551234", "To": "+82212345678"},
+    )
+    assert confirm.status_code == 200
+    assert "접수번호는" in confirm.text
+
+    complaints = client.get("/api/complaints?tenant_id=ys_thesharp")
+    assert complaints.status_code == 200
+    assert any(item["channel"] == "전화" and item["building"] == "101" and item["unit"] == "1203" for item in complaints.json()["items"])
+
+    config = client.get("/api/voice/config?tenant_id=ys_thesharp")
+    assert config.status_code == 200
+    assert config.json()["item"]["inbound_url"].endswith("/api/voice/twilio/inbound?tenant_id=ys_thesharp")
+
+    sessions = client.get("/api/voice/sessions?tenant_id=ys_thesharp")
+    assert sessions.status_code == 200
+    assert sessions.json()["items"][0]["provider_call_id"] == "CA1001"
+    assert sessions.json()["items"][0]["complaint_id"] is not None
+
+
+def test_voice_twilio_emergency_handoff_flow(app_client, monkeypatch) -> None:
+    monkeypatch.setenv("KA_VOICE_HANDOFF_NUMBER", "01012341234")
+    client = app_client
+    _bootstrap_admin_and_tenant(client)
+
+    inbound = client.post(
+        "/api/voice/twilio/inbound?tenant_id=ys_thesharp",
+        data={"CallSid": "CA2001", "From": "+821012341234", "To": "+82212345678"},
+    )
+    assert inbound.status_code == 200
+
+    handoff = client.post(
+        "/api/voice/twilio/gather?tenant_id=ys_thesharp&call_sid=CA2001",
+        data={
+            "CallSid": "CA2001",
+            "SpeechResult": "101동 1203호인데 누수가 심합니다 긴급으로 연결해 주세요",
+            "From": "+821012341234",
+            "To": "+82212345678",
+        },
+    )
+    assert handoff.status_code == 200
+    assert "<Dial>01012341234</Dial>" in handoff.text
+
+    sessions = client.get("/api/voice/sessions?tenant_id=ys_thesharp")
+    assert sessions.status_code == 200
+    target = next(item for item in sessions.json()["items"] if item["provider_call_id"] == "CA2001")
+    assert target["status"] == "handoff"
+    assert target["complaint_id"] is not None
 
 
 def test_startup_seed_supports_deployed_operator_bundle(tmp_path, monkeypatch) -> None:

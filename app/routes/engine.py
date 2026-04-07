@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 
-from ..ai_service import MAX_CHAT_DIGEST_IMAGES, analyze_chat_digest, classify_complaint_text
+from ..ai_service import MAX_CHAT_DIGEST_IMAGES, analyze_chat_digest, classify_complaint_text, normalize_summary_text
 from ..db import (
     STORAGE_ROOT,
     append_audit_log,
@@ -249,7 +249,12 @@ def complaints_create(request: Request, payload: Dict[str, Any] = Body(...)) -> 
             complainant_phone=str(payload.get("complainant_phone") or "").strip(),
             channel=str(payload.get("channel") or "기타").strip() or "기타",
             content=content,
-            summary=str(payload.get("summary") or (ai_data or {}).get("summary") or "").strip(),
+            summary=normalize_summary_text(
+                str(payload.get("summary") or (ai_data or {}).get("summary") or "").strip(),
+                building=str(payload.get("building") or "").strip(),
+                unit=str(payload.get("unit") or "").strip(),
+                complaint_type=str(payload.get("type") or (ai_data or {}).get("type") or "기타").strip(),
+            ),
             complaint_type=str(payload.get("type") or (ai_data or {}).get("type") or "기타").strip(),
             urgency=str(payload.get("urgency") or (ai_data or {}).get("urgency") or "일반").strip(),
             status=str(payload.get("status") or "접수").strip() or "접수",

@@ -94,6 +94,24 @@ def _make_summary(text: str, complaint_type: str) -> str:
     return headline
 
 
+def normalize_summary_text(summary: str, *, building: str = "", unit: str = "", complaint_type: str = "") -> str:
+    normalized = _collapse_space(summary)
+    if not normalized:
+        return normalized
+    prefix_parts = []
+    if building:
+        prefix_parts.append(f"{str(building).strip()}동")
+    if unit:
+        prefix_parts.append(f"{str(unit).strip()}호")
+    prefix = " ".join(part for part in prefix_parts if part).strip()
+    if prefix:
+        normalized = re.sub(rf"^(?:{re.escape(prefix)}\s+)+", f"{prefix} ", normalized).strip()
+    if complaint_type and complaint_type != "기타":
+        tag = f"{complaint_type} / "
+        normalized = re.sub(rf"^(?:{re.escape(tag)})+", tag, normalized).strip()
+    return normalized
+
+
 def _openai_client(default_model: str = "gpt-5") -> Tuple[Any | None, str]:
     api_key = str(os.getenv("OPENAI_API_KEY") or "").strip()
     if not api_key:
@@ -137,7 +155,7 @@ def _openai_classify(text: str) -> Dict[str, str] | None:
         return {
             "type": complaint_type,
             "urgency": urgency,
-            "summary": summary or _make_summary(text, complaint_type),
+            "summary": normalize_summary_text(summary or _make_summary(text, complaint_type), complaint_type=complaint_type),
             "model": model,
             "source": "openai",
         }
@@ -157,7 +175,7 @@ def classify_complaint_text(text: str) -> Dict[str, str]:
     return {
         "type": complaint_type,
         "urgency": urgency,
-        "summary": _make_summary(normalized, complaint_type),
+        "summary": normalize_summary_text(_make_summary(normalized, complaint_type), complaint_type=complaint_type),
         "model": "heuristic",
         "source": "fallback",
     }

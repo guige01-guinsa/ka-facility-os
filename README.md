@@ -58,6 +58,11 @@ bash ./scripts/dev-test.sh
 - `GET /api/admin/tenants`
 - `POST /api/admin/tenants`
 - `POST /api/admin/tenants/{tenant_id}/rotate_key`
+- `GET /api/voice/config`
+- `GET /api/voice/sessions`
+- `POST /api/voice/twilio/inbound`
+- `POST /api/voice/twilio/gather`
+- `POST /api/voice/twilio/status`
 
 ## Auth
 
@@ -70,6 +75,24 @@ bash ./scripts/dev-test.sh
 - 사진 첨부 최대 6장
 - 첨부 전체선택, 선택삭제, 전체삭제
 - Render 영속 스토리지용 `KA_STORAGE_ROOT` 지원
+- 전화 AI 자동응답 웹훅과 통화기록 저장
+
+## Voice AI
+
+- 현재 구현은 `Twilio Voice webhook + AI 분기 로직 + 민원 자동 생성` 구조입니다.
+- Inbound webhook 예시: `POST https://ka-part.com/api/voice/twilio/inbound?tenant_id=ys_thesharp`
+- Status callback 예시: `POST https://ka-part.com/api/voice/twilio/status?tenant_id=ys_thesharp`
+
+권장 환경변수:
+
+- `KA_PUBLIC_BASE_URL=https://ka-part.com`
+- `KA_VOICE_DEFAULT_TENANT_ID=ys_thesharp`
+- `KA_VOICE_HANDOFF_NUMBER=01012345678`
+- `KA_VOICE_SAY_LANGUAGE=ko-KR`
+- `KA_VOICE_GATHER_LANGUAGE=ko-KR`
+
+- 관리자 로그인 후 `GET /api/voice/config?tenant_id=...`로 실제 설정용 URL을 확인할 수 있습니다.
+- 긴급 키워드나 상담원 연결 요청이 감지되면 담당자 번호로 넘기고, 동시에 민원도 자동 등록합니다.
 
 ## Deployment Seed
 
